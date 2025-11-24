@@ -1,0 +1,33 @@
+# Node dependencies
+/node_modules/
+
+# Build output
+/dist/
+
+# IDE and OS files
+/.vscode/
+/.idea/
+.DS_Store
+
+# Environment files
+.env
+.env.*
+
+# Logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Coverage reports
+/coverage/
+
+# Misc
+*.tgz
+
+# Optional: ignore generated files
+*.js
+*.js.map
+*.tsbuildinfo
+
+# Optional: ignore test output
+/test-results/

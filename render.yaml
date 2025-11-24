@@ -1,0 +1,12 @@
+# Render configuration for NestJS backend
+services:
+  - type: web
+    name: trendstarz-backend
+    env: node
+    buildCommand: 'npm install && npm run build'
+    startCommand: 'npm run start:prod'
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: MONGODB_URI
+        value: <your-mongodb-uri>
