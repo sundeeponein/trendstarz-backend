@@ -1,19 +1,14 @@
 import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module';
-import mongoose from 'mongoose';
 import dotenv from 'dotenv';
 dotenv.config();
 
 async function bootstrap() {
-  // Connect to MongoDB
-  try {
-    await mongoose.connect(process.env.MONGODB_URI as string);
-    console.log('Connected to MongoDB');
-  } catch (error) {
-    console.error('MongoDB connection error:', error);
-    process.exit(1);
-  }
+  console.log("Loaded MongoDB URI:", process.env.MONGODB_URI ? "OK" : "Missing");
+
   const app = await NestFactory.create(AppModule);
   await app.listen(process.env.PORT ?? 3000);
+
+  console.log(`Server running on port ${process.env.PORT ?? 3000}`);
 }
 bootstrap();
