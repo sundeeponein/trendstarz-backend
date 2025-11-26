@@ -1,0 +1,80 @@
+import { Schema, Types, model } from 'mongoose';
+
+export const InfluencerSchema = new Schema({
+  password: { type: String, required: true },
+  name: { type: String, required: true },
+  email: { type: String, required: true, unique: true },
+  phoneNumber: { type: String, required: true },
+  username: { type: String, required: true, unique: true },
+  profileImages: [{ type: String }], // Cloudinary URLs
+  isPremium: { type: Boolean, default: false },
+  categories: [{ type: Types.ObjectId, ref: 'Category' }],
+  location: {
+    state: { type: Types.ObjectId, ref: 'State' },
+    district: { type: Types.ObjectId, ref: 'District' },
+  },
+  socialMedia: [{
+    platform: { type: Types.ObjectId, ref: 'SocialMedia' },
+    handle: { type: String },
+    tier: { type: String },
+    followersCount: { type: Number },
+  }],
+  contact: {
+    whatsapp: { type: Boolean, default: false },
+    email: { type: Boolean, default: false },
+    call: { type: Boolean, default: false },
+  },
+  status: { type: String, enum: ['pending', 'accepted', 'declined', 'deleted'], default: 'pending' },
+}, { timestamps: true });
+
+export const InfluencerModel = model('Influencer', InfluencerSchema);
+
+export const BrandSchema = new Schema({
+  password: { type: String, required: true },
+  brandName: { type: String, required: true },
+  email: { type: String, required: true, unique: true },
+  phoneNumber: { type: String, required: true },
+  brandLogo: [{ type: String }], // Cloudinary URLs
+  isPremium: { type: Boolean, default: false },
+  categories: [{ type: Types.ObjectId, ref: 'Category' }],
+  location: {
+    state: { type: Types.ObjectId, ref: 'State' },
+    district: { type: Types.ObjectId, ref: 'District' },
+    googleMapLink: { type: String },
+  },
+  products: [{ type: String }], // For premium brands, up to 3 product images
+  contact: {
+    whatsapp: { type: Boolean, default: false },
+    email: { type: Boolean, default: false },
+    call: { type: Boolean, default: false },
+  },
+  status: { type: String, enum: ['pending', 'accepted', 'declined', 'deleted'], default: 'pending' },
+}, { timestamps: true });
+
+export const BrandModel = model('Brand', BrandSchema);
+
+export const CategorySchema = new Schema({
+  name: { type: String, required: true },
+  showInFrontend: { type: Boolean, default: true },
+});
+export const CategoryModel = model('Category', CategorySchema);
+
+export const StateSchema = new Schema({
+  name: { type: String, required: true },
+  showInFrontend: { type: Boolean, default: true },
+});
+export const StateModel = model('State', StateSchema);
+
+export const DistrictSchema = new Schema({
+  name: { type: String, required: true },
+  state: { type: Types.ObjectId, ref: 'State' },
+  showInFrontend: { type: Boolean, default: true },
+});
+export const DistrictModel = model('District', DistrictSchema);
+
+export const SocialMediaSchema = new Schema({
+  name: { type: String, required: true },
+  showInFrontend: { type: Boolean, default: true },
+  tiers: [{ type: String }],
+});
+export const SocialMediaModel = model('SocialMedia', SocialMediaSchema);
