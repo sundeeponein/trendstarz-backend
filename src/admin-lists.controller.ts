@@ -1,5 +1,5 @@
 import { Controller, Get, Post, Put, Delete, Body, Param } from '@nestjs/common';
-import { CategoryModel, StateModel, DistrictModel, SocialMediaModel } from '../database/schemas/profile.schemas';
+import { CategoryModel, StateModel, DistrictModel, SocialMediaModel } from './database/schemas/profile.schemas';
 
 @Controller('admin')
 export class AdminListsController {
