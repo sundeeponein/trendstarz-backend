@@ -1,5 +1,5 @@
 import { Controller, Get, Post, Put, Delete, Body, Param } from '@nestjs/common';
-import { CategoryModel, StateModel, DistrictModel, SocialMediaModel } from './database/schemas/profile.schemas';
+import { CategoryModel, StateModel, DistrictModel, SocialMediaModel, LanguageModel } from './database/schemas/profile.schemas';
 
 @Controller('admin')
 export class AdminListsController {
@@ -55,6 +55,24 @@ export class AdminListsController {
   @Delete('districts/:id')
   async deleteDistrict(@Param('id') id: string) {
     return DistrictModel.findByIdAndDelete(id);
+  }
+
+  // Languages
+  @Get('languages')
+  async getLanguages() {
+    return LanguageModel.find();
+  }
+  @Post('languages')
+  async addLanguage(@Body() body: { name: string }) {
+    return LanguageModel.create(body);
+  }
+  @Put('languages/:id')
+  async updateLanguage(@Param('id') id: string, @Body() body: any) {
+    return LanguageModel.findByIdAndUpdate(id, body, { new: true });
+  }
+  @Delete('languages/:id')
+  async deleteLanguage(@Param('id') id: string) {
+    return LanguageModel.findByIdAndDelete(id);
   }
 
   // Social Media
