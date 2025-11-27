@@ -1,5 +1,22 @@
 import { Schema, Types, model } from 'mongoose';
 
+// Language schema
+export const LanguageSchema = new Schema({
+  name: { type: String, required: true },
+  showInFrontend: { type: Boolean, default: true },
+});
+export const LanguageModel = model('Language', LanguageSchema);
+
+// User schema (for admin and future users)
+export const UserSchema = new Schema({
+  name: { type: String, required: true },
+  email: { type: String, required: true, unique: true },
+  password: { type: String, required: true },
+  role: { type: String, enum: ['admin', 'user'], default: 'user' },
+});
+export const UserModel = model('User', UserSchema);
+
+// All schema definitions go here (LanguageSchema, UserSchema, etc.)
 export const InfluencerSchema = new Schema({
   password: { type: String, required: true },
   name: { type: String, required: true },
