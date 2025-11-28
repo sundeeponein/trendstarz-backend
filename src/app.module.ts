@@ -1,3 +1,5 @@
+console.log('🚨 MONGODB_URI from Render = ', process.env.MONGODB_URI);
+
 import { Module } from '@nestjs/common';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
