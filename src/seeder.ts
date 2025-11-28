@@ -19,7 +19,26 @@ async function bootstrap() {
   // Seed data
   await CategoryModel.create([{ name: 'Fashion' }, { name: 'Tech' }, { name: 'Food' }]);
   await LanguageModel.create([{ name: 'English' }, { name: 'Hindi' }]);
-  await SocialMediaModel.create([{ name: 'Instagram' }, { name: 'YouTube' }]);
+  await SocialMediaModel.create([
+    {
+      socialMedia: 'Facebook',
+      handleName: '@oliver1',
+      tier: 'Micro', // Tier 4 — Micro (10,000 – 50,000 followers)
+      followersCount: 5000 // Example user input
+    },
+    {
+      socialMedia: 'Instagram',
+      handleName: '@emma_insta',
+      tier: 'Nano', // Tier 2 — Nano (1,000 – 5,000 followers)
+      followersCount: 3200
+    },
+    {
+      socialMedia: 'YouTube',
+      handleName: '@techguru',
+      tier: 'Strong Micro', // Tier 5 — Strong Micro (50,000 – 100,000 followers)
+      followersCount: 75000
+    }
+  ]);
   const states = await StateModel.create([
     { name: 'Maharashtra' },
     { name: 'Karnataka' },
