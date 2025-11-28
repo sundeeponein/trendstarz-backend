@@ -78,10 +78,17 @@ export class AdminListsController {
   // Social Media
   @Get('social-media')
   async getSocialMedia() {
-    return SocialMediaModel.find();
+    // Return all social media entries with new fields
+    return SocialMediaModel.find({}, {
+      socialMedia: 1,
+      handleName: 1,
+      tier: 1,
+      followersCount: 1
+    });
   }
   @Post('social-media')
-  async addSocialMedia(@Body() body: { name: string; tiers?: string[] }) {
+  async addSocialMedia(@Body() body: { socialMedia: string; handleName: string; tier: string; followersCount: number }) {
+    // Create new social media entry with all fields
     return SocialMediaModel.create(body);
   }
   @Put('social-media/:id')
