@@ -14,7 +14,7 @@ import { AuthController } from './auth/auth.controller';
   imports: [
     ConfigModule.forRoot({
       isGlobal: true,
-      envFilePath: process.env.NODE_ENV === 'production' ? '.env.prod' : '.env',
+      envFilePath: '.env',
     }),
     MongooseModule.forRoot(process.env.MONGODB_URI as string),
     MongooseModule.forFeature([
