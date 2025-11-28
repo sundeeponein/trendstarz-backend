@@ -1,3 +1,5 @@
+console.log('🚨 MONGODB_URI from Render = ', process.env.MONGODB_URI);
+
 import { Module } from '@nestjs/common';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
@@ -14,7 +16,6 @@ import { AuthController } from './auth/auth.controller';
   imports: [
     ConfigModule.forRoot({
       isGlobal: true,
-      envFilePath: '.env',
     }),
     MongooseModule.forRoot(process.env.MONGODB_URI as string),
     MongooseModule.forFeature([
