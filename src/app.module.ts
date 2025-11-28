@@ -18,12 +18,12 @@ import { AuthController } from './auth/auth.controller';
     }),
     MongooseModule.forRoot(process.env.MONGODB_URI as string),
     MongooseModule.forFeature([
-      { name: 'Category', schema: CategorySchema },
-      { name: 'State', schema: StateSchema },
-      { name: 'District', schema: DistrictSchema },
-      { name: 'SocialMedia', schema: SocialMediaSchema },
-      { name: 'Language', schema: LanguageSchema },
-      { name: 'User', schema: UserSchema },
+      { name: 'Category', schema: CategorySchema, collection: 'categories' },
+      { name: 'State', schema: StateSchema, collection: 'states' },
+      { name: 'District', schema: DistrictSchema, collection: 'districts' },
+      { name: 'SocialMedia', schema: SocialMediaSchema, collection: 'socialmedias' },
+      { name: 'Language', schema: LanguageSchema, collection: 'languages' },
+      { name: 'User', schema: UserSchema, collection: 'users' },
     ]),
   ],
   controllers: [
