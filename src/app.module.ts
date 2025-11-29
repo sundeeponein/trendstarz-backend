@@ -1,4 +1,4 @@
-import { SeedController } from './seed.controller';
+// import { SeedController } from './seed.controller';
 
 import { Module } from '@nestjs/common';
 import { AppController } from './app.controller';
@@ -58,18 +58,9 @@ if (!mongoUri) {
     DistrictsController,
     SocialMediaController,
     AuthController,
-    SeedController,
+    // SeedController,
   ],
 
   providers: [AppService, AuthService, MongoLogger],
 })
 export class AppModule {}
-
-// 🔥 MONGOOSE CONNECTION LOGGING
-// mongoose.connection.on('connected', () => {
-//   console.log('🔥 MongoDB Connected Successfully!');
-// });
-
-// mongoose.connection.on('error', (err) => {
-//   console.log('❌ MongoDB Connection Error:', err);
-// });
