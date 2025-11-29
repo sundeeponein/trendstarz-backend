@@ -23,6 +23,11 @@ import { AuthController } from './auth/auth.controller';
 
 console.log("🚨 MONGODB_URI from Render =", process.env.MONGODB_URI);
 
+const mongoUri = process.env.MONGODB_URI;
+if (!mongoUri) {
+  throw new Error('MONGODB_URI environment variable is required');
+}
+
 @Module({
   imports: [
     ConfigModule.forRoot({
@@ -31,13 +36,7 @@ console.log("🚨 MONGODB_URI from Render =", process.env.MONGODB_URI);
     }),
 
     // ✅ FIXED MONGOOSE CONNECTION WITH PROPER TIMEOUTS
-    MongooseModule.forRoot(process.env.MONGODB_URI as string, {
-      serverSelectionTimeoutMS: 5000,   // prevent 10s buffering timeout
-      socketTimeoutMS: 45000,
-      // retryWrites: true,
-      // REQUIRED for SRV URLs (mongodb+srv://)
-      directConnection: false,
-    }),
+    MongooseModule.forRoot(mongoUri),
 
     MongooseModule.forFeature([
       { name: 'Category', schema: CategorySchema, collection: 'categories' },

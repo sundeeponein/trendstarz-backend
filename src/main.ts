@@ -3,7 +3,7 @@ import { AppModule } from './app.module';
 import mongoose from 'mongoose';
 
 async function bootstrap() {
-  // Enable MongoDB logs BEFORE Nest starts
+  // Enable MongoDB logs BEFORE Nest starts connecting
   mongoose.connection.on('connected', () => {
     console.log('🔥 MongoDB Connected Successfully!');
   });
@@ -28,7 +28,7 @@ async function bootstrap() {
   });
 
   await app.listen(process.env.PORT || 3000);
-  console.log('🚀 Server started');
+  console.log('🚀 Server started on port', process.env.PORT || 3000);
 }
 
 bootstrap();
