@@ -2,6 +2,8 @@ import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module';
 import mongoose from 'mongoose';
 
+import { connectMongo } from './mongo-connection';
+
 async function bootstrap() {
   // Enable MongoDB logs BEFORE Nest starts connecting
   mongoose.connection.on('connected', () => {
@@ -15,6 +17,8 @@ async function bootstrap() {
   mongoose.connection.on('disconnected', () => {
     console.warn('⚠️ MongoDB Disconnected');
   });
+
+  await connectMongo();
 
   const app = await NestFactory.create(AppModule);
 

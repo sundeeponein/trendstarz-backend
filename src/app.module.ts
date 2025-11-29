@@ -64,12 +64,3 @@ if (!mongoUri) {
   providers: [AppService, AuthService, MongoLogger],
 })
 export class AppModule {}
-
-// 🔥 MONGOOSE CONNECTION LOGGING
-// mongoose.connection.on('connected', () => {
-//   console.log('🔥 MongoDB Connected Successfully!');
-// });
-
-// mongoose.connection.on('error', (err) => {
-//   console.log('❌ MongoDB Connection Error:', err);
-// });
