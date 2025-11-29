@@ -5,7 +5,8 @@ import { AdminListsController } from './admin-lists.controller';
 import { CategoriesController, StatesController, DistrictsController, SocialMediaController } from './public-lists.controller';
 import { MongooseModule } from '@nestjs/mongoose';
 import { ConfigModule } from '@nestjs/config';
-import mongoose from 'mongoose';
+// import mongoose from 'mongoose';
+import { MongoLogger } from './database/mongo-logger';
 
 import { 
   CategorySchema, 
@@ -56,15 +57,15 @@ console.log("🚨 MONGODB_URI from Render =", process.env.MONGODB_URI);
     AuthController,
   ],
 
-  providers: [AppService, AuthService],
+  providers: [AppService, AuthService, MongoLogger],
 })
 export class AppModule {}
 
 // 🔥 MONGOOSE CONNECTION LOGGING
-mongoose.connection.on('connected', () => {
-  console.log('🔥 MongoDB Connected Successfully!');
-});
+// mongoose.connection.on('connected', () => {
+//   console.log('🔥 MongoDB Connected Successfully!');
+// });
 
-mongoose.connection.on('error', (err) => {
-  console.log('❌ MongoDB Connection Error:', err);
-});
+// mongoose.connection.on('error', (err) => {
+//   console.log('❌ MongoDB Connection Error:', err);
+// });
