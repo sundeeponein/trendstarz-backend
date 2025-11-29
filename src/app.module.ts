@@ -27,7 +27,8 @@ console.log("🚨 MONGODB_URI from Render =", process.env.MONGODB_URI);
   imports: [
     ConfigModule.forRoot({
       isGlobal: true,
-      envFilePath: process.env.NODE_ENV === 'production' ? '.env.prod' : '.env',
+      // envFilePath: process.env.NODE_ENV === 'production' ? '.env.prod' : '.env',
+      envFilePath: [],
     }),
 
     // ✅ FIXED MONGOOSE CONNECTION WITH PROPER TIMEOUTS
