@@ -35,7 +35,9 @@ console.log("🚨 MONGODB_URI from Render =", process.env.MONGODB_URI);
     MongooseModule.forRoot(process.env.MONGODB_URI as string, {
       serverSelectionTimeoutMS: 5000,   // prevent 10s buffering timeout
       socketTimeoutMS: 45000,
-      retryWrites: true,
+      // retryWrites: true,
+      // REQUIRED for SRV URLs (mongodb+srv://)
+      directConnection: false,
     }),
 
     MongooseModule.forFeature([
