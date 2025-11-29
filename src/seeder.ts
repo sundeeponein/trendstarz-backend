@@ -5,7 +5,7 @@ import { Model } from 'mongoose';
 import { getModelToken } from '@nestjs/mongoose';
 import * as bcrypt from 'bcryptjs';
 
-async function bootstrap() {
+export async function seedDatabase() {
   const app = await NestFactory.createApplicationContext(AppModule);
 
   const CategoryModel = app.get<Model<any>>(getModelToken('Category'));
@@ -73,5 +73,3 @@ async function bootstrap() {
   console.log('Seeding complete. Admin login: admin@trendstarz.com / admin123');
   await app.close();
 }
-
-bootstrap();
