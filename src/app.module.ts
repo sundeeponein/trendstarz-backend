@@ -1,4 +1,4 @@
-import { SeedController } from './seed.controller';
+// import { SeedController } from './seed.controller';
 
 import { Module } from '@nestjs/common';
 import { AppController } from './app.controller';
@@ -58,7 +58,7 @@ if (!mongoUri) {
     DistrictsController,
     SocialMediaController,
     AuthController,
-    SeedController,
+    // SeedController,
   ],
 
   providers: [AppService, AuthService, MongoLogger],
