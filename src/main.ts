@@ -6,12 +6,7 @@ async function bootstrap() {
   // ---- Seed ONLY when RUN_SEED=true ----
   if (process.env.RUN_SEED === 'true') {
     console.log('🚀 RUN_SEED=true — Running seeder.js...');
-    const seedModule = await import('./seeder.js');
-    // support both named and default exports
-    const seedDatabase = (seedModule as any).seedDatabase ?? (seedModule as any).default?.seedDatabase;
-    if (typeof seedDatabase !== 'function') {
-      throw new Error('seeder module does not export a seedDatabase function');
-    }
+    const { seedDatabase } = await import('./seeder.js');
     await seedDatabase();
     console.log('✅ Seed completed successfully.');
     // IMPORTANT: Return here so the server doesn't run twice
