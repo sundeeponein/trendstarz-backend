@@ -5,19 +5,19 @@ import mongoose from 'mongoose';
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
 
-  // ===== MONGOOSE DEBUG LOGS =====
+  // ======= DO NOT REMOVE THIS ========
   mongoose.connection.on('connected', () => {
     console.log('🔥 MongoDB Connected Successfully!');
   });
 
   mongoose.connection.on('error', (err) => {
-    console.log('❌ MongoDB Connection Error:', err);
+    console.error('❌ MongoDB Connection Error:', err);
   });
 
   mongoose.connection.on('disconnected', () => {
-    console.log('⚠️ MongoDB Disconnected!');
+    console.warn('⚠️ MongoDB Disconnected!');
   });
-  // ================================
+  // ====================================
 
   app.enableCors({
     origin: [
@@ -30,10 +30,8 @@ async function bootstrap() {
     credentials: true,
   });
 
-  const port = process.env.PORT || 3000;
-  await app.listen(port);
-
-  console.log('Server running on port:', port);
+  await app.listen(process.env.PORT || 3000);
+  console.log("🚀 Server started");
 }
 
 bootstrap();
