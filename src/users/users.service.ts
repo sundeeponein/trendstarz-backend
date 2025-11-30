@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { InfluencerProfileDto, BrandProfileDto } from './dto/profile.dto';
+import { InfluencerModel, BrandModel } from '../database/schemas/profile.schemas';
 
 @Injectable()
 export class UsersService {
@@ -14,13 +15,11 @@ export class UsersService {
   }
 
   async getInfluencers() {
-    // TODO: Fetch influencers from DB
-    return [];
+    return await InfluencerModel.find({});
   }
 
   async getBrands() {
-    // TODO: Fetch brands from DB
-    return [];
+    return await BrandModel.find({});
   }
 
   async acceptUser(id: string) {
