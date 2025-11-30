@@ -1,6 +1,31 @@
 import { IsString, IsEmail, IsBoolean, IsArray, IsOptional, IsMongoId, IsUrl, ValidateNested, IsNumber, ArrayMaxSize, ArrayMinSize } from 'class-validator';
 import { Type } from 'class-transformer';
 
+export class LocationDto {
+  @IsMongoId()
+  state: string;
+
+  @IsMongoId()
+  district: string;
+}
+
+export class BrandLocationDto extends LocationDto {
+  @IsUrl()
+  @IsOptional()
+  googleMapLink?: string;
+}
+
+export class ContactDto {
+  @IsBoolean()
+  whatsapp: boolean;
+
+  @IsBoolean()
+  email: boolean;
+
+  @IsBoolean()
+  call: boolean;
+}
+
 export class SocialMediaDto {
   @IsMongoId()
   platform: string;
@@ -89,29 +114,4 @@ export class BrandProfileDto {
   @Type(() => ContactDto)
   @ValidateNested()
   contact: ContactDto;
-}
-
-export class LocationDto {
-  @IsMongoId()
-  state: string;
-
-  @IsMongoId()
-  district: string;
-}
-
-export class BrandLocationDto extends LocationDto {
-  @IsUrl()
-  @IsOptional()
-  googleMapLink?: string;
-}
-
-export class ContactDto {
-  @IsBoolean()
-  whatsapp: boolean;
-
-  @IsBoolean()
-  email: boolean;
-
-  @IsBoolean()
-  call: boolean;
 }

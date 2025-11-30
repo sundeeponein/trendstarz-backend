@@ -21,6 +21,7 @@ import {
 
 import { AuthService } from './auth/auth.service';
 import { AuthController } from './auth/auth.controller';
+import { UsersModule } from './users/users.module';
 
 
 console.log("🚨 MONGODB_URI from Render =", process.env.MONGODB_URI);
@@ -46,6 +47,7 @@ console.log("🚨 MONGODB_URI from Render =", process.env.MONGODB_URI);
       { name: 'Language', schema: LanguageSchema, collection: 'languages' },
       { name: 'User', schema: UserSchema, collection: 'users' },
     ]),
+    UsersModule,
   ],
 
   controllers: [
