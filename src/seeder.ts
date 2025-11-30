@@ -79,8 +79,8 @@ export async function seedDatabase() {
   if (fs.existsSync(samplePath)) {
     const raw = fs.readFileSync(samplePath, 'utf-8');
     const users = JSON.parse(raw);
-    const influencers = users.filter(u => u.username);
-    const brands = users.filter(u => u.brandName);
+  const influencers = users.filter((u: any) => u.username);
+  const brands = users.filter((u: any) => u.brandName);
     if (influencers.length) {
       await InfluencerModel.insertMany(influencers);
       console.log(`Seeded ${influencers.length} influencers.`);
