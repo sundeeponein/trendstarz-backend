@@ -16,7 +16,9 @@ import {
   DistrictSchema, 
   SocialMediaSchema, 
   LanguageSchema, 
-  UserSchema 
+  UserSchema,
+  InfluencerSchema,
+  BrandSchema
 } from './database/schemas/profile.schemas';
 
 import { AuthService } from './auth/auth.service';
@@ -46,6 +48,8 @@ console.log("🚨 MONGODB_URI from Render =", process.env.MONGODB_URI);
       { name: 'SocialMedia', schema: SocialMediaSchema, collection: 'socialmedias' },
       { name: 'Language', schema: LanguageSchema, collection: 'languages' },
       { name: 'User', schema: UserSchema, collection: 'users' },
+      { name: 'Influencer', schema: InfluencerSchema, collection: 'influencers' },
+      { name: 'Brand', schema: BrandSchema, collection: 'brands' },
     ]),
     UsersModule,
   ],

@@ -65,14 +65,19 @@ export async function seedDatabase() {
     { name: 'Delhi', state: states[2]._id }
   ]);
 
-  // Seed Admin User
+  // Seed Admin User (upsert to avoid duplicate key error)
   const adminPassword = await bcrypt.hash('admin123', 10);
-  await UserModel.create({
-    name: 'Admin',
-    email: 'admin@trendstarz.com',
-    password: adminPassword,
-    role: 'admin',
-  });
+  await UserModel.updateOne(
+    { email: 'admin@trendstarz.com' },
+    {
+      $set: {
+        name: 'Admin',
+        password: adminPassword,
+        role: 'admin',
+      }
+    },
+    { upsert: true }
+  );
 
   // Seed Influencers and Brands from sample-users.json
   const samplePath = path.join(__dirname, '../sample-users.json');
