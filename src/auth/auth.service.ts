@@ -1,18 +1,24 @@
 import { Injectable, UnauthorizedException, BadRequestException } from '@nestjs/common';
 import * as bcrypt from 'bcryptjs';
 import * as jwt from 'jsonwebtoken';
-import { InfluencerModel, BrandModel } from '../database/schemas/profile.schemas';
+import { InfluencerModel, BrandModel, UserModel } from '../database/schemas/profile.schemas';
 
 @Injectable()
 export class AuthService {
   // Replace with actual user lookup and DB logic
   async login(email: string, password: string) {
-    // Try to find user in Influencer or Brand collections
+    // Try Influencer
     let userDoc = await InfluencerModel.findOne({ email });
     let userType = 'influencer';
     if (!userDoc) {
+      // Try Brand
       userDoc = await BrandModel.findOne({ email });
       userType = 'brand';
+    }
+    if (!userDoc) {
+      // Try Admin/User
+      userDoc = await UserModel.findOne({ email });
+      userType = 'admin';
     }
     if (!userDoc) {
       throw new UnauthorizedException('Invalid credentials');
