@@ -25,13 +25,13 @@ export const InfluencerSchema = new Schema({
   username: { type: String, required: true, unique: true },
   profileImages: [{ type: String }], // Cloudinary URLs
   isPremium: { type: Boolean, default: false },
-  categories: [{ type: Types.ObjectId, ref: 'Category' }],
+  categories: [{ type: String }],
   location: {
-    state: { type: Types.ObjectId, ref: 'State' },
-    district: { type: Types.ObjectId, ref: 'District' },
+    state: { type: String },
+    district: { type: String },
   },
   socialMedia: [{
-    platform: { type: Types.ObjectId, ref: 'SocialMedia' },
+    platform: { type: String },
     handle: { type: String },
     tier: { type: String },
     followersCount: { type: Number },
@@ -53,10 +53,10 @@ export const BrandSchema = new Schema({
   phoneNumber: { type: String, required: true },
   brandLogo: [{ type: String }], // Cloudinary URLs
   isPremium: { type: Boolean, default: false },
-  categories: [{ type: Types.ObjectId, ref: 'Category' }],
+  categories: [{ type: String }],
   location: {
-    state: { type: Types.ObjectId, ref: 'State' },
-    district: { type: Types.ObjectId, ref: 'District' },
+    state: { type: String },
+    district: { type: String },
     googleMapLink: { type: String },
   },
   products: [{ type: String }], // For premium brands, up to 3 product images

@@ -1,8 +1,9 @@
 [
   {
     "_id": "6568f1a1e1b1c1a1a1a1a1a1",
-    "name": "Alice Influencer",
-    "email": "alice@trendstarz.com",
+  "name": "Alice Influencer",
+  "email": "alice@trendstarz.com",
+  "password": "test123",
     "phoneNumber": "9876543210",
     "username": "alice_influencer",
     "profileImages": ["https://example.com/alice.jpg"],
@@ -17,8 +18,9 @@
   },
   {
     "_id": "6568f1a1e1b1c1a1a1a1a1a2",
-    "name": "Bob Influencer",
-    "email": "bob@trendstarz.com",
+  "name": "Bob Influencer",
+  "email": "bob@trendstarz.com",
+  "password": "test123",
     "phoneNumber": "9876543211",
     "username": "bob_influencer",
     "profileImages": ["https://example.com/bob.jpg"],
@@ -33,9 +35,10 @@
   },
   {
     "_id": "6568f1a1e1b1c1a1a1a1a1a3",
-    "name": "Carol Brand",
-    "brandName": "Carol's Cosmetics",
-    "email": "carol@trendstarz.com",
+  "name": "Carol Brand",
+  "brandName": "Carol's Cosmetics",
+  "email": "carol@trendstarz.com",
+  "password": "test123",
     "phoneNumber": "9876543212",
     "brandLogo": ["https://example.com/carol-logo.jpg"],
     "isPremium": true,
