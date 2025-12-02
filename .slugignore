@@ -1,0 +1,13 @@
+# Exclude files/folders from Render build to reduce slug size
+node_modules/
+test/
+docs/
+.git/
+*.md
+*.log
+coverage/
+dist/
+.env
+.vscode/
+.idea/
+*.tsbuildinfo
