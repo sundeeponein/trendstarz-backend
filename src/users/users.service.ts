@@ -1,15 +1,46 @@
 import { Injectable } from '@nestjs/common';
+import { CloudinaryService } from '../cloudinary.service';
 import { InfluencerProfileDto, BrandProfileDto } from './dto/profile.dto';
 import { InfluencerModel, BrandModel } from '../database/schemas/profile.schemas';
 
 @Injectable()
 export class UsersService {
+  constructor(private readonly cloudinaryService: CloudinaryService) {}
+
   async registerInfluencer(dto: InfluencerProfileDto) {
+    // If image is a file path or base64, upload to Cloudinary
+    if (dto.profileImages && dto.profileImages.length) {
+      const uploadedImages = [];
+      for (const img of dto.profileImages) {
+        // If already a Cloudinary URL, skip
+        if (img.startsWith('http')) {
+          uploadedImages.push(img);
+        } else {
+          const result = await this.cloudinaryService.uploadImage(img, 'profile_images');
+          uploadedImages.push(result.secure_url);
+        }
+      }
+      dto.profileImages = uploadedImages;
+    }
     // TODO: Add logic to save influencer profile to DB
     return { message: 'Influencer registered', data: dto };
   }
 
   async registerBrand(dto: BrandProfileDto) {
+    // If image is a file path or base64, upload to Cloudinary
+    if (dto.brandLogo && dto.brandLogo.length) {
+      const uploadedImages = [];
+      for (const img of dto.brandLogo) {
+        // If already a Cloudinary URL, skip
+        if (img.startsWith('http')) {
+          uploadedImages.push(img);
+        } else {
+          const result = await this.cloudinaryService.uploadImage(img, 'profile_images');
+          uploadedImages.push(result.secure_url);
+        }
+      }
+      dto.brandLogo = uploadedImages;
+    }
     // TODO: Add logic to save brand profile to DB
     return { message: 'Brand registered', data: dto };
   }
