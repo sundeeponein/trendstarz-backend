@@ -19,51 +19,51 @@ export async function seedDatabase() {
   const InfluencerModel = app.get<Model<any>>(getModelToken('Influencer'));
   const BrandModel = app.get<Model<any>>(getModelToken('Brand'));
 
-  // Seed Categories
-  await CategoryModel.insertMany([
-    { name: 'Fashion' },
-    { name: 'Tech' },
-    { name: 'Food' }
-  ]);
+  // Clean duplicates and seed Categories
+  const categoryNames = ['Fashion', 'Tech', 'Food'];
+  for (const name of categoryNames) {
+    await CategoryModel.deleteMany({ name });
+    await CategoryModel.create({ name });
+  }
 
-  // Seed Languages
-  await LanguageModel.insertMany([
-    { name: 'English' },
-    { name: 'Hindi' }
-  ]);
+  // Clean duplicates and seed Languages
+  const languageNames = ['English', 'Hindi'];
+  for (const name of languageNames) {
+    await LanguageModel.deleteMany({ name });
+    await LanguageModel.create({ name });
+  }
 
-  // Seed Social Media (correct schema)
-  await SocialMediaModel.insertMany([
-    {
-      name: 'Facebook',
-      icon: 'facebook.svg',
-      url: 'https://facebook.com'
-    },
-    {
-      name: 'Instagram',
-      icon: 'instagram.svg',
-      url: 'https://instagram.com'
-    },
-    {
-      name: 'YouTube',
-      icon: 'youtube.svg',
-      url: 'https://youtube.com'
-    }
-  ]);
+  // Seed Social Media (correct schema, avoid duplicates)
+  const socialMediaSeed = [
+    { name: 'Facebook', icon: 'facebook.svg', url: 'https://facebook.com' },
+    { name: 'Instagram', icon: 'instagram.svg', url: 'https://instagram.com' },
+    { name: 'YouTube', icon: 'youtube.svg', url: 'https://youtube.com' }
+  ];
+  for (const sm of socialMediaSeed) {
+    await SocialMediaModel.deleteMany({ name: sm.name });
+    await SocialMediaModel.create(sm);
+  }
 
-  // Seed States
-  const states = await StateModel.insertMany([
-    { name: 'Maharashtra' },
-    { name: 'Karnataka' },
-    { name: 'Delhi' }
-  ]);
+  // Clean duplicates and seed States
+  const stateNames = ['Maharashtra', 'Karnataka', 'Delhi'];
+  for (const name of stateNames) {
+    await StateModel.deleteMany({ name });
+  }
+  const states = [];
+  for (const name of stateNames) {
+    states.push(await StateModel.create({ name }));
+  }
 
-  // Seed Districts
-  await DistrictModel.insertMany([
+  // Clean duplicates and seed Districts
+  const districtSeed = [
     { name: 'Mumbai', state: states[0]._id },
     { name: 'Bangalore', state: states[1]._id },
     { name: 'Delhi', state: states[2]._id }
-  ]);
+  ];
+  for (const dist of districtSeed) {
+    await DistrictModel.deleteMany({ name: dist.name, state: dist.state });
+    await DistrictModel.create(dist);
+  }
 
   // Seed Admin User (upsert to avoid duplicate key error)
   const adminPassword = await bcrypt.hash('admin123', 10);
@@ -84,15 +84,23 @@ export async function seedDatabase() {
   if (fs.existsSync(samplePath)) {
     const raw = fs.readFileSync(samplePath, 'utf-8');
     const users = JSON.parse(raw);
-  const influencers = users.filter((u: any) => u.username);
-  const brands = users.filter((u: any) => u.brandName);
-    if (influencers.length) {
-      await InfluencerModel.insertMany(influencers);
-      console.log(`Seeded ${influencers.length} influencers.`);
+    const influencers = users.filter((u: any) => u.username);
+    const brands = users.filter((u: any) => u.brandName);
+    // Avoid duplicate influencer names
+    for (const inf of influencers) {
+      const exists = await InfluencerModel.findOne({ name: inf.name });
+      if (!exists) {
+        await InfluencerModel.create(inf);
+        console.log(`Seeded influencer: ${inf.name}`);
+      }
     }
-    if (brands.length) {
-      await BrandModel.insertMany(brands);
-      console.log(`Seeded ${brands.length} brands.`);
+    // Avoid duplicate brand names
+    for (const brand of brands) {
+      const exists = await BrandModel.findOne({ name: brand.name });
+      if (!exists) {
+        await BrandModel.create(brand);
+        console.log(`Seeded brand: ${brand.name}`);
+      }
     }
   } else {
     console.log('sample-users.json not found, skipping influencer/brand seeding.');
