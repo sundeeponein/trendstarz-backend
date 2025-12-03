@@ -4,7 +4,7 @@ import { Module } from '@nestjs/common';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { AdminListsController } from './admin-lists.controller';
-import { CategoriesController, StatesController, DistrictsController, SocialMediaController } from './public-lists.controller';
+import { CategoriesController, StatesController, DistrictsController, SocialMediaController, TiersController, LanguagesController } from './public-lists.controller';
 import { MongooseModule } from '@nestjs/mongoose';
 import { ConfigModule } from '@nestjs/config';
 // import mongoose from 'mongoose';
@@ -61,6 +61,8 @@ console.log("🚨 MONGODB_URI from Render =", process.env.MONGODB_URI);
     StatesController,
     DistrictsController,
     SocialMediaController,
+    TiersController,
+    LanguagesController,
     AuthController,
     // SeedController,
   ],
