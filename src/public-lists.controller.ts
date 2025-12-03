@@ -1,3 +1,19 @@
+import { TierModel, LanguageModel } from './database/schemas/profile.schemas';
+@Controller('tiers')
+export class TiersController {
+  @Get()
+  async getAll() {
+    return TierModel.find({});
+  }
+}
+
+@Controller('languages')
+export class LanguagesController {
+  @Get()
+  async getAll() {
+    return LanguageModel.find({});
+  }
+}
 import { Controller, Get } from '@nestjs/common';
 import { CategoryModel, StateModel, DistrictModel, SocialMediaModel } from './database/schemas/profile.schemas';
 
