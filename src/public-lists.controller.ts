@@ -1,4 +1,6 @@
-import { TierModel, LanguageModel } from './database/schemas/profile.schemas';
+import { Controller, Get } from '@nestjs/common';
+import { TierModel, LanguageModel, CategoryModel, StateModel, DistrictModel, SocialMediaModel } from './database/schemas/profile.schemas';
+
 @Controller('tiers')
 export class TiersController {
   @Get()
@@ -14,8 +16,6 @@ export class LanguagesController {
     return LanguageModel.find({});
   }
 }
-import { Controller, Get } from '@nestjs/common';
-import { CategoryModel, StateModel, DistrictModel, SocialMediaModel } from './database/schemas/profile.schemas';
 
 @Controller('categories')
 export class CategoriesController {
