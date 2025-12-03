@@ -1,10 +1,11 @@
+import { Schema, Types, model } from 'mongoose';
+
 export const TierSchema = new Schema({
   name: { type: String, required: true },
   icon: { type: String },
   desc: { type: String },
 });
 export const TierModel = model('Tier', TierSchema);
-import { Schema, Types, model } from 'mongoose';
 
 // Language schema
 export const LanguageSchema = new Schema({
