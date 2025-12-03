@@ -23,19 +23,23 @@ export async function seedDatabase() {
   const categoryNames = [
     'Fashion', 'Tech', 'Travel', 'Food', 'Fitness', 'Beauty', 'Education', 'Finance', 'Automobile', 'Gaming', 'Parenting', 'Health', 'Sports', 'Art', 'Music'
   ];
-  for (const name of categoryNames) {
-    await CategoryModel.deleteMany({ name });
-    await CategoryModel.create({ name });
-  }
+    for (const name of categoryNames) {
+      const exists = await CategoryModel.findOne({ name });
+      if (!exists) {
+        await CategoryModel.create({ name });
+      }
+    }
 
   // Seed all languages
   const languageNames = [
     'English', 'Hindi', 'Marathi', 'Kannada', 'Tamil', 'Telugu', 'Gujarati', 'Bengali', 'Punjabi', 'Malayalam', 'Odia', 'Urdu', 'Assamese', 'Konkani'
   ];
-  for (const name of languageNames) {
-    await LanguageModel.deleteMany({ name });
-    await LanguageModel.create({ name });
-  }
+    for (const name of languageNames) {
+      const exists = await LanguageModel.findOne({ name });
+      if (!exists) {
+        await LanguageModel.create({ name });
+      }
+    }
 
   // Seed all Indian states and relevant districts
   const stateDistricts = [
@@ -69,15 +73,19 @@ export async function seedDatabase() {
     { name: 'West Bengal', districts: ['Kolkata', 'Darjeeling'] }
   ];
   const states = [];
-  for (const sd of stateDistricts) {
-    await StateModel.deleteMany({ name: sd.name });
-    const stateDoc = await StateModel.create({ name: sd.name });
-    states.push(stateDoc);
-    for (const distName of sd.districts) {
-      await DistrictModel.deleteMany({ name: distName, state: stateDoc._id });
-      await DistrictModel.create({ name: distName, state: stateDoc._id });
+    for (const sd of stateDistricts) {
+      let stateDoc = await StateModel.findOne({ name: sd.name });
+      if (!stateDoc) {
+        stateDoc = await StateModel.create({ name: sd.name });
+      }
+      states.push(stateDoc);
+      for (const distName of sd.districts) {
+        const exists = await DistrictModel.findOne({ name: distName, state: stateDoc._id });
+        if (!exists) {
+          await DistrictModel.create({ name: distName, state: stateDoc._id });
+        }
+      }
     }
-  }
 
   // Seed tiers with icon and count
   const tierSeed = [
@@ -89,10 +97,12 @@ export async function seedDatabase() {
     { name: 'Mega / Celebrity', icon: '👑', desc: '1,000,001+ followers' }
   ];
   const TierModel = app.get<Model<any>>(getModelToken('Tier'));
-  for (const tier of tierSeed) {
-    await TierModel.deleteMany({ name: tier.name });
-    await TierModel.create(tier);
-  }
+    for (const tier of tierSeed) {
+      const exists = await TierModel.findOne({ name: tier.name });
+      if (!exists) {
+        await TierModel.create(tier);
+      }
+    }
 
   // Seed Admin User (upsert to avoid duplicate key error)
   const adminPassword = await bcrypt.hash('admin123', 10);
