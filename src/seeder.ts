@@ -19,50 +19,79 @@ export async function seedDatabase() {
   const InfluencerModel = app.get<Model<any>>(getModelToken('Influencer'));
   const BrandModel = app.get<Model<any>>(getModelToken('Brand'));
 
-  // Clean duplicates and seed Categories
-  const categoryNames = ['Fashion', 'Tech', 'Food'];
+  // Seed all categories
+  const categoryNames = [
+    'Fashion', 'Tech', 'Travel', 'Food', 'Fitness', 'Beauty', 'Education', 'Finance', 'Automobile', 'Gaming', 'Parenting', 'Health', 'Sports', 'Art', 'Music'
+  ];
   for (const name of categoryNames) {
     await CategoryModel.deleteMany({ name });
     await CategoryModel.create({ name });
   }
 
-  // Clean duplicates and seed Languages
-  const languageNames = ['English', 'Hindi'];
+  // Seed all languages
+  const languageNames = [
+    'English', 'Hindi', 'Marathi', 'Kannada', 'Tamil', 'Telugu', 'Gujarati', 'Bengali', 'Punjabi', 'Malayalam', 'Odia', 'Urdu', 'Assamese', 'Konkani'
+  ];
   for (const name of languageNames) {
     await LanguageModel.deleteMany({ name });
     await LanguageModel.create({ name });
   }
 
-  // Seed Social Media (correct schema, avoid duplicates)
-  const socialMediaSeed = [
-    { name: 'Facebook', icon: 'facebook.svg', url: 'https://facebook.com' },
-    { name: 'Instagram', icon: 'instagram.svg', url: 'https://instagram.com' },
-    { name: 'YouTube', icon: 'youtube.svg', url: 'https://youtube.com' }
+  // Seed all Indian states and relevant districts
+  const stateDistricts = [
+    { name: 'Andhra Pradesh', districts: ['Visakhapatnam', 'Vijayawada', 'Guntur'] },
+    { name: 'Arunachal Pradesh', districts: ['Itanagar'] },
+    { name: 'Assam', districts: ['Guwahati', 'Silchar'] },
+    { name: 'Bihar', districts: ['Patna', 'Gaya'] },
+    { name: 'Chhattisgarh', districts: ['Raipur'] },
+    { name: 'Goa', districts: ['Panaji'] },
+    { name: 'Gujarat', districts: ['Ahmedabad', 'Surat'] },
+    { name: 'Haryana', districts: ['Gurgaon', 'Faridabad'] },
+    { name: 'Himachal Pradesh', districts: ['Shimla'] },
+    { name: 'Jharkhand', districts: ['Ranchi'] },
+    { name: 'Karnataka', districts: ['Bangalore', 'Mysore'] },
+    { name: 'Kerala', districts: ['Kochi', 'Thiruvananthapuram'] },
+    { name: 'Madhya Pradesh', districts: ['Indore', 'Bhopal'] },
+    { name: 'Maharashtra', districts: ['Mumbai', 'Pune', 'Nagpur'] },
+    { name: 'Manipur', districts: ['Imphal'] },
+    { name: 'Meghalaya', districts: ['Shillong'] },
+    { name: 'Mizoram', districts: ['Aizawl'] },
+    { name: 'Nagaland', districts: ['Kohima'] },
+    { name: 'Odisha', districts: ['Bhubaneswar', 'Cuttack'] },
+    { name: 'Punjab', districts: ['Amritsar', 'Ludhiana'] },
+    { name: 'Rajasthan', districts: ['Jaipur', 'Udaipur'] },
+    { name: 'Sikkim', districts: ['Gangtok'] },
+    { name: 'Tamil Nadu', districts: ['Chennai', 'Coimbatore'] },
+    { name: 'Telangana', districts: ['Hyderabad', 'Warangal'] },
+    { name: 'Tripura', districts: ['Agartala'] },
+    { name: 'Uttar Pradesh', districts: ['Lucknow', 'Kanpur', 'Varanasi'] },
+    { name: 'Uttarakhand', districts: ['Dehradun'] },
+    { name: 'West Bengal', districts: ['Kolkata', 'Darjeeling'] }
   ];
-  for (const sm of socialMediaSeed) {
-    await SocialMediaModel.deleteMany({ name: sm.name });
-    await SocialMediaModel.create(sm);
-  }
-
-  // Clean duplicates and seed States
-  const stateNames = ['Maharashtra', 'Karnataka', 'Delhi'];
-  for (const name of stateNames) {
-    await StateModel.deleteMany({ name });
-  }
   const states = [];
-  for (const name of stateNames) {
-    states.push(await StateModel.create({ name }));
+  for (const sd of stateDistricts) {
+    await StateModel.deleteMany({ name: sd.name });
+    const stateDoc = await StateModel.create({ name: sd.name });
+    states.push(stateDoc);
+    for (const distName of sd.districts) {
+      await DistrictModel.deleteMany({ name: distName, state: stateDoc._id });
+      await DistrictModel.create({ name: distName, state: stateDoc._id });
+    }
   }
 
-  // Clean duplicates and seed Districts
-  const districtSeed = [
-    { name: 'Mumbai', state: states[0]._id },
-    { name: 'Bangalore', state: states[1]._id },
-    { name: 'Delhi', state: states[2]._id }
+  // Seed tiers with icon and count
+  const tierSeed = [
+    { name: 'Starter', icon: '⭐', desc: '1-100 followers' },
+    { name: 'Nano', icon: '🌱', desc: '101-1,000 followers' },
+    { name: 'Micro', icon: '🔬', desc: '1,001-10,000 followers' },
+    { name: 'Mid-Tier', icon: '🎯', desc: '10,001-100,000 followers' },
+    { name: 'Macro', icon: '🚀', desc: '100,001-1,000,000 followers' },
+    { name: 'Mega / Celebrity', icon: '👑', desc: '1,000,001+ followers' }
   ];
-  for (const dist of districtSeed) {
-    await DistrictModel.deleteMany({ name: dist.name, state: dist.state });
-    await DistrictModel.create(dist);
+  const TierModel = app.get<Model<any>>(getModelToken('Tier'));
+  for (const tier of tierSeed) {
+    await TierModel.deleteMany({ name: tier.name });
+    await TierModel.create(tier);
   }
 
   // Seed Admin User (upsert to avoid duplicate key error)
