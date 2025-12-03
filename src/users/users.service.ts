@@ -8,11 +8,9 @@ export class UsersService {
   constructor(private readonly cloudinaryService: CloudinaryService) {}
 
   async registerInfluencer(dto: InfluencerProfileDto) {
-    // If image is a file path or base64, upload to Cloudinary
     if (dto.profileImages && dto.profileImages.length) {
       const uploadedImages = [];
       for (const img of dto.profileImages) {
-        // If already a Cloudinary URL, skip
         if (img.startsWith('http')) {
           uploadedImages.push(img);
         } else {
@@ -22,16 +20,16 @@ export class UsersService {
       }
       dto.profileImages = uploadedImages;
     }
-    // TODO: Add logic to save influencer profile to DB
-    return { message: 'Influencer registered', data: dto };
+    // Save influencer profile to DB
+    const influencer = new InfluencerModel(dto);
+    await influencer.save();
+    return { message: 'Influencer registered', data: influencer };
   }
 
   async registerBrand(dto: BrandProfileDto) {
-    // If image is a file path or base64, upload to Cloudinary
     if (dto.brandLogo && dto.brandLogo.length) {
       const uploadedImages = [];
       for (const img of dto.brandLogo) {
-        // If already a Cloudinary URL, skip
         if (img.startsWith('http')) {
           uploadedImages.push(img);
         } else {
@@ -41,8 +39,10 @@ export class UsersService {
       }
       dto.brandLogo = uploadedImages;
     }
-    // TODO: Add logic to save brand profile to DB
-    return { message: 'Brand registered', data: dto };
+    // Save brand profile to DB
+    const brand = new BrandModel(dto);
+    await brand.save();
+    return { message: 'Brand registered', data: brand };
   }
 
   async getInfluencers() {
