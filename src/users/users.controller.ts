@@ -7,15 +7,6 @@ import { UsersService } from './users.service';
 export class UsersController {
   constructor(private readonly usersService: UsersService) {}
 
-  @Post('register-influencer')
-  async registerInfluencer(@Body() dto: InfluencerProfileDto) {
-    return this.usersService.registerInfluencer(dto);
-  }
-
-  @Post('register-brand')
-  async registerBrand(@Body() dto: BrandProfileDto) {
-    return this.usersService.registerBrand(dto);
-  }
 
   @UseGuards(JwtAuthGuard)
   @Get('influencers')

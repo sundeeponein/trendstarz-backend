@@ -1,8 +1,37 @@
-import { Controller, Get, Post, Put, Delete, Body, Param } from '@nestjs/common';
+import { Controller, Get, Post, Put, Delete, Body, Param, Patch } from '@nestjs/common';
 import { CategoryModel, StateModel, DistrictModel, SocialMediaModel, LanguageModel } from './database/schemas/profile.schemas';
+import { TierModel } from './database/schemas/profile.schemas';
 
 @Controller('admin')
 export class AdminListsController {
+  @Patch('states/:id')
+  async patchState(@Param('id') id: string, @Body() body: any) {
+    return StateModel.findByIdAndUpdate(id, body, { new: true });
+  }
+
+  @Patch('districts/:id')
+  async patchDistrict(@Param('id') id: string, @Body() body: any) {
+    return DistrictModel.findByIdAndUpdate(id, body, { new: true });
+  }
+
+  @Patch('categories/:id')
+  async patchCategory(@Param('id') id: string, @Body() body: any) {
+    return CategoryModel.findByIdAndUpdate(id, body, { new: true });
+  }
+
+  @Patch('languages/:id')
+  async patchLanguage(@Param('id') id: string, @Body() body: any) {
+    return LanguageModel.findByIdAndUpdate(id, body, { new: true });
+  }
+
+  @Patch('social-media/:id')
+  async patchSocialMedia(@Param('id') id: string, @Body() body: any) {
+    return SocialMediaModel.findByIdAndUpdate(id, body, { new: true });
+  }
+  @Patch('tiers/:id')
+  async patchTier(@Param('id') id: string, @Body() body: any) {
+    return TierModel.findByIdAndUpdate(id, body, { new: true });
+  }
   // Categories
   @Get('categories')
   async getCategories() {
@@ -13,7 +42,7 @@ export class AdminListsController {
     return CategoryModel.create(body);
   }
   @Put('categories/:id')
-  async updateCategory(@Param('id') id: string, @Body() body: any) {
+  async updateCategoryFull(@Param('id') id: string, @Body() body: any) {
     return CategoryModel.findByIdAndUpdate(id, body, { new: true });
   }
   @Delete('categories/:id')
@@ -31,7 +60,7 @@ export class AdminListsController {
     return StateModel.create(body);
   }
   @Put('states/:id')
-  async updateState(@Param('id') id: string, @Body() body: any) {
+  async updateStateFull(@Param('id') id: string, @Body() body: any) {
     return StateModel.findByIdAndUpdate(id, body, { new: true });
   }
   @Delete('states/:id')
@@ -49,7 +78,7 @@ export class AdminListsController {
     return DistrictModel.create(body);
   }
   @Put('districts/:id')
-  async updateDistrict(@Param('id') id: string, @Body() body: any) {
+  async updateDistrictFull(@Param('id') id: string, @Body() body: any) {
     return DistrictModel.findByIdAndUpdate(id, body, { new: true });
   }
   @Delete('districts/:id')
@@ -67,7 +96,7 @@ export class AdminListsController {
     return LanguageModel.create(body);
   }
   @Put('languages/:id')
-  async updateLanguage(@Param('id') id: string, @Body() body: any) {
+  async updateLanguageFull(@Param('id') id: string, @Body() body: any) {
     return LanguageModel.findByIdAndUpdate(id, body, { new: true });
   }
   @Delete('languages/:id')
@@ -92,7 +121,7 @@ export class AdminListsController {
     return SocialMediaModel.create(body);
   }
   @Put('social-media/:id')
-  async updateSocialMedia(@Param('id') id: string, @Body() body: any) {
+  async updateSocialMediaFull(@Param('id') id: string, @Body() body: any) {
     return SocialMediaModel.findByIdAndUpdate(id, body, { new: true });
   }
   @Delete('social-media/:id')

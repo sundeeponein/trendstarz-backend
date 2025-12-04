@@ -18,7 +18,8 @@ import {
   LanguageSchema, 
   UserSchema,
   InfluencerSchema,
-  BrandSchema
+  BrandSchema,
+  TierSchema,
 } from './database/schemas/profile.schemas';
 
 import { AuthService } from './auth/auth.service';
@@ -50,6 +51,8 @@ console.log("🚨 MONGODB_URI from Render =", process.env.MONGODB_URI);
       { name: 'User', schema: UserSchema, collection: 'users' },
       { name: 'Influencer', schema: InfluencerSchema, collection: 'influencers' },
       { name: 'Brand', schema: BrandSchema, collection: 'brands' },
+      { name: 'Tier', schema: TierSchema, collection: 'tiers' }, // <-- Add this line
+
     ]),
     UsersModule,
   ],

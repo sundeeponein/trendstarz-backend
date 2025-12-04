@@ -8,6 +8,19 @@ import * as fs from 'fs';
 import * as path from 'path';
 
 export async function seedDatabase() {
+  // Load admin-config.json for visibility data
+  // Try both possible paths for admin-config.json
+  let adminConfig = null;
+  let adminConfigPath = path.join(__dirname, '../assets/admin-config.json');
+  if (!fs.existsSync(adminConfigPath)) {
+    adminConfigPath = path.join(process.cwd(), 'assets/admin-config.json');
+  }
+  if (fs.existsSync(adminConfigPath)) {
+    adminConfig = JSON.parse(fs.readFileSync(adminConfigPath, 'utf-8'));
+    console.log('Loaded admin-config:', Object.keys(adminConfig));
+  } else {
+    console.log('admin-config.json not found at', adminConfigPath);
+  }
   const app = await NestFactory.createApplicationContext(AppModule);
 
   const CategoryModel = app.get<Model<any>>(getModelToken('Category'));
@@ -18,91 +31,100 @@ export async function seedDatabase() {
   const UserModel = app.get<Model<any>>(getModelToken('User'));
   const InfluencerModel = app.get<Model<any>>(getModelToken('Influencer'));
   const BrandModel = app.get<Model<any>>(getModelToken('Brand'));
+  // ...existing code...
 
   // Seed all categories
-  const categoryNames = [
-    'Fashion', 'Tech', 'Travel', 'Food', 'Fitness', 'Beauty', 'Education', 'Finance', 'Automobile', 'Gaming', 'Parenting', 'Health', 'Sports', 'Art', 'Music'
-  ];
-    for (const name of categoryNames) {
-      const exists = await CategoryModel.findOne({ name });
+  if (adminConfig?.categories) {
+    for (const cat of adminConfig.categories) {
+      const exists = await CategoryModel.findOne({ name: cat.name });
       if (!exists) {
-        await CategoryModel.create({ name });
+        await CategoryModel.create({ name: cat.name, showInFrontend: cat.visible });
+      } else {
+        await CategoryModel.updateOne({ name: cat.name }, { $set: { showInFrontend: cat.visible } });
       }
     }
+  }
 
   // Seed all languages
-  const languageNames = [
-    'English', 'Hindi', 'Marathi', 'Kannada', 'Tamil', 'Telugu', 'Gujarati', 'Bengali', 'Punjabi', 'Malayalam', 'Odia', 'Urdu', 'Assamese', 'Konkani'
-  ];
-    for (const name of languageNames) {
-      const exists = await LanguageModel.findOne({ name });
+  if (adminConfig?.languages) {
+    for (const lang of adminConfig.languages) {
+      const exists = await LanguageModel.findOne({ name: lang.name });
       if (!exists) {
-        await LanguageModel.create({ name });
+        await LanguageModel.create({ name: lang.name, showInFrontend: lang.visible });
+      } else {
+        await LanguageModel.updateOne({ name: lang.name }, { $set: { showInFrontend: lang.visible } });
       }
     }
+  }
 
   // Seed all Indian states and relevant districts
-  const stateDistricts = [
-    { name: 'Andhra Pradesh', districts: ['Visakhapatnam', 'Vijayawada', 'Guntur'] },
-    { name: 'Arunachal Pradesh', districts: ['Itanagar'] },
-    { name: 'Assam', districts: ['Guwahati', 'Silchar'] },
-    { name: 'Bihar', districts: ['Patna', 'Gaya'] },
-    { name: 'Chhattisgarh', districts: ['Raipur'] },
-    { name: 'Goa', districts: ['Panaji'] },
-    { name: 'Gujarat', districts: ['Ahmedabad', 'Surat'] },
-    { name: 'Haryana', districts: ['Gurgaon', 'Faridabad'] },
-    { name: 'Himachal Pradesh', districts: ['Shimla'] },
-    { name: 'Jharkhand', districts: ['Ranchi'] },
-    { name: 'Karnataka', districts: ['Bangalore', 'Mysore'] },
-    { name: 'Kerala', districts: ['Kochi', 'Thiruvananthapuram'] },
-    { name: 'Madhya Pradesh', districts: ['Indore', 'Bhopal'] },
-    { name: 'Maharashtra', districts: ['Mumbai', 'Pune', 'Nagpur'] },
-    { name: 'Manipur', districts: ['Imphal'] },
-    { name: 'Meghalaya', districts: ['Shillong'] },
-    { name: 'Mizoram', districts: ['Aizawl'] },
-    { name: 'Nagaland', districts: ['Kohima'] },
-    { name: 'Odisha', districts: ['Bhubaneswar', 'Cuttack'] },
-    { name: 'Punjab', districts: ['Amritsar', 'Ludhiana'] },
-    { name: 'Rajasthan', districts: ['Jaipur', 'Udaipur'] },
-    { name: 'Sikkim', districts: ['Gangtok'] },
-    { name: 'Tamil Nadu', districts: ['Chennai', 'Coimbatore'] },
-    { name: 'Telangana', districts: ['Hyderabad', 'Warangal'] },
-    { name: 'Tripura', districts: ['Agartala'] },
-    { name: 'Uttar Pradesh', districts: ['Lucknow', 'Kanpur', 'Varanasi'] },
-    { name: 'Uttarakhand', districts: ['Dehradun'] },
-    { name: 'West Bengal', districts: ['Kolkata', 'Darjeeling'] }
-  ];
-  const states = [];
-    for (const sd of stateDistricts) {
-      let stateDoc = await StateModel.findOne({ name: sd.name });
-      if (!stateDoc) {
-        stateDoc = await StateModel.create({ name: sd.name });
-      }
-      states.push(stateDoc);
-      for (const distName of sd.districts) {
-        const exists = await DistrictModel.findOne({ name: distName, state: stateDoc._id });
-        if (!exists) {
-          await DistrictModel.create({ name: distName, state: stateDoc._id });
+  if (adminConfig?.locations) {
+    for (const loc of adminConfig.locations) {
+      try {
+        let stateDoc = await StateModel.findOne({ name: loc.state });
+        if (!stateDoc) {
+          stateDoc = await StateModel.create({ name: loc.state, showInFrontend: loc.visible });
+          console.log(`Inserted state: ${loc.state}`);
+        } else {
+          await StateModel.updateOne({ name: loc.state }, { $set: { showInFrontend: loc.visible } });
+          console.log(`Updated state: ${loc.state}`);
         }
+        for (const dist of loc.districts) {
+          try {
+            const exists = await DistrictModel.findOne({ name: dist.name, state: stateDoc._id });
+            if (!exists) {
+              await DistrictModel.create({ name: dist.name, state: stateDoc._id, showInFrontend: dist.visible });
+              console.log(`Inserted district: ${dist.name} (state: ${loc.state})`);
+            } else {
+              await DistrictModel.updateOne({ name: dist.name, state: stateDoc._id }, { $set: { showInFrontend: dist.visible } });
+              console.log(`Updated district: ${dist.name} (state: ${loc.state})`);
+            }
+          } catch (err) {
+            console.error(`Error inserting/updating district ${dist.name} for state ${loc.state}:`, err);
+          }
+        }
+      } catch (err) {
+        console.error(`Error inserting/updating state ${loc.state}:`, err);
       }
     }
+  }
 
   // Seed tiers with icon and count
-  const tierSeed = [
-    { name: 'Starter', icon: '⭐', desc: '1-100 followers' },
-    { name: 'Nano', icon: '🌱', desc: '101-1,000 followers' },
-    { name: 'Micro', icon: '🔬', desc: '1,001-10,000 followers' },
-    { name: 'Mid-Tier', icon: '🎯', desc: '10,001-100,000 followers' },
-    { name: 'Macro', icon: '🚀', desc: '100,001-1,000,000 followers' },
-    { name: 'Mega / Celebrity', icon: '👑', desc: '1,000,001+ followers' }
-  ];
-  const TierModel = app.get<Model<any>>(getModelToken('Tier'));
-    for (const tier of tierSeed) {
-      const exists = await TierModel.findOne({ name: tier.name });
-      if (!exists) {
-        await TierModel.create(tier);
+  if (adminConfig?.tiers) {
+    const TierModel = app.get<Model<any>>(getModelToken('Tier'));
+    for (const tier of adminConfig.tiers) {
+      try {
+        const exists = await TierModel.findOne({ name: tier.name });
+        if (!exists) {
+          await TierModel.create({ name: tier.name, icon: tier.icon, desc: tier.desc, showInFrontend: tier.visible });
+          console.log(`Inserted tier: ${tier.name}`);
+        } else {
+          await TierModel.updateOne({ name: tier.name }, { $set: { icon: tier.icon, desc: tier.desc, showInFrontend: tier.visible } });
+          console.log(`Updated tier: ${tier.name}`);
+        }
+      } catch (err) {
+        console.error(`Error inserting/updating tier ${tier.name}:`, err);
       }
     }
+    const tierCount = await TierModel.countDocuments();
+    console.log(`Seeded Tiers. Total count: ${tierCount}`);
+  }
+  if (adminConfig?.socialMediaPlatforms) {
+    for (const sm of adminConfig.socialMediaPlatforms) {
+      try {
+        const exists = await SocialMediaModel.findOne({ name: sm.name });
+        if (!exists) {
+          await SocialMediaModel.create({ name: sm.name, showInFrontend: sm.visible });
+          console.log(`Inserted social media: ${sm.name}`);
+        } else {
+          await SocialMediaModel.updateOne({ name: sm.name }, { $set: { showInFrontend: sm.visible } });
+          console.log(`Updated social media: ${sm.name}`);
+        }
+      } catch (err) {
+        console.error(`Error inserting/updating social media ${sm.name}:`, err);
+      }
+    }
+  }
 
   // Seed Admin User (upsert to avoid duplicate key error)
   const adminPassword = await bcrypt.hash('admin123', 10);
