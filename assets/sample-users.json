@@ -1,5 +1,12 @@
 [
   {
+    "name": "Admin User",
+    "email": "admin@trendstarz.com",
+    "password": "admin123",
+    "role": "admin",
+    "visible": true
+  },
+  {
     "_id": "6568f1a1e1b1c1a1a1a1a1a1",
   "name": "Alice Influencer",
   "email": "alice@trendstarz.com",

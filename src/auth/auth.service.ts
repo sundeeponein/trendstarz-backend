@@ -35,30 +35,6 @@ export class AuthService {
     return { token, userType };
   }
 
-  async register(body: any) {
-    // Determine user type
-    const { email, password, username, brandName } = body;
-    const hashedPassword = await bcrypt.hash(password, 10);
-    let user;
-    if (username) {
-      // Influencer registration
-      if (await InfluencerModel.findOne({ email })) {
-        throw new BadRequestException('Email already exists');
-      }
-      user = new InfluencerModel({ ...body, password: hashedPassword });
-      await user.save();
-    } else if (brandName) {
-      // Brand registration
-      if (await BrandModel.findOne({ email })) {
-        throw new BadRequestException('Email already exists');
-      }
-      user = new BrandModel({ ...body, password: hashedPassword });
-      await user.save();
-    } else {
-      throw new BadRequestException('Invalid registration data');
-    }
-    return { message: 'User registered' };
-  }
 
   async findUserByEmail(email: string) {
     let user = await InfluencerModel.findOne({ email });

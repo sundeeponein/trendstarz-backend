@@ -20,10 +20,6 @@ export class UsersService {
       }
       dto.profileImages = uploadedImages;
     }
-    // Save influencer profile to DB
-    const influencer = new InfluencerModel(dto);
-    await influencer.save();
-    return { message: 'Influencer registered', data: influencer };
   }
 
   async registerBrand(dto: BrandProfileDto) {
@@ -39,10 +35,6 @@ export class UsersService {
       }
       dto.brandLogo = uploadedImages;
     }
-    // Save brand profile to DB
-    const brand = new BrandModel(dto);
-    await brand.save();
-    return { message: 'Brand registered', data: brand };
   }
 
   async getInfluencers() {

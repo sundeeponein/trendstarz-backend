@@ -4,9 +4,10 @@ import { TierModel, LanguageModel, CategoryModel, StateModel, DistrictModel, Soc
 @Controller('tiers')
 export class TiersController {
   @Get()
-  async getAll() {
-    return TierModel.find({});
-  }
+    async getAll() {
+      const tiers = await TierModel.find({});
+      return tiers.length ? tiers : [];
+    }
 }
 
 @Controller('languages')

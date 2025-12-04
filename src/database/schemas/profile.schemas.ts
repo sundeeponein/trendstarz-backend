@@ -4,6 +4,7 @@ export const TierSchema = new Schema({
   name: { type: String, required: true },
   icon: { type: String },
   desc: { type: String },
+  showInFrontend: { type: Boolean, default: true },
 });
 export const TierModel = model('Tier', TierSchema);
 
