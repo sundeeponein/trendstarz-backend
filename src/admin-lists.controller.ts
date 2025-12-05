@@ -35,7 +35,7 @@ export class AdminListsController {
   // Categories
   @Get('categories')
   async getCategories() {
-    return CategoryModel.find();
+    return CategoryModel.find().lean();
   }
   @Post('categories')
   async addCategory(@Body() body: { name: string }) {
@@ -53,7 +53,7 @@ export class AdminListsController {
   // States
   @Get('states')
   async getStates() {
-    return StateModel.find();
+    return StateModel.find().lean();
   }
   @Post('states')
   async addState(@Body() body: { name: string }) {
@@ -71,7 +71,7 @@ export class AdminListsController {
   // Districts
   @Get('districts')
   async getDistricts() {
-    return DistrictModel.find().populate('state');
+    return DistrictModel.find().populate('state').lean();
   }
   @Post('districts')
   async addDistrict(@Body() body: { name: string; state: string }) {
@@ -89,7 +89,7 @@ export class AdminListsController {
   // Languages
   @Get('languages')
   async getLanguages() {
-    return LanguageModel.find();
+    return LanguageModel.find().lean();
   }
   @Post('languages')
   async addLanguage(@Body() body: { name: string }) {
@@ -108,12 +108,7 @@ export class AdminListsController {
   @Get('social-media')
   async getSocialMedia() {
     // Return all social media entries with new fields
-    return SocialMediaModel.find({}, {
-      socialMedia: 1,
-      handleName: 1,
-      tier: 1,
-      followersCount: 1
-    });
+    return SocialMediaModel.find({}, { socialMedia: 1, handleName: 1, tier: 1, followersCount: 1 }).lean();
   }
   @Post('social-media')
   async addSocialMedia(@Body() body: { socialMedia: string; handleName: string; tier: string; followersCount: number }) {
@@ -127,5 +122,41 @@ export class AdminListsController {
   @Delete('social-media/:id')
   async deleteSocialMedia(@Param('id') id: string) {
     return SocialMediaModel.findByIdAndDelete(id);
+  }
+
+  @Post('batch-update-visibility')
+  async batchUpdateVisibility(@Body() body: any) {
+    // Each key is an array of {_id, showInFrontend}
+    if (body.tiers) {
+      for (const t of body.tiers) {
+        await TierModel.findByIdAndUpdate(t._id, { showInFrontend: t.showInFrontend });
+      }
+    }
+    if (body.socialMedia) {
+      for (const s of body.socialMedia) {
+        await SocialMediaModel.findByIdAndUpdate(s._id, { showInFrontend: s.showInFrontend });
+      }
+    }
+    if (body.categories) {
+      for (const c of body.categories) {
+        await CategoryModel.findByIdAndUpdate(c._id, { showInFrontend: c.showInFrontend });
+      }
+    }
+    if (body.languages) {
+      for (const l of body.languages) {
+        await LanguageModel.findByIdAndUpdate(l._id, { showInFrontend: l.showInFrontend });
+      }
+    }
+    if (body.states) {
+      for (const s of body.states) {
+        await StateModel.findByIdAndUpdate(s._id, { showInFrontend: s.showInFrontend });
+      }
+    }
+    if (body.districts) {
+      for (const d of body.districts) {
+        await DistrictModel.findByIdAndUpdate(d._id, { showInFrontend: d.showInFrontend });
+      }
+    }
+    return { message: 'Visibility updated' };
   }
 }
