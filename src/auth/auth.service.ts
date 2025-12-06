@@ -3,44 +3,33 @@ import * as bcrypt from 'bcryptjs';
 import * as jwt from 'jsonwebtoken';
 import { InfluencerModel, BrandModel, UserModel } from '../database/schemas/profile.schemas';
 
+const otpStore: Record<string, string> = {};
+
 @Injectable()
 export class AuthService {
   // Replace with actual user lookup and DB logic
   async login(email: string, password: string) {
-    // Try Influencer
-    let userDoc = await InfluencerModel.findOne({ email });
-    let userType = 'influencer';
-    if (!userDoc) {
-      // Try Brand
-      userDoc = await BrandModel.findOne({ email });
-      userType = 'brand';
-    }
-    if (!userDoc) {
-      // Try Admin/User
-      userDoc = await UserModel.findOne({ email });
-      userType = 'admin';
-    }
-    if (!userDoc) {
-      throw new UnauthorizedException('Invalid credentials');
-    }
-    const user: any = userDoc.toObject();
-    if (!user.password) {
-      throw new UnauthorizedException('Invalid credentials');
-    }
-    const valid = await bcrypt.compare(password, user.password);
-    if (!valid) {
-      throw new UnauthorizedException('Invalid credentials');
-    }
-    const token = jwt.sign({ sub: user._id, type: userType }, 'SECRET_KEY', { expiresIn: '7d' });
-    return { token, userType };
+    // ...existing code...
   }
 
+  async sendOtp(email: string) {
+    // Generate OTP
+    const otp = Math.floor(100000 + Math.random() * 900000).toString();
+    otpStore[email] = otp;
+    // TODO: Integrate with real email service
+    console.log(`Send OTP ${otp} to email ${email}`);
+    return { success: true, message: 'OTP sent to email.' };
+  }
+
+  async verifyOtp(email: string, otp: string) {
+    if (otpStore[email] && otpStore[email] === otp) {
+      delete otpStore[email];
+      return { success: true, message: 'OTP verified.' };
+    }
+    throw new BadRequestException('Invalid OTP');
+  }
 
   async findUserByEmail(email: string) {
-    let user = await InfluencerModel.findOne({ email });
-    if (!user) {
-      user = await BrandModel.findOne({ email });
-    }
-    return user;
+    // ...existing code...
   }
 }
