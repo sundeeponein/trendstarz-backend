@@ -49,4 +49,10 @@ export class UsersController {
   async deletePermanently(@Param('id') id: string) {
     return this.usersService.deletePermanently(id);
   }
+
+    @UseGuards(JwtAuthGuard)
+    @Patch(':id/premium')
+    async setPremium(@Param('id') id: string, @Body() body: { isPremium: boolean }) {
+      return this.usersService.setPremium(id, body.isPremium);
+    }
 }
