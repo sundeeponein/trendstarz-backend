@@ -84,10 +84,13 @@ export class UsersService {
     if (brand) return { message: 'User permanently deleted', user: brand };
     return { message: 'User not found', id };
   }
-    async setPremium(id: string, isPremium: boolean) {
-      const influencer = await InfluencerModel.findByIdAndUpdate(id, { isPremium }, { new: true });
+    async setPremium(id: string, isPremium: boolean, premiumDuration?: string) {
+      const update: any = { isPremium };
+      if (isPremium && premiumDuration) update.premiumDuration = premiumDuration;
+      if (!isPremium) update.premiumDuration = null;
+      const influencer = await InfluencerModel.findByIdAndUpdate(id, update, { new: true });
       if (influencer) return { message: 'Premium status updated', user: influencer };
-      const brand = await BrandModel.findByIdAndUpdate(id, { isPremium }, { new: true });
+      const brand = await BrandModel.findByIdAndUpdate(id, update, { new: true });
       if (brand) return { message: 'Premium status updated', user: brand };
       return { message: 'User not found', id };
     }

@@ -2,6 +2,7 @@ import { Injectable, UnauthorizedException, BadRequestException } from '@nestjs/
 import * as bcrypt from 'bcryptjs';
 import * as jwt from 'jsonwebtoken';
 import { InfluencerModel, BrandModel, UserModel } from '../database/schemas/profile.schemas';
+import { sendEmail } from '../utils/email';
 
 const otpStore: Record<string, string> = {};
 
@@ -16,9 +17,14 @@ export class AuthService {
     // Generate OTP
     const otp = Math.floor(100000 + Math.random() * 900000).toString();
     otpStore[email] = otp;
-    // TODO: Integrate with real email service
-    console.log(`Send OTP ${otp} to email ${email}`);
-    return { success: true, message: 'OTP sent to email.' };
+      // Send OTP via email
+      try {
+        await sendEmail(email, 'Your OTP Code', `Your OTP code is: ${otp}`);
+        return { success: true, message: 'OTP sent to email.' };
+      } catch (err) {
+        console.error('Failed to send OTP email:', err);
+        throw new BadRequestException('Failed to send OTP email');
+      }
   }
 
   async verifyOtp(email: string, otp: string) {
