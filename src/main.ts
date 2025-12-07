@@ -5,27 +5,11 @@ import mongoose from 'mongoose';
 import { connectMongo } from './mongo-connection';
 
 async function bootstrap() {
-  // Enable MongoDB logs BEFORE Nest starts connecting
-  mongoose.connection.on('connected', () => {
-    console.log('🔥 MongoDB Connected Successfully!');
-  });
-
-  mongoose.connection.on('error', (err) => {
-    console.error('❌ MongoDB Connection Error:', err);
-  });
-
-  mongoose.connection.on('disconnected', () => {
-    console.warn('⚠️ MongoDB Disconnected');
-  });
-
+  // MongoDB connection disabled for test deployment
   function logMemory(stage: string) {
     const mem = process.memoryUsage();
     console.log(`[MEMORY][${stage}] rss: ${(mem.rss/1024/1024).toFixed(2)}MB heapUsed: ${(mem.heapUsed/1024/1024).toFixed(2)}MB heapTotal: ${(mem.heapTotal/1024/1024).toFixed(2)}MB`);
   }
-
-  logMemory('before connectMongo');
-  await connectMongo();
-  logMemory('after connectMongo');
 
   const app = await NestFactory.create(AppModule);
   logMemory('after NestFactory.create');
