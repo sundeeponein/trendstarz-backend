@@ -4,6 +4,9 @@
   "description": "",
   "author": "",
   "private": true,
+  "engines": {
+    "node": "18.x"
+  },
   "license": "UNLICENSED",
   "scripts": {
     "build": "node node_modules/@nestjs/cli/bin/nest.js build",
