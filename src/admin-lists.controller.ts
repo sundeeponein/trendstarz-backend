@@ -35,7 +35,7 @@ export class AdminListsController {
   // Categories
   @Get('categories')
   async getCategories() {
-    return CategoryModel.find().lean();
+  return CategoryModel.find().lean().limit(100);
   }
   @Post('categories')
   async addCategory(@Body() body: { name: string }) {
@@ -53,7 +53,7 @@ export class AdminListsController {
   // States
   @Get('states')
   async getStates() {
-    return StateModel.find().lean();
+  return StateModel.find().lean().limit(100);
   }
   @Post('states')
   async addState(@Body() body: { name: string }) {
@@ -71,7 +71,7 @@ export class AdminListsController {
   // Districts
   @Get('districts')
   async getDistricts() {
-    return DistrictModel.find().populate('state').lean();
+  return DistrictModel.find().populate('state').lean().limit(100);
   }
   @Post('districts')
   async addDistrict(@Body() body: { name: string; state: string }) {
@@ -89,7 +89,7 @@ export class AdminListsController {
   // Languages
   @Get('languages')
   async getLanguages() {
-    return LanguageModel.find().lean();
+  return LanguageModel.find().lean().limit(100);
   }
   @Post('languages')
   async addLanguage(@Body() body: { name: string }) {
@@ -108,7 +108,7 @@ export class AdminListsController {
   @Get('social-media')
   async getSocialMedia() {
     // Return all social media entries with new fields
-    return SocialMediaModel.find({}, { socialMedia: 1, handleName: 1, tier: 1, followersCount: 1 }).lean();
+  return SocialMediaModel.find({}, { socialMedia: 1, handleName: 1, tier: 1, followersCount: 1 }).lean().limit(100);
   }
   @Post('social-media')
   async addSocialMedia(@Body() body: { socialMedia: string; handleName: string; tier: string; followersCount: number }) {

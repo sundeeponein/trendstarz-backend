@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { CloudinaryService } from '../cloudinary.service';
 import { InfluencerProfileDto, BrandProfileDto } from './dto/profile.dto';
+import * as bcrypt from 'bcryptjs';
 import { InfluencerModel, BrandModel } from '../database/schemas/profile.schemas';
 
 @Injectable()
@@ -20,6 +21,13 @@ export class UsersService {
       }
       dto.profileImages = uploadedImages;
     }
+    // Hash password before saving
+    if (dto.password) {
+      dto.password = await bcrypt.hash(dto.password, 10);
+    }
+    // Save influencer to DB
+    const influencer = new InfluencerModel(dto);
+    return await influencer.save();
   }
 
   async registerBrand(dto: BrandProfileDto) {
@@ -35,14 +43,23 @@ export class UsersService {
       }
       dto.brandLogo = uploadedImages;
     }
+    // Hash password before saving
+    if (dto.password) {
+      dto.password = await bcrypt.hash(dto.password, 10);
+    }
+    // Save brand to DB
+    const brand = new BrandModel(dto);
+    return await brand.save();
   }
 
   async getInfluencers() {
-    return await InfluencerModel.find({});
+    // Use lean and limit for memory efficiency; add skip for pagination if needed
+    return await InfluencerModel.find({}).lean().limit(100);
   }
 
   async getBrands() {
-    return await BrandModel.find({});
+    // Use lean and limit for memory efficiency; add skip for pagination if needed
+    return await BrandModel.find({}).lean().limit(100);
   }
 
   async acceptUser(id: string) {
