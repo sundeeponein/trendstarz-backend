@@ -39,11 +39,21 @@ async function bootstrap() {
     credentials: true,
   });
 
+  // logMemory('before app.listen');
+  // const port = 10000;
+  // await app.listen(port);
+  // logMemory('after app.listen');
+  // console.log('🚀 Server started on port', port);
+
+  // // Periodic memory logging every 10 seconds
+  // setInterval(() => {
+  //   logMemory('interval');
+  // }, 10000);
+
   logMemory('before app.listen');
-  const port = 10000;
-  await app.listen(port);
+  await app.listen(process.env.PORT || 3000);
   logMemory('after app.listen');
-  console.log('🚀 Server started on port', port);
+  console.log('🚀 Server started on port', process.env.PORT || 3000);
 
   // Periodic memory logging every 10 seconds
   setInterval(() => {
