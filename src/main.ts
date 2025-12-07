@@ -40,9 +40,10 @@ async function bootstrap() {
   });
 
   logMemory('before app.listen');
-  await app.listen(process.env.PORT || 3000);
+  const port = 10000;
+  await app.listen(port);
   logMemory('after app.listen');
-  console.log('🚀 Server started on port', process.env.PORT || 3000);
+  console.log('🚀 Server started on port', port);
 
   // Periodic memory logging every 10 seconds
   setInterval(() => {
