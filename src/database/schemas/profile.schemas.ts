@@ -33,6 +33,7 @@ export const InfluencerSchema = new Schema({
   username: { type: String, required: true, unique: true },
   profileImages: [{ type: String }], // Cloudinary URLs
   isPremium: { type: Boolean, default: false },
+  premiumDuration: { type: String, enum: ['1m', '3m', '1y', null], default: null }, // 1 month, 3 months, 1 year
   categories: [{ type: String }],
   location: {
     state: { type: String },
@@ -61,6 +62,7 @@ export const BrandSchema = new Schema({
   phoneNumber: { type: String, required: true },
   brandLogo: [{ type: String }], // Cloudinary URLs
   isPremium: { type: Boolean, default: false },
+  premiumDuration: { type: String, enum: ['1m', '3m', '1y', null], default: null },
   categories: [{ type: String }],
   location: {
     state: { type: String },
