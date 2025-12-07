@@ -43,6 +43,11 @@ async function bootstrap() {
   await app.listen(process.env.PORT || 3000);
   logMemory('after app.listen');
   console.log('🚀 Server started on port', process.env.PORT || 3000);
+
+  // Periodic memory logging every 10 seconds
+  setInterval(() => {
+    logMemory('interval');
+  }, 10000);
 }
 
 bootstrap();
