@@ -42,6 +42,9 @@ export class SocialMediaDto {
 
 export class InfluencerProfileDto {
   @IsString()
+  password: string;
+
+  @IsString()
   name: string;
 
   @IsEmail()
@@ -80,6 +83,9 @@ export class InfluencerProfileDto {
 }
 
 export class BrandProfileDto {
+  @IsString()
+  password: string;
+
   @IsString()
   brandName: string;
 

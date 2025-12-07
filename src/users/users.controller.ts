@@ -7,6 +7,18 @@ import { UsersService } from './users.service';
 export class UsersController {
   constructor(private readonly usersService: UsersService) {}
 
+  @Post('register')
+  async registerUser(@Body() body: any) {
+    // Determine type by presence of brandName or other logic
+    if (body.brandName) {
+      // Brand registration
+      return this.usersService.registerBrand(body);
+    } else {
+      // Influencer registration
+      return this.usersService.registerInfluencer(body);
+    }
+  }
+
 
   @UseGuards(JwtAuthGuard)
   @Get('influencers')
