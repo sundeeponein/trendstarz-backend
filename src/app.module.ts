@@ -30,7 +30,9 @@ import { UsersModule } from './users/users.module';
 // import { StripeService } from './payment/stripe.service';
 
 
-console.log("🚨 MONGODB_URI from Render =", process.env.MONGODB_URI);
+
+// 🚨 Seeder is now disabled for production deployment to avoid high memory usage.
+// To seed manually, run: npm run seeder or node dist/run-seeder.js
 
 @Module({
   imports: [
