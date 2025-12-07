@@ -4,17 +4,17 @@ import { TierModel, LanguageModel, CategoryModel, StateModel, DistrictModel, Soc
 @Controller('tiers')
 export class TiersController {
   @Get()
-    async getAll() {
-      const tiers = await TierModel.find({});
-      return tiers.length ? tiers : [];
-    }
+  async getAll() {
+    const tiers = await TierModel.find({}).lean().limit(100);
+    return tiers.length ? tiers : [];
+  }
 }
 
 @Controller('languages')
 export class LanguagesController {
   @Get()
   async getAll() {
-    return LanguageModel.find({});
+    return LanguageModel.find({}).lean().limit(100);
   }
 }
 
@@ -22,7 +22,7 @@ export class LanguagesController {
 export class CategoriesController {
   @Get()
   async getAll() {
-    return CategoryModel.find({});
+    return CategoryModel.find({}).lean().limit(100);
   }
 }
 
@@ -30,7 +30,7 @@ export class CategoriesController {
 export class StatesController {
   @Get()
   async getAll() {
-    return StateModel.find({});
+    return StateModel.find({}).lean().limit(100);
   }
 }
 
@@ -38,7 +38,7 @@ export class StatesController {
 export class DistrictsController {
   @Get()
   async getAll() {
-    return DistrictModel.find({}).populate('state');
+    return DistrictModel.find({}).populate('state').lean().limit(100);
   }
 }
 
@@ -46,6 +46,6 @@ export class DistrictsController {
 export class SocialMediaController {
   @Get()
   async getAll() {
-    return SocialMediaModel.find({});
+    return SocialMediaModel.find({}).lean().limit(100);
   }
 }
