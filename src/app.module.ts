@@ -25,17 +25,12 @@ import {
 import { AuthService } from './auth/auth.service';
 import { AuthController } from './auth/auth.controller';
 import { UsersModule } from './users/users.module';
-import { PaymentController } from './payment/payment.controller';
-import { PaymentService } from './payment/payment.service';
-import { StripeService } from './payment/stripe.service';
+// import { PaymentController } from './payment/payment.controller';
+// import { PaymentService } from './payment/payment.service';
+// import { StripeService } from './payment/stripe.service';
 
 
 console.log("🚨 MONGODB_URI from Render =", process.env.MONGODB_URI);
-
-// const mongoUri = process.env.MONGODB_URI;
-// if (!mongoUri) {
-//   throw new Error('MONGODB_URI environment variable is required');
-// }
 
 @Module({
   imports: [
@@ -71,9 +66,9 @@ console.log("🚨 MONGODB_URI from Render =", process.env.MONGODB_URI);
     LanguagesController,
     AuthController,
     // SeedController,
-      PaymentController,
+  // PaymentController,
   ],
 
-    providers: [AppService, AuthService, MongoLogger, PaymentService, StripeService],
+  providers: [AppService, AuthService, MongoLogger /*, PaymentService, StripeService*/],
 })
 export class AppModule {}
