@@ -1,5 +1,5 @@
 import { Controller, Get, Post, Put, Delete, Body, Param, Patch } from '@nestjs/common';
-import { CategoryModel, StateModel, DistrictModel, SocialMediaModel, LanguageModel } from './database/schemas/profile.schemas';
+import { CategoryModel, StateModel, SocialMediaModel, LanguageModel } from './database/schemas/profile.schemas';
 import { TierModel } from './database/schemas/profile.schemas';
 
 @Controller('admin')
@@ -7,11 +7,6 @@ export class AdminListsController {
   @Patch('states/:id')
   async patchState(@Param('id') id: string, @Body() body: any) {
     return StateModel.findByIdAndUpdate(id, body, { new: true });
-  }
-
-  @Patch('districts/:id')
-  async patchDistrict(@Param('id') id: string, @Body() body: any) {
-    return DistrictModel.findByIdAndUpdate(id, body, { new: true });
   }
 
   @Patch('categories/:id')
@@ -68,23 +63,6 @@ export class AdminListsController {
     return StateModel.findByIdAndDelete(id);
   }
 
-  // Districts
-  @Get('districts')
-  async getDistricts() {
-  return DistrictModel.find().populate('state').lean().limit(100);
-  }
-  @Post('districts')
-  async addDistrict(@Body() body: { name: string; state: string }) {
-    return DistrictModel.create(body);
-  }
-  @Put('districts/:id')
-  async updateDistrictFull(@Param('id') id: string, @Body() body: any) {
-    return DistrictModel.findByIdAndUpdate(id, body, { new: true });
-  }
-  @Delete('districts/:id')
-  async deleteDistrict(@Param('id') id: string) {
-    return DistrictModel.findByIdAndDelete(id);
-  }
 
   // Languages
   @Get('languages')
@@ -150,11 +128,6 @@ export class AdminListsController {
     if (body.states) {
       for (const s of body.states) {
         await StateModel.findByIdAndUpdate(s._id, { showInFrontend: s.showInFrontend });
-      }
-    }
-    if (body.districts) {
-      for (const d of body.districts) {
-        await DistrictModel.findByIdAndUpdate(d._id, { showInFrontend: d.showInFrontend });
       }
     }
     return { message: 'Visibility updated' };

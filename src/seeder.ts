@@ -27,7 +27,6 @@ export async function seedDatabase() {
   const LanguageModel = app.get<Model<any>>(getModelToken('Language'));
   const SocialMediaModel = app.get<Model<any>>(getModelToken('SocialMedia'));
   const StateModel = app.get<Model<any>>(getModelToken('State'));
-  const DistrictModel = app.get<Model<any>>(getModelToken('District'));
   const UserModel = app.get<Model<any>>(getModelToken('User'));
   const InfluencerModel = app.get<Model<any>>(getModelToken('Influencer'));
   const BrandModel = app.get<Model<any>>(getModelToken('Brand'));
@@ -57,7 +56,7 @@ export async function seedDatabase() {
     }
   }
 
-  // Seed all Indian states and relevant districts
+  // Seed all Indian states
   if (adminConfig?.locations) {
     for (const loc of adminConfig.locations) {
       try {
@@ -68,20 +67,6 @@ export async function seedDatabase() {
         } else {
           await StateModel.updateOne({ name: loc.state }, { $set: { showInFrontend: loc.visible } });
           console.log(`Updated state: ${loc.state}`);
-        }
-        for (const dist of loc.districts) {
-          try {
-            const exists = await DistrictModel.findOne({ name: dist.name, state: stateDoc._id });
-            if (!exists) {
-              await DistrictModel.create({ name: dist.name, state: stateDoc._id, showInFrontend: dist.visible });
-              console.log(`Inserted district: ${dist.name} (state: ${loc.state})`);
-            } else {
-              await DistrictModel.updateOne({ name: dist.name, state: stateDoc._id }, { $set: { showInFrontend: dist.visible } });
-              console.log(`Updated district: ${dist.name} (state: ${loc.state})`);
-            }
-          } catch (err) {
-            console.error(`Error inserting/updating district ${dist.name} for state ${loc.state}:`, err);
-          }
         }
       } catch (err) {
         console.error(`Error inserting/updating state ${loc.state}:`, err);

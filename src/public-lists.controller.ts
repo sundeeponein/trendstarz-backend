@@ -46,17 +46,6 @@ export class StatesController {
   }
 }
 
-@Controller('districts')
-export class DistrictsController {
-  constructor(@InjectModel('District') private readonly districtModel: Model<any>) {}
-
-  @Get()
-  async getAll() {
-    const districts = await this.districtModel.find({}).populate('state').lean().limit(100);
-    return districts.length ? districts : [];
-  }
-}
-
 @Controller('social-media')
 export class SocialMediaController {
   constructor(@InjectModel('SocialMedia') private readonly socialMediaModel: Model<any>) {}
