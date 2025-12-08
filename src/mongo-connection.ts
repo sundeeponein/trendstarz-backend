@@ -1,7 +1,9 @@
 import mongoose from 'mongoose';
 
 export async function connectMongo() {
+
   const uri = process.env.MONGODB_URI;
+  console.log("[DEBUG] MONGODB_URI:", uri);
 
   if (!uri) {
     console.error("❌ MONGODB_URI is missing!");
