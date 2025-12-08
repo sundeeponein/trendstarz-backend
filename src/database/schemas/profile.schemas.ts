@@ -37,7 +37,6 @@ export const InfluencerSchema = new Schema({
   categories: [{ type: String }],
   location: {
     state: { type: String },
-    district: { type: String },
   },
   socialMedia: [{
     platform: { type: String },
@@ -66,7 +65,6 @@ export const BrandSchema = new Schema({
   categories: [{ type: String }],
   location: {
     state: { type: String },
-    district: { type: String },
     googleMapLink: { type: String },
   },
   products: [{ type: String }], // For premium brands, up to 3 product images
@@ -92,12 +90,6 @@ export const StateSchema = new Schema({
 });
 export const StateModel = model('State', StateSchema);
 
-export const DistrictSchema = new Schema({
-  name: { type: String, required: true },
-  state: { type: Types.ObjectId, ref: 'State' },
-  showInFrontend: { type: Boolean, default: true },
-});
-export const DistrictModel = model('District', DistrictSchema);
 
 export const SocialMediaSchema = new Schema({
   name: { type: String, required: true },

@@ -2,14 +2,13 @@ import { Module } from '@nestjs/common';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { AdminListsController } from './admin-lists.controller';
-import { CategoriesController, StatesController, DistrictsController, SocialMediaController, TiersController, LanguagesController } from './public-lists.controller';
+import { CategoriesController, StatesController, SocialMediaController, TiersController, LanguagesController } from './public-lists.controller';
 import { MongooseModule } from '@nestjs/mongoose';
 import { ConfigModule } from '@nestjs/config';
 import { MongoLogger } from './database/mongo-logger';
 import { 
   CategorySchema, 
   StateSchema, 
-  DistrictSchema, 
   SocialMediaSchema, 
   LanguageSchema, 
   UserSchema,
@@ -38,7 +37,6 @@ console.log('[DEBUG] process.cwd():', process.cwd());
     MongooseModule.forFeature([
       { name: 'Category', schema: CategorySchema, collection: 'categories' },
       { name: 'State', schema: StateSchema, collection: 'states' },
-      { name: 'District', schema: DistrictSchema, collection: 'districts' },
       { name: 'SocialMedia', schema: SocialMediaSchema, collection: 'socialmedias' },
       { name: 'Language', schema: LanguageSchema, collection: 'languages' },
       { name: 'User', schema: UserSchema, collection: 'users' },
@@ -53,7 +51,6 @@ console.log('[DEBUG] process.cwd():', process.cwd());
     AdminListsController,
     CategoriesController,
     StatesController,
-    DistrictsController,
     SocialMediaController,
     TiersController,
     LanguagesController,

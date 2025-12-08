@@ -1,9 +1,10 @@
 [
   {
+    "_id": "admin1",
+    "role": "admin",
     "name": "Admin User",
     "email": "admin@trendstarz.com",
     "password": "admin123",
-    "role": "admin",
     "visible": true
   },
   {
@@ -16,7 +17,7 @@
     "profileImages": ["https://example.com/alice.jpg"],
     "isPremium": true,
     "categories": ["cat1"],
-    "location": { "state": "state1", "district": "district1" },
+    "location": { "state": "state1" },
     "socialMedia": [
       { "platform": "instagram", "handle": "@alice", "tier": "A", "followersCount": 12000 }
     ],
@@ -33,7 +34,7 @@
     "profileImages": ["https://example.com/bob.jpg"],
     "isPremium": false,
     "categories": ["cat2"],
-    "location": { "state": "state2", "district": "district2" },
+    "location": { "state": "state2" },
     "socialMedia": [
       { "platform": "twitter", "handle": "@bob", "tier": "B", "followersCount": 8000 }
     ],
@@ -50,7 +51,7 @@
     "brandLogo": ["https://example.com/carol-logo.jpg"],
     "isPremium": true,
     "categories": ["cat3"],
-    "location": { "state": "state3", "district": "district3", "googleMapLink": "https://maps.example.com/carol" },
+    "location": { "state": "state3", "googleMapLink": "https://maps.example.com/carol" },
     "products": ["Lipstick", "Foundation"],
     "contact": { "whatsapp": true, "email": false, "call": true },
     "status": "accepted"

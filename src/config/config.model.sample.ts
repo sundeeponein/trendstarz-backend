@@ -3,14 +3,7 @@ import { Schema } from 'mongoose';
 
 export const StateSchema = new Schema({
   state: String,
-  visible: Boolean,
-  districts: [
-    {
-      _id: String,
-      name: String,
-      visible: Boolean
-    }
-  ]
+  visible: Boolean
 });
 
 export const CategorySchema = new Schema({

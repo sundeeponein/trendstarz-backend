@@ -4,9 +4,6 @@ import { Type } from 'class-transformer';
 export class LocationDto {
   @IsMongoId()
   state: string;
-
-  @IsMongoId()
-  district: string;
 }
 
 export class BrandLocationDto extends LocationDto {
