@@ -1,8 +1,6 @@
 import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module';
-import mongoose from 'mongoose';
-
-import { connectMongo } from './mongo-connection';
+// Removed manual mongoose connection logic. Use only MongooseModule.forRoot in AppModule.
 
 async function bootstrap() {
   // MongoDB connection disabled for test deployment

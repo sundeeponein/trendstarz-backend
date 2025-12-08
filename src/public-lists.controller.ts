@@ -1,51 +1,69 @@
 import { Controller, Get } from '@nestjs/common';
-import { TierModel, LanguageModel, CategoryModel, StateModel, DistrictModel, SocialMediaModel } from './database/schemas/profile.schemas';
+import { InjectModel } from '@nestjs/mongoose';
+import { Model } from 'mongoose';
 
 @Controller('tiers')
 export class TiersController {
+  constructor(@InjectModel('Tier') private readonly tierModel: Model<any>) {}
+
   @Get()
   async getAll() {
-    const tiers = await TierModel.find({}).lean().limit(100);
+    const tiers = await this.tierModel.find({}).lean().limit(100);
     return tiers.length ? tiers : [];
   }
 }
 
 @Controller('languages')
 export class LanguagesController {
+  constructor(@InjectModel('Language') private readonly languageModel: Model<any>) {}
+
   @Get()
   async getAll() {
-    return LanguageModel.find({}).lean().limit(100);
+    const languages = await this.languageModel.find({}).lean().limit(100);
+    return languages.length ? languages : [];
   }
 }
 
 @Controller('categories')
 export class CategoriesController {
+  constructor(@InjectModel('Category') private readonly categoryModel: Model<any>) {}
+
   @Get()
   async getAll() {
-    return CategoryModel.find({}).lean().limit(100);
+    const categories = await this.categoryModel.find({}).lean().limit(100);
+    return categories.length ? categories : [];
   }
 }
 
 @Controller('states')
 export class StatesController {
+  constructor(@InjectModel('State') private readonly stateModel: Model<any>) {}
+
   @Get()
   async getAll() {
-    return StateModel.find({}).lean().limit(100);
+    const states = await this.stateModel.find({}).lean().limit(100);
+    return states.length ? states : [];
   }
 }
 
 @Controller('districts')
 export class DistrictsController {
+  constructor(@InjectModel('District') private readonly districtModel: Model<any>) {}
+
   @Get()
   async getAll() {
-    return DistrictModel.find({}).populate('state').lean().limit(100);
+    const districts = await this.districtModel.find({}).populate('state').lean().limit(100);
+    return districts.length ? districts : [];
   }
 }
 
 @Controller('social-media')
 export class SocialMediaController {
+  constructor(@InjectModel('SocialMedia') private readonly socialMediaModel: Model<any>) {}
+
   @Get()
   async getAll() {
-    return SocialMediaModel.find({}).lean().limit(100);
+    const socials = await this.socialMediaModel.find({}).lean().limit(100);
+    return socials.length ? socials : [];
   }
 }
