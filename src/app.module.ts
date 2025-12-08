@@ -17,12 +17,15 @@ import {
   BrandSchema,
   TierSchema,
 } from './database/schemas/profile.schemas';
+
 import { AuthService } from './auth/auth.service';
 import { AuthController } from './auth/auth.controller';
 import { UsersModule } from './users/users.module';
 // import { PaymentController } from './payment/payment.controller';
 // import { PaymentService } from './payment/payment.service';
 // import { StripeService } from './payment/stripe.service';
+
+console.log('[DEBUG][MongooseModule] MONGODB_URI:', process.env.MONGODB_URI);
 
 @Module({
   imports: [
