@@ -26,6 +26,8 @@ import { UsersModule } from './users/users.module';
 // import { StripeService } from './payment/stripe.service';
 
 console.log('[DEBUG][MongooseModule] MONGODB_URI:', process.env.MONGODB_URI);
+console.log('[DEBUG] process.cwd():', process.cwd());
+
 
 @Module({
   imports: [
@@ -61,4 +63,9 @@ console.log('[DEBUG][MongooseModule] MONGODB_URI:', process.env.MONGODB_URI);
   ],
   providers: [AppService, AuthService, MongoLogger /*, PaymentService, StripeService*/],
 })
-export class AppModule {}
+export class AppModule {
+  constructor() {
+    console.log('[DEBUG][MongooseModule] MONGODB_URI:', process.env.MONGODB_URI);
+    console.log('[DEBUG] process.cwd():', process.cwd());
+  }
+}
