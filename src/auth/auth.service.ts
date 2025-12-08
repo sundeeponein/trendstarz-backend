@@ -13,6 +13,22 @@ export class AuthService {
     // ...existing code...
   }
 
+    async registerInfluencer(data: any) {
+      // Check if influencer already exists
+      const existing = await InfluencerModel.findOne({ email: data.email });
+      if (existing) {
+        throw new BadRequestException('Influencer already exists');
+      }
+      // Hash password
+      const hashedPassword = await bcrypt.hash(data.password, 10);
+      const influencer = new InfluencerModel({
+        ...data,
+        password: hashedPassword,
+      });
+      await influencer.save();
+      return { success: true, message: 'Influencer registered', influencer };
+    }
+
   async sendOtp(email: string) {
     // Generate OTP
     const otp = Math.floor(100000 + Math.random() * 900000).toString();
