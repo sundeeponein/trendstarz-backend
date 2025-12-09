@@ -1,10 +1,36 @@
 import { Controller, Get, Post, Put, Delete, Body, Param, Patch, UseGuards, BadRequestException } from '@nestjs/common';
 import { JwtAuthGuard } from './auth/jwt-auth.guard';
-import { CategoryModel, StateModel, SocialMediaModel, LanguageModel } from './database/schemas/profile.schemas';
-import { TierModel } from './database/schemas/profile.schemas';
+import { CategoryModel, StateModel, SocialMediaModel, LanguageModel, TierModel } from './database/schemas/profile.schemas';
+import { InjectModel } from '@nestjs/mongoose';
+import { Model } from 'mongoose';
 
 @Controller('admin')
 export class AdminListsController {
+  constructor(
+    @InjectModel('Influencer') private readonly influencerModel: Model<any>,
+    @InjectModel('Brand') private readonly brandModel: Model<any>
+  ) {}
+  // Debug endpoint to log influencer and brand data
+  @Get('debug-users')
+  async debugUsers() {
+    try {
+      const influencers = await this.influencerModel.find({}).lean().limit(5);
+      const brands = await this.brandModel.find({}).lean().limit(5);
+      return { influencers, brands };
+    } catch (err) {
+      throw new BadRequestException(err.message || 'Error fetching debug user data');
+    }
+  }
+  // Admin dashboard endpoints for influencers and brands
+  @Get('influencers')
+  async getAllInfluencers() {
+    return this.influencerModel.find({}).lean().limit(100);
+  }
+
+  @Get('brands')
+  async getAllBrands() {
+    return this.brandModel.find({}).lean().limit(100);
+  }
   @Patch('states/:id')
   async patchState(@Param('id') id: string, @Body() body: any) {
     return StateModel.findByIdAndUpdate(id, body, { new: true });
@@ -112,7 +138,7 @@ export class AdminListsController {
         for (const t of body.tiers) {
           const result = await TierModel.findByIdAndUpdate(t._id, { showInFrontend: t.showInFrontend });
           if (!result) {
-            console.error(`[BatchUpdate] Tier not found:`, t);
+              // console.error(`[BatchUpdate] Tier not found:`, t);
             throw new BadRequestException(`Tier not found: ${t._id}`);
           }
         }
@@ -121,7 +147,7 @@ export class AdminListsController {
         for (const s of body.socialMedia) {
           const result = await SocialMediaModel.findByIdAndUpdate(s._id, { showInFrontend: s.showInFrontend });
           if (!result) {
-            console.error(`[BatchUpdate] SocialMedia not found:`, s);
+              // console.error(`[BatchUpdate] SocialMedia not found:`, s);
             throw new BadRequestException(`SocialMedia not found: ${s._id}`);
           }
         }
@@ -130,7 +156,7 @@ export class AdminListsController {
         for (const c of body.categories) {
           const result = await CategoryModel.findByIdAndUpdate(c._id, { showInFrontend: c.showInFrontend });
           if (!result) {
-            console.error(`[BatchUpdate] Category not found:`, c);
+              // console.error(`[BatchUpdate] Category not found:`, c);
             throw new BadRequestException(`Category not found: ${c._id}`);
           }
         }
@@ -139,7 +165,7 @@ export class AdminListsController {
         for (const l of body.languages) {
           const result = await LanguageModel.findByIdAndUpdate(l._id, { showInFrontend: l.showInFrontend });
           if (!result) {
-            console.error(`[BatchUpdate] Language not found:`, l);
+              // console.error(`[BatchUpdate] Language not found:`, l);
             throw new BadRequestException(`Language not found: ${l._id}`);
           }
         }
@@ -148,14 +174,14 @@ export class AdminListsController {
         for (const s of body.states) {
           const result = await StateModel.findByIdAndUpdate(s._id, { showInFrontend: s.showInFrontend });
           if (!result) {
-            console.error(`[BatchUpdate] State not found:`, s);
+              // console.error(`[BatchUpdate] State not found:`, s);
             throw new BadRequestException(`State not found: ${s._id}`);
           }
         }
       }
       return { message: 'Visibility updated' };
     } catch (err) {
-      console.error(`[BatchUpdate] Error:`, err);
+        // console.error(`[BatchUpdate] Error:`, err);
       throw new BadRequestException(err.message || 'Error updating visibility');
     }
   }

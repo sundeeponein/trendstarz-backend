@@ -24,29 +24,83 @@ export class AuthService {
   async login(email: string, password: string) {
     // Try to find admin user
     const user = await this.userModel.findOne({ email, role: 'admin' });
-    if (!user) {
-      throw new UnauthorizedException('Invalid credentials');
+    if (user) {
+      const isMatch = await bcrypt.compare(password, user.password);
+      if (!isMatch) {
+        throw new UnauthorizedException('Invalid credentials');
+      }
+      // Generate JWT token
+      const token = jwt.sign(
+        { userId: user._id, email: user.email, role: user.role },
+        process.env.JWT_SECRET || 'changeme',
+        { expiresIn: '7d' }
+      );
+      return {
+        token,
+        userType: user.role,
+        user: {
+          id: user._id,
+          name: user.name,
+          email: user.email,
+          role: user.role,
+        },
+      };
     }
-    const isMatch = await bcrypt.compare(password, user.password);
-    if (!isMatch) {
-      throw new UnauthorizedException('Invalid credentials');
+    // Check influencer
+    const influencer = await this.influencerModel.findOne({ email });
+    if (influencer) {
+      const isMatch = await bcrypt.compare(password, influencer.password);
+      if (!isMatch) {
+        throw new UnauthorizedException('Invalid credentials');
+      }
+      if (influencer.status === 'pending') {
+        throw new UnauthorizedException('Your account is pending approval. Please wait for admin to activate your account.');
+      }
+      // Generate JWT token
+      const token = jwt.sign(
+        { userId: influencer._id, email: influencer.email, role: 'influencer' },
+        process.env.JWT_SECRET || 'changeme',
+        { expiresIn: '7d' }
+      );
+      return {
+        token,
+        userType: 'influencer',
+        user: {
+          id: influencer._id,
+          name: influencer.name,
+          email: influencer.email,
+          role: 'influencer',
+        },
+      };
     }
-    // Generate JWT token
-    const token = jwt.sign(
-      { userId: user._id, email: user.email, role: user.role },
-      process.env.JWT_SECRET || 'changeme',
-      { expiresIn: '7d' }
-    );
-    return {
-      token,
-      userType: user.role,
-      user: {
-        id: user._id,
-        name: user.name,
-        email: user.email,
-        role: user.role,
-      },
-    };
+    // Check brand
+    const brand = await this.brandModel.findOne({ email });
+    if (brand) {
+      const isMatch = await bcrypt.compare(password, brand.password);
+      if (!isMatch) {
+        throw new UnauthorizedException('Invalid credentials');
+      }
+      if (brand.status === 'pending') {
+        throw new UnauthorizedException('Your account is pending approval. Please wait for admin to activate your account.');
+      }
+      // Generate JWT token
+      const token = jwt.sign(
+        { userId: brand._id, email: brand.email, role: 'brand' },
+        process.env.JWT_SECRET || 'changeme',
+        { expiresIn: '7d' }
+      );
+      return {
+        token,
+        userType: 'brand',
+        user: {
+          id: brand._id,
+          name: brand.brandName,
+          email: brand.email,
+          role: 'brand',
+        },
+      };
+    }
+    throw new UnauthorizedException('Invalid credentials');
   }
 
     async registerInfluencer(data: any) {
