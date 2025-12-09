@@ -19,10 +19,12 @@ import {
 
 import { AuthService } from './auth/auth.service';
 import { AuthController } from './auth/auth.controller';
+import { AdminUserTableController } from './admin/admin-user-table.controller';
 import { UsersModule } from './users/users.module';
 // import { PaymentController } from './payment/payment.controller';
 // import { PaymentService } from './payment/payment.service';
 // import { StripeService } from './payment/stripe.service';
+import { HealthController } from './health.controller';
 
 console.log('[DEBUG][MongooseModule] MONGODB_URI:', process.env.MONGODB_URI);
 console.log('[DEBUG] process.cwd():', process.cwd());
@@ -55,6 +57,8 @@ console.log('[DEBUG] process.cwd():', process.cwd());
     TiersController,
     LanguagesController,
     AuthController,
+    HealthController,
+    AdminUserTableController,
     // SeedController,
     // PaymentController,
   ],

@@ -1,4 +1,5 @@
-import { Controller, Get, Post, Put, Delete, Body, Param, Patch } from '@nestjs/common';
+import { Controller, Get, Post, Put, Delete, Body, Param, Patch, UseGuards, BadRequestException } from '@nestjs/common';
+import { JwtAuthGuard } from './auth/jwt-auth.guard';
 import { CategoryModel, StateModel, SocialMediaModel, LanguageModel } from './database/schemas/profile.schemas';
 import { TierModel } from './database/schemas/profile.schemas';
 
@@ -102,34 +103,60 @@ export class AdminListsController {
     return SocialMediaModel.findByIdAndDelete(id);
   }
 
+  @UseGuards(JwtAuthGuard)
   @Post('batch-update-visibility')
   async batchUpdateVisibility(@Body() body: any) {
-    // Each key is an array of {_id, showInFrontend}
-    if (body.tiers) {
-      for (const t of body.tiers) {
-        await TierModel.findByIdAndUpdate(t._id, { showInFrontend: t.showInFrontend });
+    try {
+      // Each key is an array of {_id, showInFrontend}
+      if (body.tiers) {
+        for (const t of body.tiers) {
+          const result = await TierModel.findByIdAndUpdate(t._id, { showInFrontend: t.showInFrontend });
+          if (!result) {
+            console.error(`[BatchUpdate] Tier not found:`, t);
+            throw new BadRequestException(`Tier not found: ${t._id}`);
+          }
+        }
       }
-    }
-    if (body.socialMedia) {
-      for (const s of body.socialMedia) {
-        await SocialMediaModel.findByIdAndUpdate(s._id, { showInFrontend: s.showInFrontend });
+      if (body.socialMedia) {
+        for (const s of body.socialMedia) {
+          const result = await SocialMediaModel.findByIdAndUpdate(s._id, { showInFrontend: s.showInFrontend });
+          if (!result) {
+            console.error(`[BatchUpdate] SocialMedia not found:`, s);
+            throw new BadRequestException(`SocialMedia not found: ${s._id}`);
+          }
+        }
       }
-    }
-    if (body.categories) {
-      for (const c of body.categories) {
-        await CategoryModel.findByIdAndUpdate(c._id, { showInFrontend: c.showInFrontend });
+      if (body.categories) {
+        for (const c of body.categories) {
+          const result = await CategoryModel.findByIdAndUpdate(c._id, { showInFrontend: c.showInFrontend });
+          if (!result) {
+            console.error(`[BatchUpdate] Category not found:`, c);
+            throw new BadRequestException(`Category not found: ${c._id}`);
+          }
+        }
       }
-    }
-    if (body.languages) {
-      for (const l of body.languages) {
-        await LanguageModel.findByIdAndUpdate(l._id, { showInFrontend: l.showInFrontend });
+      if (body.languages) {
+        for (const l of body.languages) {
+          const result = await LanguageModel.findByIdAndUpdate(l._id, { showInFrontend: l.showInFrontend });
+          if (!result) {
+            console.error(`[BatchUpdate] Language not found:`, l);
+            throw new BadRequestException(`Language not found: ${l._id}`);
+          }
+        }
       }
-    }
-    if (body.states) {
-      for (const s of body.states) {
-        await StateModel.findByIdAndUpdate(s._id, { showInFrontend: s.showInFrontend });
+      if (body.states) {
+        for (const s of body.states) {
+          const result = await StateModel.findByIdAndUpdate(s._id, { showInFrontend: s.showInFrontend });
+          if (!result) {
+            console.error(`[BatchUpdate] State not found:`, s);
+            throw new BadRequestException(`State not found: ${s._id}`);
+          }
+        }
       }
+      return { message: 'Visibility updated' };
+    } catch (err) {
+      console.error(`[BatchUpdate] Error:`, err);
+      throw new BadRequestException(err.message || 'Error updating visibility');
     }
-    return { message: 'Visibility updated' };
   }
 }

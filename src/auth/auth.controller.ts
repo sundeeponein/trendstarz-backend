@@ -1,4 +1,5 @@
-import { Controller, Post, Body } from '@nestjs/common';
+import { Controller, Post, Body, Res } from '@nestjs/common';
+import type { Response } from 'express';
 import { AuthService } from './auth.service';
 
 @Controller('auth')
@@ -6,14 +7,22 @@ export class AuthController {
   constructor(private readonly authService: AuthService) {}
 
   @Post('login')
-  async login(@Body() body: { email: string; password: string }) {
-    return this.authService.login(body.email, body.password);
+  async login(@Body() body: { email: string; password: string }, @Res() res: Response) {
+    const result = await this.authService.login(body.email, body.password);
+    return res.status(200).json(result);
   }
 
-    @Post('register-influencer')
-    async registerInfluencer(@Body() body: any) {
-      return this.authService.registerInfluencer(body);
-    }
+  @Post('register-influencer')
+  async registerInfluencer(@Body() body: any, @Res() res: Response) {
+    const result = await this.authService.registerInfluencer(body);
+    return res.status(201).json(result);
+  }
+
+  @Post('register-brand')
+  async registerBrand(@Body() body: any, @Res() res: Response) {
+    const result = await this.authService.registerBrand(body);
+    return res.status(201).json(result);
+  }
 
   @Post('send-otp')
   async sendOtp(@Body() body: { email: string }) {

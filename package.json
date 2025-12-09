@@ -10,16 +10,12 @@
   "license": "UNLICENSED",
   "scripts": {
     "build": "node node_modules/@nestjs/cli/bin/nest.js build",
-    "format": "prettier --write \"src/**/*.ts\" \"test/**/*.ts\"",
     "start": "NODE_OPTIONS=--max-old-space-size=2048 node node_modules/@nestjs/cli/bin/nest.js start",
     "start:dev": "node node_modules/@nestjs/cli/bin/nest.js start --watch",
-    "start:debug": "node node_modules/@nestjs/cli/bin/nest.js start --debug --watch",
+    "build:prod": "node node_modules/@nestjs/cli/bin/nest.js build --configuration production",
     "start:prod": "node dist/main.js",
     "lint": "eslint \"{src,apps,libs,test}/**/*.ts\" --fix",
     "test": "jest",
-    "test:watch": "jest --watch",
-    "test:cov": "jest --coverage",
-    "test:debug": "node --inspect-brk -r tsconfig-paths/register -r ts-node/register node_modules/.bin/jest --runInBand",
     "test:e2e": "jest --config ./test/jest-e2e.json",
     "seeder": "node dist/run-seeder.js"
   },
