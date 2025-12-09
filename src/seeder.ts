@@ -125,31 +125,33 @@ export async function seedDatabase() {
     { upsert: true }
   );
 
-  // Seed Influencers and Brands from sample-users.json
-  const samplePath = path.join(__dirname, '../sample-users.json');
+  // Seed Influencers and Brands from sample-users.json in assets folder
+  const samplePath = path.join(__dirname, '../assets/sample-users.json');
   if (fs.existsSync(samplePath)) {
     const raw = fs.readFileSync(samplePath, 'utf-8');
     const users = JSON.parse(raw);
     const influencers = users.filter((u: any) => u.username);
     const brands = users.filter((u: any) => u.brandName);
-    // Avoid duplicate influencer names
+    // Avoid duplicate influencer names and hash passwords
     for (const inf of influencers) {
-      const exists = await InfluencerModel.findOne({ name: inf.name });
+      const exists = await InfluencerModel.findOne({ email: inf.email });
       if (!exists) {
-        await InfluencerModel.create(inf);
+        const hashed = await bcrypt.hash(inf.password, 10);
+        await InfluencerModel.create({ ...inf, password: hashed });
         console.log(`Seeded influencer: ${inf.name}`);
       }
     }
-    // Avoid duplicate brand names
+    // Avoid duplicate brand names and hash passwords
     for (const brand of brands) {
-      const exists = await BrandModel.findOne({ name: brand.name });
+      const exists = await BrandModel.findOne({ email: brand.email });
       if (!exists) {
-        await BrandModel.create(brand);
+        const hashed = await bcrypt.hash(brand.password, 10);
+        await BrandModel.create({ ...brand, password: hashed });
         console.log(`Seeded brand: ${brand.name}`);
       }
     }
   } else {
-    console.log('sample-users.json not found, skipping influencer/brand seeding.');
+    console.log('sample-users.json not found in assets, skipping influencer/brand seeding.');
   }
 
   console.log('Seeding complete. Admin login: admin@trendstarz.com / admin123');

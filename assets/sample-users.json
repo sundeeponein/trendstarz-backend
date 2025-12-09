@@ -16,8 +16,8 @@
     "username": "alice_influencer",
     "profileImages": ["https://example.com/alice.jpg"],
     "isPremium": true,
-    "categories": ["cat1"],
-    "location": { "state": "state1" },
+    "categories": ["Fashion"],
+    "location": { "state": "Goa" },
     "socialMedia": [
       { "platform": "instagram", "handle": "@alice", "tier": "A", "followersCount": 12000 }
     ],
@@ -33,8 +33,8 @@
     "username": "bob_influencer",
     "profileImages": ["https://example.com/bob.jpg"],
     "isPremium": false,
-    "categories": ["cat2"],
-    "location": { "state": "state2" },
+    "categories": ["Tech", "Gaming"],
+    "location": { "state": "Maharashtra" },
     "socialMedia": [
       { "platform": "twitter", "handle": "@bob", "tier": "B", "followersCount": 8000 }
     ],
@@ -50,8 +50,8 @@
     "phoneNumber": "9876543212",
     "brandLogo": ["https://example.com/carol-logo.jpg"],
     "isPremium": true,
-    "categories": ["cat3"],
-    "location": { "state": "state3", "googleMapLink": "https://maps.example.com/carol" },
+    "categories": ["Fashion"],
+    "location": { "state": "Goa", "googleMapLink": "https://maps.example.com/carol" },
     "products": ["Lipstick", "Foundation"],
     "contact": { "whatsapp": true, "email": false, "call": true },
     "status": "accepted"
