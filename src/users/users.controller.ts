@@ -1,7 +1,9 @@
-import { Controller, Post, Body, UseGuards, Patch, Param, Get } from '@nestjs/common';
+
+import { Controller, Post, Body, UseGuards, Patch, Param, Get, Req } from '@nestjs/common';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { InfluencerProfileDto, BrandProfileDto } from './dto/profile.dto';
 import { UsersService } from './users.service';
+import type { Request } from 'express';
 
 @Controller('users')
 export class UsersController {
@@ -67,4 +69,17 @@ export class UsersController {
     async setPremium(@Param('id') id: string, @Body() body: { isPremium: boolean, premiumDuration?: string }) {
       return this.usersService.setPremium(id, body.isPremium, body.premiumDuration);
     }
+  @UseGuards(JwtAuthGuard)
+  @Get('influencer-profile')
+  async getInfluencerProfile(@Req() req: any) {
+    const userId = req.user?.sub || req.user?.id;
+    return this.usersService.getInfluencerProfileById(userId);
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Get('brand-profile')
+  async getBrandProfile(@Req() req: any) {
+    const userId = req.user?.sub || req.user?.id;
+    return this.usersService.getBrandProfileById(userId);
+  }
 }

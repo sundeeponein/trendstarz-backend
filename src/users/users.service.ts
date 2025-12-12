@@ -1,3 +1,4 @@
+
 import { Injectable } from '@nestjs/common';
 import { CloudinaryService } from '../cloudinary.service';
 import { InfluencerProfileDto, BrandProfileDto } from './dto/profile.dto';
@@ -107,14 +108,57 @@ export class UsersService {
     if (brand) return { message: 'User permanently deleted', user: brand };
     return { message: 'User not found', id };
   }
-    async setPremium(id: string, isPremium: boolean, premiumDuration?: string) {
-      const update: any = { isPremium };
-      if (isPremium && premiumDuration) update.premiumDuration = premiumDuration;
-      if (!isPremium) update.premiumDuration = null;
-  const influencer = await this.influencerModel.findByIdAndUpdate(id, update, { new: true });
-      if (influencer) return { message: 'Premium status updated', user: influencer };
-  const brand = await this.brandModel.findByIdAndUpdate(id, update, { new: true });
-      if (brand) return { message: 'Premium status updated', user: brand };
-      return { message: 'User not found', id };
-    }
+
+  async setPremium(id: string, isPremium: boolean, premiumDuration?: string) {
+    const update: any = { isPremium };
+    if (isPremium && premiumDuration) update.premiumDuration = premiumDuration;
+    if (!isPremium) update.premiumDuration = null;
+    const influencer = await this.influencerModel.findByIdAndUpdate(id, update, { new: true });
+    if (influencer) return { message: 'Premium status updated', user: influencer };
+    const brand = await this.brandModel.findByIdAndUpdate(id, update, { new: true });
+    if (brand) return { message: 'Premium status updated', user: brand };
+    return { message: 'User not found', id };
+  }
+  async getInfluencerProfileById(userId: string) {
+    const user = await this.influencerModel.findById(userId).lean();
+    if (!user || Array.isArray(user)) return null;
+    // Only return fields needed by frontend
+    return {
+      username: user.username,
+      phoneNumber: user.phoneNumber,
+      name: user.name,
+      email: user.email,
+      paymentOption: user.isPremium ? 'premium' : 'free',
+      location: user.location || { state: '' },
+      languages: user.languages || [],
+      categories: user.categories || [],
+      website: user.website || '',
+      googleMapAddress: user.googleMapAddress || '',
+      profileImages: user.profileImages || [],
+      socialMedia: user.socialMedia || [],
+      contact: user.contact || { whatsapp: false, email: false, call: false },
+    };
+  }
+
+  async getBrandProfileById(userId: string) {
+    const user = await this.brandModel.findById(userId).lean();
+    if (!user || Array.isArray(user)) return null;
+    // Only return fields needed by frontend
+    return {
+      brandName: user.brandName,
+      phoneNumber: user.phoneNumber,
+      email: user.email,
+      isPremium: user.isPremium || false,
+      paymentOption: user.isPremium ? 'premium' : 'free',
+      location: user.location || { state: '' },
+      languages: user.languages || [],
+      categories: user.categories || [],
+      website: user.website || '',
+      googleMapAddress: user.googleMapAddress || '',
+      brandLogo: user.brandLogo || [],
+      productImages: user.productImages || [],
+      socialMedia: user.socialMedia || [],
+      contact: user.contact || { whatsapp: false, email: false, call: false },
+    };
+  }
 }
