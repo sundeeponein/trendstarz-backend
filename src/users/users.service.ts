@@ -1,11 +1,9 @@
-
 import { Injectable } from '@nestjs/common';
 import { CloudinaryService } from '../cloudinary.service';
 import { InfluencerProfileDto, BrandProfileDto } from './dto/profile.dto';
 import * as bcrypt from 'bcryptjs';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
-
 
 @Injectable()
 export class UsersService {
@@ -33,8 +31,8 @@ export class UsersService {
       dto.password = await bcrypt.hash(dto.password, 10);
     }
     // Save influencer to DB
-  const influencer = new this.influencerModel(dto);
-  return await influencer.save();
+    const influencer = new this.influencerModel(dto);
+    return await influencer.save();
   }
 
   async registerBrand(dto: BrandProfileDto) {
@@ -55,56 +53,54 @@ export class UsersService {
       dto.password = await bcrypt.hash(dto.password, 10);
     }
     // Save brand to DB
-  const brand = new this.brandModel(dto);
-  return await brand.save();
+    const brand = new this.brandModel(dto);
+    return await brand.save();
   }
 
   async getInfluencers() {
-    // Use lean and limit for memory efficiency; add skip for pagination if needed
-  return await this.influencerModel.find({}).lean().limit(100);
+    return await this.influencerModel.find({}).lean().limit(100);
   }
 
   async getBrands() {
-    // Use lean and limit for memory efficiency; add skip for pagination if needed
-  return await this.brandModel.find({}).lean().limit(100);
+    return await this.brandModel.find({}).lean().limit(100);
   }
 
   async acceptUser(id: string) {
-  const influencer = await this.influencerModel.findByIdAndUpdate(id, { status: 'accepted' }, { new: true });
+    const influencer = await this.influencerModel.findByIdAndUpdate(id, { status: 'accepted' }, { new: true });
     if (influencer) return { message: 'User accepted', user: influencer };
-  const brand = await this.brandModel.findByIdAndUpdate(id, { status: 'accepted' }, { new: true });
+    const brand = await this.brandModel.findByIdAndUpdate(id, { status: 'accepted' }, { new: true });
     if (brand) return { message: 'User accepted', user: brand };
     return { message: 'User not found', id };
   }
 
   async declineUser(id: string) {
-  const influencer = await this.influencerModel.findByIdAndUpdate(id, { status: 'declined' }, { new: true });
+    const influencer = await this.influencerModel.findByIdAndUpdate(id, { status: 'declined' }, { new: true });
     if (influencer) return { message: 'User declined', user: influencer };
-  const brand = await this.brandModel.findByIdAndUpdate(id, { status: 'declined' }, { new: true });
+    const brand = await this.brandModel.findByIdAndUpdate(id, { status: 'declined' }, { new: true });
     if (brand) return { message: 'User declined', user: brand };
     return { message: 'User not found', id };
   }
 
   async deleteUser(id: string) {
-  const influencer = await this.influencerModel.findByIdAndUpdate(id, { status: 'deleted' }, { new: true });
+    const influencer = await this.influencerModel.findByIdAndUpdate(id, { status: 'deleted' }, { new: true });
     if (influencer) return { message: 'User deleted', user: influencer };
-  const brand = await this.brandModel.findByIdAndUpdate(id, { status: 'deleted' }, { new: true });
+    const brand = await this.brandModel.findByIdAndUpdate(id, { status: 'deleted' }, { new: true });
     if (brand) return { message: 'User deleted', user: brand };
     return { message: 'User not found', id };
   }
 
   async restoreUser(id: string) {
-  const influencer = await this.influencerModel.findByIdAndUpdate(id, { status: 'pending' }, { new: true });
+    const influencer = await this.influencerModel.findByIdAndUpdate(id, { status: 'pending' }, { new: true });
     if (influencer) return { message: 'User restored', user: influencer };
-  const brand = await this.brandModel.findByIdAndUpdate(id, { status: 'pending' }, { new: true });
+    const brand = await this.brandModel.findByIdAndUpdate(id, { status: 'pending' }, { new: true });
     if (brand) return { message: 'User restored', user: brand };
     return { message: 'User not found', id };
   }
 
   async deletePermanently(id: string) {
-  const influencer = await this.influencerModel.findByIdAndDelete(id);
+    const influencer = await this.influencerModel.findByIdAndDelete(id);
     if (influencer) return { message: 'User permanently deleted', user: influencer };
-  const brand = await this.brandModel.findByIdAndDelete(id);
+    const brand = await this.brandModel.findByIdAndDelete(id);
     if (brand) return { message: 'User permanently deleted', user: brand };
     return { message: 'User not found', id };
   }
@@ -119,10 +115,10 @@ export class UsersService {
     if (brand) return { message: 'Premium status updated', user: brand };
     return { message: 'User not found', id };
   }
+
   async getInfluencerProfileById(userId: string) {
     const user = await this.influencerModel.findById(userId).lean();
     if (!user || Array.isArray(user)) return null;
-    // Only return fields needed by frontend
     return {
       username: user.username,
       phoneNumber: user.phoneNumber,
@@ -143,7 +139,6 @@ export class UsersService {
   async getBrandProfileById(userId: string) {
     const user = await this.brandModel.findById(userId).lean();
     if (!user || Array.isArray(user)) return null;
-    // Only return fields needed by frontend
     return {
       brandName: user.brandName,
       phoneNumber: user.phoneNumber,
@@ -160,5 +155,23 @@ export class UsersService {
       socialMedia: user.socialMedia || [],
       contact: user.contact || { whatsapp: false, email: false, call: false },
     };
+  }
+
+  async updateInfluencerProfile(userId: string, update: any) {
+    if (update.password) delete update.password;
+    const allowedFields = [
+      'name', 'username', 'phoneNumber', 'email', 'paymentOption', 'location',
+      'languages', 'categories', 'profileImages', 'socialMedia', 'contact'
+    ];
+    const updateData: any = {};
+    for (const key of allowedFields) {
+      if (update[key] !== undefined) updateData[key] = update[key];
+    }
+    if (update.paymentOption) {
+      updateData.isPremium = update.paymentOption === 'premium';
+    }
+    const updated = await this.influencerModel.findByIdAndUpdate(userId, updateData, { new: true });
+    if (!updated) return { message: 'Influencer not found', userId };
+    return { message: 'Profile updated', user: updated };
   }
 }

@@ -65,6 +65,10 @@ export class InfluencerProfileDto {
   @IsMongoId({ each: true })
   categories: string[];
 
+  @IsArray()
+  @IsMongoId({ each: true })
+  languages: string[];
+
   @Type(() => LocationDto)
   @ValidateNested()
   location: LocationDto;
@@ -103,6 +107,10 @@ export class BrandProfileDto {
   @IsArray()
   @IsMongoId({ each: true })
   categories: string[];
+
+  @IsArray()
+  @IsMongoId({ each: true })
+  languages: string[];
 
   @Type(() => BrandLocationDto)
   @ValidateNested()

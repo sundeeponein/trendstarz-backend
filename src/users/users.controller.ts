@@ -69,17 +69,27 @@ export class UsersController {
     async setPremium(@Param('id') id: string, @Body() body: { isPremium: boolean, premiumDuration?: string }) {
       return this.usersService.setPremium(id, body.isPremium, body.premiumDuration);
     }
+
   @UseGuards(JwtAuthGuard)
   @Get('influencer-profile')
   async getInfluencerProfile(@Req() req: any) {
-    const userId = req.user?.sub || req.user?.id;
+    console.log('[getInfluencerProfile] req.user:', req.user);
+    const userId = req.user?.userId || req.user?.sub || req.user?.id;
+    console.log('[getInfluencerProfileById] userId:', userId);
     return this.usersService.getInfluencerProfileById(userId);
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Patch('influencer-profile')
+  async updateInfluencerProfile(@Req() req: any, @Body() body: any) {
+    const userId = req.user?.userId || req.user?.sub || req.user?.id;
+    return this.usersService.updateInfluencerProfile(userId, body);
   }
 
   @UseGuards(JwtAuthGuard)
   @Get('brand-profile')
   async getBrandProfile(@Req() req: any) {
-    const userId = req.user?.sub || req.user?.id;
+  const userId = req.user?.userId || req.user?.sub || req.user?.id;
     return this.usersService.getBrandProfileById(userId);
   }
 }
