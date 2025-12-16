@@ -1,5 +1,4 @@
-
-import { Controller, Post, Body, UseGuards, Patch, Param, Get, Req } from '@nestjs/common';
+ import { Controller, Post, Body, UseGuards, Patch, Param, Get, Req } from '@nestjs/common';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { InfluencerProfileDto, BrandProfileDto } from './dto/profile.dto';
 import { UsersService } from './users.service';
@@ -92,4 +91,12 @@ export class UsersController {
   const userId = req.user?.userId || req.user?.sub || req.user?.id;
     return this.usersService.getBrandProfileById(userId);
   }
+
+  @UseGuards(JwtAuthGuard)
+  @Patch('brand-profile')
+  async updateBrandProfile(@Req() req: any, @Body() body: any) {
+    const userId = req.user?.userId || req.user?.sub || req.user?.id;
+    return this.usersService.updateBrandProfile(userId, body);
+  }
+
 }

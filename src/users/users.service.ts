@@ -107,8 +107,21 @@ export class UsersService {
 
   async setPremium(id: string, isPremium: boolean, premiumDuration?: string) {
     const update: any = { isPremium };
-    if (isPremium && premiumDuration) update.premiumDuration = premiumDuration;
-    if (!isPremium) update.premiumDuration = null;
+    if (isPremium && premiumDuration) {
+      update.premiumDuration = premiumDuration;
+      // Set premiumStart to now, premiumEnd based on duration
+      const now = new Date();
+      update.premiumStart = now;
+      let end = new Date(now);
+      if (premiumDuration === '1m') end.setMonth(end.getMonth() + 1);
+      else if (premiumDuration === '3m') end.setMonth(end.getMonth() + 3);
+      else if (premiumDuration === '1y') end.setFullYear(end.getFullYear() + 1);
+      update.premiumEnd = end;
+    } else {
+      update.premiumDuration = null;
+      update.premiumStart = null;
+      update.premiumEnd = null;
+    }
     const influencer = await this.influencerModel.findByIdAndUpdate(id, update, { new: true });
     if (influencer) return { message: 'Premium status updated', user: influencer };
     const brand = await this.brandModel.findByIdAndUpdate(id, update, { new: true });
@@ -133,6 +146,10 @@ export class UsersService {
       profileImages: user.profileImages || [],
       socialMedia: user.socialMedia || [],
       contact: user.contact || { whatsapp: false, email: false, call: false },
+      isPremium: user.isPremium || false,
+      premiumDuration: user.premiumDuration || null,
+      premiumStart: user.premiumStart || null,
+      premiumEnd: user.premiumEnd || null,
     };
   }
 
@@ -154,6 +171,9 @@ export class UsersService {
       productImages: user.productImages || [],
       socialMedia: user.socialMedia || [],
       contact: user.contact || { whatsapp: false, email: false, call: false },
+      premiumDuration: user.premiumDuration || null,
+      premiumStart: user.premiumStart || null,
+      premiumEnd: user.premiumEnd || null,
     };
   }
 
@@ -172,6 +192,24 @@ export class UsersService {
     }
     const updated = await this.influencerModel.findByIdAndUpdate(userId, updateData, { new: true });
     if (!updated) return { message: 'Influencer not found', userId };
+    return { message: 'Profile updated', user: updated };
+  }
+  async updateBrandProfile(userId: string, update: any) {
+    if (update.password) delete update.password;
+    const allowedFields = [
+      'brandName', 'phoneNumber', 'email', 'paymentOption', 'location',
+      'languages', 'categories', 'brandLogo', 'products', 'website', 'googleMapAddress',
+      'productImages', 'socialMedia', 'contact'
+    ];
+    const updateData: any = {};
+    for (const key of allowedFields) {
+      if (update[key] !== undefined) updateData[key] = update[key];
+    }
+    if (update.paymentOption) {
+      updateData.isPremium = update.paymentOption === 'premium';
+    }
+    const updated = await this.brandModel.findByIdAndUpdate(userId, updateData, { new: true });
+    if (!updated) return { message: 'Brand not found', userId };
     return { message: 'Profile updated', user: updated };
   }
 }
