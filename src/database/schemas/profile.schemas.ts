@@ -58,6 +58,13 @@ export const InfluencerSchema = new Schema({
 export const InfluencerModel = model('Influencer', InfluencerSchema);
 
 export const BrandSchema = new Schema({
+  socialMedia: [{
+    platform: { type: String },
+    handle: { type: String },
+    tier: { type: String },
+    followersCount: { type: Number },
+  }],
+  googleMapAddress: { type: String },
   password: { type: String, required: true },
   brandName: { type: String, required: true },
   email: { type: String, required: true, unique: true },
@@ -69,6 +76,7 @@ export const BrandSchema = new Schema({
   premiumEnd: { type: Date, default: null },
   categories: [{ type: String }],
   languages: [{ type: String }],
+  website: { type: String },
   location: {
     state: { type: String },
     googleMapLink: { type: String },
