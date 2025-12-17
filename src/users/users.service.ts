@@ -168,7 +168,7 @@ export class UsersService {
       website: user.website || '',
       googleMapAddress: user.googleMapAddress || '',
       brandLogo: user.brandLogo || [],
-      productImages: user.productImages || [],
+      productImages: user.products || [],
       socialMedia: user.socialMedia || [],
       contact: user.contact || { whatsapp: false, email: false, call: false },
       premiumDuration: user.premiumDuration || null,

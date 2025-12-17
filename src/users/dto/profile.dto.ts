@@ -84,6 +84,15 @@ export class InfluencerProfileDto {
 }
 
 export class BrandProfileDto {
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => SocialMediaDto)
+  @IsOptional()
+  socialMedia?: SocialMediaDto[];
+
+  @IsString()
+  @IsOptional()
+  googleMapAddress?: string;
   @IsString()
   password: string;
 
