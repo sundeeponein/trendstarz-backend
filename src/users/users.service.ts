@@ -14,47 +14,64 @@ export class UsersService {
   ) {}
 
   async registerInfluencer(dto: InfluencerProfileDto) {
-    if (dto.profileImages && dto.profileImages.length) {
-      const uploadedImages = [];
-      for (const img of dto.profileImages) {
-        if (img.startsWith('http')) {
-          uploadedImages.push(img);
-        } else {
-          const result = await this.cloudinaryService.uploadImage(img, 'profile_images');
-          uploadedImages.push(result.secure_url);
+    try {
+      if (dto.profileImages && dto.profileImages.length) {
+        const uploadedImages = [];
+        for (const img of dto.profileImages) {
+          if (img.startsWith('http')) {
+            uploadedImages.push(img);
+          } else {
+            const result = await this.cloudinaryService.uploadImage(img, 'profile_images');
+            uploadedImages.push(result.secure_url);
+          }
         }
+        dto.profileImages = uploadedImages;
       }
-      dto.profileImages = uploadedImages;
+      // Hash password before saving
+      if (dto.password) {
+        dto.password = await bcrypt.hash(dto.password, 10);
+      }
+      // Save influencer to DB
+      const influencer = new this.influencerModel(dto);
+      return await influencer.save();
+    } catch (err) {
+      if (err.code === 11000) {
+        const field = Object.keys(err.keyPattern)[0];
+        throw new Error(`${field} already exists`);
+      }
+      throw err;
     }
-    // Hash password before saving
-    if (dto.password) {
-      dto.password = await bcrypt.hash(dto.password, 10);
-    }
-    // Save influencer to DB
-    const influencer = new this.influencerModel(dto);
-    return await influencer.save();
   }
 
   async registerBrand(dto: BrandProfileDto) {
-    if (dto.brandLogo && dto.brandLogo.length) {
-      const uploadedImages = [];
-      for (const img of dto.brandLogo) {
-        if (img.startsWith('http')) {
-          uploadedImages.push(img);
-        } else {
-          const result = await this.cloudinaryService.uploadImage(img, 'profile_images');
-          uploadedImages.push(result.secure_url);
+    try {
+      if (dto.brandLogo && dto.brandLogo.length) {
+        const uploadedImages = [];
+        for (const img of dto.brandLogo) {
+          if (img.startsWith('http')) {
+            uploadedImages.push(img);
+          } else {
+            const result = await this.cloudinaryService.uploadImage(img, 'profile_images');
+            uploadedImages.push(result.secure_url);
+          }
         }
+        dto.brandLogo = uploadedImages;
       }
-      dto.brandLogo = uploadedImages;
+      // Hash password before saving
+      if (dto.password) {
+        dto.password = await bcrypt.hash(dto.password, 10);
+      }
+      // Save brand to DB
+      const brand = new this.brandModel(dto);
+      return await brand.save();
+    } catch (err) {
+      if (err.code === 11000) {
+        // Find which field is duplicated
+        const field = Object.keys(err.keyPattern)[0];
+        throw new Error(`${field} already exists`);
+      }
+      throw err;
     }
-    // Hash password before saving
-    if (dto.password) {
-      dto.password = await bcrypt.hash(dto.password, 10);
-    }
-    // Save brand to DB
-    const brand = new this.brandModel(dto);
-    return await brand.save();
   }
 
   async getInfluencers() {
