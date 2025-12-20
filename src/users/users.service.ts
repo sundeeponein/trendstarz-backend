@@ -122,7 +122,12 @@ export class UsersService {
     return { message: 'User not found', id };
   }
 
-  async setPremium(id: string, isPremium: boolean, premiumDuration?: string) {
+  async setPremium(
+    id: string,
+    isPremium: boolean,
+    premiumDuration?: string,
+    type?: 'influencer' | 'brand'
+  ) {
     const update: any = { isPremium };
     if (isPremium && premiumDuration) {
       update.premiumDuration = premiumDuration;
@@ -139,10 +144,13 @@ export class UsersService {
       update.premiumStart = null;
       update.premiumEnd = null;
     }
-    const influencer = await this.influencerModel.findByIdAndUpdate(id, update, { new: true });
-    if (influencer) return { message: 'Premium status updated', user: influencer };
-    const brand = await this.brandModel.findByIdAndUpdate(id, update, { new: true });
-    if (brand) return { message: 'Premium status updated', user: brand };
+    if (type === 'brand') {
+      const brand = await this.brandModel.findByIdAndUpdate(id, update, { new: true });
+      if (brand) return { message: 'Premium status updated', user: brand };
+    } else {
+      const influencer = await this.influencerModel.findByIdAndUpdate(id, update, { new: true });
+      if (influencer) return { message: 'Premium status updated', user: influencer };
+    }
     return { message: 'User not found', id };
   }
 

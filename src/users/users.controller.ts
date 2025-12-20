@@ -65,8 +65,11 @@ export class UsersController {
 
     @UseGuards(JwtAuthGuard)
     @Patch(':id/premium')
-    async setPremium(@Param('id') id: string, @Body() body: { isPremium: boolean, premiumDuration?: string }) {
-      return this.usersService.setPremium(id, body.isPremium, body.premiumDuration);
+    async setPremium(
+      @Param('id') id: string,
+      @Body() body: { isPremium: boolean, premiumDuration?: string, type?: 'influencer' | 'brand' }
+    ) {
+      return this.usersService.setPremium(id, body.isPremium, body.premiumDuration, body.type);
     }
 
   @UseGuards(JwtAuthGuard)
