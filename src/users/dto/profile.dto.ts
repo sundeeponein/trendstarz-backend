@@ -1,3 +1,10 @@
+export class ImageDto {
+  @IsString()
+  url: string;
+
+  @IsString()
+  public_id: string;
+}
 import { IsString, IsEmail, IsBoolean, IsArray, IsOptional, IsMongoId, IsUrl, ValidateNested, IsNumber, ArrayMaxSize, ArrayMinSize } from 'class-validator';
 import { Type } from 'class-transformer';
 
@@ -55,8 +62,9 @@ export class InfluencerProfileDto {
 
   @IsArray()
   @ArrayMaxSize(3)
-  @IsString({ each: true })
-  profileImages: string[];
+  @ValidateNested({ each: true })
+  @Type(() => ImageDto)
+  profileImages: ImageDto[];
 
   @IsBoolean()
   isPremium: boolean;
@@ -107,8 +115,9 @@ export class BrandProfileDto {
 
   @IsArray()
   @ArrayMaxSize(3)
-  @IsString({ each: true })
-  brandLogo: string[];
+  @ValidateNested({ each: true })
+  @Type(() => ImageDto)
+  brandLogo: ImageDto[];
 
   @IsBoolean()
   isPremium: boolean;
@@ -127,9 +136,10 @@ export class BrandProfileDto {
 
   @IsArray()
   @ArrayMaxSize(3)
-  @IsString({ each: true })
+  @ValidateNested({ each: true })
+  @Type(() => ImageDto)
   @IsOptional()
-  products?: string[];
+  products?: ImageDto[];
 
   @Type(() => ContactDto)
   @ValidateNested()

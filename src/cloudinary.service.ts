@@ -17,4 +17,9 @@ export class CloudinaryService {
       overwrite: true,
     });
   }
+
+  async deleteImage(publicId: string) {
+    // Deletes an image from Cloudinary by public_id
+    return await cloudinary.uploader.destroy(publicId);
+  }
 }
