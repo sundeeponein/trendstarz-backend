@@ -31,7 +31,10 @@ export const InfluencerSchema = new Schema({
   email: { type: String, required: true, unique: true },
   phoneNumber: { type: String, required: true },
   username: { type: String, required: true, unique: true },
-  profileImages: [{ type: String }], // Cloudinary URLs
+  profileImages: [{
+    url: { type: String, required: true },
+    public_id: { type: String, required: true }
+  }], // Cloudinary image objects
   isPremium: { type: Boolean, default: false },
   premiumDuration: { type: String, enum: ['1m', '3m', '1y', null], default: null }, // 1 month, 3 months, 1 year
   premiumStart: { type: Date, default: null },
@@ -69,7 +72,10 @@ export const BrandSchema = new Schema({
   brandName: { type: String, required: true },
   email: { type: String, required: true, unique: true },
   phoneNumber: { type: String, required: true },
-  brandLogo: [{ type: String }], // Cloudinary URLs
+  brandLogo: [{
+    url: { type: String, required: true },
+    public_id: { type: String, required: true }
+  }], // Cloudinary image objects
   isPremium: { type: Boolean, default: false },
   premiumDuration: { type: String, enum: ['1m', '3m', '1y', null], default: null },
   premiumStart: { type: Date, default: null },
@@ -81,7 +87,10 @@ export const BrandSchema = new Schema({
     state: { type: String },
     googleMapLink: { type: String },
   },
-  products: [{ type: String }], // For premium brands, up to 3 product images
+  products: [{
+    url: { type: String, required: true },
+    public_id: { type: String, required: true }
+  }], // For premium brands, up to 3 product images
   contact: {
     whatsapp: { type: Boolean, default: false },
     email: { type: Boolean, default: false },

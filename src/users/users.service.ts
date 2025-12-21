@@ -4,6 +4,7 @@ import { InfluencerProfileDto, BrandProfileDto } from './dto/profile.dto';
 import * as bcrypt from 'bcryptjs';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
+import { v2 as cloudinary } from 'cloudinary';
 
 @Injectable()
 export class UsersService {
@@ -18,11 +19,18 @@ export class UsersService {
       if (dto.profileImages && dto.profileImages.length) {
         const uploadedImages = [];
         for (const img of dto.profileImages) {
-          if (img.startsWith('http')) {
+          if (typeof img === 'object' && img.url && img.public_id) {
             uploadedImages.push(img);
+          } else if (typeof img === 'string') {
+            if ((img as string).startsWith('http')) {
+              uploadedImages.push({ url: img, public_id: '' });
+            } else {
+              const result = await this.cloudinaryService.uploadImage(img, 'profile_images');
+              uploadedImages.push({ url: result.secure_url, public_id: result.public_id });
+            }
           } else {
-            const result = await this.cloudinaryService.uploadImage(img, 'profile_images');
-            uploadedImages.push(result.secure_url);
+            // fallback for unknown type
+            uploadedImages.push({ url: '', public_id: '' });
           }
         }
         dto.profileImages = uploadedImages;
@@ -48,14 +56,38 @@ export class UsersService {
       if (dto.brandLogo && dto.brandLogo.length) {
         const uploadedImages = [];
         for (const img of dto.brandLogo) {
-          if (img.startsWith('http')) {
+          if (typeof img === 'object' && img.url && img.public_id) {
             uploadedImages.push(img);
+          } else if (typeof img === 'string') {
+            if ((img as string).startsWith('http')) {
+              uploadedImages.push({ url: img, public_id: '' });
+            } else {
+              const result = await this.cloudinaryService.uploadImage(img, 'profile_images');
+              uploadedImages.push({ url: result.secure_url, public_id: result.public_id });
+            }
           } else {
-            const result = await this.cloudinaryService.uploadImage(img, 'profile_images');
-            uploadedImages.push(result.secure_url);
+            uploadedImages.push({ url: '', public_id: '' });
           }
         }
         dto.brandLogo = uploadedImages;
+      }
+      if (dto.products && dto.products.length) {
+        const uploadedProducts = [];
+        for (const img of dto.products) {
+          if (typeof img === 'object' && img.url && img.public_id) {
+            uploadedProducts.push(img);
+          } else if (typeof img === 'string') {
+            if ((img as string).startsWith('http')) {
+              uploadedProducts.push({ url: img, public_id: '' });
+            } else {
+              const result = await this.cloudinaryService.uploadImage(img, 'profile_images');
+              uploadedProducts.push({ url: result.secure_url, public_id: result.public_id });
+            }
+          } else {
+            uploadedProducts.push({ url: '', public_id: '' });
+          }
+        }
+        dto.products = uploadedProducts;
       }
       // Hash password before saving
       if (dto.password) {
@@ -115,10 +147,40 @@ export class UsersService {
   }
 
   async deletePermanently(id: string) {
-    const influencer = await this.influencerModel.findByIdAndDelete(id);
-    if (influencer) return { message: 'User permanently deleted', user: influencer };
-    const brand = await this.brandModel.findByIdAndDelete(id);
-    if (brand) return { message: 'User permanently deleted', user: brand };
+    // Try influencer first
+    let user = await this.influencerModel.findById(id);
+    if (user) {
+      // Delete all images from Cloudinary
+      if (user.profileImages && Array.isArray(user.profileImages)) {
+        for (const img of user.profileImages) {
+          if (typeof img === 'object' && img.public_id) {
+            await this.cloudinaryService.deleteImage(img.public_id);
+          }
+        }
+      }
+      await this.influencerModel.findByIdAndDelete(id);
+      return { message: 'User permanently deleted', user };
+    }
+    // Try brand
+    user = await this.brandModel.findById(id);
+    if (user) {
+      if (user.brandLogo && Array.isArray(user.brandLogo)) {
+        for (const img of user.brandLogo) {
+          if (typeof img === 'object' && img.public_id) {
+            await this.cloudinaryService.deleteImage(img.public_id);
+          }
+        }
+      }
+      if (user.products && Array.isArray(user.products)) {
+        for (const img of user.products) {
+          if (typeof img === 'object' && img.public_id) {
+            await this.cloudinaryService.deleteImage(img.public_id);
+          }
+        }
+      }
+      await this.brandModel.findByIdAndDelete(id);
+      return { message: 'User permanently deleted', user };
+    }
     return { message: 'User not found', id };
   }
 
