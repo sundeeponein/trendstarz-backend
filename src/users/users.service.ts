@@ -20,6 +20,21 @@ export class UsersService {
     // Try influencer
     let user = await this.influencerModel.findById(id);
     if (user && images.profileImages) {
+      // Remove all old images from Cloudinary if profileImages is being replaced
+      if (user.profileImages && Array.isArray(user.profileImages)) {
+        for (const oldImg of user.profileImages) {
+          if (oldImg && oldImg.public_id && (!images.profileImages.some(newImg => newImg.public_id === oldImg.public_id))) {
+            try {
+              let publicId = oldImg.public_id;
+              if (publicId && !publicId.includes('/')) publicId = `uploads/${publicId}`;
+              await this.cloudinaryService.deleteImage(publicId);
+              console.log('[PATCH] Deleted old influencer image from Cloudinary:', publicId);
+            } catch (err) {
+              console.error('[PATCH] Error deleting old influencer image:', err);
+            }
+          }
+        }
+      }
       user.profileImages = images.profileImages;
       await user.save();
       console.log('[PATCH] Influencer images updated:', user.profileImages);
@@ -28,6 +43,36 @@ export class UsersService {
     // Try brand
     user = await this.brandModel.findById(id);
     if (user) {
+      // Remove all old brand logos from Cloudinary if brandLogo is being replaced
+      if (user.brandLogo && Array.isArray(user.brandLogo) && images.brandLogo) {
+        for (const oldImg of user.brandLogo) {
+          if (oldImg && oldImg.public_id && (!images.brandLogo.some(newImg => newImg.public_id === oldImg.public_id))) {
+            try {
+              let publicId = oldImg.public_id;
+              if (publicId && !publicId.includes('/')) publicId = `uploads/${publicId}`;
+              await this.cloudinaryService.deleteImage(publicId);
+              console.log('[PATCH] Deleted old brand logo from Cloudinary:', publicId);
+            } catch (err) {
+              console.error('[PATCH] Error deleting old brand logo:', err);
+            }
+          }
+        }
+      }
+      // Remove all old product images from Cloudinary if products are being replaced
+      if (user.products && Array.isArray(user.products) && images.products) {
+        for (const oldImg of user.products) {
+          if (oldImg && oldImg.public_id && (!images.products.some(newImg => newImg.public_id === oldImg.public_id))) {
+            try {
+              let publicId = oldImg.public_id;
+              if (publicId && !publicId.includes('/')) publicId = `uploads/${publicId}`;
+              await this.cloudinaryService.deleteImage(publicId);
+              console.log('[PATCH] Deleted old brand product image from Cloudinary:', publicId);
+            } catch (err) {
+              console.error('[PATCH] Error deleting old brand product image:', err);
+            }
+          }
+        }
+      }
       if (images.brandLogo) user.brandLogo = images.brandLogo;
       if (images.products) user.products = images.products;
       await user.save();
@@ -36,6 +81,28 @@ export class UsersService {
     }
     console.log('[PATCH] User not found for id:', id);
     return { message: 'User not found', id };
+  }
+
+  // Helper for removing a specific influencer image (by index)
+  async removeInfluencerImage(id: string, imageIdx: number) {
+    const user = await this.influencerModel.findById(id);
+    if (user && user.profileImages && user.profileImages[imageIdx]) {
+      const img = user.profileImages[imageIdx];
+      if (img && img.public_id) {
+        let publicId = img.public_id;
+        if (publicId && !publicId.includes('/')) publicId = `uploads/${publicId}`;
+        try {
+          await this.cloudinaryService.deleteImage(publicId);
+          user.profileImages.splice(imageIdx, 1);
+          await user.save();
+          return { message: 'Profile image removed', user };
+        } catch (err) {
+          console.error('[REMOVE] Error deleting influencer image:', err);
+          throw new Error('Failed to remove image');
+        }
+      }
+    }
+    return { message: 'Image not found or already removed' };
   }
 
   async registerInfluencer(dto: InfluencerProfileDto) {
