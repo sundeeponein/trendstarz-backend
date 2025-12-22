@@ -1,5 +1,19 @@
 import { Injectable } from '@nestjs/common';
-import { v2 as cloudinary } from 'cloudinary';
+// Always use require and v2 to avoid ESM/CJS issues
+const cloudinary = require('cloudinary').v2;
+
+function setCloudinaryConfig() {
+  cloudinary.config({
+    cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+    api_key: process.env.CLOUDINARY_API_KEY,
+    api_secret: process.env.CLOUDINARY_API_SECRET,
+  });
+  console.log('[DEBUG] Cloudinary config set:', {
+    cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+    api_key: process.env.CLOUDINARY_API_KEY,
+    api_secret: process.env.CLOUDINARY_API_SECRET,
+  });
+}
 
 
 // Ensure all Cloudinary env vars are present
@@ -28,6 +42,7 @@ if (!process.env.CLOUDINARY_CLOUD_NAME || !process.env.CLOUDINARY_API_KEY || !pr
 @Injectable()
 export class CloudinaryService {
   async uploadImage(file: string, folder = 'profile_images') {
+    setCloudinaryConfig();
     // file: base64 string or file path
     return await cloudinary.uploader.upload(file, {
       folder,
@@ -37,19 +52,12 @@ export class CloudinaryService {
   }
 
   async deleteImage(publicId: string) {
-    console.log('[DEBUG] CLOUDINARY_API_KEY at delete:', process.env.CLOUDINARY_API_KEY);
-      // Log all Cloudinary config values at runtime before delete
-      console.log('[DEBUG] Cloudinary config at delete:', {
-        cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
-        api_key: process.env.CLOUDINARY_API_KEY,
-        api_secret: process.env.CLOUDINARY_API_SECRET,
-      });
-    // Explicitly set Cloudinary config before destroy
-    cloudinary.config({
-      cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
-      api_key: process.env.CLOUDINARY_API_KEY,
-      api_secret: process.env.CLOUDINARY_API_SECRET,
-    });
+    setCloudinaryConfig();
+    // Log the type of cloudinary and check for config/uploader.destroy
+    console.log('[DEBUG] typeof cloudinary:', typeof cloudinary);
+    console.log('[DEBUG] typeof cloudinary.config:', typeof cloudinary.config);
+    console.log('[DEBUG] typeof cloudinary.uploader:', typeof cloudinary.uploader);
+    console.log('[DEBUG] typeof cloudinary.uploader.destroy:', typeof cloudinary.uploader.destroy);
     return await cloudinary.uploader.destroy(publicId);
   }
 }
