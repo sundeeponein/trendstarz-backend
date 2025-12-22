@@ -1,4 +1,4 @@
-import { Controller, Post, Body, UseGuards, Patch, Param, Get, Req } from '@nestjs/common';
+import { Controller, Post, Body, UseGuards, Patch, Param, Get, Req, Delete } from '@nestjs/common';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { InfluencerProfileDto, BrandProfileDto } from './dto/profile.dto';
 import { UsersService } from './users.service';
@@ -63,7 +63,7 @@ export class UsersController {
   }
 
   @UseGuards(JwtAuthGuard)
-  @Patch(':id/delete-permanent')
+  @Delete(':id/permanent')
   async deletePermanently(@Param('id') id: string) {
     return this.usersService.deletePermanently(id);
   }
