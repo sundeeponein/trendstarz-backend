@@ -222,10 +222,51 @@ export class UsersService {
   }
 
   async deleteUser(id: string) {
-    const influencer = await this.influencerModel.findByIdAndUpdate(id, { status: 'deleted' }, { new: true });
-    if (influencer) return { message: 'User deleted', user: influencer };
-    const brand = await this.brandModel.findByIdAndUpdate(id, { status: 'deleted' }, { new: true });
-    if (brand) return { message: 'User deleted', user: brand };
+    // Try influencer first
+    let user = await this.influencerModel.findById(id);
+    if (user) {
+      // Delete all images from Cloudinary
+      if (user.profileImages && Array.isArray(user.profileImages)) {
+        for (const img of user.profileImages) {
+          if (typeof img === 'object' && img.public_id) {
+            let publicId = img.public_id;
+            if (publicId && !publicId.includes('/')) {
+              publicId = `uploads/${publicId}`;
+            }
+            try {
+              const result = await this.cloudinaryService.deleteImage(publicId);
+              console.log('[SOFT DELETE] Cloudinary destroy result:', result);
+            } catch (cloudErr) {
+              console.error('[SOFT DELETE] Error deleting influencer image from Cloudinary:', cloudErr, img);
+            }
+          }
+        }
+      }
+      const influencer = await this.influencerModel.findByIdAndUpdate(id, { status: 'deleted' }, { new: true });
+      return { message: 'User deleted', user: influencer };
+    }
+    // Try brand
+    user = await this.brandModel.findById(id);
+    if (user) {
+      if (user.brandLogo && Array.isArray(user.brandLogo)) {
+        for (const img of user.brandLogo) {
+          if (typeof img === 'object' && img.public_id) {
+            let publicId = img.public_id;
+            if (publicId && !publicId.includes('/')) {
+              publicId = `uploads/${publicId}`;
+            }
+            try {
+              const result = await this.cloudinaryService.deleteImage(publicId);
+              console.log('[SOFT DELETE] Cloudinary destroy result:', result);
+            } catch (cloudErr) {
+              console.error('[SOFT DELETE] Error deleting brand logo from Cloudinary:', cloudErr, img);
+            }
+          }
+        }
+      }
+      const brand = await this.brandModel.findByIdAndUpdate(id, { status: 'deleted' }, { new: true });
+      return { message: 'User deleted', user: brand };
+    }
     return { message: 'User not found', id };
   }
 
@@ -253,7 +294,8 @@ export class UsersService {
               }
               console.log('Deleting influencer image from Cloudinary, public_id:', publicId);
               try {
-                await this.cloudinaryService.deleteImage(publicId);
+                const result = await this.cloudinaryService.deleteImage(publicId);
+                console.log('Cloudinary destroy result:', result);
               } catch (cloudErr) {
                 console.error('Error deleting influencer image from Cloudinary:', cloudErr, img);
               }
