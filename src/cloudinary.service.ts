@@ -37,7 +37,19 @@ export class CloudinaryService {
   }
 
   async deleteImage(publicId: string) {
-    // Deletes an image from Cloudinary by public_id
+    console.log('[DEBUG] CLOUDINARY_API_KEY at delete:', process.env.CLOUDINARY_API_KEY);
+      // Log all Cloudinary config values at runtime before delete
+      console.log('[DEBUG] Cloudinary config at delete:', {
+        cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+        api_key: process.env.CLOUDINARY_API_KEY,
+        api_secret: process.env.CLOUDINARY_API_SECRET,
+      });
+    // Explicitly set Cloudinary config before destroy
+    cloudinary.config({
+      cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+      api_key: process.env.CLOUDINARY_API_KEY,
+      api_secret: process.env.CLOUDINARY_API_SECRET,
+    });
     return await cloudinary.uploader.destroy(publicId);
   }
 }
