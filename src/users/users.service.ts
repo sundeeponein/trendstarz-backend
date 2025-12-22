@@ -1,3 +1,4 @@
+  
 import { Injectable } from '@nestjs/common';
 import { CloudinaryService } from '../cloudinary.service';
 import { InfluencerProfileDto, BrandProfileDto } from './dto/profile.dto';
@@ -13,6 +14,29 @@ export class UsersService {
     @InjectModel('Influencer') private readonly influencerModel: Model<any>,
     @InjectModel('Brand') private readonly brandModel: Model<any>,
   ) {}
+
+  async updateUserImages(id: string, images: { brandLogo?: any[]; products?: any[]; profileImages?: any[] }) {
+    console.log('[PATCH] updateUserImages called for id:', id, 'with images:', images);
+    // Try influencer
+    let user = await this.influencerModel.findById(id);
+    if (user && images.profileImages) {
+      user.profileImages = images.profileImages;
+      await user.save();
+      console.log('[PATCH] Influencer images updated:', user.profileImages);
+      return { message: 'Influencer images updated', user };
+    }
+    // Try brand
+    user = await this.brandModel.findById(id);
+    if (user) {
+      if (images.brandLogo) user.brandLogo = images.brandLogo;
+      if (images.products) user.products = images.products;
+      await user.save();
+      console.log('[PATCH] Brand images updated:', { brandLogo: user.brandLogo, products: user.products });
+      return { message: 'Brand images updated', user };
+    }
+    console.log('[PATCH] User not found for id:', id);
+    return { message: 'User not found', id };
+  }
 
   async registerInfluencer(dto: InfluencerProfileDto) {
     try {
@@ -147,41 +171,74 @@ export class UsersService {
   }
 
   async deletePermanently(id: string) {
-    // Try influencer first
-    let user = await this.influencerModel.findById(id);
-    if (user) {
-      // Delete all images from Cloudinary
-      if (user.profileImages && Array.isArray(user.profileImages)) {
-        for (const img of user.profileImages) {
-          if (typeof img === 'object' && img.public_id) {
-            await this.cloudinaryService.deleteImage(img.public_id);
+    try {
+      // Try influencer first
+      let user = await this.influencerModel.findById(id);
+      if (user) {
+        // Delete all images from Cloudinary
+        if (user.profileImages && Array.isArray(user.profileImages)) {
+          for (const img of user.profileImages) {
+            if (typeof img === 'object' && img.public_id) {
+              // Ensure public_id includes folder if needed
+              let publicId = img.public_id;
+              if (publicId && !publicId.includes('/')) {
+                publicId = `uploads/${publicId}`;
+              }
+              console.log('Deleting influencer image from Cloudinary, public_id:', publicId);
+              try {
+                await this.cloudinaryService.deleteImage(publicId);
+              } catch (cloudErr) {
+                console.error('Error deleting influencer image from Cloudinary:', cloudErr, img);
+              }
+            }
           }
         }
+        await this.influencerModel.findByIdAndDelete(id);
+        return { message: 'Influencer permanently deleted', user };
       }
-      await this.influencerModel.findByIdAndDelete(id);
-      return { message: 'User permanently deleted', user };
+      // Try brand
+      user = await this.brandModel.findById(id);
+      if (user) {
+        if (user.brandLogo && Array.isArray(user.brandLogo)) {
+          for (const img of user.brandLogo) {
+            if (typeof img === 'object' && img.public_id) {
+              let publicId = img.public_id;
+              if (publicId && !publicId.includes('/')) {
+                publicId = `uploads/${publicId}`;
+              }
+              console.log('Deleting brand logo from Cloudinary, public_id:', publicId);
+              try {
+                await this.cloudinaryService.deleteImage(publicId);
+              } catch (cloudErr) {
+                console.error('Error deleting brand logo from Cloudinary:', cloudErr, img);
+              }
+            }
+          }
+        }
+        if (user.products && Array.isArray(user.products)) {
+          for (const img of user.products) {
+            if (typeof img === 'object' && img.public_id) {
+              let publicId = img.public_id;
+              if (publicId && !publicId.includes('/')) {
+                publicId = `uploads/${publicId}`;
+              }
+              console.log('Deleting brand product image from Cloudinary, public_id:', publicId);
+              try {
+                await this.cloudinaryService.deleteImage(publicId);
+              } catch (cloudErr) {
+                console.error('Error deleting brand product image from Cloudinary:', cloudErr, img);
+              }
+            }
+          }
+        }
+        await this.brandModel.findByIdAndDelete(id);
+        return { message: 'Brand permanently deleted', user };
+      }
+      return { message: 'User not found', id };
+    } catch (err) {
+      console.error('Error in deletePermanently:', err);
+      throw new Error('Failed to permanently delete user: ' + (err?.message || err));
     }
-    // Try brand
-    user = await this.brandModel.findById(id);
-    if (user) {
-      if (user.brandLogo && Array.isArray(user.brandLogo)) {
-        for (const img of user.brandLogo) {
-          if (typeof img === 'object' && img.public_id) {
-            await this.cloudinaryService.deleteImage(img.public_id);
-          }
-        }
-      }
-      if (user.products && Array.isArray(user.products)) {
-        for (const img of user.products) {
-          if (typeof img === 'object' && img.public_id) {
-            await this.cloudinaryService.deleteImage(img.public_id);
-          }
-        }
-      }
-      await this.brandModel.findByIdAndDelete(id);
-      return { message: 'User permanently deleted', user };
-    }
-    return { message: 'User not found', id };
   }
 
   async setPremium(

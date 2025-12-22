@@ -1,4 +1,4 @@
- import { Controller, Post, Body, UseGuards, Patch, Param, Get, Req } from '@nestjs/common';
+import { Controller, Post, Body, UseGuards, Patch, Param, Get, Req } from '@nestjs/common';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { InfluencerProfileDto, BrandProfileDto } from './dto/profile.dto';
 import { UsersService } from './users.service';
@@ -7,6 +7,11 @@ import type { Request } from 'express';
 @Controller('users')
 export class UsersController {
   constructor(private readonly usersService: UsersService) {}
+
+  @Patch(':id/images')
+  async updateUserImages(@Param('id') id: string, @Body() body: any) {
+    return this.usersService.updateUserImages(id, body);
+  }
 
   @Post('register')
   async registerUser(@Body() body: any) {
