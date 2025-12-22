@@ -253,7 +253,8 @@ export class UsersService {
               }
               console.log('Deleting influencer image from Cloudinary, public_id:', publicId);
               try {
-                await this.cloudinaryService.deleteImage(publicId);
+                const result = await this.cloudinaryService.deleteImage(publicId);
+                console.log('Cloudinary destroy result:', result);
               } catch (cloudErr) {
                 console.error('Error deleting influencer image from Cloudinary:', cloudErr, img);
               }
