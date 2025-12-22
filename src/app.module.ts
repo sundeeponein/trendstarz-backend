@@ -62,8 +62,4 @@ console.log('[DEBUG] process.cwd():', process.cwd());
   ],
   providers: [AppService, AuthService, MongoLogger /*, PaymentService, StripeService*/],
 })
-export class AppModule {
-    constructor(private readonly cloudinaryService: CloudinaryService) {
-      // Force instantiation and env logging at startup
-    }
-}
+export class AppModule {}
