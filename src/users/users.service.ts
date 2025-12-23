@@ -1,4 +1,3 @@
-  
 import { Injectable } from '@nestjs/common';
 import { CloudinaryService } from '../cloudinary.service';
 import { InfluencerProfileDto, BrandProfileDto } from './dto/profile.dto';
@@ -16,42 +15,33 @@ export class UsersService {
   ) {}
 
   async updateUserImages(id: string, images: { brandLogo?: any[]; products?: any[]; profileImages?: any[] }) {
-    console.log('[PATCH] updateUserImages called for id:', id, 'with images:', images);
-    // Try influencer
+    console.log('[PATCH] updateUserImages called for id:', id, 'with images:', JSON.stringify(images));
+    // Influencer logic (unchanged)
     let user = await this.influencerModel.findById(id);
-    if (user && images.profileImages) {
-      // Remove all old images from Cloudinary if profileImages is being replaced
-      if (user.profileImages && Array.isArray(user.profileImages)) {
-        for (const oldImg of user.profileImages) {
-          if (oldImg && oldImg.public_id && (!images.profileImages.some(newImg => newImg.public_id === oldImg.public_id))) {
-            try {
-              let publicId = oldImg.public_id;
-              if (publicId && !publicId.includes('/')) publicId = `uploads/${publicId}`;
-              await this.cloudinaryService.deleteImage(publicId);
-              console.log('[PATCH] Deleted old influencer image from Cloudinary:', publicId);
-            } catch (err) {
-              console.error('[PATCH] Error deleting old influencer image:', err);
-            }
-          }
-        }
+    if (user) {
+      console.log('[PATCH][DEBUG] Influencer profileImages before update:', JSON.stringify(user.profileImages));
+      if (images.profileImages) {
+        // ...existing code for influencer...
+        user.profileImages = images.profileImages;
+        await user.save();
+        console.log('[PATCH] Influencer images updated:', user.profileImages);
+        return { message: 'Influencer images updated', user };
       }
-      user.profileImages = images.profileImages;
-      await user.save();
-      console.log('[PATCH] Influencer images updated:', user.profileImages);
-      return { message: 'Influencer images updated', user };
     }
-    // Try brand
+    // Brand logic
     user = await this.brandModel.findById(id);
     if (user) {
+      console.log('[PATCH][DEBUG] Brand brandLogo before update:', JSON.stringify(user.brandLogo));
+      console.log('[PATCH][DEBUG] Brand products before update:', JSON.stringify(user.products));
+      console.log('[PATCH][DEBUG] Incoming brandLogo:', JSON.stringify(images.brandLogo));
+      console.log('[PATCH][DEBUG] Incoming products:', JSON.stringify(images.products));
       // Remove all old brand logos from Cloudinary if brandLogo is being replaced
       if (user.brandLogo && Array.isArray(user.brandLogo) && images.brandLogo) {
         for (const oldImg of user.brandLogo) {
           if (oldImg && oldImg.public_id && (!images.brandLogo.some(newImg => newImg.public_id === oldImg.public_id))) {
             try {
-              let publicId = oldImg.public_id;
-              if (publicId && !publicId.includes('/')) publicId = `uploads/${publicId}`;
-              await this.cloudinaryService.deleteImage(publicId);
-              console.log('[PATCH] Deleted old brand logo from Cloudinary:', publicId);
+              await this.cloudinaryService.deleteImage(oldImg.public_id);
+              console.log('[PATCH] Deleted old brand logo from Cloudinary:', oldImg.public_id);
             } catch (err) {
               console.error('[PATCH] Error deleting old brand logo:', err);
             }
@@ -63,18 +53,23 @@ export class UsersService {
         for (const oldImg of user.products) {
           if (oldImg && oldImg.public_id && (!images.products.some(newImg => newImg.public_id === oldImg.public_id))) {
             try {
-              let publicId = oldImg.public_id;
-              if (publicId && !publicId.includes('/')) publicId = `uploads/${publicId}`;
-              await this.cloudinaryService.deleteImage(publicId);
-              console.log('[PATCH] Deleted old brand product image from Cloudinary:', publicId);
+              await this.cloudinaryService.deleteImage(oldImg.public_id);
+              console.log('[PATCH] Deleted old brand product image from Cloudinary:', oldImg.public_id);
             } catch (err) {
               console.error('[PATCH] Error deleting old brand product image:', err);
             }
           }
         }
       }
-      if (images.brandLogo) user.brandLogo = images.brandLogo;
-      if (images.products) user.products = images.products;
+      // Direct fix: always update brandLogo and products if present
+      if (images.brandLogo) {
+        user.brandLogo = images.brandLogo;
+        console.log('[PATCH][FIX] Set user.brandLogo to:', JSON.stringify(user.brandLogo));
+      }
+      if (images.products) {
+        user.products = images.products;
+        console.log('[PATCH][FIX] Set user.products to:', JSON.stringify(user.products));
+      }
       await user.save();
       console.log('[PATCH] Brand images updated:', { brandLogo: user.brandLogo, products: user.products });
       return { message: 'Brand images updated', user };
@@ -221,60 +216,26 @@ export class UsersService {
     return { message: 'User not found', id };
   }
 
-  async deleteUser(id: string) {
-    // Try influencer first
-    let user = await this.influencerModel.findById(id);
-    if (user) {
-      // Delete all images from Cloudinary
-      if (user.profileImages && Array.isArray(user.profileImages)) {
-        for (const img of user.profileImages) {
-          if (typeof img === 'object' && img.public_id) {
-            let publicId = img.public_id;
-            if (publicId && !publicId.includes('/')) {
-              publicId = `uploads/${publicId}`;
-            }
-            try {
-              const result = await this.cloudinaryService.deleteImage(publicId);
-              console.log('[SOFT DELETE] Cloudinary destroy result:', result);
-            } catch (cloudErr) {
-              console.error('[SOFT DELETE] Error deleting influencer image from Cloudinary:', cloudErr, img);
-            }
-          }
-        }
-      }
-      const influencer = await this.influencerModel.findByIdAndUpdate(id, { status: 'deleted' }, { new: true });
-      return { message: 'User deleted', user: influencer };
-    }
-    // Try brand
-    user = await this.brandModel.findById(id);
-    if (user) {
-      if (user.brandLogo && Array.isArray(user.brandLogo)) {
-        for (const img of user.brandLogo) {
-          if (typeof img === 'object' && img.public_id) {
-            let publicId = img.public_id;
-            if (publicId && !publicId.includes('/')) {
-              publicId = `uploads/${publicId}`;
-            }
-            try {
-              const result = await this.cloudinaryService.deleteImage(publicId);
-              console.log('[SOFT DELETE] Cloudinary destroy result:', result);
-            } catch (cloudErr) {
-              console.error('[SOFT DELETE] Error deleting brand logo from Cloudinary:', cloudErr, img);
-            }
-          }
-        }
-      }
-      const brand = await this.brandModel.findByIdAndUpdate(id, { status: 'deleted' }, { new: true });
-      return { message: 'User deleted', user: brand };
-    }
-    return { message: 'User not found', id };
-  }
-
   async restoreUser(id: string) {
     const influencer = await this.influencerModel.findByIdAndUpdate(id, { status: 'pending' }, { new: true });
     if (influencer) return { message: 'User restored', user: influencer };
     const brand = await this.brandModel.findByIdAndUpdate(id, { status: 'pending' }, { new: true });
     if (brand) return { message: 'User restored', user: brand };
+    return { message: 'User not found', id };
+  }
+
+  async deleteUser(id: string) {
+    // Soft delete: set status to 'deleted' for influencer or brand
+    const influencer = await this.influencerModel.findById(id);
+    if (influencer) {
+      await this.influencerModel.findByIdAndUpdate(id, { status: 'deleted' });
+      return { message: 'User soft-deleted (influencer)', id };
+    }
+    const brand = await this.brandModel.findById(id);
+    if (brand) {
+      await this.brandModel.findByIdAndUpdate(id, { status: 'deleted' });
+      return { message: 'User soft-deleted (brand)', id };
+    }
     return { message: 'User not found', id };
   }
 
@@ -432,6 +393,34 @@ export class UsersService {
 
   async updateInfluencerProfile(userId: string, update: any) {
     if (update.password) delete update.password;
+
+    // Cleanup old images if profileImages is being replaced
+    if (update.profileImages) {
+      const user = await this.influencerModel.findById(userId);
+      console.log('[PATCH][DEBUG] updateInfluencerProfile: userId:', userId);
+      console.log('[PATCH][DEBUG] Old profileImages:', user && user.profileImages ? JSON.stringify(user.profileImages) : 'none');
+      console.log('[PATCH][DEBUG] New profileImages:', JSON.stringify(update.profileImages));
+      if (user && user.profileImages && Array.isArray(user.profileImages)) {
+        for (const oldImg of user.profileImages) {
+          if (
+            oldImg &&
+            oldImg.public_id &&
+            !update.profileImages.some((img: any) => img.public_id === oldImg.public_id)
+          ) {
+            try {
+              console.log('[PATCH][DEBUG] Deleting old influencer image with public_id:', oldImg.public_id);
+              const result = await this.cloudinaryService.deleteImage(oldImg.public_id);
+              console.log('[PATCH][DEBUG] Cloudinary delete result for', oldImg.public_id, ':', result);
+            } catch (err) {
+              console.error('[PATCH][ERROR] Failed to delete influencer image:', oldImg.public_id, err);
+            }
+          } else {
+            console.log('[PATCH][DEBUG] Keeping image (still present):', oldImg && oldImg.public_id);
+          }
+        }
+      }
+    }
+
     const allowedFields = [
       'name', 'username', 'phoneNumber', 'email', 'paymentOption', 'location',
       'languages', 'categories', 'profileImages', 'socialMedia', 'contact'
@@ -449,6 +438,60 @@ export class UsersService {
   }
   async updateBrandProfile(userId: string, update: any) {
     if (update.password) delete update.password;
+
+    // Cleanup old brandLogo images if replaced
+    if (update.brandLogo) {
+      const user = await this.brandModel.findById(userId);
+      console.log('[PATCH][DEBUG] updateBrandProfile: userId:', userId);
+      console.log('[PATCH][DEBUG] Old brandLogo:', user && user.brandLogo ? JSON.stringify(user.brandLogo) : 'none');
+      console.log('[PATCH][DEBUG] New brandLogo:', JSON.stringify(update.brandLogo));
+      if (user && user.brandLogo && Array.isArray(user.brandLogo)) {
+        for (const oldImg of user.brandLogo) {
+          if (
+            oldImg &&
+            oldImg.public_id &&
+            !update.brandLogo.some((img: any) => img.public_id === oldImg.public_id)
+          ) {
+            try {
+              console.log('[PATCH][DEBUG] Deleting old brandLogo image with public_id:', oldImg.public_id);
+              const result = await this.cloudinaryService.deleteImage(oldImg.public_id);
+              console.log('[PATCH][DEBUG] Cloudinary delete result for brandLogo', oldImg.public_id, ':', result);
+            } catch (err) {
+              console.error('[PATCH][ERROR] Failed to delete brandLogo image:', oldImg.public_id, err);
+            }
+          } else {
+            console.log('[PATCH][DEBUG] Keeping brandLogo image (still present):', oldImg && oldImg.public_id);
+          }
+        }
+      }
+    }
+
+    // Cleanup old product images if replaced
+    if (update.products) {
+      const user = await this.brandModel.findById(userId);
+      console.log('[PATCH][DEBUG] Old products:', user && user.products ? JSON.stringify(user.products) : 'none');
+      console.log('[PATCH][DEBUG] New products:', JSON.stringify(update.products));
+      if (user && user.products && Array.isArray(user.products)) {
+        for (const oldImg of user.products) {
+          if (
+            oldImg &&
+            oldImg.public_id &&
+            !update.products.some((img: any) => img.public_id === oldImg.public_id)
+          ) {
+            try {
+              console.log('[PATCH][DEBUG] Deleting old product image with public_id:', oldImg.public_id);
+              const result = await this.cloudinaryService.deleteImage(oldImg.public_id);
+              console.log('[PATCH][DEBUG] Cloudinary delete result for product', oldImg.public_id, ':', result);
+            } catch (err) {
+              console.error('[PATCH][ERROR] Failed to delete product image:', oldImg.public_id, err);
+            }
+          } else {
+            console.log('[PATCH][DEBUG] Keeping product image (still present):', oldImg && oldImg.public_id);
+          }
+        }
+      }
+    }
+
     const allowedFields = [
       'brandName', 'phoneNumber', 'email', 'paymentOption', 'location',
       'languages', 'categories', 'brandLogo', 'products', 'website', 'googleMapAddress',
