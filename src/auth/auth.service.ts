@@ -43,6 +43,7 @@ export class AuthService {
           name: user.name,
           email: user.email,
           role: user.role,
+          profileImage: user.profileImages && user.profileImages.length > 0 ? user.profileImages[0].url : null,
         },
       };
     }
@@ -56,9 +57,17 @@ export class AuthService {
       if (influencer.status === 'pending') {
         throw new UnauthorizedException('Your account is pending approval. Please wait for admin to activate your account.');
       }
+  // Use display name if available, fallback to empty string (never email)
+  let displayName = influencer.name && influencer.name !== influencer.email ? influencer.name : '';
+  // Use first profile image URL if available
+  let profileImageUrl = null;
+  if (Array.isArray(influencer.profileImages) && influencer.profileImages.length > 0 && influencer.profileImages[0].url) {
+    profileImageUrl = influencer.profileImages[0].url;
+  }
+  
       // Generate JWT token
       const token = jwt.sign(
-        { userId: influencer._id, email: influencer.email, role: 'influencer' },
+        { userId: influencer._id, email: influencer.email, role: 'influencer', name: displayName, profileImage: profileImageUrl },
         process.env.JWT_SECRET || 'changeme',
         { expiresIn: '7d' }
       );
@@ -67,9 +76,10 @@ export class AuthService {
         userType: 'influencer',
         user: {
           id: influencer._id,
-          name: influencer.name,
+          name: displayName,
           email: influencer.email,
           role: 'influencer',
+          profileImage: profileImageUrl,
         },
       };
     }
@@ -83,9 +93,13 @@ export class AuthService {
       if (brand.status === 'pending') {
         throw new UnauthorizedException('Your account is pending approval. Please wait for admin to activate your account.');
       }
+      // Use display name if available, fallback to email
+      const displayName = brand.brandName || brand.email;
+      // Use first brand logo URL if available
+      const brandLogoUrl = brand.brandLogo && brand.brandLogo.length > 0 ? brand.brandLogo[0].url : null;
       // Generate JWT token
       const token = jwt.sign(
-        { userId: brand._id, email: brand.email, role: 'brand' },
+        { userId: brand._id, email: brand.email, role: 'brand', name: displayName, brandLogo: brandLogoUrl },
         process.env.JWT_SECRET || 'changeme',
         { expiresIn: '7d' }
       );
@@ -94,9 +108,10 @@ export class AuthService {
         userType: 'brand',
         user: {
           id: brand._id,
-          name: brand.brandName,
+          name: displayName,
           email: brand.email,
           role: 'brand',
+          brandLogo: brandLogoUrl,
         },
       };
     }
