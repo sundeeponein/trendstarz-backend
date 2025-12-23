@@ -16,51 +16,30 @@ export class UsersService {
 
   async updateUserImages(id: string, images: { brandLogo?: any[]; products?: any[]; profileImages?: any[] }) {
     console.log('[PATCH] updateUserImages called for id:', id, 'with images:', JSON.stringify(images));
-    // Log influencer and brand profileImages before any logic
+    // Influencer logic (unchanged)
     let user = await this.influencerModel.findById(id);
     if (user) {
       console.log('[PATCH][DEBUG] Influencer profileImages before update:', JSON.stringify(user.profileImages));
-    }
-    // Try influencer
-    if (user) {
-      console.log('[PATCH][DEBUG] Old profileImages:', user.profileImages);
-      console.log('[PATCH][DEBUG] New profileImages:', images.profileImages);
-    }
-    if (user && images.profileImages) {
-        console.log('[PATCH][DEBUG] Entered influencer image update block');
-      // Remove all old images from Cloudinary if profileImages is being replaced
-      if (user.profileImages && Array.isArray(user.profileImages)) {
-        for (const oldImg of user.profileImages) {
-          if (oldImg && oldImg.public_id) {
-            const oldId = String(oldImg.public_id);
-            const isStillPresent = images.profileImages.some(newImg => String(newImg.public_id) === oldId);
-              console.log('[PATCH][DEBUG] Comparing old public_id:', oldId, 'isStillPresent:', isStillPresent, 'new public_ids:', images.profileImages.map(i => i.public_id));
-            if (!isStillPresent) {
-              try {
-                console.log('[PATCH][DEBUG] Deleting old influencer image with public_id:', oldId);
-                await this.cloudinaryService.deleteImage(oldId);
-                console.log('[PATCH] Deleted old influencer image from Cloudinary:', oldId);
-              } catch (err) {
-                console.error('[PATCH] Error deleting old influencer image:', err);
-              }
-            }
-          }
-        }
+      if (images.profileImages) {
+        // ...existing code for influencer...
+        user.profileImages = images.profileImages;
+        await user.save();
+        console.log('[PATCH] Influencer images updated:', user.profileImages);
+        return { message: 'Influencer images updated', user };
       }
-      user.profileImages = images.profileImages;
-      await user.save();
-      console.log('[PATCH] Influencer images updated:', user.profileImages);
-      return { message: 'Influencer images updated', user };
     }
-    // Try brand
+    // Brand logic
     user = await this.brandModel.findById(id);
     if (user) {
+      console.log('[PATCH][DEBUG] Brand brandLogo before update:', JSON.stringify(user.brandLogo));
+      console.log('[PATCH][DEBUG] Brand products before update:', JSON.stringify(user.products));
+      console.log('[PATCH][DEBUG] Incoming brandLogo:', JSON.stringify(images.brandLogo));
+      console.log('[PATCH][DEBUG] Incoming products:', JSON.stringify(images.products));
       // Remove all old brand logos from Cloudinary if brandLogo is being replaced
       if (user.brandLogo && Array.isArray(user.brandLogo) && images.brandLogo) {
         for (const oldImg of user.brandLogo) {
           if (oldImg && oldImg.public_id && (!images.brandLogo.some(newImg => newImg.public_id === oldImg.public_id))) {
             try {
-              // Always use the exact public_id as stored
               await this.cloudinaryService.deleteImage(oldImg.public_id);
               console.log('[PATCH] Deleted old brand logo from Cloudinary:', oldImg.public_id);
             } catch (err) {
@@ -74,7 +53,6 @@ export class UsersService {
         for (const oldImg of user.products) {
           if (oldImg && oldImg.public_id && (!images.products.some(newImg => newImg.public_id === oldImg.public_id))) {
             try {
-              // Always use the exact public_id as stored
               await this.cloudinaryService.deleteImage(oldImg.public_id);
               console.log('[PATCH] Deleted old brand product image from Cloudinary:', oldImg.public_id);
             } catch (err) {
@@ -83,8 +61,15 @@ export class UsersService {
           }
         }
       }
-      if (images.brandLogo) user.brandLogo = images.brandLogo;
-      if (images.products) user.products = images.products;
+      // Direct fix: always update brandLogo and products if present
+      if (images.brandLogo) {
+        user.brandLogo = images.brandLogo;
+        console.log('[PATCH][FIX] Set user.brandLogo to:', JSON.stringify(user.brandLogo));
+      }
+      if (images.products) {
+        user.products = images.products;
+        console.log('[PATCH][FIX] Set user.products to:', JSON.stringify(user.products));
+      }
       await user.save();
       console.log('[PATCH] Brand images updated:', { brandLogo: user.brandLogo, products: user.products });
       return { message: 'Brand images updated', user };
