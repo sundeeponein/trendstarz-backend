@@ -95,11 +95,11 @@ export class AuthService {
       }
       // Use display name if available, fallback to email
       const displayName = brand.brandName || brand.email;
-      // Use first brand logo URL if available
-      const brandLogoUrl = brand.brandLogo && brand.brandLogo.length > 0 ? brand.brandLogo[0].url : null;
-      // Generate JWT token
+      // Always return brandLogo as an array of objects (even if empty)
+      const brandLogoArr = Array.isArray(brand.brandLogo) ? brand.brandLogo : [];
+      // Generate JWT token with brandLogo as array
       const token = jwt.sign(
-        { userId: brand._id, email: brand.email, role: 'brand', name: displayName, brandLogo: brandLogoUrl },
+        { userId: brand._id, email: brand.email, role: 'brand', name: displayName, brandLogo: brandLogoArr },
         process.env.JWT_SECRET || 'changeme',
         { expiresIn: '7d' }
       );
@@ -111,7 +111,7 @@ export class AuthService {
           name: displayName,
           email: brand.email,
           role: 'brand',
-          brandLogo: brandLogoUrl,
+          brandLogo: brandLogoArr,
         },
       };
     }
