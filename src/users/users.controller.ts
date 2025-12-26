@@ -6,7 +6,21 @@ import type { Request } from 'express';
 
 @Controller('users')
 export class UsersController {
+  @Get('brands/name/:brandName')
+  async getBrandByName(@Param('brandName') brandName: string) {
+    return this.usersService.getBrandByName(brandName);
+  }
   constructor(private readonly usersService: UsersService) {}
+
+  @Get('influencers/:id')
+  async getInfluencerById(@Param('id') id: string) {
+    return this.usersService.getInfluencerById(id);
+  }
+
+  @Get('influencers/username/:username')
+  async getInfluencerByUsername(@Param('username') username: string) {
+    return this.usersService.getInfluencerByUsername(username);
+  }
 
   @Patch(':id/images')
   async updateUserImages(@Param('id') id: string, @Body() body: any) {
@@ -26,13 +40,11 @@ export class UsersController {
   }
 
 
-  @UseGuards(JwtAuthGuard)
   @Get('influencers')
   async getInfluencers() {
     return this.usersService.getInfluencers();
   }
 
-  @UseGuards(JwtAuthGuard)
   @Get('brands')
   async getBrands() {
     return this.usersService.getBrands();
