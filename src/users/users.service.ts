@@ -1,3 +1,5 @@
+
+
 import { Injectable } from '@nestjs/common';
 import { CloudinaryService } from '../cloudinary.service';
 import { InfluencerProfileDto, BrandProfileDto } from './dto/profile.dto';
@@ -13,6 +15,53 @@ export class UsersService {
     @InjectModel('Influencer') private readonly influencerModel: Model<any>,
     @InjectModel('Brand') private readonly brandModel: Model<any>,
   ) {}
+
+  async getBrandByName(brandName: string) {
+    // Slugify helper
+    function slugify(text: string): string {
+      return text
+        .toString()
+        .toLowerCase()
+        .replace(/\s+/g, '-')
+        .replace(/[^a-z0-9\-]/g, '')
+        .replace(/-+/g, '-')
+        .replace(/^-+/, '')
+        .replace(/-+$/, '');
+    }
+
+    // Fetch all brands and match by slug
+    const allBrands = await this.brandModel.find({}).lean();
+    const user = allBrands.find((b: any) => slugify(b.brandName) === slugify(brandName));
+    if (!user) return null;
+    const {
+      _id,
+      brandName: name,
+      email,
+      phoneNumber,
+      categories,
+      state,
+      socialMedia,
+      isPremium,
+      brandLogo,
+      products,
+      website,
+      googleMapAddress
+    } = user;
+    return {
+      _id,
+      name,
+      email,
+      phoneNumber,
+      categories,
+      state,
+      socialMedia,
+      isPremium,
+      brandLogo,
+      products,
+      website,
+      googleMapAddress
+    };
+  }
 
   async updateUserImages(id: string, images: { brandLogo?: any[]; products?: any[]; profileImages?: any[] }) {
     console.log('[PATCH] updateUserImages called for id:', id, 'with images:', JSON.stringify(images));
@@ -192,8 +241,69 @@ export class UsersService {
     }
   }
 
+
   async getInfluencers() {
     return await this.influencerModel.find({}).lean().limit(100);
+  }
+
+    // Place this inside UsersService class
+  async getInfluencerByUsername(username: string) {
+    const user: any = await this.influencerModel.findOne({ username }).lean();
+    if (!user) return null;
+    const {
+      _id,
+      name,
+      username: userUsername,
+      profileImage,
+      profileImages,
+      email,
+      phoneNumber,
+      categories,
+      state,
+      socialMedia,
+      isPremium
+    } = user;
+    return {
+      _id,
+      name,
+      username: userUsername,
+      profileImage,
+      profileImages: profileImages || [],
+      email,
+      phoneNumber,
+      categories,
+      state,
+      socialMedia,
+      isPremium
+    };
+  }
+  async getInfluencerById(id: string) {
+    const user: any = await this.influencerModel.findById(id).lean();
+    if (!user) return null;
+    const {
+      _id,
+      name,
+      username,
+      profileImage,
+      email,
+      phoneNumber,
+      categories,
+      state,
+      socialMedia,
+      isPremium
+    } = user;
+    return {
+      _id,
+      name,
+      username,
+      profileImage,
+      email,
+      phoneNumber,
+      categories,
+      state,
+      socialMedia,
+      isPremium
+    };
   }
 
   async getBrands() {
