@@ -39,7 +39,7 @@ export class UsersService {
       email,
       phoneNumber,
       categories,
-      state,
+      location,
       socialMedia,
       isPremium,
       brandLogo,
@@ -53,7 +53,7 @@ export class UsersService {
       email,
       phoneNumber,
       categories,
-      state,
+      location: location || { state: '' },
       socialMedia,
       isPremium,
       brandLogo,
@@ -259,7 +259,7 @@ export class UsersService {
       email,
       phoneNumber,
       categories,
-      state,
+      location,
       socialMedia,
       isPremium
     } = user;
@@ -272,7 +272,7 @@ export class UsersService {
       email,
       phoneNumber,
       categories,
-      state,
+      location: location || { state: '' },
       socialMedia,
       isPremium
     };
@@ -285,10 +285,11 @@ export class UsersService {
       name,
       username,
       profileImage,
+      profileImages,
       email,
       phoneNumber,
       categories,
-      state,
+      location,
       socialMedia,
       isPremium
     } = user;
@@ -297,10 +298,11 @@ export class UsersService {
       name,
       username,
       profileImage,
+      profileImages: profileImages || [],
       email,
       phoneNumber,
       categories,
-      state,
+      location: location || { state: '' },
       socialMedia,
       isPremium
     };
