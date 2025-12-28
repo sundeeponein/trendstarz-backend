@@ -24,8 +24,6 @@ import { UsersModule } from './users/users.module';
 import { CloudinaryService } from './cloudinary.service';
 import { HealthController } from './health.controller';
 
-console.log('[DEBUG][MongooseModule] MONGODB_URI:', process.env.MONGODB_URI);
-console.log('[DEBUG] process.cwd():', process.cwd());
 
 
 @Module({
