@@ -1,5 +1,6 @@
 
 
+
 import { Injectable } from '@nestjs/common';
 import { CloudinaryService } from '../cloudinary.service';
 import { InfluencerProfileDto, BrandProfileDto } from './dto/profile.dto';
@@ -10,6 +11,75 @@ import { v2 as cloudinary } from 'cloudinary';
 
 @Injectable()
 export class UsersService {
+  async deletePermanently(id: string) {
+    // Try influencer first
+    let user = await this.influencerModel.findById(id);
+    if (user) {
+      let errors: any[] = [];
+      // Delete all images from Cloudinary
+      if (user.profileImages && Array.isArray(user.profileImages)) {
+        for (const img of user.profileImages) {
+          if (typeof img === 'object' && img.public_id) {
+            let publicId = img.public_id;
+            if (publicId && !publicId.includes('/')) publicId = `uploads/${publicId}`;
+            try {
+              await this.cloudinaryService.deleteImage(publicId);
+              console.log(`[DELETE] Deleted influencer image from Cloudinary: ${publicId}`);
+            } catch (err) {
+              console.error('[DELETE] Error deleting influencer image from Cloudinary:', err, img);
+              errors.push({ type: 'influencer', publicId, error: err });
+            }
+          }
+        }
+      }
+      await this.influencerModel.findByIdAndDelete(id);
+      if (errors.length > 0) {
+        return { message: 'Influencer deleted with some image deletion errors', user, errors };
+      }
+      return { message: 'Influencer permanently deleted', user };
+    }
+    // Try brand
+    user = await this.brandModel.findById(id);
+    if (user) {
+      let errors: any[] = [];
+      if (user.brandLogo && Array.isArray(user.brandLogo)) {
+        for (const img of user.brandLogo) {
+          if (typeof img === 'object' && img.public_id) {
+            let publicId = img.public_id;
+            if (publicId && !publicId.includes('/')) publicId = `uploads/${publicId}`;
+            try {
+              await this.cloudinaryService.deleteImage(publicId);
+              console.log(`[DELETE] Deleted brand logo from Cloudinary: ${publicId}`);
+            } catch (cloudErr) {
+              console.error('[DELETE] Error deleting brand logo from Cloudinary:', cloudErr, img);
+              errors.push({ type: 'brandLogo', publicId, error: cloudErr });
+            }
+          }
+        }
+      }
+      if (user.products && Array.isArray(user.products)) {
+        for (const img of user.products) {
+          if (typeof img === 'object' && img.public_id) {
+            let publicId = img.public_id;
+            if (publicId && !publicId.includes('/')) publicId = `uploads/${publicId}`;
+            try {
+              await this.cloudinaryService.deleteImage(publicId);
+              console.log(`[DELETE] Deleted brand product image from Cloudinary: ${publicId}`);
+            } catch (cloudErr) {
+              console.error('[DELETE] Error deleting brand product image from Cloudinary:', cloudErr, img);
+              errors.push({ type: 'brandProduct', publicId, error: cloudErr });
+            }
+          }
+        }
+      }
+      await this.brandModel.findByIdAndDelete(id);
+      if (errors.length > 0) {
+        return { message: 'Brand deleted with some image deletion errors', user, errors };
+      }
+      return { message: 'Brand permanently deleted', user };
+    }
+    return { message: 'User not found', id };
+  }
   constructor(
     private readonly cloudinaryService: CloudinaryService,
     @InjectModel('Influencer') private readonly influencerModel: Model<any>,
@@ -174,9 +244,13 @@ export class UsersService {
       if (dto.password) {
         dto.password = await bcrypt.hash(dto.password, 10);
       }
-      // Save influencer to DB
-      const influencer = new this.influencerModel(dto);
-      return await influencer.save();
+    // Save influencer to DB
+  if ('price' in dto) {
+    (dto as any).promotionalPrice = (dto as any).price;
+    delete (dto as any).price;
+  }
+  const influencer = new this.influencerModel(dto);
+  return await influencer.save();
     } catch (err) {
       if (err.code === 11000) {
         const field = Object.keys(err.keyPattern)[0];
@@ -228,9 +302,13 @@ export class UsersService {
       if (dto.password) {
         dto.password = await bcrypt.hash(dto.password, 10);
       }
-      // Save brand to DB
-      const brand = new this.brandModel(dto);
-      return await brand.save();
+    // Save brand to DB
+  if ('price' in dto) {
+    (dto as any).promotionalPrice = (dto as any).price;
+    delete (dto as any).price;
+  }
+  const brand = new this.brandModel(dto);
+  return await brand.save();
     } catch (err) {
       if (err.code === 11000) {
         // Find which field is duplicated
@@ -349,80 +427,61 @@ export class UsersService {
       return { message: 'User soft-deleted (brand)', id };
     }
     return { message: 'User not found', id };
-  }
-
-  async deletePermanently(id: string) {
-    try {
-      // Try influencer first
-      let user = await this.influencerModel.findById(id);
-      if (user) {
-        // Delete all images from Cloudinary
-        if (user.profileImages && Array.isArray(user.profileImages)) {
-          for (const img of user.profileImages) {
-            if (typeof img === 'object' && img.public_id) {
-              // Ensure public_id includes folder if needed
-              let publicId = img.public_id;
-              if (publicId && !publicId.includes('/')) {
-                publicId = `uploads/${publicId}`;
-              }
-              console.log('Deleting influencer image from Cloudinary, public_id:', publicId);
-              try {
-                const result = await this.cloudinaryService.deleteImage(publicId);
-                console.log('Cloudinary destroy result:', result);
-              } catch (cloudErr) {
-                console.error('Error deleting influencer image from Cloudinary:', cloudErr, img);
-              }
+    // Try influencer first
+    let user = await this.influencerModel.findById(id);
+    if (user) {
+      // Delete all images from Cloudinary
+      if (user.profileImages && Array.isArray(user.profileImages)) {
+        for (const img of user.profileImages) {
+          if (typeof img === 'object' && img.public_id) {
+            let publicId = img.public_id;
+            if (publicId && !publicId.includes('/')) publicId = `uploads/${publicId}`;
+            try {
+              await this.cloudinaryService.deleteImage(publicId);
+            } catch (err) {
+              console.error('Error deleting influencer image from Cloudinary:', err, img);
             }
           }
         }
-        await this.influencerModel.findByIdAndDelete(id);
-        return { message: 'Influencer permanently deleted', user };
       }
-      // Try brand
-      user = await this.brandModel.findById(id);
-      if (user) {
-        if (user.brandLogo && Array.isArray(user.brandLogo)) {
-          for (const img of user.brandLogo) {
-            if (typeof img === 'object' && img.public_id) {
-              let publicId = img.public_id;
-              if (publicId && !publicId.includes('/')) {
-                publicId = `uploads/${publicId}`;
-              }
-              console.log('Deleting brand logo from Cloudinary, public_id:', publicId);
-              try {
-                await this.cloudinaryService.deleteImage(publicId);
-              } catch (cloudErr) {
-                console.error('Error deleting brand logo from Cloudinary:', cloudErr, img);
-              }
-            }
-          }
-        }
-        if (user.products && Array.isArray(user.products)) {
-          for (const img of user.products) {
-            if (typeof img === 'object' && img.public_id) {
-              let publicId = img.public_id;
-              if (publicId && !publicId.includes('/')) {
-                publicId = `uploads/${publicId}`;
-              }
-              console.log('Deleting brand product image from Cloudinary, public_id:', publicId);
-              try {
-                await this.cloudinaryService.deleteImage(publicId);
-              } catch (cloudErr) {
-                console.error('Error deleting brand product image from Cloudinary:', cloudErr, img);
-              }
-            }
-          }
-        }
-        await this.brandModel.findByIdAndDelete(id);
-        return { message: 'Brand permanently deleted', user };
-      }
-      return { message: 'User not found', id };
-    } catch (err) {
-      console.error('Error in deletePermanently:', err);
-      throw new Error('Failed to permanently delete user: ' + (err?.message || err));
+      await this.influencerModel.findByIdAndDelete(id);
+      return { message: 'Influencer permanently deleted', user };
     }
-  }
+    // Try brand
+    user = await this.brandModel.findById(id);
+    if (user) {
+      if (user.brandLogo && Array.isArray(user.brandLogo)) {
+        for (const img of user.brandLogo) {
+          if (typeof img === 'object' && img.public_id) {
+            let publicId = img.public_id;
+            if (publicId && !publicId.includes('/')) publicId = `uploads/${publicId}`;
+            try {
+              await this.cloudinaryService.deleteImage(publicId);
+            } catch (cloudErr) {
+              console.error('Error deleting brand logo from Cloudinary:', cloudErr, img);
+            }
+          }
+        }
+      }
+      if (user.products && Array.isArray(user.products)) {
+        for (const img of user.products) {
+          if (typeof img === 'object' && img.public_id) {
+            let publicId = img.public_id;
+            if (publicId && !publicId.includes('/')) publicId = `uploads/${publicId}`;
+            try {
+              await this.cloudinaryService.deleteImage(publicId);
+            } catch (cloudErr) {
+              console.error('Error deleting brand product image from Cloudinary:', cloudErr, img);
+            }
+          }
+        }
+      }
+      await this.brandModel.findByIdAndDelete(id);
+      return { message: 'Brand permanently deleted', user };
+    }
+    return { message: 'User not found', id };
 
+  }
   async setPremium(
     id: string,
     isPremium: boolean,
@@ -475,7 +534,7 @@ export class UsersService {
       isPremium: user.isPremium || false,
       premiumDuration: user.premiumDuration || null,
       premiumStart: user.premiumStart || null,
-      premiumEnd: user.premiumEnd || null,
+      premiumEnd: user.premiumEnd || null
     };
   }
 
@@ -499,7 +558,7 @@ export class UsersService {
       contact: user.contact || { whatsapp: false, email: false, call: false },
       premiumDuration: user.premiumDuration || null,
       premiumStart: user.premiumStart || null,
-      premiumEnd: user.premiumEnd || null,
+      premiumEnd: user.premiumEnd || null
     };
   }
 
@@ -535,7 +594,7 @@ export class UsersService {
 
     const allowedFields = [
       'name', 'username', 'phoneNumber', 'email', 'paymentOption', 'location',
-      'languages', 'categories', 'profileImages', 'socialMedia', 'contact'
+      'languages', 'categories', 'profileImages', 'socialMedia', 'contact', 'promotionalPrice'
     ];
     const updateData: any = {};
     for (const key of allowedFields) {
@@ -607,12 +666,14 @@ export class UsersService {
     const allowedFields = [
       'brandName', 'phoneNumber', 'email', 'paymentOption', 'location',
       'languages', 'categories', 'brandLogo', 'products', 'website', 'googleMapAddress',
-      'productImages', 'socialMedia', 'contact'
+      'productImages', 'socialMedia', 'contact', 'promotionalPrice'
     ];
     const updateData: any = {};
     for (const key of allowedFields) {
       if (update[key] !== undefined) updateData[key] = update[key];
     }
+    // Remove price if present
+    if ('price' in updateData) delete updateData.price;
     if (update.paymentOption) {
       updateData.isPremium = update.paymentOption === 'premium';
     }

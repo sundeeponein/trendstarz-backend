@@ -55,6 +55,7 @@ export const InfluencerSchema = new Schema({
     email: { type: Boolean, default: false },
     call: { type: Boolean, default: false },
   },
+  promotionalPrice: { type: Number },
   status: { type: String, enum: ['pending', 'accepted', 'declined', 'deleted'], default: 'pending' },
 }, { timestamps: true });
 
@@ -96,6 +97,7 @@ export const BrandSchema = new Schema({
     email: { type: Boolean, default: false },
     call: { type: Boolean, default: false },
   },
+  promotionalPrice: { type: Number },
   status: { type: String, enum: ['pending', 'accepted', 'declined', 'deleted'], default: 'pending' },
 }, { timestamps: true });
 
