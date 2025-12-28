@@ -45,6 +45,8 @@ export class SocialMediaDto {
 }
 
 export class InfluencerProfileDto {
+  @IsNumber()
+  promotionalPrice: number;
   @IsString()
   password: string;
 
@@ -92,6 +94,8 @@ export class InfluencerProfileDto {
 }
 
 export class BrandProfileDto {
+  @IsNumber()
+  promotionalPrice: number;
   @IsArray()
   @ValidateNested({ each: true })
   @Type(() => SocialMediaDto)
