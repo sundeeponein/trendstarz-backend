@@ -1,6 +1,7 @@
 import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module';
 import * as dotenv from 'dotenv';
+import helmet from 'helmet';
 dotenv.config();
 // Removed manual mongoose connection logic. Use only MongooseModule.forRoot in AppModule.
 
@@ -14,6 +15,10 @@ async function bootstrap() {
   const app = await NestFactory.create(AppModule);
   logMemory('after NestFactory.create');
 
+  // Security headers
+  app.use(helmet());
+
+  // Restrict CORS to trusted origins
   app.enableCors({
     origin: [
       'https://trendstarz.in',
