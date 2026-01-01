@@ -339,7 +339,8 @@ export class UsersService {
       categories,
       location,
       socialMedia,
-      isPremium
+      isPremium,
+      promotionalPrice
     } = user;
     return {
       _id,
@@ -352,7 +353,8 @@ export class UsersService {
       categories,
       location: location || { state: '' },
       socialMedia,
-      isPremium
+      isPremium,
+      promotionalPrice
     };
   }
   async getInfluencerById(id: string) {
@@ -366,6 +368,7 @@ export class UsersService {
       profileImages,
       email,
       phoneNumber,
+      promotionalPrice,
       categories,
       location,
       socialMedia,
@@ -382,7 +385,8 @@ export class UsersService {
       categories,
       location: location || { state: '' },
       socialMedia,
-      isPremium
+      isPremium,
+      promotionalPrice
     };
   }
 
@@ -534,7 +538,8 @@ export class UsersService {
       isPremium: user.isPremium || false,
       premiumDuration: user.premiumDuration || null,
       premiumStart: user.premiumStart || null,
-      premiumEnd: user.premiumEnd || null
+      premiumEnd: user.premiumEnd || null,
+      promotionalPrice: user.promotionalPrice
     };
   }
 
