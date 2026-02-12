@@ -40,9 +40,9 @@ import { HealthController } from './health.controller';
       { name: 'User', schema: UserSchema, collection: 'users' },
       { name: 'Influencer', schema: InfluencerSchema, collection: 'influencers' },
       { name: 'Brand', schema: BrandSchema, collection: 'brands' },
-      { name: 'Tier', schema: TierSchema, collection: 'tiers' },
+      { name: 'Tier', schema: TierSchema, collection: 'tiers' }
     ]),
-    UsersModule,
+    UsersModule
   ],
   controllers: [
     AppController,
@@ -54,10 +54,10 @@ import { HealthController } from './health.controller';
     LanguagesController,
     AuthController,
     HealthController,
-    AdminUserTableController,
+    AdminUserTableController
     // SeedController,
-    // PaymentController,
+    // PaymentController
   ],
-  providers: [AppService, AuthService, MongoLogger /*, PaymentService, StripeService*/],
+  providers: [AppService, AuthService, MongoLogger /*, PaymentService, StripeService*/]
 })
 export class AppModule {}
