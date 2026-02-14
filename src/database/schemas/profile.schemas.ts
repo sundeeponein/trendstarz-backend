@@ -21,6 +21,8 @@ export const UserSchema = new Schema({
   email: { type: String, required: true, unique: true },
   password: { type: String, required: true },
   role: { type: String, enum: ['admin', 'user'], default: 'user' },
+  isEmailVerified: { type: Boolean, default: false },
+  isMobileVerified: { type: Boolean, default: false },
 });
 export const UserModel = model('User', UserSchema);
 
@@ -31,6 +33,8 @@ export const InfluencerSchema = new Schema({
   email: { type: String, required: true, unique: true },
   phoneNumber: { type: String, required: true },
   username: { type: String, required: true, unique: true },
+  isEmailVerified: { type: Boolean, default: false },
+  isMobileVerified: { type: Boolean, default: false },
   profileImages: [{
     url: { type: String, required: true },
     public_id: { type: String, required: true }
@@ -73,6 +77,8 @@ export const BrandSchema = new Schema({
   brandName: { type: String, required: true },
   email: { type: String, required: true, unique: true },
   phoneNumber: { type: String, required: true },
+  isEmailVerified: { type: Boolean, default: false },
+  isMobileVerified: { type: Boolean, default: false },
   brandLogo: [{
     url: { type: String, required: true },
     public_id: { type: String, required: true }

@@ -321,7 +321,8 @@ export class UsersService {
 
 
   async getInfluencers() {
-    return await this.influencerModel.find({}).lean().limit(100);
+  // Only return accepted influencers
+  return await this.influencerModel.find({ status: 'accepted' }).lean().limit(100);
   }
 
     // Place this inside UsersService class
@@ -391,7 +392,8 @@ export class UsersService {
   }
 
   async getBrands() {
-    return await this.brandModel.find({}).lean().limit(100);
+  // Only return accepted brands
+  return await this.brandModel.find({ status: 'accepted' }).lean().limit(100);
   }
 
   async acceptUser(id: string) {
