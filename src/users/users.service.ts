@@ -244,13 +244,24 @@ export class UsersService {
       if (dto.password) {
         dto.password = await bcrypt.hash(dto.password, 10);
       }
-    // Save influencer to DB
-  if ('price' in dto) {
-    (dto as any).promotionalPrice = (dto as any).price;
-    delete (dto as any).price;
-  }
-  const influencer = new this.influencerModel(dto);
-  return await influencer.save();
+      // Save influencer to DB
+      if ('price' in dto) {
+        (dto as any).promotionalPrice = (dto as any).price;
+        delete (dto as any).price;
+      }
+      const influencer = new this.influencerModel(dto);
+      const savedInfluencer = await influencer.save();
+      // Send email verification after registration
+      try {
+        const { VerificationService } = require('../services/verification.service');
+        const { DummyEmailProvider } = require('../services/emailProvider.service');
+        const emailProvider = new DummyEmailProvider();
+        const verificationService = new VerificationService(emailProvider, null);
+        await verificationService.generateToken(savedInfluencer._id, 'email');
+      } catch (e) {
+        console.error('Failed to send verification email:', e);
+      }
+      return savedInfluencer;
     } catch (err) {
       if (err.code === 11000) {
         const field = Object.keys(err.keyPattern)[0];
@@ -302,13 +313,25 @@ export class UsersService {
       if (dto.password) {
         dto.password = await bcrypt.hash(dto.password, 10);
       }
-    // Save brand to DB
-  if ('price' in dto) {
-    (dto as any).promotionalPrice = (dto as any).price;
-    delete (dto as any).price;
-  }
-  const brand = new this.brandModel(dto);
-  return await brand.save();
+      // Save brand to DB
+      if ('price' in dto) {
+        (dto as any).promotionalPrice = (dto as any).price;
+        delete (dto as any).price;
+      }
+      const brand = new this.brandModel(dto);
+      const savedBrand = await brand.save();
+      // Send email verification after registration
+      try {
+        // Import and instantiate your verification service and email provider as needed
+        const { VerificationService } = require('../services/verification.service');
+        const { DummyEmailProvider } = require('../services/emailProvider.service');
+        const emailProvider = new DummyEmailProvider();
+        const verificationService = new VerificationService(emailProvider, null);
+        await verificationService.generateToken(savedBrand._id, 'email');
+      } catch (e) {
+        console.error('Failed to send verification email:', e);
+      }
+      return savedBrand;
     } catch (err) {
       if (err.code === 11000) {
         // Find which field is duplicated
