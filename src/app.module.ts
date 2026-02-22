@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { OtpModule } from './otp/otp.module';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { AdminListsController } from './admin-lists.controller';
@@ -42,7 +43,8 @@ import { HealthController } from './health.controller';
       { name: 'Brand', schema: BrandSchema, collection: 'brands' },
       { name: 'Tier', schema: TierSchema, collection: 'tiers' }
     ]),
-    UsersModule
+  UsersModule,
+  OtpModule
   ],
   controllers: [
     AppController,
