@@ -1,4 +1,6 @@
 import { NestFactory } from '@nestjs/core';
+import { ExpressAdapter } from '@nestjs/platform-express';
+import express from 'express';
 import { AppModule } from './app.module';
 import * as dotenv from 'dotenv';
 import helmet from 'helmet';
@@ -12,8 +14,13 @@ async function bootstrap() {
     console.log(`[MEMORY][${stage}] rss: ${(mem.rss/1024/1024).toFixed(2)}MB heapUsed: ${(mem.heapUsed/1024/1024).toFixed(2)}MB heapTotal: ${(mem.heapTotal/1024/1024).toFixed(2)}MB`);
   }
 
-  const app = await NestFactory.create(AppModule);
+
+  const server = express();
+  const app = await NestFactory.create(AppModule, new ExpressAdapter(server));
   logMemory('after NestFactory.create');
+
+  // Set global API prefix for all routes
+  app.setGlobalPrefix('api');
 
   // Security headers
   app.use(helmet());

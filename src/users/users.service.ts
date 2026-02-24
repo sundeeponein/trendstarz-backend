@@ -32,7 +32,17 @@ export class UsersService {
           }
         }
       }
-      await this.influencerModel.findByIdAndDelete(id);
+      const deleteResult = await this.influencerModel.findByIdAndDelete(id);
+      if (!deleteResult) {
+        console.error(`[CLEANUP][ERROR] Influencer not found for deletion after Cloudinary cleanup: ${id}`);
+      } else {
+        console.log(`[CLEANUP] Influencer document deleted from DB: ${id}`);
+      }
+      // Double-check for any remaining influencer with this id
+      const checkUser = await this.influencerModel.findById(id);
+      if (checkUser) {
+        console.error(`[CLEANUP][ERROR] Influencer still exists after deletion: ${id}`);
+      }
       if (errors.length > 0) {
         return { message: 'Influencer deleted with some image deletion errors', user, errors };
       }
@@ -72,7 +82,17 @@ export class UsersService {
           }
         }
       }
-      await this.brandModel.findByIdAndDelete(id);
+      const deleteResult = await this.brandModel.findByIdAndDelete(id);
+      if (!deleteResult) {
+        console.error(`[CLEANUP][ERROR] Brand not found for deletion after Cloudinary cleanup: ${id}`);
+      } else {
+        console.log(`[CLEANUP] Brand document deleted from DB: ${id}`);
+      }
+      // Double-check for any remaining brand with this id
+      const checkBrand = await this.brandModel.findById(id);
+      if (checkBrand) {
+        console.error(`[CLEANUP][ERROR] Brand still exists after deletion: ${id}`);
+      }
       if (errors.length > 0) {
         return { message: 'Brand deleted with some image deletion errors', user, errors };
       }
