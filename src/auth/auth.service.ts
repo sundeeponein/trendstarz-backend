@@ -10,6 +10,23 @@ const otpStore: Record<string, string> = {};
 
 @Injectable()
 export class AuthService {
+  async forgotPassword(email: string) {
+    // Try to find user in all collections
+    const user = await this.userModel.findOne({ email }) || await this.influencerModel.findOne({ email }) || await this.brandModel.findOne({ email });
+    if (!user) {
+      throw new Error('Email not found. Please enter a registered email.');
+    }
+    // Generate a reset token (for demo, just a random string)
+    const resetToken = Math.random().toString(36).substr(2, 10);
+    // Save token to user (or a real token store in production)
+    user.resetToken = resetToken;
+    user.resetTokenExpires = Date.now() + 1000 * 60 * 60; // 1 hour expiry
+    await user.save();
+    // Send email (use your email util)
+    const resetUrl = `${process.env.FRONTEND_URL || 'http://localhost:4200'}/reset-password?token=${resetToken}`;
+    const text = `Hey ${user.name || user.email},\n\nWe’ve received a request to reset your password for your account. Click the link below to create a new password:\n${resetUrl}\n\nIf you didn’t request to change your password, then don’t worry! Your password is still safe and you can delete this email.`;
+    await sendEmail(user.email, 'Reset your password', text);
+  }
   constructor(
     @InjectModel('User') private readonly userModel: Model<any>,
     @InjectModel('Influencer') private readonly influencerModel: Model<any>,

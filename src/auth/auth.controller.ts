@@ -33,4 +33,13 @@ export class AuthController {
   async verifyOtp(@Body() body: { email: string; otp: string }) {
     return this.authService.verifyOtp(body.email, body.otp);
   }
+  @Post('forgot-password')
+  async forgotPassword(@Body() body: { email: string }, @Res() res: Response) {
+    try {
+      await this.authService.forgotPassword(body.email);
+      return res.status(200).json({ message: 'Reset email sent if user exists.' });
+    } catch (err) {
+      return res.status(400).json({ message: err.message || 'Failed to send reset email.' });
+    }
+  }
 }
