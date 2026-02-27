@@ -1,13 +1,13 @@
 import { Request, Response } from 'express';
 import { VerificationService } from '../services/verification.service';
-import { DummyEmailProvider } from '../services/emailProvider.service';
+import { getEmailProvider } from '../services/emailProvider.service';
 import { DummySmsProvider } from '../services/smsProvider.service';
 
 interface AuthenticatedRequest extends Request {
   user: { _id: string; email?: string };
 }
 
-const emailProvider = new DummyEmailProvider();
+const emailProvider = getEmailProvider();
 const smsProvider = new DummySmsProvider();
 const verificationService = new VerificationService(emailProvider, smsProvider);
 
