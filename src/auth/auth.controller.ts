@@ -1,4 +1,4 @@
-import { Controller, Post, Body, Res } from '@nestjs/common';
+import { Controller, Post, Body, Res, Get, Query } from '@nestjs/common';
 import type { Response } from 'express';
 import { AuthService } from './auth.service';
 
@@ -27,6 +27,23 @@ export class AuthController {
   @Post('send-otp')
   async sendOtp(@Body() body: { email: string }) {
     return this.authService.sendOtp(body.email);
+  }
+
+  @Post('send-email-verification')
+  async sendEmailVerification(@Body() body: { email: string }) {
+    return this.authService.sendEmailVerificationLink(body.email);
+  }
+
+  @Get('verify-email')
+  async verifyEmail(@Query('token') token: string, @Res() res: Response) {
+    try {
+      await this.authService.verifyEmailByToken(token);
+      const frontend = (process.env.FRONTEND_URL || 'http://localhost:4200').replace(/\/$/, '');
+      return res.redirect(`${frontend}/verify-email?status=success`);
+    } catch {
+      const frontend = (process.env.FRONTEND_URL || 'http://localhost:4200').replace(/\/$/, '');
+      return res.redirect(`${frontend}/verify-email?status=failed`);
+    }
   }
 
   @Post('verify-otp')
