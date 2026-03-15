@@ -10,6 +10,85 @@ const otpStore: Record<string, string> = {};
 
 @Injectable()
 export class AuthService {
+  private getFrontendBaseUrl(): string {
+    return (process.env.FRONTEND_URL || 'http://localhost:4200').replace(/\/$/, '');
+  }
+
+  private async findAnyUserByEmail(email: string): Promise<any | null> {
+    return (
+      await this.userModel.findOne({ email }) ||
+      await this.influencerModel.findOne({ email }) ||
+      await this.brandModel.findOne({ email })
+    );
+  }
+
+  async sendEmailVerificationLink(email: string) {
+    const normalizedEmail = (email || '').trim().toLowerCase();
+    if (!normalizedEmail) {
+      throw new BadRequestException('Email is required');
+    }
+
+    const user = await this.findAnyUserByEmail(normalizedEmail);
+    if (!user) {
+      // Avoid exposing user existence details.
+      return { success: true, message: 'If the email exists, a verification link has been sent.' };
+    }
+
+    if (user.isEmailVerified) {
+      return { success: true, message: 'Email is already verified.' };
+    }
+
+    const token = jwt.sign(
+      { email: normalizedEmail, purpose: 'email_verification' },
+      process.env.JWT_SECRET || 'changeme',
+      { expiresIn: '1h' },
+    );
+
+    const verifyUrl = `${this.getFrontendBaseUrl()}/verify-email?token=${encodeURIComponent(token)}`;
+    const html = `
+      <p>Hi,</p>
+      <p>Please verify your Trendstarz email address by clicking the link below:</p>
+      <p><a href="${verifyUrl}">Verify Email</a></p>
+      <p>If you did not request this, you can ignore this email.</p>
+    `;
+    const text = `Please verify your Trendstarz email address: ${verifyUrl}`;
+
+    await sendEmail(normalizedEmail, 'Verify your Trendstarz email', text);
+    // Keep html for future providers that support rich templates.
+    void html;
+
+    return { success: true, message: 'Verification email sent.' };
+  }
+
+  async verifyEmailByToken(token: string) {
+    if (!token) {
+      throw new BadRequestException('Missing verification token');
+    }
+
+    let decoded: any;
+    try {
+      decoded = jwt.verify(token, process.env.JWT_SECRET || 'changeme');
+    } catch {
+      throw new BadRequestException('Invalid or expired verification token');
+    }
+
+    if (!decoded?.email || decoded?.purpose !== 'email_verification') {
+      throw new BadRequestException('Invalid verification token payload');
+    }
+
+    const user = await this.findAnyUserByEmail(String(decoded.email).toLowerCase());
+    if (!user) {
+      throw new BadRequestException('User not found for verification token');
+    }
+
+    if (!user.isEmailVerified) {
+      user.isEmailVerified = true;
+      await user.save();
+    }
+
+    return { success: true, message: 'Email verified successfully.' };
+  }
+
   async forgotPassword(email: string) {
     // Try to find user in all collections
     const user = await this.userModel.findOne({ email }) || await this.influencerModel.findOne({ email }) || await this.brandModel.findOne({ email });
@@ -207,6 +286,11 @@ export class AuthService {
       console.log('Influencer payload:', influencer);
       try {
         const saved = await influencer.save();
+        try {
+          await this.sendEmailVerificationLink(saved.email);
+        } catch (verifyMailErr) {
+          console.error('Failed to send influencer verification email:', verifyMailErr);
+        }
         console.log('Influencer saved successfully:', saved._id, 'Collection:', saved.collection.name);
       } catch (err) {
         if (err.name === 'ValidationError') {
@@ -287,8 +371,13 @@ export class AuthService {
         languages: languageNames,
         socialMedia: socialMediaMapped,
       });
-      await brand.save();
-      return { success: true, message: 'Brand registered', brand };
+      const savedBrand = await brand.save();
+      try {
+        await this.sendEmailVerificationLink(savedBrand.email);
+      } catch (verifyMailErr) {
+        console.error('Failed to send brand verification email:', verifyMailErr);
+      }
+      return { success: true, message: 'Brand registered', brand: savedBrand };
     }
 
   async sendOtp(email: string) {

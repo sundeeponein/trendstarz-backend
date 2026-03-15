@@ -13,6 +13,47 @@ export interface EmailProvider {
   send(to: string, subject: string, html: string): Promise<void>;
 }
 
+export function getSmtpRuntimeStatus(): {
+  nodeEnv: string;
+  smtpConfigured: boolean;
+  host: string | null;
+  port: string | null;
+  userMasked: string | null;
+  mode: 'smtp' | 'console-fallback' | 'error';
+} {
+  const host = process.env.SMTP_HOST || null;
+  const port = process.env.SMTP_PORT || null;
+  const user = process.env.SMTP_USER || '';
+  const smtpConfigured = !!(
+    process.env.SMTP_HOST &&
+    process.env.SMTP_PORT &&
+    process.env.SMTP_USER &&
+    process.env.SMTP_PASS
+  );
+  const nodeEnv = process.env.NODE_ENV || 'development';
+
+  let userMasked: string | null = null;
+  if (user) {
+    const [local, domain] = user.split('@');
+    const safeLocal = local ? `${local.slice(0, 2)}***` : '***';
+    userMasked = domain ? `${safeLocal}@${domain}` : safeLocal;
+  }
+
+  const mode: 'smtp' | 'console-fallback' | 'error' =
+    nodeEnv === 'production'
+      ? (smtpConfigured ? 'smtp' : 'error')
+      : (smtpConfigured ? 'smtp' : 'console-fallback');
+
+  return {
+    nodeEnv,
+    smtpConfigured,
+    host,
+    port,
+    userMasked,
+    mode,
+  };
+}
+
 // Fallback provider for local development when SMTP credentials are not configured.
 export class ConsoleEmailProvider implements EmailProvider {
   async send(to: string, subject: string, html: string): Promise<void> {
@@ -65,16 +106,19 @@ export class ProductionEmailProvider implements EmailProvider {
 
 // Factory to select provider
 export function getEmailProvider(): EmailProvider {
-  if (process.env.NODE_ENV === 'production') {
-    return new ProductionEmailProvider();
-  }
-
   const smtpConfigured = !!(
     process.env.SMTP_HOST &&
     process.env.SMTP_PORT &&
     process.env.SMTP_USER &&
     process.env.SMTP_PASS
   );
+
+  if (process.env.NODE_ENV === 'production') {
+    if (smtpConfigured) {
+      return new NodemailerProvider();
+    }
+    throw new Error('SMTP is required in production. Set SMTP_HOST, SMTP_PORT, SMTP_USER, and SMTP_PASS.');
+  }
 
   if (!smtpConfigured) {
     return new ConsoleEmailProvider();
