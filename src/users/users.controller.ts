@@ -22,6 +22,11 @@ export class UsersController {
     return this.usersService.getInfluencerByUsername(username);
   }
 
+  @Get('check-username/:username')
+  async checkUsername(@Param('username') username: string) {
+    return this.usersService.checkUsername(username);
+  }
+
   @Patch(':id/images')
   async updateUserImages(@Param('id') id: string, @Body() body: any) {
     return this.usersService.updateUserImages(id, body);
