@@ -13,17 +13,36 @@ export interface EmailProvider {
   send(to: string, subject: string, html: string): Promise<void>;
 }
 
+// Fallback provider for local development when SMTP credentials are not configured.
+export class ConsoleEmailProvider implements EmailProvider {
+  async send(to: string, subject: string, html: string): Promise<void> {
+    console.warn('[Email:FALLBACK] SMTP credentials missing. Email not sent via SMTP.');
+    console.log('[Email:FALLBACK] To:', to);
+    console.log('[Email:FALLBACK] Subject:', subject);
+    console.log('[Email:FALLBACK] HTML:', html);
+  }
+}
+
 // Nodemailer provider for dev/local (supports Gmail SMTP or Ethereal)
 export class NodemailerProvider implements EmailProvider {
   async send(to: string, subject: string, html: string): Promise<void> {
-    const isGmail = process.env.SMTP_HOST?.includes('gmail');
+    const smtpHost = process.env.SMTP_HOST;
+    const smtpPort = Number(process.env.SMTP_PORT || 587);
+    const smtpUser = process.env.SMTP_USER;
+    const smtpPass = process.env.SMTP_PASS;
+    const isGmail = smtpHost?.includes('gmail');
+
+    if (!smtpHost || !smtpUser || !smtpPass) {
+      throw new Error('SMTP is not fully configured. Please set SMTP_HOST, SMTP_PORT, SMTP_USER, and SMTP_PASS.');
+    }
+
     const transporter = nodemailer.createTransport({
-      host: process.env.SMTP_HOST,
-      port: Number(process.env.SMTP_PORT),
+      host: smtpHost,
+      port: smtpPort,
       secure: isGmail ? true : false, // Gmail requires secure connection
       auth: {
-        user: process.env.SMTP_USER,
-        pass: process.env.SMTP_PASS,
+        user: smtpUser,
+        pass: smtpPass,
       },
     });
     await transporter.sendMail({
@@ -49,5 +68,17 @@ export function getEmailProvider(): EmailProvider {
   if (process.env.NODE_ENV === 'production') {
     return new ProductionEmailProvider();
   }
+
+  const smtpConfigured = !!(
+    process.env.SMTP_HOST &&
+    process.env.SMTP_PORT &&
+    process.env.SMTP_USER &&
+    process.env.SMTP_PASS
+  );
+
+  if (!smtpConfigured) {
+    return new ConsoleEmailProvider();
+  }
+
   return new NodemailerProvider();
 }
