@@ -11,6 +11,34 @@ import { v2 as cloudinary } from 'cloudinary';
 
 @Injectable()
 export class UsersService {
+  private escapeRegex(value: string): string {
+    return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  }
+
+  async checkUsername(username: string): Promise<{ exists: boolean }> {
+    const normalized = (username || '').trim();
+    if (!normalized) {
+      return { exists: false };
+    }
+
+    const exactCaseInsensitive = new RegExp(`^${this.escapeRegex(normalized)}$`, 'i');
+    const influencer = await this.influencerModel.findOne({ username: exactCaseInsensitive }).select('_id').lean();
+
+    return { exists: !!influencer };
+  }
+
+  async checkBrandNameUnique(name: string): Promise<boolean> {
+    const normalized = (name || '').trim();
+    if (!normalized) {
+      return false;
+    }
+
+    const exactCaseInsensitive = new RegExp(`^${this.escapeRegex(normalized)}$`, 'i');
+    const brand = await this.brandModel.findOne({ brandName: exactCaseInsensitive }).select('_id').lean();
+
+    return !!brand;
+  }
+
   async deletePermanently(id: string) {
     // Try influencer first
     let user = await this.influencerModel.findById(id);
