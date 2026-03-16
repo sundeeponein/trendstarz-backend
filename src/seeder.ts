@@ -1,35 +1,35 @@
 // Seeder script for initial data and admin user
-import { NestFactory } from '@nestjs/core';
-import { AppModule } from './app.module';
-import { Model } from 'mongoose';
-import { getModelToken } from '@nestjs/mongoose';
-import * as bcrypt from 'bcryptjs';
-import * as fs from 'fs';
-import * as path from 'path';
+import { NestFactory } from "@nestjs/core";
+import { AppModule } from "./app.module";
+import { Model } from "mongoose";
+import { getModelToken } from "@nestjs/mongoose";
+import * as bcrypt from "bcryptjs";
+import * as fs from "fs";
+import * as path from "path";
 
 export async function seedDatabase() {
   // Load admin-config.json for visibility data
   // Try both possible paths for admin-config.json
   let adminConfig = null;
-  let adminConfigPath = path.join(__dirname, '../assets/admin-config.json');
+  let adminConfigPath = path.join(__dirname, "../assets/admin-config.json");
   if (!fs.existsSync(adminConfigPath)) {
-    adminConfigPath = path.join(process.cwd(), 'assets/admin-config.json');
+    adminConfigPath = path.join(process.cwd(), "assets/admin-config.json");
   }
   if (fs.existsSync(adminConfigPath)) {
-    adminConfig = JSON.parse(fs.readFileSync(adminConfigPath, 'utf-8'));
-    console.log('Loaded admin-config:', Object.keys(adminConfig));
+    adminConfig = JSON.parse(fs.readFileSync(adminConfigPath, "utf-8"));
+    console.log("Loaded admin-config:", Object.keys(adminConfig));
   } else {
-    console.log('admin-config.json not found at', adminConfigPath);
+    console.log("admin-config.json not found at", adminConfigPath);
   }
   const app = await NestFactory.createApplicationContext(AppModule);
 
-  const CategoryModel = app.get<Model<any>>(getModelToken('Category'));
-  const LanguageModel = app.get<Model<any>>(getModelToken('Language'));
-  const SocialMediaModel = app.get<Model<any>>(getModelToken('SocialMedia'));
-  const StateModel = app.get<Model<any>>(getModelToken('State'));
-  const UserModel = app.get<Model<any>>(getModelToken('User'));
-  const InfluencerModel = app.get<Model<any>>(getModelToken('Influencer'));
-  const BrandModel = app.get<Model<any>>(getModelToken('Brand'));
+  const CategoryModel = app.get<Model<any>>(getModelToken("Category"));
+  const LanguageModel = app.get<Model<any>>(getModelToken("Language"));
+  const SocialMediaModel = app.get<Model<any>>(getModelToken("SocialMedia"));
+  const StateModel = app.get<Model<any>>(getModelToken("State"));
+  const UserModel = app.get<Model<any>>(getModelToken("User"));
+  const InfluencerModel = app.get<Model<any>>(getModelToken("Influencer"));
+  const BrandModel = app.get<Model<any>>(getModelToken("Brand"));
   // ...existing code...
 
   // Seed all categories
@@ -37,9 +37,15 @@ export async function seedDatabase() {
     for (const cat of adminConfig.categories) {
       const exists = await CategoryModel.findOne({ name: cat.name });
       if (!exists) {
-        await CategoryModel.create({ name: cat.name, showInFrontend: cat.visible });
+        await CategoryModel.create({
+          name: cat.name,
+          showInFrontend: cat.visible,
+        });
       } else {
-        await CategoryModel.updateOne({ name: cat.name }, { $set: { showInFrontend: cat.visible } });
+        await CategoryModel.updateOne(
+          { name: cat.name },
+          { $set: { showInFrontend: cat.visible } },
+        );
       }
     }
   }
@@ -49,9 +55,15 @@ export async function seedDatabase() {
     for (const lang of adminConfig.languages) {
       const exists = await LanguageModel.findOne({ name: lang.name });
       if (!exists) {
-        await LanguageModel.create({ name: lang.name, showInFrontend: lang.visible });
+        await LanguageModel.create({
+          name: lang.name,
+          showInFrontend: lang.visible,
+        });
       } else {
-        await LanguageModel.updateOne({ name: lang.name }, { $set: { showInFrontend: lang.visible } });
+        await LanguageModel.updateOne(
+          { name: lang.name },
+          { $set: { showInFrontend: lang.visible } },
+        );
       }
     }
   }
@@ -62,10 +74,16 @@ export async function seedDatabase() {
       try {
         let stateDoc = await StateModel.findOne({ name: loc.state });
         if (!stateDoc) {
-          stateDoc = await StateModel.create({ name: loc.state, showInFrontend: loc.visible });
+          stateDoc = await StateModel.create({
+            name: loc.state,
+            showInFrontend: loc.visible,
+          });
           console.log(`Inserted state: ${loc.state}`);
         } else {
-          await StateModel.updateOne({ name: loc.state }, { $set: { showInFrontend: loc.visible } });
+          await StateModel.updateOne(
+            { name: loc.state },
+            { $set: { showInFrontend: loc.visible } },
+          );
           console.log(`Updated state: ${loc.state}`);
         }
       } catch (err) {
@@ -76,15 +94,29 @@ export async function seedDatabase() {
 
   // Seed tiers with icon and count
   if (adminConfig?.tiers) {
-    const TierModel = app.get<Model<any>>(getModelToken('Tier'));
+    const TierModel = app.get<Model<any>>(getModelToken("Tier"));
     for (const tier of adminConfig.tiers) {
       try {
         const exists = await TierModel.findOne({ name: tier.name });
         if (!exists) {
-          await TierModel.create({ name: tier.name, icon: tier.icon, desc: tier.desc, showInFrontend: tier.visible });
+          await TierModel.create({
+            name: tier.name,
+            icon: tier.icon,
+            desc: tier.desc,
+            showInFrontend: tier.visible,
+          });
           console.log(`Inserted tier: ${tier.name}`);
         } else {
-          await TierModel.updateOne({ name: tier.name }, { $set: { icon: tier.icon, desc: tier.desc, showInFrontend: tier.visible } });
+          await TierModel.updateOne(
+            { name: tier.name },
+            {
+              $set: {
+                icon: tier.icon,
+                desc: tier.desc,
+                showInFrontend: tier.visible,
+              },
+            },
+          );
           console.log(`Updated tier: ${tier.name}`);
         }
       } catch (err) {
@@ -99,10 +131,16 @@ export async function seedDatabase() {
       try {
         const exists = await SocialMediaModel.findOne({ name: sm.name });
         if (!exists) {
-          await SocialMediaModel.create({ name: sm.name, showInFrontend: sm.visible });
+          await SocialMediaModel.create({
+            name: sm.name,
+            showInFrontend: sm.visible,
+          });
           console.log(`Inserted social media: ${sm.name}`);
         } else {
-          await SocialMediaModel.updateOne({ name: sm.name }, { $set: { showInFrontend: sm.visible } });
+          await SocialMediaModel.updateOne(
+            { name: sm.name },
+            { $set: { showInFrontend: sm.visible } },
+          );
           console.log(`Updated social media: ${sm.name}`);
         }
       } catch (err) {
@@ -112,23 +150,23 @@ export async function seedDatabase() {
   }
 
   // Seed Admin User (upsert to avoid duplicate key error)
-  const adminPassword = await bcrypt.hash('admin123', 10);
+  const adminPassword = await bcrypt.hash("admin123", 10);
   await UserModel.updateOne(
-    { email: 'admin@trendstarz.com' },
+    { email: "admin@trendstarz.com" },
     {
       $set: {
-        name: 'Admin',
+        name: "Admin",
         password: adminPassword,
-        role: 'admin',
-      }
+        role: "admin",
+      },
     },
-    { upsert: true }
+    { upsert: true },
   );
 
   // Seed Influencers and Brands from sample-users.json in assets folder
-  const samplePath = path.join(__dirname, '../assets/sample-users.json');
+  const samplePath = path.join(__dirname, "../assets/sample-users.json");
   if (fs.existsSync(samplePath)) {
-    const raw = fs.readFileSync(samplePath, 'utf-8');
+    const raw = fs.readFileSync(samplePath, "utf-8");
     const users = JSON.parse(raw);
     const influencers = users.filter((u: any) => u.username);
     const brands = users.filter((u: any) => u.brandName);
@@ -151,9 +189,11 @@ export async function seedDatabase() {
       }
     }
   } else {
-    console.log('sample-users.json not found in assets, skipping influencer/brand seeding.');
+    console.log(
+      "sample-users.json not found in assets, skipping influencer/brand seeding.",
+    );
   }
 
-  console.log('Seeding complete. Admin login: admin@trendstarz.com / admin123');
+  console.log("Seeding complete. Admin login: admin@trendstarz.com / admin123");
   await app.close();
 }

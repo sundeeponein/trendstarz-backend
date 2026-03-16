@@ -1,11 +1,11 @@
-import { Controller, Get } from '@nestjs/common';
-import { seedDatabase } from './seeder';
+import { Controller, Get } from "@nestjs/common";
+import { seedDatabase } from "./seeder";
 
-@Controller('seed')
+@Controller("seed")
 export class SeedController {
   @Get()
   async runSeeder() {
     await seedDatabase();
-    return { message: 'Database seeding completed!' };
+    return { message: "Database seeding completed!" };
   }
 }

@@ -1,10 +1,10 @@
-import { Controller, Get } from '@nestjs/common';
-import { InjectModel } from '@nestjs/mongoose';
-import { Model } from 'mongoose';
+import { Controller, Get } from "@nestjs/common";
+import { InjectModel } from "@nestjs/mongoose";
+import { Model } from "mongoose";
 
-@Controller('tiers')
+@Controller("tiers")
 export class TiersController {
-  constructor(@InjectModel('Tier') private readonly tierModel: Model<any>) {}
+  constructor(@InjectModel("Tier") private readonly tierModel: Model<any>) {}
 
   @Get()
   async getAll() {
@@ -13,9 +13,11 @@ export class TiersController {
   }
 }
 
-@Controller('languages')
+@Controller("languages")
 export class LanguagesController {
-  constructor(@InjectModel('Language') private readonly languageModel: Model<any>) {}
+  constructor(
+    @InjectModel("Language") private readonly languageModel: Model<any>,
+  ) {}
 
   @Get()
   async getAll() {
@@ -24,9 +26,11 @@ export class LanguagesController {
   }
 }
 
-@Controller('categories')
+@Controller("categories")
 export class CategoriesController {
-  constructor(@InjectModel('Category') private readonly categoryModel: Model<any>) {}
+  constructor(
+    @InjectModel("Category") private readonly categoryModel: Model<any>,
+  ) {}
 
   @Get()
   async getAll() {
@@ -35,9 +39,9 @@ export class CategoriesController {
   }
 }
 
-@Controller('states')
+@Controller("states")
 export class StatesController {
-  constructor(@InjectModel('State') private readonly stateModel: Model<any>) {}
+  constructor(@InjectModel("State") private readonly stateModel: Model<any>) {}
 
   @Get()
   async getAll() {
@@ -46,9 +50,11 @@ export class StatesController {
   }
 }
 
-@Controller('social-media')
+@Controller("social-media")
 export class SocialMediaController {
-  constructor(@InjectModel('SocialMedia') private readonly socialMediaModel: Model<any>) {}
+  constructor(
+    @InjectModel("SocialMedia") private readonly socialMediaModel: Model<any>,
+  ) {}
 
   @Get()
   async getAll() {
