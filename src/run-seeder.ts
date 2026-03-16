@@ -1,4 +1,4 @@
-import { seedDatabase } from './seeder';
+import { seedDatabase } from "./seeder";
 
 seedDatabase()
   .then(() => {

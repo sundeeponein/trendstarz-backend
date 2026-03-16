@@ -1,40 +1,49 @@
-
-
-
-import { Injectable } from '@nestjs/common';
-import { CloudinaryService } from '../cloudinary.service';
-import { InfluencerProfileDto, BrandProfileDto } from './dto/profile.dto';
-import * as bcrypt from 'bcryptjs';
-import { InjectModel } from '@nestjs/mongoose';
-import { Model } from 'mongoose';
-import { v2 as cloudinary } from 'cloudinary';
+import { Injectable } from "@nestjs/common";
+import { CloudinaryService } from "../cloudinary.service";
+import { InfluencerProfileDto, BrandProfileDto } from "./dto/profile.dto";
+import * as bcrypt from "bcryptjs";
+import { InjectModel } from "@nestjs/mongoose";
+import { Model } from "mongoose";
+import { v2 as cloudinary } from "cloudinary";
 
 @Injectable()
 export class UsersService {
   private escapeRegex(value: string): string {
-    return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   }
 
   async checkUsername(username: string): Promise<{ exists: boolean }> {
-    const normalized = (username || '').trim();
+    const normalized = (username || "").trim();
     if (!normalized) {
       return { exists: false };
     }
 
-    const exactCaseInsensitive = new RegExp(`^${this.escapeRegex(normalized)}$`, 'i');
-    const influencer = await this.influencerModel.findOne({ username: exactCaseInsensitive }).select('_id').lean();
+    const exactCaseInsensitive = new RegExp(
+      `^${this.escapeRegex(normalized)}$`,
+      "i",
+    );
+    const influencer = await this.influencerModel
+      .findOne({ username: exactCaseInsensitive })
+      .select("_id")
+      .lean();
 
     return { exists: !!influencer };
   }
 
   async checkBrandNameUnique(name: string): Promise<boolean> {
-    const normalized = (name || '').trim();
+    const normalized = (name || "").trim();
     if (!normalized) {
       return false;
     }
 
-    const exactCaseInsensitive = new RegExp(`^${this.escapeRegex(normalized)}$`, 'i');
-    const brand = await this.brandModel.findOne({ brandName: exactCaseInsensitive }).select('_id').lean();
+    const exactCaseInsensitive = new RegExp(
+      `^${this.escapeRegex(normalized)}$`,
+      "i",
+    );
+    const brand = await this.brandModel
+      .findOne({ brandName: exactCaseInsensitive })
+      .select("_id")
+      .lean();
 
     return !!brand;
   }
@@ -43,95 +52,132 @@ export class UsersService {
     // Try influencer first
     let user = await this.influencerModel.findById(id);
     if (user) {
-      let errors: any[] = [];
+      const errors: any[] = [];
       // Delete all images from Cloudinary
       if (user.profileImages && Array.isArray(user.profileImages)) {
         for (const img of user.profileImages) {
-          if (typeof img === 'object' && img.public_id) {
+          if (typeof img === "object" && img.public_id) {
             let publicId = img.public_id;
-            if (publicId && !publicId.includes('/')) publicId = `uploads/${publicId}`;
+            if (publicId && !publicId.includes("/"))
+              publicId = `uploads/${publicId}`;
             try {
               await this.cloudinaryService.deleteImage(publicId);
-              console.log(`[DELETE] Deleted influencer image from Cloudinary: ${publicId}`);
+              console.log(
+                `[DELETE] Deleted influencer image from Cloudinary: ${publicId}`,
+              );
             } catch (err) {
-              console.error('[DELETE] Error deleting influencer image from Cloudinary:', err, img);
-              errors.push({ type: 'influencer', publicId, error: err });
+              console.error(
+                "[DELETE] Error deleting influencer image from Cloudinary:",
+                err,
+                img,
+              );
+              errors.push({ type: "influencer", publicId, error: err });
             }
           }
         }
       }
       const deleteResult = await this.influencerModel.findByIdAndDelete(id);
       if (!deleteResult) {
-        console.error(`[CLEANUP][ERROR] Influencer not found for deletion after Cloudinary cleanup: ${id}`);
+        console.error(
+          `[CLEANUP][ERROR] Influencer not found for deletion after Cloudinary cleanup: ${id}`,
+        );
       } else {
         console.log(`[CLEANUP] Influencer document deleted from DB: ${id}`);
       }
       // Double-check for any remaining influencer with this id
       const checkUser = await this.influencerModel.findById(id);
       if (checkUser) {
-        console.error(`[CLEANUP][ERROR] Influencer still exists after deletion: ${id}`);
+        console.error(
+          `[CLEANUP][ERROR] Influencer still exists after deletion: ${id}`,
+        );
       }
       if (errors.length > 0) {
-        return { message: 'Influencer deleted with some image deletion errors', user, errors };
+        return {
+          message: "Influencer deleted with some image deletion errors",
+          user,
+          errors,
+        };
       }
-      return { message: 'Influencer permanently deleted', user };
+      return { message: "Influencer permanently deleted", user };
     }
     // Try brand
     user = await this.brandModel.findById(id);
     if (user) {
-      let errors: any[] = [];
+      const errors: any[] = [];
       if (user.brandLogo && Array.isArray(user.brandLogo)) {
         for (const img of user.brandLogo) {
-          if (typeof img === 'object' && img.public_id) {
+          if (typeof img === "object" && img.public_id) {
             let publicId = img.public_id;
-            if (publicId && !publicId.includes('/')) publicId = `uploads/${publicId}`;
+            if (publicId && !publicId.includes("/"))
+              publicId = `uploads/${publicId}`;
             try {
               await this.cloudinaryService.deleteImage(publicId);
-              console.log(`[DELETE] Deleted brand logo from Cloudinary: ${publicId}`);
+              console.log(
+                `[DELETE] Deleted brand logo from Cloudinary: ${publicId}`,
+              );
             } catch (cloudErr) {
-              console.error('[DELETE] Error deleting brand logo from Cloudinary:', cloudErr, img);
-              errors.push({ type: 'brandLogo', publicId, error: cloudErr });
+              console.error(
+                "[DELETE] Error deleting brand logo from Cloudinary:",
+                cloudErr,
+                img,
+              );
+              errors.push({ type: "brandLogo", publicId, error: cloudErr });
             }
           }
         }
       }
       if (user.products && Array.isArray(user.products)) {
         for (const img of user.products) {
-          if (typeof img === 'object' && img.public_id) {
+          if (typeof img === "object" && img.public_id) {
             let publicId = img.public_id;
-            if (publicId && !publicId.includes('/')) publicId = `uploads/${publicId}`;
+            if (publicId && !publicId.includes("/"))
+              publicId = `uploads/${publicId}`;
             try {
               await this.cloudinaryService.deleteImage(publicId);
-              console.log(`[DELETE] Deleted brand product image from Cloudinary: ${publicId}`);
+              console.log(
+                `[DELETE] Deleted brand product image from Cloudinary: ${publicId}`,
+              );
             } catch (cloudErr) {
-              console.error('[DELETE] Error deleting brand product image from Cloudinary:', cloudErr, img);
-              errors.push({ type: 'brandProduct', publicId, error: cloudErr });
+              console.error(
+                "[DELETE] Error deleting brand product image from Cloudinary:",
+                cloudErr,
+                img,
+              );
+              errors.push({ type: "brandProduct", publicId, error: cloudErr });
             }
           }
         }
       }
       const deleteResult = await this.brandModel.findByIdAndDelete(id);
       if (!deleteResult) {
-        console.error(`[CLEANUP][ERROR] Brand not found for deletion after Cloudinary cleanup: ${id}`);
+        console.error(
+          `[CLEANUP][ERROR] Brand not found for deletion after Cloudinary cleanup: ${id}`,
+        );
       } else {
         console.log(`[CLEANUP] Brand document deleted from DB: ${id}`);
       }
       // Double-check for any remaining brand with this id
       const checkBrand = await this.brandModel.findById(id);
       if (checkBrand) {
-        console.error(`[CLEANUP][ERROR] Brand still exists after deletion: ${id}`);
+        console.error(
+          `[CLEANUP][ERROR] Brand still exists after deletion: ${id}`,
+        );
       }
       if (errors.length > 0) {
-        return { message: 'Brand deleted with some image deletion errors', user, errors };
+        return {
+          message: "Brand deleted with some image deletion errors",
+          user,
+          errors,
+        };
       }
-      return { message: 'Brand permanently deleted', user };
+      return { message: "Brand permanently deleted", user };
     }
-    return { message: 'User not found', id };
+    return { message: "User not found", id };
   }
   constructor(
     private readonly cloudinaryService: CloudinaryService,
-    @InjectModel('Influencer') private readonly influencerModel: Model<any>,
-    @InjectModel('Brand') private readonly brandModel: Model<any>,
+    @InjectModel("Influencer") private readonly influencerModel: Model<any>,
+    @InjectModel("Brand") private readonly brandModel: Model<any>,
   ) {}
 
   async getBrandByName(brandName: string) {
@@ -140,16 +186,18 @@ export class UsersService {
       return text
         .toString()
         .toLowerCase()
-        .replace(/\s+/g, '-')
-        .replace(/[^a-z0-9\-]/g, '')
-        .replace(/-+/g, '-')
-        .replace(/^-+/, '')
-        .replace(/-+$/, '');
+        .replace(/\s+/g, "-")
+        .replace(/[^a-z0-9\-]/g, "")
+        .replace(/-+/g, "-")
+        .replace(/^-+/, "")
+        .replace(/-+$/, "");
     }
 
     // Fetch all brands and match by slug
     const allBrands = await this.brandModel.find({}).lean();
-    const user = allBrands.find((b: any) => slugify(b.brandName) === slugify(brandName));
+    const user = allBrands.find(
+      (b: any) => slugify(b.brandName) === slugify(brandName),
+    );
     if (!user) return null;
     const {
       _id,
@@ -163,7 +211,7 @@ export class UsersService {
       brandLogo,
       products,
       website,
-      googleMapAddress
+      googleMapAddress,
     } = user;
     return {
       _id,
@@ -171,46 +219,78 @@ export class UsersService {
       email,
       phoneNumber,
       categories,
-      location: location || { state: '' },
+      location: location || { state: "" },
       socialMedia,
       isPremium,
       brandLogo,
       products,
       website,
-      googleMapAddress
+      googleMapAddress,
     };
   }
 
-  async updateUserImages(id: string, images: { brandLogo?: any[]; products?: any[]; profileImages?: any[] }) {
-    console.log('[PATCH] updateUserImages called for id:', id, 'with images:', JSON.stringify(images));
+  async updateUserImages(
+    id: string,
+    images: { brandLogo?: any[]; products?: any[]; profileImages?: any[] },
+  ) {
+    console.log(
+      "[PATCH] updateUserImages called for id:",
+      id,
+      "with images:",
+      JSON.stringify(images),
+    );
     // Influencer logic (unchanged)
     let user = await this.influencerModel.findById(id);
     if (user) {
-      console.log('[PATCH][DEBUG] Influencer profileImages before update:', JSON.stringify(user.profileImages));
+      console.log(
+        "[PATCH][DEBUG] Influencer profileImages before update:",
+        JSON.stringify(user.profileImages),
+      );
       if (images.profileImages) {
         // ...existing code for influencer...
         user.profileImages = images.profileImages;
         await user.save();
-        console.log('[PATCH] Influencer images updated:', user.profileImages);
-        return { message: 'Influencer images updated', user };
+        console.log("[PATCH] Influencer images updated:", user.profileImages);
+        return { message: "Influencer images updated", user };
       }
     }
     // Brand logic
     user = await this.brandModel.findById(id);
     if (user) {
-      console.log('[PATCH][DEBUG] Brand brandLogo before update:', JSON.stringify(user.brandLogo));
-      console.log('[PATCH][DEBUG] Brand products before update:', JSON.stringify(user.products));
-      console.log('[PATCH][DEBUG] Incoming brandLogo:', JSON.stringify(images.brandLogo));
-      console.log('[PATCH][DEBUG] Incoming products:', JSON.stringify(images.products));
+      console.log(
+        "[PATCH][DEBUG] Brand brandLogo before update:",
+        JSON.stringify(user.brandLogo),
+      );
+      console.log(
+        "[PATCH][DEBUG] Brand products before update:",
+        JSON.stringify(user.products),
+      );
+      console.log(
+        "[PATCH][DEBUG] Incoming brandLogo:",
+        JSON.stringify(images.brandLogo),
+      );
+      console.log(
+        "[PATCH][DEBUG] Incoming products:",
+        JSON.stringify(images.products),
+      );
       // Remove all old brand logos from Cloudinary if brandLogo is being replaced
       if (user.brandLogo && Array.isArray(user.brandLogo) && images.brandLogo) {
         for (const oldImg of user.brandLogo) {
-          if (oldImg && oldImg.public_id && (!images.brandLogo.some(newImg => newImg.public_id === oldImg.public_id))) {
+          if (
+            oldImg &&
+            oldImg.public_id &&
+            !images.brandLogo.some(
+              (newImg) => newImg.public_id === oldImg.public_id,
+            )
+          ) {
             try {
               await this.cloudinaryService.deleteImage(oldImg.public_id);
-              console.log('[PATCH] Deleted old brand logo from Cloudinary:', oldImg.public_id);
+              console.log(
+                "[PATCH] Deleted old brand logo from Cloudinary:",
+                oldImg.public_id,
+              );
             } catch (err) {
-              console.error('[PATCH] Error deleting old brand logo:', err);
+              console.error("[PATCH] Error deleting old brand logo:", err);
             }
           }
         }
@@ -218,12 +298,24 @@ export class UsersService {
       // Remove all old product images from Cloudinary if products are being replaced
       if (user.products && Array.isArray(user.products) && images.products) {
         for (const oldImg of user.products) {
-          if (oldImg && oldImg.public_id && (!images.products.some(newImg => newImg.public_id === oldImg.public_id))) {
+          if (
+            oldImg &&
+            oldImg.public_id &&
+            !images.products.some(
+              (newImg) => newImg.public_id === oldImg.public_id,
+            )
+          ) {
             try {
               await this.cloudinaryService.deleteImage(oldImg.public_id);
-              console.log('[PATCH] Deleted old brand product image from Cloudinary:', oldImg.public_id);
+              console.log(
+                "[PATCH] Deleted old brand product image from Cloudinary:",
+                oldImg.public_id,
+              );
             } catch (err) {
-              console.error('[PATCH] Error deleting old brand product image:', err);
+              console.error(
+                "[PATCH] Error deleting old brand product image:",
+                err,
+              );
             }
           }
         }
@@ -231,18 +323,27 @@ export class UsersService {
       // Direct fix: always update brandLogo and products if present
       if (images.brandLogo) {
         user.brandLogo = images.brandLogo;
-        console.log('[PATCH][FIX] Set user.brandLogo to:', JSON.stringify(user.brandLogo));
+        console.log(
+          "[PATCH][FIX] Set user.brandLogo to:",
+          JSON.stringify(user.brandLogo),
+        );
       }
       if (images.products) {
         user.products = images.products;
-        console.log('[PATCH][FIX] Set user.products to:', JSON.stringify(user.products));
+        console.log(
+          "[PATCH][FIX] Set user.products to:",
+          JSON.stringify(user.products),
+        );
       }
       await user.save();
-      console.log('[PATCH] Brand images updated:', { brandLogo: user.brandLogo, products: user.products });
-      return { message: 'Brand images updated', user };
+      console.log("[PATCH] Brand images updated:", {
+        brandLogo: user.brandLogo,
+        products: user.products,
+      });
+      return { message: "Brand images updated", user };
     }
-    console.log('[PATCH] User not found for id:', id);
-    return { message: 'User not found', id };
+    console.log("[PATCH] User not found for id:", id);
+    return { message: "User not found", id };
   }
 
   // Helper for removing a specific influencer image (by index)
@@ -252,19 +353,20 @@ export class UsersService {
       const img = user.profileImages[imageIdx];
       if (img && img.public_id) {
         let publicId = img.public_id;
-        if (publicId && !publicId.includes('/')) publicId = `uploads/${publicId}`;
+        if (publicId && !publicId.includes("/"))
+          publicId = `uploads/${publicId}`;
         try {
           await this.cloudinaryService.deleteImage(publicId);
           user.profileImages.splice(imageIdx, 1);
           await user.save();
-          return { message: 'Profile image removed', user };
+          return { message: "Profile image removed", user };
         } catch (err) {
-          console.error('[REMOVE] Error deleting influencer image:', err);
-          throw new Error('Failed to remove image');
+          console.error("[REMOVE] Error deleting influencer image:", err);
+          throw new Error("Failed to remove image");
         }
       }
     }
-    return { message: 'Image not found or already removed' };
+    return { message: "Image not found or already removed" };
   }
 
   async registerInfluencer(dto: InfluencerProfileDto) {
@@ -272,18 +374,24 @@ export class UsersService {
       if (dto.profileImages && dto.profileImages.length) {
         const uploadedImages = [];
         for (const img of dto.profileImages) {
-          if (typeof img === 'object' && img.url && img.public_id) {
+          if (typeof img === "object" && img.url && img.public_id) {
             uploadedImages.push(img);
-          } else if (typeof img === 'string') {
-            if ((img as string).startsWith('http')) {
-              uploadedImages.push({ url: img, public_id: '' });
+          } else if (typeof img === "string") {
+            if ((img as string).startsWith("http")) {
+              uploadedImages.push({ url: img, public_id: "" });
             } else {
-              const result = await this.cloudinaryService.uploadImage(img, 'profile_images');
-              uploadedImages.push({ url: result.secure_url, public_id: result.public_id });
+              const result = await this.cloudinaryService.uploadImage(
+                img,
+                "profile_images",
+              );
+              uploadedImages.push({
+                url: result.secure_url,
+                public_id: result.public_id,
+              });
             }
           } else {
             // fallback for unknown type
-            uploadedImages.push({ url: '', public_id: '' });
+            uploadedImages.push({ url: "", public_id: "" });
           }
         }
         dto.profileImages = uploadedImages;
@@ -293,7 +401,7 @@ export class UsersService {
         dto.password = await bcrypt.hash(dto.password, 10);
       }
       // Save influencer to DB
-      if ('price' in dto) {
+      if ("price" in dto) {
         (dto as any).promotionalPrice = (dto as any).price;
         delete (dto as any).price;
       }
@@ -301,13 +409,20 @@ export class UsersService {
       const savedInfluencer = await influencer.save();
       // Send email verification after registration
       try {
-        const { VerificationService } = require('../services/verification.service');
-        const { DummyEmailProvider } = require('../services/emailProvider.service');
+        const {
+          VerificationService,
+        } = require("../services/verification.service");
+        const {
+          DummyEmailProvider,
+        } = require("../services/emailProvider.service");
         const emailProvider = new DummyEmailProvider();
-        const verificationService = new VerificationService(emailProvider, null);
-        await verificationService.generateToken(savedInfluencer._id, 'email');
+        const verificationService = new VerificationService(
+          emailProvider,
+          null,
+        );
+        await verificationService.generateToken(savedInfluencer._id, "email");
       } catch (e) {
-        console.error('Failed to send verification email:', e);
+        console.error("Failed to send verification email:", e);
       }
       return savedInfluencer;
     } catch (err) {
@@ -324,17 +439,23 @@ export class UsersService {
       if (dto.brandLogo && dto.brandLogo.length) {
         const uploadedImages = [];
         for (const img of dto.brandLogo) {
-          if (typeof img === 'object' && img.url && img.public_id) {
+          if (typeof img === "object" && img.url && img.public_id) {
             uploadedImages.push(img);
-          } else if (typeof img === 'string') {
-            if ((img as string).startsWith('http')) {
-              uploadedImages.push({ url: img, public_id: '' });
+          } else if (typeof img === "string") {
+            if ((img as string).startsWith("http")) {
+              uploadedImages.push({ url: img, public_id: "" });
             } else {
-              const result = await this.cloudinaryService.uploadImage(img, 'profile_images');
-              uploadedImages.push({ url: result.secure_url, public_id: result.public_id });
+              const result = await this.cloudinaryService.uploadImage(
+                img,
+                "profile_images",
+              );
+              uploadedImages.push({
+                url: result.secure_url,
+                public_id: result.public_id,
+              });
             }
           } else {
-            uploadedImages.push({ url: '', public_id: '' });
+            uploadedImages.push({ url: "", public_id: "" });
           }
         }
         dto.brandLogo = uploadedImages;
@@ -342,17 +463,23 @@ export class UsersService {
       if (dto.products && dto.products.length) {
         const uploadedProducts = [];
         for (const img of dto.products) {
-          if (typeof img === 'object' && img.url && img.public_id) {
+          if (typeof img === "object" && img.url && img.public_id) {
             uploadedProducts.push(img);
-          } else if (typeof img === 'string') {
-            if ((img as string).startsWith('http')) {
-              uploadedProducts.push({ url: img, public_id: '' });
+          } else if (typeof img === "string") {
+            if ((img as string).startsWith("http")) {
+              uploadedProducts.push({ url: img, public_id: "" });
             } else {
-              const result = await this.cloudinaryService.uploadImage(img, 'profile_images');
-              uploadedProducts.push({ url: result.secure_url, public_id: result.public_id });
+              const result = await this.cloudinaryService.uploadImage(
+                img,
+                "profile_images",
+              );
+              uploadedProducts.push({
+                url: result.secure_url,
+                public_id: result.public_id,
+              });
             }
           } else {
-            uploadedProducts.push({ url: '', public_id: '' });
+            uploadedProducts.push({ url: "", public_id: "" });
           }
         }
         dto.products = uploadedProducts;
@@ -362,7 +489,7 @@ export class UsersService {
         dto.password = await bcrypt.hash(dto.password, 10);
       }
       // Save brand to DB
-      if ('price' in dto) {
+      if ("price" in dto) {
         (dto as any).promotionalPrice = (dto as any).price;
         delete (dto as any).price;
       }
@@ -371,13 +498,20 @@ export class UsersService {
       // Send email verification after registration
       try {
         // Import and instantiate your verification service and email provider as needed
-        const { VerificationService } = require('../services/verification.service');
-        const { DummyEmailProvider } = require('../services/emailProvider.service');
+        const {
+          VerificationService,
+        } = require("../services/verification.service");
+        const {
+          DummyEmailProvider,
+        } = require("../services/emailProvider.service");
         const emailProvider = new DummyEmailProvider();
-        const verificationService = new VerificationService(emailProvider, null);
-        await verificationService.generateToken(savedBrand._id, 'email');
+        const verificationService = new VerificationService(
+          emailProvider,
+          null,
+        );
+        await verificationService.generateToken(savedBrand._id, "email");
       } catch (e) {
-        console.error('Failed to send verification email:', e);
+        console.error("Failed to send verification email:", e);
       }
       return savedBrand;
     } catch (err) {
@@ -390,13 +524,15 @@ export class UsersService {
     }
   }
 
-
   async getInfluencers() {
-  // Only return accepted influencers
-  return await this.influencerModel.find({ status: 'accepted' }).lean().limit(100);
+    // Only return accepted influencers
+    return await this.influencerModel
+      .find({ status: "accepted" })
+      .lean()
+      .limit(100);
   }
 
-    // Place this inside UsersService class
+  // Place this inside UsersService class
   async getInfluencerByUsername(username: string) {
     const user: any = await this.influencerModel.findOne({ username }).lean();
     if (!user) return null;
@@ -412,7 +548,7 @@ export class UsersService {
       location,
       socialMedia,
       isPremium,
-      promotionalPrice
+      promotionalPrice,
     } = user;
     return {
       _id,
@@ -423,10 +559,10 @@ export class UsersService {
       email,
       phoneNumber,
       categories,
-      location: location || { state: '' },
+      location: location || { state: "" },
       socialMedia,
       isPremium,
-      promotionalPrice
+      promotionalPrice,
     };
   }
   async getInfluencerById(id: string) {
@@ -444,7 +580,7 @@ export class UsersService {
       categories,
       location,
       socialMedia,
-      isPremium
+      isPremium,
     } = user;
     return {
       _id,
@@ -455,115 +591,153 @@ export class UsersService {
       email,
       phoneNumber,
       categories,
-      location: location || { state: '' },
+      location: location || { state: "" },
       socialMedia,
       isPremium,
-      promotionalPrice
+      promotionalPrice,
     };
   }
 
   async getBrands() {
-  // Only return accepted brands
-  return await this.brandModel.find({ status: 'accepted' }).lean().limit(100);
+    // Only return accepted brands
+    return await this.brandModel.find({ status: "accepted" }).lean().limit(100);
   }
 
   async acceptUser(id: string) {
-    const influencer = await this.influencerModel.findByIdAndUpdate(id, { status: 'accepted' }, { new: true });
-    if (influencer) return { message: 'User accepted', user: influencer };
-    const brand = await this.brandModel.findByIdAndUpdate(id, { status: 'accepted' }, { new: true });
-    if (brand) return { message: 'User accepted', user: brand };
-    return { message: 'User not found', id };
+    const influencer = await this.influencerModel.findByIdAndUpdate(
+      id,
+      { status: "accepted" },
+      { new: true },
+    );
+    if (influencer) return { message: "User accepted", user: influencer };
+    const brand = await this.brandModel.findByIdAndUpdate(
+      id,
+      { status: "accepted" },
+      { new: true },
+    );
+    if (brand) return { message: "User accepted", user: brand };
+    return { message: "User not found", id };
   }
 
   async declineUser(id: string) {
-    const influencer = await this.influencerModel.findByIdAndUpdate(id, { status: 'declined' }, { new: true });
-    if (influencer) return { message: 'User declined', user: influencer };
-    const brand = await this.brandModel.findByIdAndUpdate(id, { status: 'declined' }, { new: true });
-    if (brand) return { message: 'User declined', user: brand };
-    return { message: 'User not found', id };
+    const influencer = await this.influencerModel.findByIdAndUpdate(
+      id,
+      { status: "declined" },
+      { new: true },
+    );
+    if (influencer) return { message: "User declined", user: influencer };
+    const brand = await this.brandModel.findByIdAndUpdate(
+      id,
+      { status: "declined" },
+      { new: true },
+    );
+    if (brand) return { message: "User declined", user: brand };
+    return { message: "User not found", id };
   }
 
   async restoreUser(id: string) {
-    const influencer = await this.influencerModel.findByIdAndUpdate(id, { status: 'pending' }, { new: true });
-    if (influencer) return { message: 'User restored', user: influencer };
-    const brand = await this.brandModel.findByIdAndUpdate(id, { status: 'pending' }, { new: true });
-    if (brand) return { message: 'User restored', user: brand };
-    return { message: 'User not found', id };
+    const influencer = await this.influencerModel.findByIdAndUpdate(
+      id,
+      { status: "pending" },
+      { new: true },
+    );
+    if (influencer) return { message: "User restored", user: influencer };
+    const brand = await this.brandModel.findByIdAndUpdate(
+      id,
+      { status: "pending" },
+      { new: true },
+    );
+    if (brand) return { message: "User restored", user: brand };
+    return { message: "User not found", id };
   }
 
   async deleteUser(id: string) {
     // Soft delete: set status to 'deleted' for influencer or brand
     const influencer = await this.influencerModel.findById(id);
     if (influencer) {
-      await this.influencerModel.findByIdAndUpdate(id, { status: 'deleted' });
-      return { message: 'User soft-deleted (influencer)', id };
+      await this.influencerModel.findByIdAndUpdate(id, { status: "deleted" });
+      return { message: "User soft-deleted (influencer)", id };
     }
     const brand = await this.brandModel.findById(id);
     if (brand) {
-      await this.brandModel.findByIdAndUpdate(id, { status: 'deleted' });
-      return { message: 'User soft-deleted (brand)', id };
+      await this.brandModel.findByIdAndUpdate(id, { status: "deleted" });
+      return { message: "User soft-deleted (brand)", id };
     }
-    return { message: 'User not found', id };
+    return { message: "User not found", id };
     // Try influencer first
     let user = await this.influencerModel.findById(id);
     if (user) {
       // Delete all images from Cloudinary
       if (user.profileImages && Array.isArray(user.profileImages)) {
         for (const img of user.profileImages) {
-          if (typeof img === 'object' && img.public_id) {
+          if (typeof img === "object" && img.public_id) {
             let publicId = img.public_id;
-            if (publicId && !publicId.includes('/')) publicId = `uploads/${publicId}`;
+            if (publicId && !publicId.includes("/"))
+              publicId = `uploads/${publicId}`;
             try {
               await this.cloudinaryService.deleteImage(publicId);
             } catch (err) {
-              console.error('Error deleting influencer image from Cloudinary:', err, img);
+              console.error(
+                "Error deleting influencer image from Cloudinary:",
+                err,
+                img,
+              );
             }
           }
         }
       }
       await this.influencerModel.findByIdAndDelete(id);
-      return { message: 'Influencer permanently deleted', user };
+      return { message: "Influencer permanently deleted", user };
     }
     // Try brand
     user = await this.brandModel.findById(id);
     if (user) {
       if (user.brandLogo && Array.isArray(user.brandLogo)) {
         for (const img of user.brandLogo) {
-          if (typeof img === 'object' && img.public_id) {
+          if (typeof img === "object" && img.public_id) {
             let publicId = img.public_id;
-            if (publicId && !publicId.includes('/')) publicId = `uploads/${publicId}`;
+            if (publicId && !publicId.includes("/"))
+              publicId = `uploads/${publicId}`;
             try {
               await this.cloudinaryService.deleteImage(publicId);
             } catch (cloudErr) {
-              console.error('Error deleting brand logo from Cloudinary:', cloudErr, img);
+              console.error(
+                "Error deleting brand logo from Cloudinary:",
+                cloudErr,
+                img,
+              );
             }
           }
         }
       }
       if (user.products && Array.isArray(user.products)) {
         for (const img of user.products) {
-          if (typeof img === 'object' && img.public_id) {
+          if (typeof img === "object" && img.public_id) {
             let publicId = img.public_id;
-            if (publicId && !publicId.includes('/')) publicId = `uploads/${publicId}`;
+            if (publicId && !publicId.includes("/"))
+              publicId = `uploads/${publicId}`;
             try {
               await this.cloudinaryService.deleteImage(publicId);
             } catch (cloudErr) {
-              console.error('Error deleting brand product image from Cloudinary:', cloudErr, img);
+              console.error(
+                "Error deleting brand product image from Cloudinary:",
+                cloudErr,
+                img,
+              );
             }
           }
         }
       }
       await this.brandModel.findByIdAndDelete(id);
-      return { message: 'Brand permanently deleted', user };
+      return { message: "Brand permanently deleted", user };
     }
-    return { message: 'User not found', id };
-
+    return { message: "User not found", id };
   }
   async setPremium(
     id: string,
     isPremium: boolean,
     premiumDuration?: string,
-    type?: 'influencer' | 'brand'
+    type?: "influencer" | "brand",
   ) {
     const update: any = { isPremium };
     if (isPremium && premiumDuration) {
@@ -571,24 +745,31 @@ export class UsersService {
       // Set premiumStart to now, premiumEnd based on duration
       const now = new Date();
       update.premiumStart = now;
-      let end = new Date(now);
-      if (premiumDuration === '1m') end.setMonth(end.getMonth() + 1);
-      else if (premiumDuration === '3m') end.setMonth(end.getMonth() + 3);
-      else if (premiumDuration === '1y') end.setFullYear(end.getFullYear() + 1);
+      const end = new Date(now);
+      if (premiumDuration === "1m") end.setMonth(end.getMonth() + 1);
+      else if (premiumDuration === "3m") end.setMonth(end.getMonth() + 3);
+      else if (premiumDuration === "1y") end.setFullYear(end.getFullYear() + 1);
       update.premiumEnd = end;
     } else {
       update.premiumDuration = null;
       update.premiumStart = null;
       update.premiumEnd = null;
     }
-    if (type === 'brand') {
-      const brand = await this.brandModel.findByIdAndUpdate(id, update, { new: true });
-      if (brand) return { message: 'Premium status updated', user: brand };
+    if (type === "brand") {
+      const brand = await this.brandModel.findByIdAndUpdate(id, update, {
+        new: true,
+      });
+      if (brand) return { message: "Premium status updated", user: brand };
     } else {
-      const influencer = await this.influencerModel.findByIdAndUpdate(id, update, { new: true });
-      if (influencer) return { message: 'Premium status updated', user: influencer };
+      const influencer = await this.influencerModel.findByIdAndUpdate(
+        id,
+        update,
+        { new: true },
+      );
+      if (influencer)
+        return { message: "Premium status updated", user: influencer };
     }
-    return { message: 'User not found', id };
+    return { message: "User not found", id };
   }
 
   async getInfluencerProfileById(userId: string) {
@@ -599,12 +780,12 @@ export class UsersService {
       phoneNumber: user.phoneNumber,
       name: user.name,
       email: user.email,
-      paymentOption: user.isPremium ? 'premium' : 'free',
-      location: user.location || { state: '' },
+      paymentOption: user.isPremium ? "premium" : "free",
+      location: user.location || { state: "" },
       languages: user.languages || [],
       categories: user.categories || [],
-      website: user.website || '',
-      googleMapAddress: user.googleMapAddress || '',
+      website: user.website || "",
+      googleMapAddress: user.googleMapAddress || "",
       profileImages: user.profileImages || [],
       socialMedia: user.socialMedia || [],
       contact: user.contact || { whatsapp: false, email: false, call: false },
@@ -612,7 +793,7 @@ export class UsersService {
       premiumDuration: user.premiumDuration || null,
       premiumStart: user.premiumStart || null,
       premiumEnd: user.premiumEnd || null,
-      promotionalPrice: user.promotionalPrice
+      promotionalPrice: user.promotionalPrice,
     };
   }
 
@@ -624,19 +805,19 @@ export class UsersService {
       phoneNumber: user.phoneNumber,
       email: user.email,
       isPremium: user.isPremium || false,
-      paymentOption: user.isPremium ? 'premium' : 'free',
-      location: user.location || { state: '' },
+      paymentOption: user.isPremium ? "premium" : "free",
+      location: user.location || { state: "" },
       languages: user.languages || [],
       categories: user.categories || [],
-      website: user.website || '',
-      googleMapAddress: user.googleMapAddress || '',
+      website: user.website || "",
+      googleMapAddress: user.googleMapAddress || "",
       brandLogo: user.brandLogo || [],
       productImages: user.products || [],
       socialMedia: user.socialMedia || [],
       contact: user.contact || { whatsapp: false, email: false, call: false },
       premiumDuration: user.premiumDuration || null,
       premiumStart: user.premiumStart || null,
-      premiumEnd: user.premiumEnd || null
+      premiumEnd: user.premiumEnd || null,
     };
   }
 
@@ -646,44 +827,85 @@ export class UsersService {
     // Cleanup old images if profileImages is being replaced
     if (update.profileImages) {
       const user = await this.influencerModel.findById(userId);
-      console.log('[PATCH][DEBUG] updateInfluencerProfile: userId:', userId);
-      console.log('[PATCH][DEBUG] Old profileImages:', user && user.profileImages ? JSON.stringify(user.profileImages) : 'none');
-      console.log('[PATCH][DEBUG] New profileImages:', JSON.stringify(update.profileImages));
+      console.log("[PATCH][DEBUG] updateInfluencerProfile: userId:", userId);
+      console.log(
+        "[PATCH][DEBUG] Old profileImages:",
+        user && user.profileImages
+          ? JSON.stringify(user.profileImages)
+          : "none",
+      );
+      console.log(
+        "[PATCH][DEBUG] New profileImages:",
+        JSON.stringify(update.profileImages),
+      );
       if (user && user.profileImages && Array.isArray(user.profileImages)) {
         for (const oldImg of user.profileImages) {
           if (
             oldImg &&
             oldImg.public_id &&
-            !update.profileImages.some((img: any) => img.public_id === oldImg.public_id)
+            !update.profileImages.some(
+              (img: any) => img.public_id === oldImg.public_id,
+            )
           ) {
             try {
-              console.log('[PATCH][DEBUG] Deleting old influencer image with public_id:', oldImg.public_id);
-              const result = await this.cloudinaryService.deleteImage(oldImg.public_id);
-              console.log('[PATCH][DEBUG] Cloudinary delete result for', oldImg.public_id, ':', result);
+              console.log(
+                "[PATCH][DEBUG] Deleting old influencer image with public_id:",
+                oldImg.public_id,
+              );
+              const result = await this.cloudinaryService.deleteImage(
+                oldImg.public_id,
+              );
+              console.log(
+                "[PATCH][DEBUG] Cloudinary delete result for",
+                oldImg.public_id,
+                ":",
+                result,
+              );
             } catch (err) {
-              console.error('[PATCH][ERROR] Failed to delete influencer image:', oldImg.public_id, err);
+              console.error(
+                "[PATCH][ERROR] Failed to delete influencer image:",
+                oldImg.public_id,
+                err,
+              );
             }
           } else {
-            console.log('[PATCH][DEBUG] Keeping image (still present):', oldImg && oldImg.public_id);
+            console.log(
+              "[PATCH][DEBUG] Keeping image (still present):",
+              oldImg && oldImg.public_id,
+            );
           }
         }
       }
     }
 
     const allowedFields = [
-      'name', 'username', 'phoneNumber', 'email', 'paymentOption', 'location',
-      'languages', 'categories', 'profileImages', 'socialMedia', 'contact', 'promotionalPrice'
+      "name",
+      "username",
+      "phoneNumber",
+      "email",
+      "paymentOption",
+      "location",
+      "languages",
+      "categories",
+      "profileImages",
+      "socialMedia",
+      "contact",
+      "promotionalPrice",
     ];
     const updateData: any = {};
     for (const key of allowedFields) {
       if (update[key] !== undefined) updateData[key] = update[key];
     }
     if (update.paymentOption) {
-      updateData.isPremium = update.paymentOption === 'premium';
+      updateData.isPremium = update.paymentOption === "premium";
     }
-    const updated = await this.influencerModel.findByIdAndUpdate(userId, updateData, { new: true });
-    if (!updated) return { message: 'Influencer not found', userId };
-    return { message: 'Profile updated', user: updated };
+    const updated = await this.influencerModel.findByIdAndUpdate(
+      userId,
+      updateData,
+      { new: true },
+    );
+    if (!updated) return { message: "Influencer not found", userId };
+    return { message: "Profile updated", user: updated };
   }
   async updateBrandProfile(userId: string, update: any) {
     if (update.password) delete update.password;
@@ -691,25 +913,50 @@ export class UsersService {
     // Cleanup old brandLogo images if replaced
     if (update.brandLogo) {
       const user = await this.brandModel.findById(userId);
-      console.log('[PATCH][DEBUG] updateBrandProfile: userId:', userId);
-      console.log('[PATCH][DEBUG] Old brandLogo:', user && user.brandLogo ? JSON.stringify(user.brandLogo) : 'none');
-      console.log('[PATCH][DEBUG] New brandLogo:', JSON.stringify(update.brandLogo));
+      console.log("[PATCH][DEBUG] updateBrandProfile: userId:", userId);
+      console.log(
+        "[PATCH][DEBUG] Old brandLogo:",
+        user && user.brandLogo ? JSON.stringify(user.brandLogo) : "none",
+      );
+      console.log(
+        "[PATCH][DEBUG] New brandLogo:",
+        JSON.stringify(update.brandLogo),
+      );
       if (user && user.brandLogo && Array.isArray(user.brandLogo)) {
         for (const oldImg of user.brandLogo) {
           if (
             oldImg &&
             oldImg.public_id &&
-            !update.brandLogo.some((img: any) => img.public_id === oldImg.public_id)
+            !update.brandLogo.some(
+              (img: any) => img.public_id === oldImg.public_id,
+            )
           ) {
             try {
-              console.log('[PATCH][DEBUG] Deleting old brandLogo image with public_id:', oldImg.public_id);
-              const result = await this.cloudinaryService.deleteImage(oldImg.public_id);
-              console.log('[PATCH][DEBUG] Cloudinary delete result for brandLogo', oldImg.public_id, ':', result);
+              console.log(
+                "[PATCH][DEBUG] Deleting old brandLogo image with public_id:",
+                oldImg.public_id,
+              );
+              const result = await this.cloudinaryService.deleteImage(
+                oldImg.public_id,
+              );
+              console.log(
+                "[PATCH][DEBUG] Cloudinary delete result for brandLogo",
+                oldImg.public_id,
+                ":",
+                result,
+              );
             } catch (err) {
-              console.error('[PATCH][ERROR] Failed to delete brandLogo image:', oldImg.public_id, err);
+              console.error(
+                "[PATCH][ERROR] Failed to delete brandLogo image:",
+                oldImg.public_id,
+                err,
+              );
             }
           } else {
-            console.log('[PATCH][DEBUG] Keeping brandLogo image (still present):', oldImg && oldImg.public_id);
+            console.log(
+              "[PATCH][DEBUG] Keeping brandLogo image (still present):",
+              oldImg && oldImg.public_id,
+            );
           }
         }
       }
@@ -718,45 +965,86 @@ export class UsersService {
     // Cleanup old product images if replaced
     if (update.products) {
       const user = await this.brandModel.findById(userId);
-      console.log('[PATCH][DEBUG] Old products:', user && user.products ? JSON.stringify(user.products) : 'none');
-      console.log('[PATCH][DEBUG] New products:', JSON.stringify(update.products));
+      console.log(
+        "[PATCH][DEBUG] Old products:",
+        user && user.products ? JSON.stringify(user.products) : "none",
+      );
+      console.log(
+        "[PATCH][DEBUG] New products:",
+        JSON.stringify(update.products),
+      );
       if (user && user.products && Array.isArray(user.products)) {
         for (const oldImg of user.products) {
           if (
             oldImg &&
             oldImg.public_id &&
-            !update.products.some((img: any) => img.public_id === oldImg.public_id)
+            !update.products.some(
+              (img: any) => img.public_id === oldImg.public_id,
+            )
           ) {
             try {
-              console.log('[PATCH][DEBUG] Deleting old product image with public_id:', oldImg.public_id);
-              const result = await this.cloudinaryService.deleteImage(oldImg.public_id);
-              console.log('[PATCH][DEBUG] Cloudinary delete result for product', oldImg.public_id, ':', result);
+              console.log(
+                "[PATCH][DEBUG] Deleting old product image with public_id:",
+                oldImg.public_id,
+              );
+              const result = await this.cloudinaryService.deleteImage(
+                oldImg.public_id,
+              );
+              console.log(
+                "[PATCH][DEBUG] Cloudinary delete result for product",
+                oldImg.public_id,
+                ":",
+                result,
+              );
             } catch (err) {
-              console.error('[PATCH][ERROR] Failed to delete product image:', oldImg.public_id, err);
+              console.error(
+                "[PATCH][ERROR] Failed to delete product image:",
+                oldImg.public_id,
+                err,
+              );
             }
           } else {
-            console.log('[PATCH][DEBUG] Keeping product image (still present):', oldImg && oldImg.public_id);
+            console.log(
+              "[PATCH][DEBUG] Keeping product image (still present):",
+              oldImg && oldImg.public_id,
+            );
           }
         }
       }
     }
 
     const allowedFields = [
-      'brandName', 'phoneNumber', 'email', 'paymentOption', 'location',
-      'languages', 'categories', 'brandLogo', 'products', 'website', 'googleMapAddress',
-      'productImages', 'socialMedia', 'contact', 'promotionalPrice'
+      "brandName",
+      "phoneNumber",
+      "email",
+      "paymentOption",
+      "location",
+      "languages",
+      "categories",
+      "brandLogo",
+      "products",
+      "website",
+      "googleMapAddress",
+      "productImages",
+      "socialMedia",
+      "contact",
+      "promotionalPrice",
     ];
     const updateData: any = {};
     for (const key of allowedFields) {
       if (update[key] !== undefined) updateData[key] = update[key];
     }
     // Remove price if present
-    if ('price' in updateData) delete updateData.price;
+    if ("price" in updateData) delete updateData.price;
     if (update.paymentOption) {
-      updateData.isPremium = update.paymentOption === 'premium';
+      updateData.isPremium = update.paymentOption === "premium";
     }
-    const updated = await this.brandModel.findByIdAndUpdate(userId, updateData, { new: true });
-    if (!updated) return { message: 'Brand not found', userId };
-    return { message: 'Profile updated', user: updated };
+    const updated = await this.brandModel.findByIdAndUpdate(
+      userId,
+      updateData,
+      { new: true },
+    );
+    if (!updated) return { message: "Brand not found", userId };
+    return { message: "Profile updated", user: updated };
   }
 }

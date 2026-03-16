@@ -1,188 +1,229 @@
-import { Controller, Get, Post, Put, Delete, Body, Param, Patch, UseGuards, BadRequestException } from '@nestjs/common';
-import { JwtAuthGuard } from './auth/jwt-auth.guard';
-import { CategoryModel, StateModel, SocialMediaModel, LanguageModel, TierModel } from './database/schemas/profile.schemas';
-import { InjectModel } from '@nestjs/mongoose';
-import { Model } from 'mongoose';
+import {
+  Controller,
+  Get,
+  Post,
+  Put,
+  Delete,
+  Body,
+  Param,
+  Patch,
+  UseGuards,
+  BadRequestException,
+} from "@nestjs/common";
+import { JwtAuthGuard } from "./auth/jwt-auth.guard";
+import {
+  CategoryModel,
+  StateModel,
+  SocialMediaModel,
+  LanguageModel,
+  TierModel,
+} from "./database/schemas/profile.schemas";
+import { InjectModel } from "@nestjs/mongoose";
+import { Model } from "mongoose";
 
-@Controller('admin')
+@Controller("admin")
 export class AdminListsController {
   constructor(
-    @InjectModel('Influencer') private readonly influencerModel: Model<any>,
-    @InjectModel('Brand') private readonly brandModel: Model<any>
+    @InjectModel("Influencer") private readonly influencerModel: Model<any>,
+    @InjectModel("Brand") private readonly brandModel: Model<any>,
   ) {}
   // Debug endpoint to log influencer and brand data
-  @Get('debug-users')
+  @Get("debug-users")
   async debugUsers() {
     try {
       const influencers = await this.influencerModel.find({}).lean().limit(5);
       const brands = await this.brandModel.find({}).lean().limit(5);
       return { influencers, brands };
     } catch (err) {
-      throw new BadRequestException(err.message || 'Error fetching debug user data');
+      throw new BadRequestException(
+        err.message || "Error fetching debug user data",
+      );
     }
   }
   // Admin dashboard endpoints for influencers and brands
-  @Get('influencers')
+  @Get("influencers")
   async getAllInfluencers() {
     return this.influencerModel.find({}).lean().limit(100);
   }
 
-  @Get('brands')
+  @Get("brands")
   async getAllBrands() {
     return this.brandModel.find({}).lean().limit(100);
   }
-  @Patch('states/:id')
-  async patchState(@Param('id') id: string, @Body() body: any) {
+  @Patch("states/:id")
+  async patchState(@Param("id") id: string, @Body() body: any) {
     return StateModel.findByIdAndUpdate(id, body, { new: true });
   }
 
-  @Patch('categories/:id')
-  async patchCategory(@Param('id') id: string, @Body() body: any) {
+  @Patch("categories/:id")
+  async patchCategory(@Param("id") id: string, @Body() body: any) {
     return CategoryModel.findByIdAndUpdate(id, body, { new: true });
   }
 
-  @Patch('languages/:id')
-  async patchLanguage(@Param('id') id: string, @Body() body: any) {
+  @Patch("languages/:id")
+  async patchLanguage(@Param("id") id: string, @Body() body: any) {
     return LanguageModel.findByIdAndUpdate(id, body, { new: true });
   }
 
-  @Patch('social-media/:id')
-  async patchSocialMedia(@Param('id') id: string, @Body() body: any) {
+  @Patch("social-media/:id")
+  async patchSocialMedia(@Param("id") id: string, @Body() body: any) {
     return SocialMediaModel.findByIdAndUpdate(id, body, { new: true });
   }
-  @Patch('tiers/:id')
-  async patchTier(@Param('id') id: string, @Body() body: any) {
+  @Patch("tiers/:id")
+  async patchTier(@Param("id") id: string, @Body() body: any) {
     return TierModel.findByIdAndUpdate(id, body, { new: true });
   }
   // Categories
-  @Get('categories')
+  @Get("categories")
   async getCategories() {
-  return CategoryModel.find().lean().limit(100);
+    return CategoryModel.find().lean().limit(100);
   }
-  @Post('categories')
+  @Post("categories")
   async addCategory(@Body() body: { name: string }) {
     return CategoryModel.create(body);
   }
-  @Put('categories/:id')
-  async updateCategoryFull(@Param('id') id: string, @Body() body: any) {
+  @Put("categories/:id")
+  async updateCategoryFull(@Param("id") id: string, @Body() body: any) {
     return CategoryModel.findByIdAndUpdate(id, body, { new: true });
   }
-  @Delete('categories/:id')
-  async deleteCategory(@Param('id') id: string) {
+  @Delete("categories/:id")
+  async deleteCategory(@Param("id") id: string) {
     return CategoryModel.findByIdAndDelete(id);
   }
 
   // States
-  @Get('states')
+  @Get("states")
   async getStates() {
-  return StateModel.find().lean().limit(100);
+    return StateModel.find().lean().limit(100);
   }
-  @Post('states')
+  @Post("states")
   async addState(@Body() body: { name: string }) {
     return StateModel.create(body);
   }
-  @Put('states/:id')
-  async updateStateFull(@Param('id') id: string, @Body() body: any) {
+  @Put("states/:id")
+  async updateStateFull(@Param("id") id: string, @Body() body: any) {
     return StateModel.findByIdAndUpdate(id, body, { new: true });
   }
-  @Delete('states/:id')
-  async deleteState(@Param('id') id: string) {
+  @Delete("states/:id")
+  async deleteState(@Param("id") id: string) {
     return StateModel.findByIdAndDelete(id);
   }
 
-
   // Languages
-  @Get('languages')
+  @Get("languages")
   async getLanguages() {
-  return LanguageModel.find().lean().limit(100);
+    return LanguageModel.find().lean().limit(100);
   }
-  @Post('languages')
+  @Post("languages")
   async addLanguage(@Body() body: { name: string }) {
     return LanguageModel.create(body);
   }
-  @Put('languages/:id')
-  async updateLanguageFull(@Param('id') id: string, @Body() body: any) {
+  @Put("languages/:id")
+  async updateLanguageFull(@Param("id") id: string, @Body() body: any) {
     return LanguageModel.findByIdAndUpdate(id, body, { new: true });
   }
-  @Delete('languages/:id')
-  async deleteLanguage(@Param('id') id: string) {
+  @Delete("languages/:id")
+  async deleteLanguage(@Param("id") id: string) {
     return LanguageModel.findByIdAndDelete(id);
   }
 
   // Social Media
-  @Get('social-media')
+  @Get("social-media")
   async getSocialMedia() {
     // Return all social media entries with new fields
-  return SocialMediaModel.find({}, { socialMedia: 1, handleName: 1, tier: 1, followersCount: 1 }).lean().limit(100);
+    return SocialMediaModel.find(
+      {},
+      { socialMedia: 1, handleName: 1, tier: 1, followersCount: 1 },
+    )
+      .lean()
+      .limit(100);
   }
-  @Post('social-media')
-  async addSocialMedia(@Body() body: { socialMedia: string; handleName: string; tier: string; followersCount: number }) {
+  @Post("social-media")
+  async addSocialMedia(
+    @Body()
+    body: {
+      socialMedia: string;
+      handleName: string;
+      tier: string;
+      followersCount: number;
+    },
+  ) {
     // Create new social media entry with all fields
     return SocialMediaModel.create(body);
   }
-  @Put('social-media/:id')
-  async updateSocialMediaFull(@Param('id') id: string, @Body() body: any) {
+  @Put("social-media/:id")
+  async updateSocialMediaFull(@Param("id") id: string, @Body() body: any) {
     return SocialMediaModel.findByIdAndUpdate(id, body, { new: true });
   }
-  @Delete('social-media/:id')
-  async deleteSocialMedia(@Param('id') id: string) {
+  @Delete("social-media/:id")
+  async deleteSocialMedia(@Param("id") id: string) {
     return SocialMediaModel.findByIdAndDelete(id);
   }
 
   @UseGuards(JwtAuthGuard)
-  @Post('batch-update-visibility')
+  @Post("batch-update-visibility")
   async batchUpdateVisibility(@Body() body: any) {
     try {
       // Each key is an array of {_id, showInFrontend}
       if (body.tiers) {
         for (const t of body.tiers) {
-          const result = await TierModel.findByIdAndUpdate(t._id, { showInFrontend: t.showInFrontend });
+          const result = await TierModel.findByIdAndUpdate(t._id, {
+            showInFrontend: t.showInFrontend,
+          });
           if (!result) {
-              // console.error(`[BatchUpdate] Tier not found:`, t);
+            // console.error(`[BatchUpdate] Tier not found:`, t);
             throw new BadRequestException(`Tier not found: ${t._id}`);
           }
         }
       }
       if (body.socialMedia) {
         for (const s of body.socialMedia) {
-          const result = await SocialMediaModel.findByIdAndUpdate(s._id, { showInFrontend: s.showInFrontend });
+          const result = await SocialMediaModel.findByIdAndUpdate(s._id, {
+            showInFrontend: s.showInFrontend,
+          });
           if (!result) {
-              // console.error(`[BatchUpdate] SocialMedia not found:`, s);
+            // console.error(`[BatchUpdate] SocialMedia not found:`, s);
             throw new BadRequestException(`SocialMedia not found: ${s._id}`);
           }
         }
       }
       if (body.categories) {
         for (const c of body.categories) {
-          const result = await CategoryModel.findByIdAndUpdate(c._id, { showInFrontend: c.showInFrontend });
+          const result = await CategoryModel.findByIdAndUpdate(c._id, {
+            showInFrontend: c.showInFrontend,
+          });
           if (!result) {
-              // console.error(`[BatchUpdate] Category not found:`, c);
+            // console.error(`[BatchUpdate] Category not found:`, c);
             throw new BadRequestException(`Category not found: ${c._id}`);
           }
         }
       }
       if (body.languages) {
         for (const l of body.languages) {
-          const result = await LanguageModel.findByIdAndUpdate(l._id, { showInFrontend: l.showInFrontend });
+          const result = await LanguageModel.findByIdAndUpdate(l._id, {
+            showInFrontend: l.showInFrontend,
+          });
           if (!result) {
-              // console.error(`[BatchUpdate] Language not found:`, l);
+            // console.error(`[BatchUpdate] Language not found:`, l);
             throw new BadRequestException(`Language not found: ${l._id}`);
           }
         }
       }
       if (body.states) {
         for (const s of body.states) {
-          const result = await StateModel.findByIdAndUpdate(s._id, { showInFrontend: s.showInFrontend });
+          const result = await StateModel.findByIdAndUpdate(s._id, {
+            showInFrontend: s.showInFrontend,
+          });
           if (!result) {
-              // console.error(`[BatchUpdate] State not found:`, s);
+            // console.error(`[BatchUpdate] State not found:`, s);
             throw new BadRequestException(`State not found: ${s._id}`);
           }
         }
       }
-      return { message: 'Visibility updated' };
+      return { message: "Visibility updated" };
     } catch (err) {
-        // console.error(`[BatchUpdate] Error:`, err);
-      throw new BadRequestException(err.message || 'Error updating visibility');
+      // console.error(`[BatchUpdate] Error:`, err);
+      throw new BadRequestException(err.message || "Error updating visibility");
     }
   }
 }

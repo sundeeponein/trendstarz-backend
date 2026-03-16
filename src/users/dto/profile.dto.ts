@@ -5,8 +5,20 @@ export class ImageDto {
   @IsString()
   public_id: string;
 }
-import { IsString, IsEmail, IsBoolean, IsArray, IsOptional, IsMongoId, IsUrl, ValidateNested, IsNumber, ArrayMaxSize, ArrayMinSize } from 'class-validator';
-import { Type } from 'class-transformer';
+import {
+  IsString,
+  IsEmail,
+  IsBoolean,
+  IsArray,
+  IsOptional,
+  IsMongoId,
+  IsUrl,
+  ValidateNested,
+  IsNumber,
+  ArrayMaxSize,
+  ArrayMinSize,
+} from "class-validator";
+import { Type } from "class-transformer";
 
 export class LocationDto {
   @IsMongoId()
