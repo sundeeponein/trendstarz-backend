@@ -93,6 +93,7 @@ export const BrandSchema = new Schema(
     googleMapAddress: { type: String },
     password: { type: String, required: true },
     brandName: { type: String, required: true },
+    brandUsername: { type: String },
     email: { type: String, required: true, unique: true },
     phoneNumber: { type: String, required: true },
     isEmailVerified: { type: Boolean, default: false },
