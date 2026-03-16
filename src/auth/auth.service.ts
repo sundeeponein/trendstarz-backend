@@ -269,7 +269,7 @@ export class AuthService {
 
   async registerInfluencer(data: any) {
     console.log("registerInfluencer called with data:", data);
-    // Check duplicates up front so the API can return field-specific 400 messages.
+    // Check duplicates up front so the API can return all conflicting fields together.
     const [existingEmail, existingUsername, existingPhone] = await Promise.all([
       data.email ? this.influencerModel.findOne({ email: data.email }) : null,
       data.username
@@ -280,14 +280,16 @@ export class AuthService {
         : null,
     ]);
 
-    if (existingEmail) {
-      throw new BadRequestException("Email already exists");
-    }
-    if (existingUsername) {
-      throw new BadRequestException("Username already exists");
-    }
-    if (existingPhone) {
-      throw new BadRequestException("Phone number already exists");
+    const duplicateFields: string[] = [];
+    if (existingEmail) duplicateFields.push("email");
+    if (existingUsername) duplicateFields.push("username");
+    if (existingPhone) duplicateFields.push("phoneNumber");
+
+    if (duplicateFields.length) {
+      throw new BadRequestException({
+        message: "Some fields already exist",
+        duplicateFields,
+      });
     }
     // Map category, state, language, and socialMedia platform IDs to names
     const {
@@ -356,6 +358,12 @@ export class AuthService {
     }
     // Hash password
     const hashedPassword = await bcrypt.hash(data.password, 10);
+    const normalizedProfileImages = Array.isArray(data.profileImages)
+      ? data.profileImages
+          .filter((img: any) => img?.url && img?.public_id)
+          .slice(0, 1)
+      : [];
+
     const influencer = new this.influencerModel({
       ...data,
       password: hashedPassword,
@@ -363,6 +371,7 @@ export class AuthService {
       location: { state: stateName },
       languages: languageNames,
       socialMedia: socialMediaMapped,
+      profileImages: normalizedProfileImages,
     });
     console.log("Influencer payload:", influencer);
     try {
@@ -395,10 +404,33 @@ export class AuthService {
   }
 
   async registerBrand(data: any) {
-    // Check if brand already exists
-    const existing = await this.brandModel.findOne({ email: data.email });
-    if (existing) {
-      throw new BadRequestException("Brand already exists");
+    // Check duplicates up front so the API can return all conflicting fields together.
+    const existingBrandUsernameRegex = data.brandUsername
+      ? new RegExp(`^${String(data.brandUsername).replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`, "i")
+      : null;
+
+    const [existingEmail, existingPhone, existingBrandName, existingBrandUsername] = await Promise.all([
+      data.email ? this.brandModel.findOne({ email: data.email }) : null,
+      data.phoneNumber
+        ? this.brandModel.findOne({ phoneNumber: data.phoneNumber })
+        : null,
+      data.brandName ? this.brandModel.findOne({ brandName: data.brandName }) : null,
+      existingBrandUsernameRegex
+        ? this.brandModel.findOne({ brandUsername: existingBrandUsernameRegex })
+        : null,
+    ]);
+
+    const duplicateFields: string[] = [];
+    if (existingEmail) duplicateFields.push("email");
+    if (existingPhone) duplicateFields.push("phoneNumber");
+    if (existingBrandName) duplicateFields.push("brandName");
+    if (existingBrandUsername) duplicateFields.push("brandUsername");
+
+    if (duplicateFields.length) {
+      throw new BadRequestException({
+        message: "Some fields already exist",
+        duplicateFields,
+      });
     }
     // Map category, state, language, and socialMedia platform IDs to names
     const {
