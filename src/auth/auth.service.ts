@@ -356,6 +356,12 @@ export class AuthService {
     }
     // Hash password
     const hashedPassword = await bcrypt.hash(data.password, 10);
+    const normalizedProfileImages = Array.isArray(data.profileImages)
+      ? data.profileImages
+          .filter((img: any) => img?.url && img?.public_id)
+          .slice(0, 1)
+      : [];
+
     const influencer = new this.influencerModel({
       ...data,
       password: hashedPassword,
@@ -363,6 +369,7 @@ export class AuthService {
       location: { state: stateName },
       languages: languageNames,
       socialMedia: socialMediaMapped,
+      profileImages: normalizedProfileImages,
     });
     console.log("Influencer payload:", influencer);
     try {
