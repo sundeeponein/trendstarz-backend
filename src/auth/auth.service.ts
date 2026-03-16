@@ -269,7 +269,7 @@ export class AuthService {
 
   async registerInfluencer(data: any) {
     console.log("registerInfluencer called with data:", data);
-    // Check duplicates up front so the API can return field-specific 400 messages.
+    // Check duplicates up front so the API can return all conflicting fields together.
     const [existingEmail, existingUsername, existingPhone] = await Promise.all([
       data.email ? this.influencerModel.findOne({ email: data.email }) : null,
       data.username
@@ -280,14 +280,16 @@ export class AuthService {
         : null,
     ]);
 
-    if (existingEmail) {
-      throw new BadRequestException("Email already exists");
-    }
-    if (existingUsername) {
-      throw new BadRequestException("Username already exists");
-    }
-    if (existingPhone) {
-      throw new BadRequestException("Phone number already exists");
+    const duplicateFields: string[] = [];
+    if (existingEmail) duplicateFields.push("email");
+    if (existingUsername) duplicateFields.push("username");
+    if (existingPhone) duplicateFields.push("phoneNumber");
+
+    if (duplicateFields.length) {
+      throw new BadRequestException({
+        message: "Some fields already exist",
+        duplicateFields,
+      });
     }
     // Map category, state, language, and socialMedia platform IDs to names
     const {
@@ -402,10 +404,25 @@ export class AuthService {
   }
 
   async registerBrand(data: any) {
-    // Check if brand already exists
-    const existing = await this.brandModel.findOne({ email: data.email });
-    if (existing) {
-      throw new BadRequestException("Brand already exists");
+    // Check duplicates up front so the API can return all conflicting fields together.
+    const [existingEmail, existingPhone, existingBrandName] = await Promise.all([
+      data.email ? this.brandModel.findOne({ email: data.email }) : null,
+      data.phoneNumber
+        ? this.brandModel.findOne({ phoneNumber: data.phoneNumber })
+        : null,
+      data.brandName ? this.brandModel.findOne({ brandName: data.brandName }) : null,
+    ]);
+
+    const duplicateFields: string[] = [];
+    if (existingEmail) duplicateFields.push("email");
+    if (existingPhone) duplicateFields.push("phoneNumber");
+    if (existingBrandName) duplicateFields.push("brandName");
+
+    if (duplicateFields.length) {
+      throw new BadRequestException({
+        message: "Some fields already exist",
+        duplicateFields,
+      });
     }
     // Map category, state, language, and socialMedia platform IDs to names
     const {
