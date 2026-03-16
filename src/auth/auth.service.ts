@@ -405,18 +405,26 @@ export class AuthService {
 
   async registerBrand(data: any) {
     // Check duplicates up front so the API can return all conflicting fields together.
-    const [existingEmail, existingPhone, existingBrandName] = await Promise.all([
+    const existingBrandUsernameRegex = data.brandUsername
+      ? new RegExp(`^${String(data.brandUsername).replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`, "i")
+      : null;
+
+    const [existingEmail, existingPhone, existingBrandName, existingBrandUsername] = await Promise.all([
       data.email ? this.brandModel.findOne({ email: data.email }) : null,
       data.phoneNumber
         ? this.brandModel.findOne({ phoneNumber: data.phoneNumber })
         : null,
       data.brandName ? this.brandModel.findOne({ brandName: data.brandName }) : null,
+      existingBrandUsernameRegex
+        ? this.brandModel.findOne({ brandUsername: existingBrandUsernameRegex })
+        : null,
     ]);
 
     const duplicateFields: string[] = [];
     if (existingEmail) duplicateFields.push("email");
     if (existingPhone) duplicateFields.push("phoneNumber");
     if (existingBrandName) duplicateFields.push("brandName");
+    if (existingBrandUsername) duplicateFields.push("brandUsername");
 
     if (duplicateFields.length) {
       throw new BadRequestException({
