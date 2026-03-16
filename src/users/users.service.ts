@@ -1,13 +1,10 @@
-/* eslint-disable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-argument, @typescript-eslint/no-unsafe-return */
+/* eslint-disable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-argument, @typescript-eslint/no-unsafe-return, @typescript-eslint/no-require-imports */
 import { Injectable } from "@nestjs/common";
 import { CloudinaryService } from "../cloudinary.service";
 import { InfluencerProfileDto, BrandProfileDto } from "./dto/profile.dto";
 import * as bcrypt from "bcryptjs";
 import { InjectModel } from "@nestjs/mongoose";
 import { Model } from "mongoose";
-import { VerificationService } from "../services/verification.service";
-import { getEmailProvider } from "../services/emailProvider.service";
-import { DummySmsProvider } from "../services/smsProvider.service";
 
 @Injectable()
 export class UsersService {
@@ -412,6 +409,13 @@ export class UsersService {
       const savedInfluencer = await influencer.save();
       // Send email verification after registration
       try {
+        const {
+          VerificationService,
+        } = require("../services/verification.service");
+        const {
+          getEmailProvider,
+        } = require("../services/emailProvider.service");
+        const { DummySmsProvider } = require("../services/smsProvider.service");
         const emailProvider = getEmailProvider();
         const smsProvider = new DummySmsProvider();
         const verificationService = new VerificationService(
@@ -495,6 +499,13 @@ export class UsersService {
       const savedBrand = await brand.save();
       // Send email verification after registration
       try {
+        const {
+          VerificationService,
+        } = require("../services/verification.service");
+        const {
+          getEmailProvider,
+        } = require("../services/emailProvider.service");
+        const { DummySmsProvider } = require("../services/smsProvider.service");
         const emailProvider = getEmailProvider();
         const smsProvider = new DummySmsProvider();
         const verificationService = new VerificationService(
