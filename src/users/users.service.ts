@@ -1,10 +1,13 @@
-/* eslint-disable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-argument, @typescript-eslint/no-require-imports, @typescript-eslint/no-unsafe-return */
+/* eslint-disable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-argument, @typescript-eslint/no-unsafe-return */
 import { Injectable } from "@nestjs/common";
 import { CloudinaryService } from "../cloudinary.service";
 import { InfluencerProfileDto, BrandProfileDto } from "./dto/profile.dto";
 import * as bcrypt from "bcryptjs";
 import { InjectModel } from "@nestjs/mongoose";
 import { Model } from "mongoose";
+import { VerificationService } from "../services/verification.service";
+import { getEmailProvider } from "../services/emailProvider.service";
+import { DummySmsProvider } from "../services/smsProvider.service";
 
 @Injectable()
 export class UsersService {
@@ -409,16 +412,11 @@ export class UsersService {
       const savedInfluencer = await influencer.save();
       // Send email verification after registration
       try {
-        const {
-          VerificationService,
-        } = require("../services/verification.service");
-        const {
-          DummyEmailProvider,
-        } = require("../services/emailProvider.service");
-        const emailProvider = new DummyEmailProvider();
+        const emailProvider = getEmailProvider();
+        const smsProvider = new DummySmsProvider();
         const verificationService = new VerificationService(
           emailProvider,
-          null,
+          smsProvider,
         );
         await verificationService.generateToken(savedInfluencer._id, "email");
       } catch (e) {
@@ -497,17 +495,11 @@ export class UsersService {
       const savedBrand = await brand.save();
       // Send email verification after registration
       try {
-        // Import and instantiate your verification service and email provider as needed
-        const {
-          VerificationService,
-        } = require("../services/verification.service");
-        const {
-          DummyEmailProvider,
-        } = require("../services/emailProvider.service");
-        const emailProvider = new DummyEmailProvider();
+        const emailProvider = getEmailProvider();
+        const smsProvider = new DummySmsProvider();
         const verificationService = new VerificationService(
           emailProvider,
-          null,
+          smsProvider,
         );
         await verificationService.generateToken(savedBrand._id, "email");
       } catch (e) {
