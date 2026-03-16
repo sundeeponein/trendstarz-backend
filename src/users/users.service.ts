@@ -802,6 +802,7 @@ export class UsersService {
     if (!user || Array.isArray(user)) return null;
     return {
       brandName: user.brandName,
+      brandUsername: (user as any).brandUsername || (user as any).username || "",
       phoneNumber: user.phoneNumber,
       email: user.email,
       isPremium: user.isPremium || false,
@@ -815,6 +816,7 @@ export class UsersService {
       productImages: user.products || [],
       socialMedia: user.socialMedia || [],
       contact: user.contact || { whatsapp: false, email: false, call: false },
+      promotionalPrice: (user as any).promotionalPrice,
       premiumDuration: user.premiumDuration || null,
       premiumStart: user.premiumStart || null,
       premiumEnd: user.premiumEnd || null,
@@ -1015,6 +1017,7 @@ export class UsersService {
 
     const allowedFields = [
       "brandName",
+      "brandUsername",
       "phoneNumber",
       "email",
       "paymentOption",
