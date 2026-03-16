@@ -1,10 +1,13 @@
+/* eslint-disable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-argument, @typescript-eslint/no-unsafe-return */
 import { Injectable } from "@nestjs/common";
 import { CloudinaryService } from "../cloudinary.service";
 import { InfluencerProfileDto, BrandProfileDto } from "./dto/profile.dto";
 import * as bcrypt from "bcryptjs";
 import { InjectModel } from "@nestjs/mongoose";
 import { Model } from "mongoose";
-import { v2 as cloudinary } from "cloudinary";
+import { VerificationService } from "../services/verification.service";
+import { getEmailProvider } from "../services/emailProvider.service";
+import { DummySmsProvider } from "../services/smsProvider.service";
 
 @Injectable()
 export class UsersService {
@@ -187,7 +190,7 @@ export class UsersService {
         .toString()
         .toLowerCase()
         .replace(/\s+/g, "-")
-        .replace(/[^a-z0-9\-]/g, "")
+        .replace(/[^a-z0-9-]/g, "")
         .replace(/-+/g, "-")
         .replace(/^-+/, "")
         .replace(/-+$/, "");
@@ -409,16 +412,11 @@ export class UsersService {
       const savedInfluencer = await influencer.save();
       // Send email verification after registration
       try {
-        const {
-          VerificationService,
-        } = require("../services/verification.service");
-        const {
-          DummyEmailProvider,
-        } = require("../services/emailProvider.service");
-        const emailProvider = new DummyEmailProvider();
+        const emailProvider = getEmailProvider();
+        const smsProvider = new DummySmsProvider();
         const verificationService = new VerificationService(
           emailProvider,
-          null,
+          smsProvider,
         );
         await verificationService.generateToken(savedInfluencer._id, "email");
       } catch (e) {
@@ -497,17 +495,11 @@ export class UsersService {
       const savedBrand = await brand.save();
       // Send email verification after registration
       try {
-        // Import and instantiate your verification service and email provider as needed
-        const {
-          VerificationService,
-        } = require("../services/verification.service");
-        const {
-          DummyEmailProvider,
-        } = require("../services/emailProvider.service");
-        const emailProvider = new DummyEmailProvider();
+        const emailProvider = getEmailProvider();
+        const smsProvider = new DummySmsProvider();
         const verificationService = new VerificationService(
           emailProvider,
-          null,
+          smsProvider,
         );
         await verificationService.generateToken(savedBrand._id, "email");
       } catch (e) {
@@ -652,86 +644,8 @@ export class UsersService {
   }
 
   async deleteUser(id: string) {
-    // Soft delete: set status to 'deleted' for influencer or brand
-    const influencer = await this.influencerModel.findById(id);
-    if (influencer) {
-      await this.influencerModel.findByIdAndUpdate(id, { status: "deleted" });
-      return { message: "User soft-deleted (influencer)", id };
-    }
-    const brand = await this.brandModel.findById(id);
-    if (brand) {
-      await this.brandModel.findByIdAndUpdate(id, { status: "deleted" });
-      return { message: "User soft-deleted (brand)", id };
-    }
-    return { message: "User not found", id };
-    // Try influencer first
-    let user = await this.influencerModel.findById(id);
-    if (user) {
-      // Delete all images from Cloudinary
-      if (user.profileImages && Array.isArray(user.profileImages)) {
-        for (const img of user.profileImages) {
-          if (typeof img === "object" && img.public_id) {
-            let publicId = img.public_id;
-            if (publicId && !publicId.includes("/"))
-              publicId = `uploads/${publicId}`;
-            try {
-              await this.cloudinaryService.deleteImage(publicId);
-            } catch (err) {
-              console.error(
-                "Error deleting influencer image from Cloudinary:",
-                err,
-                img,
-              );
-            }
-          }
-        }
-      }
-      await this.influencerModel.findByIdAndDelete(id);
-      return { message: "Influencer permanently deleted", user };
-    }
-    // Try brand
-    user = await this.brandModel.findById(id);
-    if (user) {
-      if (user.brandLogo && Array.isArray(user.brandLogo)) {
-        for (const img of user.brandLogo) {
-          if (typeof img === "object" && img.public_id) {
-            let publicId = img.public_id;
-            if (publicId && !publicId.includes("/"))
-              publicId = `uploads/${publicId}`;
-            try {
-              await this.cloudinaryService.deleteImage(publicId);
-            } catch (cloudErr) {
-              console.error(
-                "Error deleting brand logo from Cloudinary:",
-                cloudErr,
-                img,
-              );
-            }
-          }
-        }
-      }
-      if (user.products && Array.isArray(user.products)) {
-        for (const img of user.products) {
-          if (typeof img === "object" && img.public_id) {
-            let publicId = img.public_id;
-            if (publicId && !publicId.includes("/"))
-              publicId = `uploads/${publicId}`;
-            try {
-              await this.cloudinaryService.deleteImage(publicId);
-            } catch (cloudErr) {
-              console.error(
-                "Error deleting brand product image from Cloudinary:",
-                cloudErr,
-                img,
-              );
-            }
-          }
-        }
-      }
-      await this.brandModel.findByIdAndDelete(id);
-      return { message: "Brand permanently deleted", user };
-    }
-    return { message: "User not found", id };
+    // Admin delete should fully remove DB profile + Cloudinary assets.
+    return this.deletePermanently(id);
   }
   async setPremium(
     id: string,
@@ -802,7 +716,8 @@ export class UsersService {
     if (!user || Array.isArray(user)) return null;
     return {
       brandName: user.brandName,
-      brandUsername: (user as any).brandUsername || (user as any).username || "",
+      brandUsername:
+        (user as any).brandUsername || (user as any).username || "",
       phoneNumber: user.phoneNumber,
       email: user.email,
       isPremium: user.isPremium || false,
