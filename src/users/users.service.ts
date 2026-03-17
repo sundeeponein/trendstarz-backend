@@ -212,6 +212,9 @@ export class UsersService {
       products,
       website,
       googleMapAddress,
+      promotionalPrice,
+      languages,
+      contact,
     } = user;
     return {
       _id,
@@ -226,6 +229,9 @@ export class UsersService {
       products,
       website,
       googleMapAddress,
+      promotionalPrice,
+      languages,
+      contact,
     };
   }
 
