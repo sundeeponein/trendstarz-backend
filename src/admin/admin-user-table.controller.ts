@@ -6,6 +6,8 @@ import { Model } from "mongoose";
 type BrandImageDoc = {
   brandLogo?: any[];
   products?: any[];
+  promotionalPrice?: number;
+  price?: number;
   save: () => Promise<unknown>;
 };
 
@@ -29,6 +31,9 @@ export class AdminUserTableController {
     brands.forEach((b) => {
       if (!b.brandLogo) b.brandLogo = [];
       if (!b.products) b.products = [];
+      if (b.promotionalPrice === undefined && (b as any).price !== undefined) {
+        b.promotionalPrice = (b as any).price;
+      }
     });
     return brands;
   }
