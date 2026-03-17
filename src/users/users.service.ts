@@ -742,7 +742,8 @@ export class UsersService {
       productImages: user.products || [],
       socialMedia: user.socialMedia || [],
       contact: user.contact || { whatsapp: false, email: false, call: false },
-      promotionalPrice: (user as any).promotionalPrice,
+      promotionalPrice:
+        (user as any).promotionalPrice ?? (user as any).price ?? null,
       premiumDuration: user.premiumDuration || null,
       premiumStart: user.premiumStart || null,
       premiumEnd: user.premiumEnd || null,
