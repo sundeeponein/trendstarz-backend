@@ -1,6 +1,10 @@
 import { Controller, Post, Body } from "@nestjs/common";
+import { randomInt } from "crypto";
 import { DevEmailService } from "../utils/dev-email.service";
 import { SesEmailService } from "../utils/ses-email.service";
+
+const otpStore = new Map<string, { otp: string; expires: number }>();
+const OTP_TTL = 5 * 60 * 1000; // 5 minutes
 
 @Controller("otp")
 export class OtpController {
@@ -15,19 +19,17 @@ export class OtpController {
     if (!type || !value) {
       return { error: "Missing type or value" };
     }
-    // Generate OTP (for demo, use 123456)
-    const otp = "123456";
+    const otp = randomInt(100000, 999999).toString();
+    otpStore.set(value, { otp, expires: Date.now() + OTP_TTL });
     if (type === "email") {
       const subject = "Your TrendStarz OTP";
       const text = `Your OTP is: ${otp}`;
-      // Use SES in production, Nodemailer in dev
       if (process.env.NODE_ENV === "production") {
         await this.sesEmailService.sendMail(value, subject, text);
       } else {
         await this.devEmailService.sendMail(value, subject, text);
       }
     }
-    // Add phone logic if needed
     return { message: `OTP sent to ${type}: ${value}` };
   }
 
@@ -37,11 +39,11 @@ export class OtpController {
     if (!type || !value || !otp) {
       return { error: "Missing type, value, or otp" };
     }
-    // Simulate OTP verification
-    // In real app, check OTP from DB
-    if (otp === "123456") {
-      return { message: "OTP verified successfully" };
+    const stored = otpStore.get(value);
+    if (!stored || stored.otp !== otp || Date.now() > stored.expires) {
+      return { error: "Invalid or expired OTP" };
     }
-    return { error: "Invalid OTP" };
+    otpStore.delete(value);
+    return { message: "OTP verified successfully" };
   }
 }

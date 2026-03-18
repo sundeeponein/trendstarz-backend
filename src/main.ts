@@ -2,6 +2,7 @@ import { NestFactory } from "@nestjs/core";
 import { ExpressAdapter } from "@nestjs/platform-express";
 import express from "express";
 import { AppModule } from "./app.module";
+import { ResponseInterceptor } from "./response.interceptor";
 import * as dotenv from "dotenv";
 import helmet from "helmet";
 dotenv.config();
@@ -54,6 +55,9 @@ async function bootstrap() {
 
   // Set global API prefix for all routes
   app.setGlobalPrefix("api");
+
+  // Standardize API responses
+  app.useGlobalInterceptors(new ResponseInterceptor());
 
   // Security headers
   app.use(helmet());

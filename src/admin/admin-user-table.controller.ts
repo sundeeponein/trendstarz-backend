@@ -1,5 +1,6 @@
 import { Controller, Get, Patch, Body, Param, UseGuards } from "@nestjs/common";
 import { JwtAuthGuard } from "../auth/jwt-auth.guard";
+import { RolesGuard } from "../auth/roles.guard";
 import { InjectModel } from "@nestjs/mongoose";
 import { Model } from "mongoose";
 
@@ -12,7 +13,7 @@ type BrandImageDoc = {
 };
 
 @Controller("admin")
-@UseGuards(JwtAuthGuard)
+@UseGuards(JwtAuthGuard, RolesGuard)
 export class AdminUserTableController {
   constructor(
     @InjectModel("Influencer") private readonly influencerModel: Model<any>,

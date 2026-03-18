@@ -77,6 +77,11 @@ export const InfluencerSchema = new Schema(
   },
   { timestamps: true },
 );
+InfluencerSchema.index({ status: 1 });
+InfluencerSchema.index({ email: 1 });
+InfluencerSchema.index({ username: 1 });
+InfluencerSchema.index({ categories: 1 });
+InfluencerSchema.index({ "location.state": 1 });
 
 export const InfluencerModel = model("Influencer", InfluencerSchema);
 
@@ -139,6 +144,9 @@ export const BrandSchema = new Schema(
   },
   { timestamps: true },
 );
+BrandSchema.index({ status: 1 });
+BrandSchema.index({ email: 1 });
+BrandSchema.index({ brandName: 1 });
 
 export const BrandModel = model("Brand", BrandSchema);
 
@@ -160,3 +168,49 @@ export const SocialMediaSchema = new Schema({
   tiers: [{ type: String }],
 });
 export const SocialMediaModel = model("SocialMedia", SocialMediaSchema);
+
+// Campaign schema
+export const CampaignSchema = new Schema(
+  {
+    brandId: { type: Types.ObjectId, ref: "Brand", required: true, index: true },
+    title: { type: String, required: true },
+    description: { type: String },
+    image: {
+      url: { type: String },
+      public_id: { type: String },
+    },
+    status: {
+      type: String,
+      enum: ["draft", "active", "completed"],
+      default: "draft",
+    },
+    budgetMin: { type: Number },
+    budgetMax: { type: Number },
+    timelineStart: { type: Date },
+    timelineEnd: { type: Date },
+  },
+  { timestamps: true },
+);
+CampaignSchema.index({ status: 1 });
+export const CampaignModel = model("Campaign", CampaignSchema);
+
+// Campaign Invite schema
+export const CampaignInviteSchema = new Schema(
+  {
+    campaignId: { type: Types.ObjectId, ref: "Campaign", required: true, index: true },
+    brandId: { type: Types.ObjectId, ref: "Brand", required: true, index: true },
+    influencerId: { type: Types.ObjectId, ref: "Influencer", required: true, index: true },
+    status: {
+      type: String,
+      enum: ["pending", "accepted", "declined"],
+      default: "pending",
+    },
+    analytics: {
+      reach: { type: Number },
+      engagement: { type: Number },
+      clicks: { type: Number },
+    },
+  },
+  { timestamps: true },
+);
+export const CampaignInviteModel = model("CampaignInvite", CampaignInviteSchema);

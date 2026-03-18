@@ -28,6 +28,7 @@ import { AuthService } from "./auth/auth.service";
 import { AuthController } from "./auth/auth.controller";
 import { AdminUserTableController } from "./admin/admin-user-table.controller";
 import { UsersModule } from "./users/users.module";
+import { CampaignsModule } from "./campaigns/campaigns.module";
 import { CloudinaryService } from "./cloudinary.service";
 import { HealthController } from "./health.controller";
 
@@ -56,6 +57,7 @@ import { HealthController } from "./health.controller";
       { name: "Tier", schema: TierSchema, collection: "tiers" },
     ]),
     UsersModule,
+    CampaignsModule,
     OtpModule,
   ],
   controllers: [
