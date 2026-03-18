@@ -22,7 +22,9 @@ import {
   InfluencerSchema,
   BrandSchema,
   TierSchema,
+  CampaignSchema,
 } from "./database/schemas/profile.schemas";
+import { CampaignsController } from "./campaigns/campaigns.controller";
 
 import { AuthService } from "./auth/auth.service";
 import { AuthController } from "./auth/auth.controller";
@@ -54,6 +56,7 @@ import { HealthController } from "./health.controller";
       },
       { name: "Brand", schema: BrandSchema, collection: "brands" },
       { name: "Tier", schema: TierSchema, collection: "tiers" },
+      { name: "Campaign", schema: CampaignSchema, collection: "campaigns" },
     ]),
     UsersModule,
     OtpModule,
@@ -69,6 +72,7 @@ import { HealthController } from "./health.controller";
     AuthController,
     HealthController,
     AdminUserTableController,
+    CampaignsController,
     // SeedController,
     // PaymentController
   ],

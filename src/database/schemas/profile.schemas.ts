@@ -160,3 +160,29 @@ export const SocialMediaSchema = new Schema({
   tiers: [{ type: String }],
 });
 export const SocialMediaModel = model("SocialMedia", SocialMediaSchema);
+
+// Campaign schema
+export const CampaignSchema = new Schema(
+  {
+    brandId: { type: Types.ObjectId, ref: "Brand", required: true },
+    title: { type: String, required: true },
+    description: { type: String },
+    image: {
+      url: { type: String },
+      public_id: { type: String },
+    },
+    status: {
+      type: String,
+      enum: ["active", "pending", "completed", "draft"],
+      default: "draft",
+    },
+    budgetMin: { type: Number },
+    budgetMax: { type: Number },
+    applicants: { type: Number, default: 0 },
+    timelineStart: { type: Date },
+    timelineEnd: { type: Date },
+  },
+  { timestamps: true },
+);
+
+export const CampaignModel = model("Campaign", CampaignSchema);
