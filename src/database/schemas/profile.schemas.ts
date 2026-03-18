@@ -78,8 +78,6 @@ export const InfluencerSchema = new Schema(
   { timestamps: true },
 );
 InfluencerSchema.index({ status: 1 });
-InfluencerSchema.index({ email: 1 });
-InfluencerSchema.index({ username: 1 });
 InfluencerSchema.index({ categories: 1 });
 InfluencerSchema.index({ "location.state": 1 });
 
@@ -145,7 +143,6 @@ export const BrandSchema = new Schema(
   { timestamps: true },
 );
 BrandSchema.index({ status: 1 });
-BrandSchema.index({ email: 1 });
 BrandSchema.index({ brandName: 1 });
 
 export const BrandModel = model("Brand", BrandSchema);
@@ -172,7 +169,12 @@ export const SocialMediaModel = model("SocialMedia", SocialMediaSchema);
 // Campaign schema
 export const CampaignSchema = new Schema(
   {
-    brandId: { type: Types.ObjectId, ref: "Brand", required: true, index: true },
+    brandId: {
+      type: Types.ObjectId,
+      ref: "Brand",
+      required: true,
+      index: true,
+    },
     title: { type: String, required: true },
     description: { type: String },
     image: {
@@ -197,9 +199,24 @@ export const CampaignModel = model("Campaign", CampaignSchema);
 // Campaign Invite schema
 export const CampaignInviteSchema = new Schema(
   {
-    campaignId: { type: Types.ObjectId, ref: "Campaign", required: true, index: true },
-    brandId: { type: Types.ObjectId, ref: "Brand", required: true, index: true },
-    influencerId: { type: Types.ObjectId, ref: "Influencer", required: true, index: true },
+    campaignId: {
+      type: Types.ObjectId,
+      ref: "Campaign",
+      required: true,
+      index: true,
+    },
+    brandId: {
+      type: Types.ObjectId,
+      ref: "Brand",
+      required: true,
+      index: true,
+    },
+    influencerId: {
+      type: Types.ObjectId,
+      ref: "Influencer",
+      required: true,
+      index: true,
+    },
     status: {
       type: String,
       enum: ["pending", "accepted", "declined"],
@@ -213,4 +230,7 @@ export const CampaignInviteSchema = new Schema(
   },
   { timestamps: true },
 );
-export const CampaignInviteModel = model("CampaignInvite", CampaignInviteSchema);
+export const CampaignInviteModel = model(
+  "CampaignInvite",
+  CampaignInviteSchema,
+);
