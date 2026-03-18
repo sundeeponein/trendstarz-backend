@@ -8,8 +8,11 @@ import {
   Get,
   Req,
   Delete,
+  Query,
+  ForbiddenException,
 } from "@nestjs/common";
 import { JwtAuthGuard } from "../auth/jwt-auth.guard";
+import { RolesGuard } from "../auth/roles.guard";
 import { InfluencerProfileDto, BrandProfileDto } from "./dto/profile.dto";
 import { UsersService } from "./users.service";
 import type { Request } from "express";
@@ -39,7 +42,15 @@ export class UsersController {
 
   @UseGuards(JwtAuthGuard)
   @Patch(":id/images")
-  async updateUserImages(@Param("id") id: string, @Body() body: any) {
+  async updateUserImages(
+    @Param("id") id: string,
+    @Body() body: any,
+    @Req() req: Request,
+  ) {
+    const userId = (req as any).user?.userId;
+    if (userId !== id) {
+      throw new ForbiddenException("You can only update your own images");
+    }
     return this.usersService.updateUserImages(id, body);
   }
 
@@ -55,47 +66,76 @@ export class UsersController {
     }
   }
 
+  @Get("influencers/search")
+  async searchInfluencers(
+    @Query("q") q?: string,
+    @Query("category") category?: string,
+    @Query("state") state?: string,
+    @Query("page") page?: string,
+    @Query("limit") limit?: string,
+  ) {
+    return this.usersService.searchInfluencers({
+      q,
+      category,
+      state,
+      page: page ? parseInt(page, 10) : undefined,
+      limit: limit ? parseInt(limit, 10) : undefined,
+    });
+  }
+
   @Get("influencers")
-  async getInfluencers() {
-    return this.usersService.getInfluencers();
+  async getInfluencers(
+    @Query("page") page?: string,
+    @Query("limit") limit?: string,
+  ) {
+    return this.usersService.getInfluencers(
+      page ? parseInt(page, 10) : undefined,
+      limit ? parseInt(limit, 10) : undefined,
+    );
   }
 
   @Get("brands")
-  async getBrands() {
-    return this.usersService.getBrands();
+  async getBrands(
+    @Query("page") page?: string,
+    @Query("limit") limit?: string,
+  ) {
+    return this.usersService.getBrands(
+      page ? parseInt(page, 10) : undefined,
+      limit ? parseInt(limit, 10) : undefined,
+    );
   }
 
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, RolesGuard)
   @Patch(":id/accept")
   async acceptUser(@Param("id") id: string) {
     return this.usersService.acceptUser(id);
   }
 
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, RolesGuard)
   @Patch(":id/decline")
   async declineUser(@Param("id") id: string) {
     return this.usersService.declineUser(id);
   }
 
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, RolesGuard)
   @Patch(":id/delete")
   async deleteUser(@Param("id") id: string) {
     return this.usersService.deleteUser(id);
   }
 
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, RolesGuard)
   @Patch(":id/restore")
   async restoreUser(@Param("id") id: string) {
     return this.usersService.restoreUser(id);
   }
 
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, RolesGuard)
   @Delete(":id/permanent")
   async deletePermanently(@Param("id") id: string) {
     return this.usersService.deletePermanently(id);
   }
 
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, RolesGuard)
   @Patch(":id/premium")
   async setPremium(
     @Param("id") id: string,
