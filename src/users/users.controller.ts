@@ -37,6 +37,7 @@ export class UsersController {
     return this.usersService.checkUsername(username);
   }
 
+  @UseGuards(JwtAuthGuard)
   @Patch(":id/images")
   async updateUserImages(@Param("id") id: string, @Body() body: any) {
     return this.usersService.updateUserImages(id, body);

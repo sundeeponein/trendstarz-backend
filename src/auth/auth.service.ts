@@ -5,10 +5,12 @@ import {
   BadRequestException,
 } from "@nestjs/common";
 import * as bcrypt from "bcryptjs";
+import * as crypto from "crypto";
 import * as jwt from "jsonwebtoken";
 import { InjectModel } from "@nestjs/mongoose";
 import { Model } from "mongoose";
 import { sendEmail } from "../utils/email";
+import { getJwtSecret } from "./jwt-secret";
 
 const otpStore: Record<string, string> = {};
 
@@ -60,7 +62,7 @@ export class AuthService {
 
     const token = jwt.sign(
       { email: normalizedEmail, purpose: "email_verification" },
-      process.env.JWT_SECRET || "changeme",
+      getJwtSecret(),
       { expiresIn: "1h" },
     );
 
@@ -87,7 +89,7 @@ export class AuthService {
 
     let decoded: any;
     try {
-      decoded = jwt.verify(token, process.env.JWT_SECRET || "changeme");
+      decoded = jwt.verify(token, getJwtSecret());
     } catch {
       throw new BadRequestException("Invalid or expired verification token");
     }
@@ -120,8 +122,8 @@ export class AuthService {
     if (!user) {
       throw new Error("Email not found. Please enter a registered email.");
     }
-    // Generate a reset token (for demo, just a random string)
-    const resetToken = Math.random().toString(36).substr(2, 10);
+    // Generate a cryptographically secure reset token
+    const resetToken = crypto.randomBytes(32).toString("hex");
     // Save token to user (or a real token store in production)
     user.resetToken = resetToken;
     user.resetTokenExpires = Date.now() + 1000 * 60 * 60; // 1 hour expiry
@@ -153,7 +155,7 @@ export class AuthService {
       // Generate JWT token
       const token = jwt.sign(
         { userId: user._id, email: user.email, role: user.role },
-        process.env.JWT_SECRET || "changeme",
+        getJwtSecret(),
         { expiresIn: "7d" },
       );
       return {
@@ -207,7 +209,7 @@ export class AuthService {
           name: displayName,
           profileImage: profileImageUrl,
         },
-        process.env.JWT_SECRET || "changeme",
+        getJwtSecret(),
         { expiresIn: "7d" },
       );
       return {
@@ -249,7 +251,7 @@ export class AuthService {
           name: displayName,
           brandLogo: brandLogoArr,
         },
-        process.env.JWT_SECRET || "changeme",
+        getJwtSecret(),
         { expiresIn: "7d" },
       );
       return {
