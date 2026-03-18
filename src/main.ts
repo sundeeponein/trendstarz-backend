@@ -1,5 +1,6 @@
 import { NestFactory } from "@nestjs/core";
 import { ExpressAdapter } from "@nestjs/platform-express";
+import { ValidationPipe } from "@nestjs/common";
 import express from "express";
 import { AppModule } from "./app.module";
 import { ResponseInterceptor } from "./response.interceptor";

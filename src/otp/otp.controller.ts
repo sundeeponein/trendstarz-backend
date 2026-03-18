@@ -2,6 +2,10 @@ import { Controller, Post, Body } from "@nestjs/common";
 import { randomInt } from "crypto";
 import { DevEmailService } from "../utils/dev-email.service";
 import { SesEmailService } from "../utils/ses-email.service";
+import * as crypto from "crypto";
+
+// In-memory OTP store with expiry (replace with MongoDB/Redis in production)
+const otpStore: Map<string, { otp: string; expires: number }> = new Map();
 
 const otpStore = new Map<string, { otp: string; expires: number }>();
 const OTP_TTL = 5 * 60 * 1000; // 5 minutes
