@@ -5,6 +5,7 @@ import {
   UnauthorizedException,
 } from "@nestjs/common";
 import * as jwt from "jsonwebtoken";
+import { getJwtSecret } from "./jwt-secret";
 
 @Injectable()
 export class JwtAuthGuard implements CanActivate {
@@ -13,13 +14,11 @@ export class JwtAuthGuard implements CanActivate {
     const authHeader = req.headers["authorization"];
     if (!authHeader) throw new UnauthorizedException("No token provided");
     const token = authHeader.split(" ")[1];
-    console.log("[JwtAuthGuard] JWT token:", token);
     try {
-      const decoded = jwt.verify(token, process.env.JWT_SECRET || "changeme");
+      const decoded = jwt.verify(token, getJwtSecret());
       req.user = decoded;
       return true;
-    } catch (err) {
-      console.error("[JwtAuthGuard] Invalid token:", err);
+    } catch {
       throw new UnauthorizedException("Invalid token");
     }
   }

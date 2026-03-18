@@ -23,8 +23,11 @@ import {
   BrandSchema,
   TierSchema,
   CampaignSchema,
+  CampaignInviteSchema,
 } from "./database/schemas/profile.schemas";
 import { CampaignsController } from "./campaigns/campaigns.controller";
+import { CampaignInvitesController } from "./campaigns/campaign-invites.controller";
+import { CampaignInvitesService } from "./campaigns/campaign-invites.service";
 
 import { AuthService } from "./auth/auth.service";
 import { AuthController } from "./auth/auth.controller";
@@ -57,6 +60,11 @@ import { HealthController } from "./health.controller";
       { name: "Brand", schema: BrandSchema, collection: "brands" },
       { name: "Tier", schema: TierSchema, collection: "tiers" },
       { name: "Campaign", schema: CampaignSchema, collection: "campaigns" },
+      {
+        name: "CampaignInvite",
+        schema: CampaignInviteSchema,
+        collection: "campaign_invites",
+      },
     ]),
     UsersModule,
     OtpModule,
@@ -73,12 +81,14 @@ import { HealthController } from "./health.controller";
     HealthController,
     AdminUserTableController,
     CampaignsController,
+    CampaignInvitesController,
     // SeedController,
     // PaymentController
   ],
   providers: [
     AppService,
     AuthService,
+    CampaignInvitesService,
     MongoLogger /*, PaymentService, StripeService*/,
   ],
 })
