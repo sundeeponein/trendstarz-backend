@@ -8,11 +8,6 @@ function setCloudinaryConfig() {
     api_key: process.env.CLOUDINARY_API_KEY,
     api_secret: process.env.CLOUDINARY_API_SECRET,
   });
-  console.log("[DEBUG] Cloudinary config set:", {
-    cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
-    api_key: process.env.CLOUDINARY_API_KEY,
-    api_secret: process.env.CLOUDINARY_API_SECRET,
-  });
 }
 
 // Ensure all Cloudinary env vars are present
@@ -25,16 +20,6 @@ if (
     "[Cloudinary ENV ERROR] Missing Cloudinary environment variables!",
   );
 } else {
-  console.log("[Cloudinary ENV]", {
-    cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
-    api_key: process.env.CLOUDINARY_API_KEY,
-    api_secret: process.env.CLOUDINARY_API_SECRET ? "***" : undefined,
-  });
-  console.log("[DEBUG][Cloudinary ENV] At file load:", {
-    cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
-    api_key: process.env.CLOUDINARY_API_KEY,
-    api_secret: process.env.CLOUDINARY_API_SECRET ? "***" : undefined,
-  });
   cloudinary.config({
     cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
     api_key: process.env.CLOUDINARY_API_KEY,
