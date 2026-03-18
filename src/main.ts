@@ -3,6 +3,7 @@ import { ExpressAdapter } from "@nestjs/platform-express";
 import { ValidationPipe } from "@nestjs/common";
 import express from "express";
 import { AppModule } from "./app.module";
+import { ResponseInterceptor } from "./response.interceptor";
 import * as dotenv from "dotenv";
 import helmet from "helmet";
 dotenv.config();
@@ -56,10 +57,8 @@ async function bootstrap() {
   // Set global API prefix for all routes
   app.setGlobalPrefix("api");
 
-  // Enable global input validation
-  app.useGlobalPipes(
-    new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true, transform: true }),
-  );
+  // Standardize API responses
+  app.useGlobalInterceptors(new ResponseInterceptor());
 
   // Security headers
   app.use(helmet());

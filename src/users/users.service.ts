@@ -193,11 +193,22 @@ export class UsersService {
         .replace(/-+$/, "");
     }
 
-    // Fetch all brands and match by slug
-    const allBrands = await this.brandModel.find({}).lean();
-    const user = allBrands.find(
-      (b: any) => slugify(b.brandName) === slugify(brandName),
-    );
+    // Use case-insensitive find instead of scanning all brands
+    const decoded = slugify(brandName);
+    // Try direct match (replacing hyphens with spaces for stored names)
+    let user: any = await this.brandModel.findOne({
+      brandName: new RegExp(`^${this.escapeRegex(brandName.replace(/-/g, " "))}$`, "i"),
+    }).lean();
+    // Fallback: slug-based match on brandName field only
+    if (!user) {
+      const candidates = await this.brandModel.find({}).select("brandName").lean();
+      const match = candidates.find(
+        (b: any) => slugify(b.brandName) === decoded,
+      );
+      if (match) {
+        user = await this.brandModel.findById(match._id).lean();
+      }
+    }
     if (!user) return null;
     const {
       _id,
@@ -413,25 +424,6 @@ export class UsersService {
       }
       const influencer = new this.influencerModel(dto);
       const savedInfluencer = await influencer.save();
-      // Send email verification after registration
-      try {
-        const {
-          VerificationService,
-        } = require("../services/verification.service");
-        const {
-          getEmailProvider,
-        } = require("../services/emailProvider.service");
-        const { DummySmsProvider } = require("../services/smsProvider.service");
-        const emailProvider = getEmailProvider();
-        const smsProvider = new DummySmsProvider();
-        const verificationService = new VerificationService(
-          emailProvider,
-          smsProvider,
-        );
-        await verificationService.generateToken(savedInfluencer._id, "email");
-      } catch (e) {
-        console.error("Failed to send verification email:", e);
-      }
       return savedInfluencer;
     } catch (err) {
       if (err.code === 11000) {
@@ -503,25 +495,6 @@ export class UsersService {
       }
       const brand = new this.brandModel(dto);
       const savedBrand = await brand.save();
-      // Send email verification after registration
-      try {
-        const {
-          VerificationService,
-        } = require("../services/verification.service");
-        const {
-          getEmailProvider,
-        } = require("../services/emailProvider.service");
-        const { DummySmsProvider } = require("../services/smsProvider.service");
-        const emailProvider = getEmailProvider();
-        const smsProvider = new DummySmsProvider();
-        const verificationService = new VerificationService(
-          emailProvider,
-          smsProvider,
-        );
-        await verificationService.generateToken(savedBrand._id, "email");
-      } catch (e) {
-        console.error("Failed to send verification email:", e);
-      }
       return savedBrand;
     } catch (err) {
       if (err.code === 11000) {
@@ -533,12 +506,48 @@ export class UsersService {
     }
   }
 
-  async getInfluencers() {
-    // Only return accepted influencers
-    return await this.influencerModel
-      .find({ status: "accepted" })
-      .lean()
-      .limit(100);
+  async getInfluencers(page = 1, limit = 20) {
+    const skip = (page - 1) * limit;
+    const [data, total] = await Promise.all([
+      this.influencerModel
+        .find({ status: "accepted" })
+        .lean()
+        .skip(skip)
+        .limit(limit),
+      this.influencerModel.countDocuments({ status: "accepted" }),
+    ]);
+    return { data, total, page, limit };
+  }
+
+  async searchInfluencers(query: {
+    q?: string;
+    category?: string;
+    state?: string;
+    page?: number;
+    limit?: number;
+  }) {
+    const filter: any = { status: "accepted" };
+    if (query.q) {
+      const escaped = this.escapeRegex(query.q);
+      filter.$or = [
+        { name: new RegExp(escaped, "i") },
+        { username: new RegExp(escaped, "i") },
+      ];
+    }
+    if (query.category) {
+      filter.categories = query.category;
+    }
+    if (query.state) {
+      filter["location.state"] = new RegExp(`^${this.escapeRegex(query.state)}$`, "i");
+    }
+    const page = query.page || 1;
+    const limit = query.limit || 20;
+    const skip = (page - 1) * limit;
+    const [data, total] = await Promise.all([
+      this.influencerModel.find(filter).lean().skip(skip).limit(limit),
+      this.influencerModel.countDocuments(filter),
+    ]);
+    return { data, total, page, limit };
   }
 
   // Place this inside UsersService class
@@ -607,9 +616,17 @@ export class UsersService {
     };
   }
 
-  async getBrands() {
-    // Only return accepted brands
-    return await this.brandModel.find({ status: "accepted" }).lean().limit(100);
+  async getBrands(page = 1, limit = 20) {
+    const skip = (page - 1) * limit;
+    const [data, total] = await Promise.all([
+      this.brandModel
+        .find({ status: "accepted" })
+        .lean()
+        .skip(skip)
+        .limit(limit),
+      this.brandModel.countDocuments({ status: "accepted" }),
+    ]);
+    return { data, total, page, limit };
   }
 
   async acceptUser(id: string) {

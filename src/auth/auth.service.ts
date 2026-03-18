@@ -7,12 +7,11 @@ import {
 import * as bcrypt from "bcryptjs";
 import * as crypto from "crypto";
 import * as jwt from "jsonwebtoken";
+import * as crypto from "crypto";
 import { InjectModel } from "@nestjs/mongoose";
 import { Model } from "mongoose";
 import { sendEmail } from "../utils/email";
 import { getJwtSecret } from "./jwt-secret";
-
-const otpStore: Record<string, string> = {};
 
 type AnyUserDoc = {
   email: string;
@@ -133,6 +132,34 @@ export class AuthService {
     const text = `Hey ${user.name || user.email},\n\nWe’ve received a request to reset your password for your account. Click the link below to create a new password:\n${resetUrl}\n\nIf you didn’t request to change your password, then don’t worry! Your password is still safe and you can delete this email.`;
     await sendEmail(user.email, "Reset your password", text);
   }
+
+  async resetPassword(token: string, newPassword: string) {
+    if (!token || !newPassword) {
+      throw new BadRequestException("Token and new password are required");
+    }
+    const user =
+      (await this.userModel.findOne({
+        resetToken: token,
+        resetTokenExpires: { $gt: Date.now() },
+      })) ||
+      (await this.influencerModel.findOne({
+        resetToken: token,
+        resetTokenExpires: { $gt: Date.now() },
+      })) ||
+      (await this.brandModel.findOne({
+        resetToken: token,
+        resetTokenExpires: { $gt: Date.now() },
+      }));
+    if (!user) {
+      throw new BadRequestException("Invalid or expired reset token");
+    }
+    user.password = await bcrypt.hash(newPassword, 10);
+    user.resetToken = undefined;
+    user.resetTokenExpires = undefined;
+    await user.save();
+    return { success: true, message: "Password reset successfully." };
+  }
+
   constructor(
     @InjectModel("User") private readonly userModel: Model<any>,
     @InjectModel("Influencer") private readonly influencerModel: Model<any>,
@@ -142,6 +169,48 @@ export class AuthService {
     @InjectModel("Language") private readonly languageModel: Model<any>,
     @InjectModel("SocialMedia") private readonly socialMediaModel: Model<any>,
   ) {}
+
+  private isObjectId(val: string): boolean {
+    return typeof val === "string" && /^[a-fA-F0-9]{24}$/.test(val);
+  }
+
+  private async resolveIdsToNames(data: {
+    categories?: string[];
+    location?: { state?: string };
+    languages?: string[];
+    socialMedia?: any[];
+  }) {
+    const { categories = [], location = {}, languages = [], socialMedia = [] } = data;
+
+    // Batch fetch all IDs at once
+    const catIds = categories.filter((v) => this.isObjectId(v));
+    const langIds = languages.filter((v) => this.isObjectId(v));
+    const smIds = socialMedia
+      .map((sm) => sm.platform)
+      .filter((v: string) => v && this.isObjectId(v));
+    const stateId = location.state && this.isObjectId(location.state) ? location.state : null;
+
+    const [catDocs, langDocs, smDocs, stateDoc] = await Promise.all([
+      catIds.length ? this.categoryModel.find({ _id: { $in: catIds } }).lean() : [],
+      langIds.length ? this.languageModel.find({ _id: { $in: langIds } }).lean() : [],
+      smIds.length ? this.socialMediaModel.find({ _id: { $in: smIds } }).lean() : [],
+      stateId ? this.stateModel.findById(stateId).lean() : null,
+    ]);
+
+    const catMap = new Map(catDocs.map((d: any) => [String(d._id), d.name]));
+    const langMap = new Map(langDocs.map((d: any) => [String(d._id), d.name]));
+    const smMap = new Map(smDocs.map((d: any) => [String(d._id), d.name]));
+
+    const categoryNames = categories.map((v) => catMap.get(v) || v);
+    const languageNames = languages.map((v) => langMap.get(v) || v);
+    const stateName = stateDoc ? (stateDoc as any).name : (location.state || "");
+    const socialMediaMapped = socialMedia.map((sm: any) => ({
+      ...sm,
+      platform: smMap.get(sm.platform) || sm.platform,
+    }));
+
+    return { categoryNames, languageNames, stateName, socialMediaMapped };
+  }
 
   // Admin login implementation
   async login(email: string, password: string) {
@@ -293,71 +362,9 @@ export class AuthService {
         duplicateFields,
       });
     }
-    // Map category, state, language, and socialMedia platform IDs to names
-    const {
-      categories = [],
-      location = {},
-      languages = [],
-      socialMedia = [],
-    } = data;
-    const isObjectId = (val: string) =>
-      typeof val === "string" && /^[a-fA-F0-9]{24}$/.test(val);
-    // Fetch names for categories
-    let categoryNames = [];
-    if (categories.length) {
-      categoryNames = await Promise.all(
-        categories.map(async (val: string) => {
-          if (isObjectId(val)) {
-            const cat = await this.categoryModel.findById(val);
-            return cat ? cat.name : val;
-          }
-          return val;
-        }),
-      );
-    }
-    // Fetch state name
-    let stateName = location.state;
-    if (stateName) {
-      if (isObjectId(stateName)) {
-        const stateObj = await this.stateModel.findById(stateName);
-        stateName = stateObj ? stateObj.name : stateName;
-      }
-    }
-    // Fetch language names
-    let languageNames = [];
-    if (languages.length) {
-      languageNames = await Promise.all(
-        languages.map(async (val: string) => {
-          if (isObjectId(val)) {
-            const lang = await this.languageModel.findById(val);
-            return lang ? lang.name : val;
-          }
-          return val;
-        }),
-      );
-    }
-    // Map socialMedia platform IDs and tier IDs to names
-    let socialMediaMapped = [];
-    if (socialMedia.length) {
-      socialMediaMapped = await Promise.all(
-        socialMedia.map(async (sm: any) => {
-          let platformName = sm.platform;
-          if (platformName && isObjectId(platformName)) {
-            const platformObj =
-              await this.socialMediaModel.findById(platformName);
-            platformName = platformObj ? platformObj.name : platformName;
-          }
-          const tierName = sm.tier;
-          // If you have a Tier model injected, add similar logic here
-          // Example:
-          // if (tierName && isObjectId(tierName) && this.tierModel) {
-          //   const tierObj = await this.tierModel.findById(tierName);
-          //   tierName = tierObj ? tierObj.name : tierName;
-          // }
-          return { ...sm, platform: platformName, tier: tierName };
-        }),
-      );
-    }
+    // Map category, state, language, and socialMedia platform IDs to names (batch)
+    const { categoryNames, languageNames, stateName, socialMediaMapped } =
+      await this.resolveIdsToNames(data);
     // Hash password
     const hashedPassword = await bcrypt.hash(data.password, 10);
     const normalizedProfileImages = Array.isArray(data.profileImages)
@@ -434,71 +441,9 @@ export class AuthService {
         duplicateFields,
       });
     }
-    // Map category, state, language, and socialMedia platform IDs to names
-    const {
-      categories = [],
-      location = {},
-      languages = [],
-      socialMedia = [],
-    } = data;
-    const isObjectId = (val: string) =>
-      typeof val === "string" && /^[a-fA-F0-9]{24}$/.test(val);
-    // Fetch names for categories
-    let categoryNames = [];
-    if (categories.length) {
-      categoryNames = await Promise.all(
-        categories.map(async (val: string) => {
-          if (isObjectId(val)) {
-            const cat = await this.categoryModel.findById(val);
-            return cat ? cat.name : val;
-          }
-          return val;
-        }),
-      );
-    }
-    // Fetch state name
-    let stateName = location.state;
-    if (stateName) {
-      if (isObjectId(stateName)) {
-        const stateObj = await this.stateModel.findById(stateName);
-        stateName = stateObj ? stateObj.name : stateName;
-      }
-    }
-    // Fetch language names
-    let languageNames = [];
-    if (languages.length) {
-      languageNames = await Promise.all(
-        languages.map(async (val: string) => {
-          if (isObjectId(val)) {
-            const lang = await this.languageModel.findById(val);
-            return lang ? lang.name : val;
-          }
-          return val;
-        }),
-      );
-    }
-    // Map socialMedia platform IDs and tier IDs to names
-    let socialMediaMapped = [];
-    if (socialMedia.length) {
-      socialMediaMapped = await Promise.all(
-        socialMedia.map(async (sm: any) => {
-          let platformName = sm.platform;
-          if (platformName && isObjectId(platformName)) {
-            const platformObj =
-              await this.socialMediaModel.findById(platformName);
-            platformName = platformObj ? platformObj.name : platformName;
-          }
-          const tierName = sm.tier;
-          // If you have a Tier model injected, add similar logic here
-          // Example:
-          // if (tierName && isObjectId(tierName) && this.tierModel) {
-          //   const tierObj = await this.tierModel.findById(tierName);
-          //   tierName = tierObj ? tierObj.name : tierName;
-          // }
-          return { ...sm, platform: platformName, tier: tierName };
-        }),
-      );
-    }
+    // Map category, state, language, and socialMedia platform IDs to names (batch)
+    const { categoryNames, languageNames, stateName, socialMediaMapped } =
+      await this.resolveIdsToNames(data);
     // Hash password
     const hashedPassword = await bcrypt.hash(data.password, 10);
     const brand = new this.brandModel({
@@ -516,28 +461,6 @@ export class AuthService {
       console.error("Failed to send brand verification email:", verifyMailErr);
     }
     return { success: true, message: "Brand registered", brand: savedBrand };
-  }
-
-  async sendOtp(email: string) {
-    // Generate OTP
-    const otp = Math.floor(100000 + Math.random() * 900000).toString();
-    otpStore[email] = otp;
-    // Send OTP via email
-    try {
-      await sendEmail(email, "Your OTP Code", `Your OTP code is: ${otp}`);
-      return { success: true, message: "OTP sent to email." };
-    } catch (err) {
-      console.error("Failed to send OTP email:", err);
-      throw new BadRequestException("Failed to send OTP email");
-    }
-  }
-
-  verifyOtp(email: string, otp: string) {
-    if (otpStore[email] && otpStore[email] === otp) {
-      delete otpStore[email];
-      return { success: true, message: "OTP verified." };
-    }
-    throw new BadRequestException("Invalid OTP");
   }
 
   async findUserByEmail(email: string) {

@@ -1,177 +1,128 @@
-/* eslint-disable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-argument, @typescript-eslint/no-unsafe-return */
 import {
   Injectable,
   BadRequestException,
-  ForbiddenException,
   NotFoundException,
 } from "@nestjs/common";
 import { InjectModel } from "@nestjs/mongoose";
-import { Model, Types } from "mongoose";
-
-// Valid status transitions
-const VALID_TRANSITIONS: Record<string, string[]> = {
-  invited: ["accepted", "declined"],
-  accepted: ["submitted"],
-  submitted: ["completed"],
-};
+import { Model } from "mongoose";
+import { sendEmail } from "../utils/email";
 
 @Injectable()
 export class CampaignInvitesService {
   constructor(
-    @InjectModel("CampaignInvite") private readonly inviteModel: Model<any>,
+    @InjectModel("CampaignInvite")
+    private readonly inviteModel: Model<any>,
     @InjectModel("Campaign") private readonly campaignModel: Model<any>,
+    @InjectModel("Brand") private readonly brandModel: Model<any>,
     @InjectModel("Influencer") private readonly influencerModel: Model<any>,
   ) {}
 
-  /** Brand sends an invite to an influencer for a campaign */
-  async createInvite(
-    campaignId: string,
-    influencerId: string,
-    brandUserId: string,
-  ) {
-    // Verify campaign exists and belongs to brand
-    const campaign = (await this.campaignModel
-      .findById(campaignId)
-      .lean()) as any;
+  async create(brandId: string, data: any) {
+    const campaign: any = await this.campaignModel
+      .findById(data.campaignId)
+      .lean();
     if (!campaign) throw new NotFoundException("Campaign not found");
-    if (String(campaign.brandId) !== String(brandUserId)) {
-      throw new ForbiddenException("You do not own this campaign");
+    if (String(campaign.brandId) !== brandId) {
+      throw new BadRequestException("Not your campaign");
+    }
+    const invite = new this.inviteModel({ ...data, brandId });
+    const saved = await invite.save();
+
+    // Send notification email to influencer
+    try {
+      const influencer: any = await this.influencerModel
+        .findById(data.influencerId)
+        .select("email name")
+        .lean();
+      const brand: any = await this.brandModel
+        .findById(brandId)
+        .select("brandName")
+        .lean();
+      if (influencer?.email) {
+        const text = `Hi ${influencer.name || ""},\n\nYou have a new campaign invite from ${brand?.brandName || "a brand"} for "${campaign.title}".\nLog in to TrendStarz to respond.\n`;
+        await sendEmail(influencer.email, "New Campaign Invite", text);
+      }
+    } catch (e) {
+      console.error("Failed to send invite email:", e);
     }
 
-    // Verify influencer exists
-    const influencer = await this.influencerModel
-      .findById(influencerId)
-      .select("_id")
-      .lean();
-    if (!influencer) throw new NotFoundException("Influencer not found");
-
-    // Check for duplicate invite
-    const existing = await this.inviteModel
-      .findOne({ campaignId, influencerId })
-      .lean();
-    if (existing) {
-      throw new BadRequestException(
-        "Influencer has already been invited to this campaign",
-      );
-    }
-
-    const invite = await this.inviteModel.create({
-      campaignId: new Types.ObjectId(campaignId),
-      influencerId: new Types.ObjectId(influencerId),
-      brandId: new Types.ObjectId(brandUserId),
-      status: "invited",
-      invitedAt: new Date(),
-    });
-
-    // Increment the applicants counter on the campaign
-    await this.campaignModel.findByIdAndUpdate(campaignId, {
-      $inc: { applicants: 1 },
-    });
-
-    return invite;
+    return saved;
   }
 
-  /** Influencer responds (accept / decline) */
-  async respond(inviteId: string, influencerUserId: string, accept: boolean) {
-    const invite = await this.inviteModel.findById(inviteId);
-    if (!invite) throw new NotFoundException("Invite not found");
-    if (String(invite.influencerId) !== String(influencerUserId)) {
-      throw new ForbiddenException("This invite does not belong to you");
-    }
-
-    const newStatus = accept ? "accepted" : "declined";
-    this.assertTransition(invite.status, newStatus);
-
-    invite.status = newStatus;
-    invite.respondedAt = new Date();
-    await invite.save();
-    return invite;
-  }
-
-  /** Influencer submits content for a campaign */
-  async submit(
-    inviteId: string,
-    influencerUserId: string,
-    url: string,
-    notes?: string,
-  ) {
-    const invite = await this.inviteModel.findById(inviteId);
-    if (!invite) throw new NotFoundException("Invite not found");
-    if (String(invite.influencerId) !== String(influencerUserId)) {
-      throw new ForbiddenException("This invite does not belong to you");
-    }
-
-    this.assertTransition(invite.status, "submitted");
-
-    invite.status = "submitted";
-    invite.submission = {
-      url,
-      notes: notes || "",
-      submittedAt: new Date(),
-    };
-    await invite.save();
-    return invite;
-  }
-
-  /** Brand marks a submission as completed */
-  async markCompleted(inviteId: string, brandUserId: string) {
-    const invite = await this.inviteModel.findById(inviteId);
-    if (!invite) throw new NotFoundException("Invite not found");
-    if (String(invite.brandId) !== String(brandUserId)) {
-      throw new ForbiddenException(
-        "You do not own the campaign for this invite",
-      );
-    }
-
-    this.assertTransition(invite.status, "completed");
-
-    invite.status = "completed";
-    await invite.save();
-    return invite;
-  }
-
-  /** Get all invites for a campaign (brand view) */
-  async getInvitesForCampaign(campaignId: string, brandUserId: string) {
-    const campaign = (await this.campaignModel
-      .findById(campaignId)
-      .lean()) as any;
-    if (!campaign) throw new NotFoundException("Campaign not found");
-    if (String(campaign.brandId) !== String(brandUserId)) {
-      throw new ForbiddenException("You do not own this campaign");
-    }
-
+  async findByCampaign(campaignId: string) {
     return this.inviteModel
-      .find({ campaignId: new Types.ObjectId(campaignId) })
-      .populate("influencerId", "name username profileImages socialMedia")
-      .sort({ createdAt: -1 })
+      .find({ campaignId })
+      .populate("influencerId", "name email username profileImages")
       .lean();
   }
 
-  /** Get all invites for the logged-in influencer */
-  async getInvitesForInfluencer(influencerUserId: string, status?: string) {
-    const filter: any = {
-      influencerId: new Types.ObjectId(influencerUserId),
-    };
-    if (status) filter.status = status;
-
+  async findByInfluencer(influencerId: string) {
     return this.inviteModel
-      .find(filter)
-      .populate(
-        "campaignId",
-        "title description image status budgetMin budgetMax timelineStart timelineEnd",
-      )
+      .find({ influencerId })
+      .populate("campaignId", "title description status budgetMin budgetMax")
       .populate("brandId", "brandName brandLogo")
-      .sort({ createdAt: -1 })
       .lean();
   }
 
-  // ── Private helpers ──────────────────────
-  private assertTransition(current: string, next: string) {
-    const allowed = VALID_TRANSITIONS[current];
-    if (!allowed || !allowed.includes(next)) {
+  async respond(
+    inviteId: string,
+    influencerId: string,
+    status: "accepted" | "declined",
+  ) {
+    const invite = await this.inviteModel.findById(inviteId);
+    if (!invite) throw new NotFoundException("Invite not found");
+    if (String(invite.influencerId) !== influencerId) {
+      throw new BadRequestException("Not your invite");
+    }
+    if (invite.status !== "pending") {
+      throw new BadRequestException("Invite already responded to");
+    }
+    invite.status = status;
+    const updated = await invite.save();
+
+    // Send notification email to brand on acceptance
+    if (status === "accepted") {
+      try {
+        const brand: any = await this.brandModel
+          .findById(invite.brandId)
+          .select("email brandName")
+          .lean();
+        const influencer: any = await this.influencerModel
+          .findById(influencerId)
+          .select("name")
+          .lean();
+        const campaign: any = await this.campaignModel
+          .findById(invite.campaignId)
+          .select("title")
+          .lean();
+        if (brand?.email) {
+          const text = `Hi ${brand.brandName || ""},\n\n${influencer?.name || "An influencer"} has accepted your campaign invite for "${campaign?.title || ""}".\n`;
+          await sendEmail(brand.email, "Campaign Invite Accepted", text);
+        }
+      } catch (e) {
+        console.error("Failed to send acceptance email:", e);
+      }
+    }
+
+    return updated;
+  }
+
+  async submitAnalytics(
+    inviteId: string,
+    influencerId: string,
+    analytics: { reach?: number; engagement?: number; clicks?: number },
+  ) {
+    const invite = await this.inviteModel.findById(inviteId);
+    if (!invite) throw new NotFoundException("Invite not found");
+    if (String(invite.influencerId) !== influencerId) {
+      throw new BadRequestException("Not your invite");
+    }
+    if (invite.status !== "accepted") {
       throw new BadRequestException(
-        `Cannot transition from "${current}" to "${next}"`,
+        "Can only submit analytics for accepted invites",
       );
     }
+    invite.analytics = analytics;
+    return invite.save();
   }
 }

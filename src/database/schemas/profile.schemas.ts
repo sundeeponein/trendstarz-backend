@@ -77,6 +77,9 @@ export const InfluencerSchema = new Schema(
   },
   { timestamps: true },
 );
+InfluencerSchema.index({ status: 1 });
+InfluencerSchema.index({ categories: 1 });
+InfluencerSchema.index({ "location.state": 1 });
 
 export const InfluencerModel = model("Influencer", InfluencerSchema);
 
@@ -139,6 +142,8 @@ export const BrandSchema = new Schema(
   },
   { timestamps: true },
 );
+BrandSchema.index({ status: 1 });
+BrandSchema.index({ brandName: 1 });
 
 export const BrandModel = model("Brand", BrandSchema);
 
@@ -164,7 +169,12 @@ export const SocialMediaModel = model("SocialMedia", SocialMediaSchema);
 // Campaign schema
 export const CampaignSchema = new Schema(
   {
-    brandId: { type: Types.ObjectId, ref: "Brand", required: true },
+    brandId: {
+      type: Types.ObjectId,
+      ref: "Brand",
+      required: true,
+      index: true,
+    },
     title: { type: String, required: true },
     description: { type: String },
     image: {
@@ -173,58 +183,53 @@ export const CampaignSchema = new Schema(
     },
     status: {
       type: String,
-      enum: ["active", "pending", "completed", "draft"],
+      enum: ["draft", "active", "completed"],
       default: "draft",
     },
     budgetMin: { type: Number },
     budgetMax: { type: Number },
-    applicants: { type: Number, default: 0 },
     timelineStart: { type: Date },
     timelineEnd: { type: Date },
   },
   { timestamps: true },
 );
-
+CampaignSchema.index({ status: 1 });
 export const CampaignModel = model("Campaign", CampaignSchema);
 
-// ── Campaign Invite schema ─────────────────────────────────
-// Tracks the full invite → accept → submission → completion lifecycle
+// Campaign Invite schema
 export const CampaignInviteSchema = new Schema(
   {
-    campaignId: { type: Types.ObjectId, ref: "Campaign", required: true },
-    influencerId: { type: Types.ObjectId, ref: "Influencer", required: true },
-    brandId: { type: Types.ObjectId, ref: "Brand", required: true },
+    campaignId: {
+      type: Types.ObjectId,
+      ref: "Campaign",
+      required: true,
+      index: true,
+    },
+    brandId: {
+      type: Types.ObjectId,
+      ref: "Brand",
+      required: true,
+      index: true,
+    },
+    influencerId: {
+      type: Types.ObjectId,
+      ref: "Influencer",
+      required: true,
+      index: true,
+    },
     status: {
       type: String,
-      enum: ["invited", "accepted", "declined", "submitted", "completed"],
-      default: "invited",
-    },
-    invitedAt: { type: Date, default: Date.now },
-    respondedAt: { type: Date },
-    submission: {
-      url: { type: String },
-      notes: { type: String },
-      submittedAt: { type: Date },
+      enum: ["pending", "accepted", "declined"],
+      default: "pending",
     },
     analytics: {
-      views: { type: Number, default: 0 },
-      clicks: { type: Number, default: 0 },
-      engagement: { type: Number, default: 0 },
+      reach: { type: Number },
+      engagement: { type: Number },
+      clicks: { type: Number },
     },
   },
   { timestamps: true },
 );
-
-// One invite per influencer per campaign
-CampaignInviteSchema.index(
-  { campaignId: 1, influencerId: 1 },
-  { unique: true },
-);
-// Fast lookup: influencer's invites by status
-CampaignInviteSchema.index({ influencerId: 1, status: 1 });
-// Fast lookup: all invites for a campaign
-CampaignInviteSchema.index({ campaignId: 1, status: 1 });
-
 export const CampaignInviteModel = model(
   "CampaignInvite",
   CampaignInviteSchema,

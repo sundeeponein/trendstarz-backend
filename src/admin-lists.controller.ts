@@ -11,6 +11,7 @@ import {
   BadRequestException,
 } from "@nestjs/common";
 import { JwtAuthGuard } from "./auth/jwt-auth.guard";
+import { RolesGuard } from "./auth/roles.guard";
 import {
   CategoryModel,
   StateModel,
@@ -21,7 +22,21 @@ import {
 import { InjectModel } from "@nestjs/mongoose";
 import { Model } from "mongoose";
 
+interface VisibilityItem {
+  _id: string;
+  showInFrontend: boolean;
+}
+
+interface BatchVisibilityBody {
+  tiers?: VisibilityItem[];
+  socialMedia?: VisibilityItem[];
+  categories?: VisibilityItem[];
+  languages?: VisibilityItem[];
+  states?: VisibilityItem[];
+}
+
 @Controller("admin")
+@UseGuards(JwtAuthGuard, RolesGuard)
 export class AdminListsController {
   constructor(
     @InjectModel("Influencer") private readonly influencerModel: Model<any>,
@@ -34,10 +49,10 @@ export class AdminListsController {
       const influencers = await this.influencerModel.find({}).lean().limit(5);
       const brands = await this.brandModel.find({}).lean().limit(5);
       return { influencers, brands };
-    } catch (err) {
-      throw new BadRequestException(
-        err.message || "Error fetching debug user data",
-      );
+    } catch (err: unknown) {
+      const message =
+        err instanceof Error ? err.message : "Error fetching debug user data";
+      throw new BadRequestException(message);
     }
   }
   // Admin dashboard endpoints for influencers and brands
@@ -51,26 +66,41 @@ export class AdminListsController {
     return this.brandModel.find({}).lean().limit(100);
   }
   @Patch("states/:id")
-  async patchState(@Param("id") id: string, @Body() body: any) {
+  async patchState(
+    @Param("id") id: string,
+    @Body() body: Record<string, unknown>,
+  ) {
     return StateModel.findByIdAndUpdate(id, body, { new: true });
   }
 
   @Patch("categories/:id")
-  async patchCategory(@Param("id") id: string, @Body() body: any) {
+  async patchCategory(
+    @Param("id") id: string,
+    @Body() body: Record<string, unknown>,
+  ) {
     return CategoryModel.findByIdAndUpdate(id, body, { new: true });
   }
 
   @Patch("languages/:id")
-  async patchLanguage(@Param("id") id: string, @Body() body: any) {
+  async patchLanguage(
+    @Param("id") id: string,
+    @Body() body: Record<string, unknown>,
+  ) {
     return LanguageModel.findByIdAndUpdate(id, body, { new: true });
   }
 
   @Patch("social-media/:id")
-  async patchSocialMedia(@Param("id") id: string, @Body() body: any) {
+  async patchSocialMedia(
+    @Param("id") id: string,
+    @Body() body: Record<string, unknown>,
+  ) {
     return SocialMediaModel.findByIdAndUpdate(id, body, { new: true });
   }
   @Patch("tiers/:id")
-  async patchTier(@Param("id") id: string, @Body() body: any) {
+  async patchTier(
+    @Param("id") id: string,
+    @Body() body: Record<string, unknown>,
+  ) {
     return TierModel.findByIdAndUpdate(id, body, { new: true });
   }
   // Categories
@@ -83,7 +113,10 @@ export class AdminListsController {
     return CategoryModel.create(body);
   }
   @Put("categories/:id")
-  async updateCategoryFull(@Param("id") id: string, @Body() body: any) {
+  async updateCategoryFull(
+    @Param("id") id: string,
+    @Body() body: Record<string, unknown>,
+  ) {
     return CategoryModel.findByIdAndUpdate(id, body, { new: true });
   }
   @Delete("categories/:id")
@@ -101,7 +134,10 @@ export class AdminListsController {
     return StateModel.create(body);
   }
   @Put("states/:id")
-  async updateStateFull(@Param("id") id: string, @Body() body: any) {
+  async updateStateFull(
+    @Param("id") id: string,
+    @Body() body: Record<string, unknown>,
+  ) {
     return StateModel.findByIdAndUpdate(id, body, { new: true });
   }
   @Delete("states/:id")
@@ -119,7 +155,10 @@ export class AdminListsController {
     return LanguageModel.create(body);
   }
   @Put("languages/:id")
-  async updateLanguageFull(@Param("id") id: string, @Body() body: any) {
+  async updateLanguageFull(
+    @Param("id") id: string,
+    @Body() body: Record<string, unknown>,
+  ) {
     return LanguageModel.findByIdAndUpdate(id, body, { new: true });
   }
   @Delete("languages/:id")
@@ -152,7 +191,10 @@ export class AdminListsController {
     return SocialMediaModel.create(body);
   }
   @Put("social-media/:id")
-  async updateSocialMediaFull(@Param("id") id: string, @Body() body: any) {
+  async updateSocialMediaFull(
+    @Param("id") id: string,
+    @Body() body: Record<string, unknown>,
+  ) {
     return SocialMediaModel.findByIdAndUpdate(id, body, { new: true });
   }
   @Delete("social-media/:id")
@@ -160,9 +202,8 @@ export class AdminListsController {
     return SocialMediaModel.findByIdAndDelete(id);
   }
 
-  @UseGuards(JwtAuthGuard)
   @Post("batch-update-visibility")
-  async batchUpdateVisibility(@Body() body: any) {
+  async batchUpdateVisibility(@Body() body: BatchVisibilityBody) {
     try {
       // Each key is an array of {_id, showInFrontend}
       if (body.tiers) {
@@ -221,9 +262,10 @@ export class AdminListsController {
         }
       }
       return { message: "Visibility updated" };
-    } catch (err) {
-      // console.error(`[BatchUpdate] Error:`, err);
-      throw new BadRequestException(err.message || "Error updating visibility");
+    } catch (err: unknown) {
+      const message =
+        err instanceof Error ? err.message : "Error updating visibility";
+      throw new BadRequestException(message);
     }
   }
 }

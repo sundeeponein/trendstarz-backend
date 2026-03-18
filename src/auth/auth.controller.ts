@@ -27,11 +27,6 @@ export class AuthController {
     return res.status(201).json(result);
   }
 
-  @Post("send-otp")
-  async sendOtp(@Body() body: { email: string }) {
-    return this.authService.sendOtp(body.email);
-  }
-
   @Post("send-email-verification")
   async sendEmailVerification(@Body() body: { email: string }) {
     return this.authService.sendEmailVerificationLink(body.email);
@@ -53,10 +48,6 @@ export class AuthController {
     }
   }
 
-  @Post("verify-otp")
-  async verifyOtp(@Body() body: { email: string; otp: string }) {
-    return this.authService.verifyOtp(body.email, body.otp);
-  }
   @Post("forgot-password")
   async forgotPassword(@Body() body: { email: string }, @Res() res: Response) {
     try {
@@ -68,6 +59,24 @@ export class AuthController {
       return res
         .status(400)
         .json({ message: err.message || "Failed to send reset email." });
+    }
+  }
+
+  @Post("reset-password")
+  async resetPassword(
+    @Body() body: { token: string; newPassword: string },
+    @Res() res: Response,
+  ) {
+    try {
+      const result = await this.authService.resetPassword(
+        body.token,
+        body.newPassword,
+      );
+      return res.status(200).json(result);
+    } catch (err) {
+      return res
+        .status(400)
+        .json({ message: err.message || "Failed to reset password." });
     }
   }
 }

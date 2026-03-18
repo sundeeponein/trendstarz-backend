@@ -4,101 +4,53 @@ import {
   Post,
   Patch,
   Delete,
-  Param,
   Body,
+  Param,
   Query,
   UseGuards,
   Req,
-  ForbiddenException,
-  NotFoundException,
 } from "@nestjs/common";
-import { InjectModel } from "@nestjs/mongoose";
-import { Model, Document, Types } from "mongoose";
 import { JwtAuthGuard } from "../auth/jwt-auth.guard";
+import { CampaignsService } from "./campaigns.service";
 
 @Controller("campaigns")
 export class CampaignsController {
-  constructor(
-    @InjectModel("Campaign") private readonly campaignModel: Model<Document>,
-  ) {}
+  constructor(private readonly campaignsService: CampaignsService) {}
 
-  // ── Helpers ──────────────────────────────
-  private async assertOwnership(campaignId: string, userId: string) {
-    const campaign = await this.campaignModel.findById(campaignId).lean();
-    if (!campaign) throw new NotFoundException("Campaign not found");
-    if (String((campaign as any).brandId) !== String(userId)) {
-      throw new ForbiddenException("You do not own this campaign");
-    }
-    return campaign;
-  }
-
-  // ── Public reads (brand-name lookup used by public profile) ──
-  // GET /api/campaigns/brand-name/:brandName
-  @Get("brand-name/:brandName")
-  async getCampaignsByBrandName(@Param("brandName") brandName: string) {
-    const BrandModel = this.campaignModel.db.model("Brand");
-    const escaped = brandName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    const brand = (await BrandModel.findOne({
-      $or: [
-        { brandName: new RegExp(`^${escaped}$`, "i") },
-        { brandUsername: new RegExp(`^${escaped}$`, "i") },
-      ],
-    })
-      .select("_id")
-      .lean()) as { _id: Types.ObjectId } | null;
-    if (!brand) return [];
-    return this.campaignModel
-      .find({ brandId: brand._id })
-      .sort({ createdAt: -1 })
-      .lean();
-  }
-
-  // ── Authenticated endpoints ──────────────
-  // GET /api/campaigns?brandId=xxx
-  @UseGuards(JwtAuthGuard)
-  @Get()
-  async getCampaigns(@Query("brandId") brandId: string) {
-    if (!brandId) return [];
-    return this.campaignModel
-      .find({ brandId: new Types.ObjectId(brandId) })
-      .sort({ createdAt: -1 })
-      .lean();
-  }
-
-  // GET /api/campaigns/:id
-  @UseGuards(JwtAuthGuard)
-  @Get(":id")
-  async getCampaignById(@Param("id") id: string) {
-    return this.campaignModel.findById(id).lean();
-  }
-
-  // POST /api/campaigns
   @UseGuards(JwtAuthGuard)
   @Post()
-  async createCampaign(@Req() req: any, @Body() body: Record<string, unknown>) {
-    // Force brandId to the authenticated user
-    const userId = req.user?.userId;
-    return this.campaignModel.create({ ...body, brandId: userId });
+  async create(@Req() req: any, @Body() body: any) {
+    const brandId = req.user?.userId;
+    return this.campaignsService.create(brandId, body);
   }
 
-  // PATCH /api/campaigns/:id
+  @UseGuards(JwtAuthGuard)
+  @Get()
+  async findByBrand(@Query("brandId") brandId: string) {
+    return this.campaignsService.findByBrandId(brandId);
+  }
+
+  @Get("brand-name/:brandName")
+  async findByBrandName(@Param("brandName") brandName: string) {
+    return this.campaignsService.findByBrandName(brandName);
+  }
+
+  @Get(":id")
+  async findOne(@Param("id") id: string) {
+    return this.campaignsService.findById(id);
+  }
+
   @UseGuards(JwtAuthGuard)
   @Patch(":id")
-  async updateCampaign(
-    @Req() req: any,
-    @Param("id") id: string,
-    @Body() body: Record<string, unknown>,
-  ) {
-    await this.assertOwnership(id, req.user?.userId);
-    return this.campaignModel.findByIdAndUpdate(id, body, { new: true }).lean();
+  async update(@Param("id") id: string, @Req() req: any, @Body() body: any) {
+    const brandId = req.user?.userId;
+    return this.campaignsService.update(id, brandId, body);
   }
 
-  // DELETE /api/campaigns/:id
   @UseGuards(JwtAuthGuard)
   @Delete(":id")
-  async deleteCampaign(@Req() req: any, @Param("id") id: string) {
-    await this.assertOwnership(id, req.user?.userId);
-    await this.campaignModel.findByIdAndDelete(id);
-    return { deleted: true };
+  async remove(@Param("id") id: string, @Req() req: any) {
+    const brandId = req.user?.userId;
+    return this.campaignsService.remove(id, brandId);
   }
 }
