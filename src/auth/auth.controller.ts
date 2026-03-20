@@ -11,20 +11,41 @@ export class AuthController {
     @Body() body: { email: string; password: string },
     @Res() res: Response,
   ) {
-    const result = await this.authService.login(body.email, body.password);
-    return res.status(200).json(result);
+    try {
+      const result = await this.authService.login(body.email, body.password);
+      return res.status(200).json(result);
+    } catch (err: any) {
+      console.error("Auth login error:", err);
+      const status = err?.status || 500;
+      const message = err?.message || "Login failed";
+      return res.status(status).json({ success: false, message });
+    }
   }
 
   @Post("register-influencer")
   async registerInfluencer(@Body() body: any, @Res() res: Response) {
-    const result = await this.authService.registerInfluencer(body);
-    return res.status(201).json(result);
+    try {
+      const result = await this.authService.registerInfluencer(body);
+      return res.status(201).json(result);
+    } catch (err: any) {
+      console.error("Auth registerInfluencer error:", err);
+      const status = err?.status || 500;
+      const message = err?.message || "Registration failed";
+      return res.status(status).json({ success: false, message });
+    }
   }
 
   @Post("register-brand")
   async registerBrand(@Body() body: any, @Res() res: Response) {
-    const result = await this.authService.registerBrand(body);
-    return res.status(201).json(result);
+    try {
+      const result = await this.authService.registerBrand(body);
+      return res.status(201).json(result);
+    } catch (err: any) {
+      console.error("Auth registerBrand error:", err);
+      const status = err?.status || 500;
+      const message = err?.message || "Registration failed";
+      return res.status(status).json({ success: false, message });
+    }
   }
 
   @Post("send-email-verification")
