@@ -1,6 +1,5 @@
 import { NestFactory } from "@nestjs/core";
 import { ExpressAdapter } from "@nestjs/platform-express";
-import { ValidationPipe } from "@nestjs/common";
 import express from "express";
 import { AppModule } from "./app.module";
 import { ResponseInterceptor } from "./response.interceptor";
@@ -63,14 +62,17 @@ async function bootstrap() {
   // Security headers
   app.use(helmet());
 
-  // Restrict CORS to trusted origins
+  // Restrict CORS to trusted origins (configurable via environment variable)
+  const corsOrigins = (
+    process.env.CORS_ORIGINS ||
+    "https://trendstarz.in,https://www.trendstarz.in,http://localhost:4200,http://127.0.0.1:4200"
+  )
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+
   app.enableCors({
-    origin: [
-      "https://trendstarz.in",
-      "https://www.trendstarz.in",
-      "http://localhost:4200",
-      "http://127.0.0.1:4200",
-    ],
+    origin: corsOrigins,
     credentials: true,
   });
 
