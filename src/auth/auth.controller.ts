@@ -16,7 +16,7 @@ export class AuthController {
       return res.status(200).json(result);
     } catch (err: any) {
       console.error("Auth login error:", err);
-      const status = err?.status || 500;
+      const status = err?.status || 401;
       const message = err?.message || "Login failed";
       return res.status(status).json({ success: false, message });
     }
@@ -29,7 +29,7 @@ export class AuthController {
       return res.status(201).json(result);
     } catch (err: any) {
       console.error("Auth registerInfluencer error:", err);
-      const status = err?.status || 500;
+      const status = err?.status || 400;
       const message = err?.message || "Registration failed";
       return res.status(status).json({ success: false, message });
     }
@@ -42,7 +42,7 @@ export class AuthController {
       return res.status(201).json(result);
     } catch (err: any) {
       console.error("Auth registerBrand error:", err);
-      const status = err?.status || 500;
+      const status = err?.status || 400;
       const message = err?.message || "Registration failed";
       return res.status(status).json({ success: false, message });
     }
