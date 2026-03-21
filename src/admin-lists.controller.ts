@@ -7,6 +7,7 @@ import {
   Body,
   Param,
   Patch,
+  Query,
   UseGuards,
   BadRequestException,
 } from "@nestjs/common";
@@ -55,15 +56,49 @@ export class AdminListsController {
       throw new BadRequestException(message);
     }
   }
+  // Debug endpoint to check stored public_ids for a specific user (for Cloudinary deletion troubleshooting)
+  @Get("debug-user-images/:id")
+  async debugUserImages(@Param("id") id: string) {
+    let user: any = await this.influencerModel.findById(id).lean();
+    if (user) {
+      return {
+        type: "influencer",
+        profileImages: (user.profileImages || []).map((img: any) => ({
+          url: typeof img === "object" ? img.url : img,
+          public_id: typeof img === "object" ? img.public_id : img,
+        })),
+      };
+    }
+    user = await this.brandModel.findById(id).lean();
+    if (user) {
+      return {
+        type: "brand",
+        brandLogo: (user.brandLogo || []).map((img: any) => ({
+          url: typeof img === "object" ? img.url : img,
+          public_id: typeof img === "object" ? img.public_id : img,
+        })),
+        products: (user.products || []).map((img: any) => ({
+          url: typeof img === "object" ? img.url : img,
+          public_id: typeof img === "object" ? img.public_id : img,
+        })),
+      };
+    }
+    return { message: "User not found", id };
+  }
+
   // Admin dashboard endpoints for influencers and brands
   @Get("influencers")
-  async getAllInfluencers() {
-    return this.influencerModel.find({}).lean().limit(100);
+  async getAllInfluencers(@Query("status") status?: string) {
+    const filter = status ? { status } : {};
+    const docs = await this.influencerModel.find(filter).lean().limit(200);
+    return { success: true, data: docs };
   }
 
   @Get("brands")
-  async getAllBrands() {
-    return this.brandModel.find({}).lean().limit(100);
+  async getAllBrands(@Query("status") status?: string) {
+    const filter = status ? { status } : {};
+    const docs = await this.brandModel.find(filter).lean().limit(200);
+    return { success: true, data: docs };
   }
   @Patch("states/:id")
   async patchState(

@@ -40,43 +40,34 @@ export class CloudinaryService {
   }
 
   async deleteImage(publicId: string) {
-    console.log("[DEBUG] Attempting to delete image with public_id:", publicId);
     setCloudinaryConfig();
-    try {
-      // Log the type of cloudinary and check for config/uploader.destroy
-      console.log("[DEBUG] typeof cloudinary:", typeof cloudinary);
-      console.log(
-        "[DEBUG] typeof cloudinary.config:",
-        typeof cloudinary.config,
-      );
-      console.log(
-        "[DEBUG] typeof cloudinary.uploader:",
-        typeof cloudinary.uploader,
-      );
-      console.log(
-        "[DEBUG] typeof cloudinary.uploader.destroy:",
-        typeof cloudinary.uploader.destroy,
-      );
-      const result = await cloudinary.uploader.destroy(publicId);
-      console.log("[DEBUG] Cloudinary destroy result:", result);
-      if (result.result === "ok" || result.result === "not found") {
-        console.log("[DEBUG] Image deleted or not found:", publicId);
-      } else {
-        console.warn(
-          "[DEBUG] Unexpected Cloudinary destroy result for",
-          publicId,
-          ":",
-          result,
-        );
-      }
-      return result;
-    } catch (err) {
-      console.error(
-        "[ERROR] Cloudinary deleteImage failed for public_id:",
-        publicId,
-        err,
-      );
-      throw err;
+    // Strip file extension if present (Cloudinary public_id never includes extension)
+    const strippedId = publicId.replace(/\.[^/.]+$/, "");
+    // Build list of public_id variants to try in order
+    const variants: string[] = [strippedId];
+    if (!strippedId.includes("/")) {
+      variants.push(`client-side/uploads/${strippedId}`);
+      variants.push(`uploads/${strippedId}`);
+    } else if (!strippedId.startsWith("client-side/") && !strippedId.startsWith("uploads/")) {
+      variants.push(`client-side/uploads/${strippedId}`);
     }
+    let lastResult: any = null;
+    for (const id of variants) {
+      try {
+        console.log("[Cloudinary] Attempting to delete public_id:", id);
+        const result = await cloudinary.uploader.destroy(id);
+        console.log("[Cloudinary] destroy result for", id, ":", result);
+        if (result.result === "ok") {
+          console.log("[Cloudinary] Successfully deleted:", id);
+          return result;
+        }
+        lastResult = result;
+      } catch (err) {
+        console.error("[Cloudinary] deleteImage error for public_id:", id, err);
+        lastResult = err;
+      }
+    }
+    console.warn("[Cloudinary] Image not found or could not be deleted for original public_id:", publicId);
+    return lastResult;
   }
 }
