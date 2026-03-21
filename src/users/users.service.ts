@@ -56,21 +56,13 @@ export class UsersService {
       // Delete all images from Cloudinary
       if (user.profileImages && Array.isArray(user.profileImages)) {
         for (const img of user.profileImages) {
-          if (typeof img === "object" && img.public_id) {
-            let publicId = img.public_id;
-            if (publicId && !publicId.includes("/"))
-              publicId = `uploads/${publicId}`;
+          const publicId = typeof img === "object" ? img.public_id : (typeof img === "string" ? img : null);
+          if (publicId) {
             try {
               await this.cloudinaryService.deleteImage(publicId);
-              console.log(
-                `[DELETE] Deleted influencer image from Cloudinary: ${publicId}`,
-              );
+              console.log(`[DELETE] Deleted influencer image from Cloudinary: ${publicId}`);
             } catch (err) {
-              console.error(
-                "[DELETE] Error deleting influencer image from Cloudinary:",
-                err,
-                img,
-              );
+              console.error("[DELETE] Error deleting influencer image from Cloudinary:", err, img);
               errors.push({ type: "influencer", publicId, error: err });
             }
           }
@@ -106,21 +98,13 @@ export class UsersService {
       const errors: any[] = [];
       if (user.brandLogo && Array.isArray(user.brandLogo)) {
         for (const img of user.brandLogo) {
-          if (typeof img === "object" && img.public_id) {
-            let publicId = img.public_id;
-            if (publicId && !publicId.includes("/"))
-              publicId = `uploads/${publicId}`;
+          const publicId = typeof img === "object" ? img.public_id : (typeof img === "string" ? img : null);
+          if (publicId) {
             try {
               await this.cloudinaryService.deleteImage(publicId);
-              console.log(
-                `[DELETE] Deleted brand logo from Cloudinary: ${publicId}`,
-              );
+              console.log(`[DELETE] Deleted brand logo from Cloudinary: ${publicId}`);
             } catch (cloudErr) {
-              console.error(
-                "[DELETE] Error deleting brand logo from Cloudinary:",
-                cloudErr,
-                img,
-              );
+              console.error("[DELETE] Error deleting brand logo from Cloudinary:", cloudErr, img);
               errors.push({ type: "brandLogo", publicId, error: cloudErr });
             }
           }
@@ -128,21 +112,13 @@ export class UsersService {
       }
       if (user.products && Array.isArray(user.products)) {
         for (const img of user.products) {
-          if (typeof img === "object" && img.public_id) {
-            let publicId = img.public_id;
-            if (publicId && !publicId.includes("/"))
-              publicId = `uploads/${publicId}`;
+          const publicId = typeof img === "object" ? img.public_id : (typeof img === "string" ? img : null);
+          if (publicId) {
             try {
               await this.cloudinaryService.deleteImage(publicId);
-              console.log(
-                `[DELETE] Deleted brand product image from Cloudinary: ${publicId}`,
-              );
+              console.log(`[DELETE] Deleted brand product image from Cloudinary: ${publicId}`);
             } catch (cloudErr) {
-              console.error(
-                "[DELETE] Error deleting brand product image from Cloudinary:",
-                cloudErr,
-                img,
-              );
+              console.error("[DELETE] Error deleting brand product image from Cloudinary:", cloudErr, img);
               errors.push({ type: "brandProduct", publicId, error: cloudErr });
             }
           }
