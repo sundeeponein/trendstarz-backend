@@ -654,8 +654,21 @@ export class UsersService {
   }
 
   async deleteUser(id: string) {
-    // Admin delete should fully remove DB profile + Cloudinary assets.
-    return this.deletePermanently(id);
+    // Soft-delete: set status to 'deleted' so user appears in Deleted Users list.
+    // Admin can permanently delete from there.
+    let user: any = await this.influencerModel.findByIdAndUpdate(
+      id,
+      { status: 'deleted' },
+      { new: true }
+    );
+    if (user) return { message: 'Influencer soft-deleted', user };
+    user = await this.brandModel.findByIdAndUpdate(
+      id,
+      { status: 'deleted' },
+      { new: true }
+    );
+    if (user) return { message: 'Brand soft-deleted', user };
+    return { message: 'User not found', id };
   }
   async setPremium(
     id: string,

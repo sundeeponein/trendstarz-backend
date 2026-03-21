@@ -7,6 +7,7 @@ import {
   Body,
   Param,
   Patch,
+  Query,
   UseGuards,
   BadRequestException,
 } from "@nestjs/common";
@@ -87,14 +88,16 @@ export class AdminListsController {
 
   // Admin dashboard endpoints for influencers and brands
   @Get("influencers")
-  async getAllInfluencers() {
-    const docs = await this.influencerModel.find({}).lean().limit(100);
+  async getAllInfluencers(@Query("status") status?: string) {
+    const filter = status ? { status } : {};
+    const docs = await this.influencerModel.find(filter).lean().limit(200);
     return { success: true, data: docs };
   }
 
   @Get("brands")
-  async getAllBrands() {
-    const docs = await this.brandModel.find({}).lean().limit(100);
+  async getAllBrands(@Query("status") status?: string) {
+    const filter = status ? { status } : {};
+    const docs = await this.brandModel.find(filter).lean().limit(200);
     return { success: true, data: docs };
   }
   @Patch("states/:id")
