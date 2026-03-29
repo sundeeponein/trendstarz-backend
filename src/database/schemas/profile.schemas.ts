@@ -158,7 +158,11 @@ export const BrandModel = model("Brand", BrandSchema);
 
 export const AppSettingsSchema = new Schema({
   preApproveInfluencers: { type: Boolean, default: false },
+  influencerRequireEmailVerified: { type: Boolean, default: true },
+  influencerRequireMobileVerified: { type: Boolean, default: false },
   preApproveBrands: { type: Boolean, default: false },
+  brandRequireEmailVerified: { type: Boolean, default: true },
+  brandRequireMobileVerified: { type: Boolean, default: false },
 });
 export const AppSettingsModel = model("AppSettings", AppSettingsSchema);
 
