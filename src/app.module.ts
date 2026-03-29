@@ -22,6 +22,7 @@ import {
   InfluencerSchema,
   BrandSchema,
   TierSchema,
+  AppSettingsSchema,
 } from "./database/schemas/profile.schemas";
 
 import { AuthService } from "./auth/auth.service";
@@ -55,6 +56,7 @@ import { HealthController } from "./health.controller";
       },
       { name: "Brand", schema: BrandSchema, collection: "brands" },
       { name: "Tier", schema: TierSchema, collection: "tiers" },
+      { name: "AppSettings", schema: AppSettingsSchema, collection: "appsettings" },
     ]),
     UsersModule,
     CampaignsModule,
