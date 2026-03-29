@@ -8,7 +8,7 @@ import * as crypto from "crypto";
 import * as jwt from "jsonwebtoken";
 import { InjectModel } from "@nestjs/mongoose";
 import { Model } from "mongoose";
-import { sendEmail } from "../utils/email";
+import { sendAppEmail } from "../utils/app-email.service";
 import { getJwtSecret } from "./jwt-secret";
 
 type AnyUserDoc = {
@@ -75,7 +75,12 @@ export class AuthService {
     `;
     const text = `Please verify your Trendstarz email address: ${verifyUrl}`;
 
-    await sendEmail(normalizedEmail, "Verify your Trendstarz email", text);
+    await sendAppEmail({
+      to: normalizedEmail,
+      subject: "Verify your Trendstarz email",
+      text,
+      html,
+    });
     // Keep html for future providers that support rich templates.
     void html;
 
@@ -182,8 +187,12 @@ export class AuthService {
     await user.save();
     // Send email (use your email util)
     const resetUrl = `${process.env.FRONTEND_URL || "http://localhost:4200"}/reset-password?token=${resetToken}`;
-    const text = `Hey ${user.name || user.email},\n\nWe’ve received a request to reset your password for your account. Click the link below to create a new password:\n${resetUrl}\n\nIf you didn’t request to change your password, then don’t worry! Your password is still safe and you can delete this email.`;
-    await sendEmail(user.email, "Reset your password", text);
+    const text = `Reset your Trendstarz password: ${resetUrl}`;
+    await sendAppEmail({
+      to: user.email,
+      subject: "Reset your password",
+      text,
+    });
   }
 
   async resetPassword(token: string, newPassword: string) {
