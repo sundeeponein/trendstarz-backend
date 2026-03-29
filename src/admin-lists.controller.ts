@@ -62,14 +62,11 @@ export class AdminListsController {
   }
 
   @Patch("settings")
-  async updateSettings(
-    @Body() body: { preApproveInfluencers?: boolean; preApproveBrands?: boolean },
-  ) {
-    const settings = await this.appSettingsModel.findOneAndUpdate(
-      {},
-      { $set: body },
-      { upsert: true, new: true },
-    ).lean();
+  async updateSettings(@Body() body: Record<string, any>) {
+    // Only update fields present in the request body
+    const settings = await this.appSettingsModel
+      .findOneAndUpdate({}, { $set: body }, { upsert: true, new: true })
+      .lean();
     return { success: true, settings };
   }
   // Debug endpoint to log influencer and brand data
