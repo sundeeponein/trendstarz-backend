@@ -66,7 +66,8 @@ export class AuthService {
       { expiresIn: "1h" },
     );
 
-    const verifyUrl = `${this.getFrontendBaseUrl()}/verify-email?token=${encodeURIComponent(token)}`;
+    const backendUrl = process.env.BACKEND_URL || "http://localhost:3000";
+    const verifyUrl = `${backendUrl}/api/auth/verify-email?token=${encodeURIComponent(token)}`;
     const html = `
       <p>Hi,</p>
       <p>Please verify your Trendstarz email address by clicking the link below:</p>
