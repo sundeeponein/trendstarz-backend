@@ -47,8 +47,18 @@ export class AdminListsController {
 
   @Get("settings")
   async getSettings() {
+    // These are the defaults from the schema
+    const defaults = {
+      preApproveInfluencers: false,
+      influencerRequireEmailVerified: true,
+      influencerRequireMobileVerified: false,
+      preApproveBrands: false,
+      brandRequireEmailVerified: true,
+      brandRequireMobileVerified: false,
+    };
     const settings = await this.appSettingsModel.findOne({}).lean();
-    return settings || { preApproveInfluencers: false, preApproveBrands: false };
+    // Merge defaults with settings from DB (DB values override defaults)
+    return { ...defaults, ...(settings || {}) };
   }
 
   @Patch("settings")
