@@ -32,11 +32,14 @@ export class AuthService {
   }
 
   private async findAnyUserByEmail(email: string): Promise<AnyUserDoc | null> {
-    return (
-      (await this.userModel.findOne({ email })) ||
-      (await this.influencerModel.findOne({ email })) ||
-      (await this.brandModel.findOne({ email }))
-    );
+    // Parallel queries — eliminates sequential round-trips and prevents
+    // timing-based user-enumeration across collections.
+    const [adminUser, influencer, brand] = await Promise.all([
+      this.userModel.findOne({ email }),
+      this.influencerModel.findOne({ email }),
+      this.brandModel.findOne({ email }),
+    ]);
+    return adminUser || influencer || brand || null;
   }
 
   async sendEmailVerificationLink(email: string) {
@@ -136,25 +139,31 @@ export class AuthService {
     if (!token || !newPassword) {
       throw new BadRequestException("Token and new password are required");
     }
-    const user =
-      (await this.userModel.findOne({
-        resetToken: token,
-        resetTokenExpires: { $gt: Date.now() },
-      })) ||
-      (await this.influencerModel.findOne({
-        resetToken: token,
-        resetTokenExpires: { $gt: Date.now() },
-      })) ||
-      (await this.brandModel.findOne({
-        resetToken: token,
-        resetTokenExpires: { $gt: Date.now() },
-      }));
+    if (newPassword.length < 8) {
+      throw new BadRequestException("Password must be at least 8 characters.");
+    }
+    if (newPassword.length > 128) {
+      throw new BadRequestException("Password must not exceed 128 characters.");
+    }
+
+    // Hash the incoming raw token to compare against the stored hash.
+    const tokenHash = crypto.createHash("sha256").update(token).digest("hex");
+    const now = Date.now();
+
+    // Parallel lookup across collections.
+    const [adminUser, influencer, brand] = await Promise.all([
+      this.userModel.findOne({ resetToken: tokenHash, resetTokenExpires: { $gt: now } }),
+      this.influencerModel.findOne({ resetToken: tokenHash, resetTokenExpires: { $gt: now } }),
+      this.brandModel.findOne({ resetToken: tokenHash, resetTokenExpires: { $gt: now } }),
+    ]);
+    const user = adminUser || influencer || brand;
+
     if (!user) {
       throw new BadRequestException("Invalid or expired reset token");
     }
     user.password = await bcrypt.hash(newPassword, 10);
-    user.resetToken = undefined;
-    user.resetTokenExpires = undefined;
+    user.resetToken = null;
+    user.resetTokenExpires = null;
     await user.save();
     return { success: true, message: "Password reset successfully." };
   }
@@ -167,6 +176,7 @@ export class AuthService {
     @InjectModel("State") private readonly stateModel: Model<any>,
     @InjectModel("Language") private readonly languageModel: Model<any>,
     @InjectModel("SocialMedia") private readonly socialMediaModel: Model<any>,
+    @InjectModel("AppSettings") private readonly appSettingsModel: Model<any>,
   ) {}
 
   private isObjectId(val: string): boolean {
@@ -211,72 +221,62 @@ export class AuthService {
     return { categoryNames, languageNames, stateName, socialMediaMapped };
   }
 
-  // Admin login implementation
+  // Admin / influencer / brand login
   async login(email: string, password: string) {
-    // Try to find admin user
-    const user = await this.userModel.findOne({ email, role: "admin" });
-    if (user) {
-      const isMatch = await bcrypt.compare(password, user.password);
-      if (!isMatch) {
-        throw new UnauthorizedException("Invalid credentials");
-      }
-      // Generate JWT token
+    const normalizedEmail = (email || "").trim().toLowerCase();
+
+    // Fetch all three collections in parallel to eliminate sequential DB round-trips
+    // and prevent timing-based enumeration of which collection a user belongs to.
+    const [adminUser, influencer, brand] = await Promise.all([
+      this.userModel.findOne({ email: normalizedEmail, role: "admin" }),
+      this.influencerModel.findOne({ email: normalizedEmail }),
+      this.brandModel.findOne({ email: normalizedEmail }),
+    ]);
+
+    if (adminUser) {
+      const isMatch = await bcrypt.compare(password, adminUser.password);
+      if (!isMatch) throw new UnauthorizedException("Invalid credentials");
       const token = jwt.sign(
-        { userId: user._id, email: user.email, role: user.role },
+        { userId: adminUser._id, email: adminUser.email, role: adminUser.role },
         getJwtSecret(),
         { expiresIn: "7d" },
       );
       return {
         token,
-        userType: user.role,
+        userType: adminUser.role,
         user: {
-          id: user._id,
-          name: user.name,
-          email: user.email,
-          role: user.role,
+          id: adminUser._id,
+          name: adminUser.name,
+          email: adminUser.email,
+          role: adminUser.role,
           profileImage:
-            user.profileImages && user.profileImages.length > 0
-              ? user.profileImages[0].url
+            Array.isArray(adminUser.profileImages) && adminUser.profileImages.length > 0
+              ? adminUser.profileImages[0].url
               : null,
         },
       };
     }
-    // Check influencer
-    const influencer = await this.influencerModel.findOne({ email });
+
     if (influencer) {
       const isMatch = await bcrypt.compare(password, influencer.password);
-      if (!isMatch) {
-        throw new UnauthorizedException("Invalid credentials");
-      }
+      if (!isMatch) throw new UnauthorizedException("Invalid credentials");
       if (influencer.status === "pending") {
         throw new UnauthorizedException(
           "Your account is pending approval. Please wait for admin to activate your account.",
         );
       }
-      // Use display name if available, fallback to empty string (never email)
       const displayName =
-        influencer.name && influencer.name !== influencer.email
-          ? influencer.name
-          : "";
-      // Use first profile image URL if available
-      let profileImageUrl = null;
-      if (
+        influencer.name && influencer.name !== influencer.email ? influencer.name : "";
+      const profileImageUrl =
         Array.isArray(influencer.profileImages) &&
         influencer.profileImages.length > 0 &&
         influencer.profileImages[0].url
-      ) {
-        profileImageUrl = influencer.profileImages[0].url;
-      }
+          ? influencer.profileImages[0].url
+          : null;
 
-      // Generate JWT token
+      // Keep JWT payload minimal — no PII beyond userId/email/role.
       const token = jwt.sign(
-        {
-          userId: influencer._id,
-          email: influencer.email,
-          role: "influencer",
-          name: displayName,
-          profileImage: profileImageUrl,
-        },
+        { userId: influencer._id, email: influencer.email, role: "influencer" },
         getJwtSecret(),
         { expiresIn: "7d" },
       );
@@ -292,33 +292,21 @@ export class AuthService {
         },
       };
     }
-    // Check brand
-    const brand = await this.brandModel.findOne({ email });
+
     if (brand) {
       const isMatch = await bcrypt.compare(password, brand.password);
-      if (!isMatch) {
-        throw new UnauthorizedException("Invalid credentials");
-      }
+      if (!isMatch) throw new UnauthorizedException("Invalid credentials");
       if (brand.status === "pending") {
         throw new UnauthorizedException(
           "Your account is pending approval. Please wait for admin to activate your account.",
         );
       }
-      // Use display name if available, fallback to email
       const displayName = brand.brandName || brand.email;
-      // Always return brandLogo as an array of objects (even if empty)
-      const brandLogoArr = Array.isArray(brand.brandLogo)
-        ? brand.brandLogo
-        : [];
-      // Generate JWT token with brandLogo as array
+      const brandLogoArr = Array.isArray(brand.brandLogo) ? brand.brandLogo : [];
+
+      // Keep JWT payload minimal — no PII beyond userId/email/role.
       const token = jwt.sign(
-        {
-          userId: brand._id,
-          email: brand.email,
-          role: "brand",
-          name: displayName,
-          brandLogo: brandLogoArr,
-        },
+        { userId: brand._id, email: brand.email, role: "brand" },
         getJwtSecret(),
         { expiresIn: "7d" },
       );
@@ -334,6 +322,7 @@ export class AuthService {
         },
       };
     }
+
     throw new UnauthorizedException("Invalid credentials");
   }
 
@@ -381,6 +370,11 @@ export class AuthService {
       socialMedia: socialMediaMapped,
       profileImages: normalizedProfileImages,
     });
+    // Auto-approve if global setting is enabled
+    const settings = await this.appSettingsModel.findOne({}).lean() as any;
+    if (settings?.preApproveInfluencers) {
+      influencer.status = "accepted";
+    }
     console.log("Influencer payload:", influencer);
     try {
       const saved = await influencer.save();
@@ -453,6 +447,11 @@ export class AuthService {
       languages: languageNames,
       socialMedia: socialMediaMapped,
     });
+    // Auto-approve if global setting is enabled
+    const brandSettings = await this.appSettingsModel.findOne({}).lean() as any;
+    if (brandSettings?.preApproveBrands) {
+      brand.status = "accepted";
+    }
     const savedBrand = await brand.save();
     try {
       await this.sendEmailVerificationLink(savedBrand.email);
@@ -462,7 +461,7 @@ export class AuthService {
     return { success: true, message: "Brand registered", brand: savedBrand };
   }
 
-  async findUserByEmail(email: string) {
+  async getPublicSettings() {\n    const settings = await this.appSettingsModel.findOne({}).lean() as any;\n    return {\n      preApproveInfluencers: !!settings?.preApproveInfluencers,\n      preApproveBrands: !!settings?.preApproveBrands,\n    };\n  }\n\n  async findUserByEmail(email: string) {
     return this.findAnyUserByEmail(email);
   }
 }
