@@ -1,4 +1,3 @@
-/* eslint-disable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-argument, @typescript-eslint/no-unsafe-return */
 import {
   Injectable,
   UnauthorizedException,
@@ -99,19 +98,71 @@ export class AuthService {
       throw new BadRequestException("Invalid verification token payload");
     }
 
-    const user = await this.findAnyUserByEmail(
-      String(decoded.email).toLowerCase(),
-    );
+    const normalizedEmail = String(decoded.email).toLowerCase();
+
+    // Parallel lookup — we need to know the user TYPE to apply the correct pre-approve setting.
+    const [adminUser, influencer, brand] = await Promise.all([
+      this.userModel.findOne({ email: normalizedEmail }),
+      this.influencerModel.findOne({ email: normalizedEmail }),
+      this.brandModel.findOne({ email: normalizedEmail }),
+    ]);
+
+    const user = adminUser || influencer || brand;
     if (!user) {
       throw new BadRequestException("User not found for verification token");
     }
 
     if (!user.isEmailVerified) {
       user.isEmailVerified = true;
+      let autoApproved = false;
+
+      // Auto-approve only after email is verified (secure: not at registration time).
+      // The email condition is inherently satisfied here (we just verified it).
+      // Mobile condition gates approval until mobile verification is also done (future feature).
+      if (influencer && !adminUser) {
+        const settings = (await this.appSettingsModel
+          .findOne({})
+          .lean()) as any;
+        const mobileOk =
+          !settings?.influencerRequireMobileVerified ||
+          !!influencer.isMobileVerified;
+        if (
+          settings?.preApproveInfluencers &&
+          mobileOk &&
+          influencer.status === "pending"
+        ) {
+          influencer.status = "accepted";
+          autoApproved = true;
+        }
+      } else if (brand && !adminUser) {
+        const settings = (await this.appSettingsModel
+          .findOne({})
+          .lean()) as any;
+        const mobileOk =
+          !settings?.brandRequireMobileVerified || !!brand.isMobileVerified;
+        if (
+          settings?.preApproveBrands &&
+          mobileOk &&
+          brand.status === "pending"
+        ) {
+          brand.status = "accepted";
+          autoApproved = true;
+        }
+      }
+
       await user.save();
+      return {
+        success: true,
+        autoApproved,
+        message: "Email verified successfully.",
+      };
     }
 
-    return { success: true, message: "Email verified successfully." };
+    return {
+      success: true,
+      autoApproved: false,
+      message: "Email already verified.",
+    };
   }
 
   async forgotPassword(email: string) {
@@ -152,9 +203,18 @@ export class AuthService {
 
     // Parallel lookup across collections.
     const [adminUser, influencer, brand] = await Promise.all([
-      this.userModel.findOne({ resetToken: tokenHash, resetTokenExpires: { $gt: now } }),
-      this.influencerModel.findOne({ resetToken: tokenHash, resetTokenExpires: { $gt: now } }),
-      this.brandModel.findOne({ resetToken: tokenHash, resetTokenExpires: { $gt: now } }),
+      this.userModel.findOne({
+        resetToken: tokenHash,
+        resetTokenExpires: { $gt: now },
+      }),
+      this.influencerModel.findOne({
+        resetToken: tokenHash,
+        resetTokenExpires: { $gt: now },
+      }),
+      this.brandModel.findOne({
+        resetToken: tokenHash,
+        resetTokenExpires: { $gt: now },
+      }),
     ]);
     const user = adminUser || influencer || brand;
 
@@ -189,7 +249,12 @@ export class AuthService {
     languages?: string[];
     socialMedia?: any[];
   }) {
-    const { categories = [], location = {}, languages = [], socialMedia = [] } = data;
+    const {
+      categories = [],
+      location = {},
+      languages = [],
+      socialMedia = [],
+    } = data;
 
     // Batch fetch all IDs at once
     const catIds = categories.filter((v) => this.isObjectId(v));
@@ -197,12 +262,19 @@ export class AuthService {
     const smIds = socialMedia
       .map((sm) => sm.platform)
       .filter((v: string) => v && this.isObjectId(v));
-    const stateId = location.state && this.isObjectId(location.state) ? location.state : null;
+    const stateId =
+      location.state && this.isObjectId(location.state) ? location.state : null;
 
     const [catDocs, langDocs, smDocs, stateDoc] = await Promise.all([
-      catIds.length ? this.categoryModel.find({ _id: { $in: catIds } }).lean() : [],
-      langIds.length ? this.languageModel.find({ _id: { $in: langIds } }).lean() : [],
-      smIds.length ? this.socialMediaModel.find({ _id: { $in: smIds } }).lean() : [],
+      catIds.length
+        ? this.categoryModel.find({ _id: { $in: catIds } }).lean()
+        : [],
+      langIds.length
+        ? this.languageModel.find({ _id: { $in: langIds } }).lean()
+        : [],
+      smIds.length
+        ? this.socialMediaModel.find({ _id: { $in: smIds } }).lean()
+        : [],
       stateId ? this.stateModel.findById(stateId).lean() : null,
     ]);
 
@@ -212,7 +284,7 @@ export class AuthService {
 
     const categoryNames = categories.map((v) => catMap.get(v) || v);
     const languageNames = languages.map((v) => langMap.get(v) || v);
-    const stateName = stateDoc ? (stateDoc as any).name : (location.state || "");
+    const stateName = stateDoc ? (stateDoc as any).name : location.state || "";
     const socialMediaMapped = socialMedia.map((sm: any) => ({
       ...sm,
       platform: smMap.get(sm.platform) || sm.platform,
@@ -250,7 +322,8 @@ export class AuthService {
           email: adminUser.email,
           role: adminUser.role,
           profileImage:
-            Array.isArray(adminUser.profileImages) && adminUser.profileImages.length > 0
+            Array.isArray(adminUser.profileImages) &&
+            adminUser.profileImages.length > 0
               ? adminUser.profileImages[0].url
               : null,
         },
@@ -266,7 +339,9 @@ export class AuthService {
         );
       }
       const displayName =
-        influencer.name && influencer.name !== influencer.email ? influencer.name : "";
+        influencer.name && influencer.name !== influencer.email
+          ? influencer.name
+          : "";
       const profileImageUrl =
         Array.isArray(influencer.profileImages) &&
         influencer.profileImages.length > 0 &&
@@ -302,7 +377,9 @@ export class AuthService {
         );
       }
       const displayName = brand.brandName || brand.email;
-      const brandLogoArr = Array.isArray(brand.brandLogo) ? brand.brandLogo : [];
+      const brandLogoArr = Array.isArray(brand.brandLogo)
+        ? brand.brandLogo
+        : [];
 
       // Keep JWT payload minimal — no PII beyond userId/email/role.
       const token = jwt.sign(
@@ -370,11 +447,7 @@ export class AuthService {
       socialMedia: socialMediaMapped,
       profileImages: normalizedProfileImages,
     });
-    // Auto-approve if global setting is enabled
-    const settings = await this.appSettingsModel.findOne({}).lean() as any;
-    if (settings?.preApproveInfluencers) {
-      influencer.status = "accepted";
-    }
+    // Status stays "pending" until email is verified — auto-approve (if enabled) is applied in verifyEmailByToken.
     console.log("Influencer payload:", influencer);
     try {
       const saved = await influencer.save();
@@ -408,15 +481,25 @@ export class AuthService {
   async registerBrand(data: any) {
     // Check duplicates up front so the API can return all conflicting fields together.
     const existingBrandUsernameRegex = data.brandUsername
-      ? new RegExp(`^${String(data.brandUsername).replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`, "i")
+      ? new RegExp(
+          `^${String(data.brandUsername).replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`,
+          "i",
+        )
       : null;
 
-    const [existingEmail, existingPhone, existingBrandName, existingBrandUsername] = await Promise.all([
+    const [
+      existingEmail,
+      existingPhone,
+      existingBrandName,
+      existingBrandUsername,
+    ] = await Promise.all([
       data.email ? this.brandModel.findOne({ email: data.email }) : null,
       data.phoneNumber
         ? this.brandModel.findOne({ phoneNumber: data.phoneNumber })
         : null,
-      data.brandName ? this.brandModel.findOne({ brandName: data.brandName }) : null,
+      data.brandName
+        ? this.brandModel.findOne({ brandName: data.brandName })
+        : null,
       existingBrandUsernameRegex
         ? this.brandModel.findOne({ brandUsername: existingBrandUsernameRegex })
         : null,
@@ -447,11 +530,7 @@ export class AuthService {
       languages: languageNames,
       socialMedia: socialMediaMapped,
     });
-    // Auto-approve if global setting is enabled
-    const brandSettings = await this.appSettingsModel.findOne({}).lean() as any;
-    if (brandSettings?.preApproveBrands) {
-      brand.status = "accepted";
-    }
+    // Status stays "pending" until email is verified — auto-approve (if enabled) is applied in verifyEmailByToken.
     const savedBrand = await brand.save();
     try {
       await this.sendEmailVerificationLink(savedBrand.email);
@@ -461,7 +540,21 @@ export class AuthService {
     return { success: true, message: "Brand registered", brand: savedBrand };
   }
 
-  async getPublicSettings() {\n    const settings = await this.appSettingsModel.findOne({}).lean() as any;\n    return {\n      preApproveInfluencers: !!settings?.preApproveInfluencers,\n      preApproveBrands: !!settings?.preApproveBrands,\n    };\n  }\n\n  async findUserByEmail(email: string) {
+  async getPublicSettings() {
+    const settings = (await this.appSettingsModel.findOne({}).lean()) as any;
+    return {
+      preApproveInfluencers: !!settings?.preApproveInfluencers,
+      influencerRequireEmailVerified:
+        settings?.influencerRequireEmailVerified !== false,
+      influencerRequireMobileVerified:
+        !!settings?.influencerRequireMobileVerified,
+      preApproveBrands: !!settings?.preApproveBrands,
+      brandRequireEmailVerified: settings?.brandRequireEmailVerified !== false,
+      brandRequireMobileVerified: !!settings?.brandRequireMobileVerified,
+    };
+  }
+
+  async findUserByEmail(email: string) {
     return this.findAnyUserByEmail(email);
   }
 }
