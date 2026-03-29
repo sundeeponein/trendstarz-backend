@@ -42,7 +42,26 @@ export class AdminListsController {
   constructor(
     @InjectModel("Influencer") private readonly influencerModel: Model<any>,
     @InjectModel("Brand") private readonly brandModel: Model<any>,
+    @InjectModel("AppSettings") private readonly appSettingsModel: Model<any>,
   ) {}
+
+  @Get("settings")
+  async getSettings() {
+    const settings = await this.appSettingsModel.findOne({}).lean();
+    return settings || { preApproveInfluencers: false, preApproveBrands: false };
+  }
+
+  @Patch("settings")
+  async updateSettings(
+    @Body() body: { preApproveInfluencers?: boolean; preApproveBrands?: boolean },
+  ) {
+    const settings = await this.appSettingsModel.findOneAndUpdate(
+      {},
+      { $set: body },
+      { upsert: true, new: true },
+    ).lean();
+    return { success: true, settings };
+  }
   // Debug endpoint to log influencer and brand data
   @Get("debug-users")
   async debugUsers() {

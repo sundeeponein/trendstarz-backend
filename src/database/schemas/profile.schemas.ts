@@ -23,7 +23,10 @@ export const UserSchema = new Schema({
   role: { type: String, enum: ["admin", "user"], default: "user" },
   isEmailVerified: { type: Boolean, default: false },
   isMobileVerified: { type: Boolean, default: false },
+  resetToken: { type: String, default: null },
+  resetTokenExpires: { type: Number, default: null },
 });
+UserSchema.index({ resetToken: 1 }, { sparse: true });
 export const UserModel = model("User", UserSchema);
 
 // All schema definitions go here (LanguageSchema, UserSchema, etc.)
@@ -74,12 +77,15 @@ export const InfluencerSchema = new Schema(
       enum: ["pending", "accepted", "declined", "deleted"],
       default: "pending",
     },
+    resetToken: { type: String, default: null },
+    resetTokenExpires: { type: Number, default: null },
   },
   { timestamps: true },
 );
 InfluencerSchema.index({ status: 1 });
 InfluencerSchema.index({ categories: 1 });
 InfluencerSchema.index({ "location.state": 1 });
+InfluencerSchema.index({ resetToken: 1 }, { sparse: true });
 
 export const InfluencerModel = model("Influencer", InfluencerSchema);
 
@@ -139,13 +145,22 @@ export const BrandSchema = new Schema(
       enum: ["pending", "accepted", "declined", "deleted"],
       default: "pending",
     },
+    resetToken: { type: String, default: null },
+    resetTokenExpires: { type: Number, default: null },
   },
   { timestamps: true },
 );
 BrandSchema.index({ status: 1 });
 BrandSchema.index({ brandName: 1 });
+BrandSchema.index({ resetToken: 1 }, { sparse: true });
 
 export const BrandModel = model("Brand", BrandSchema);
+
+export const AppSettingsSchema = new Schema({
+  preApproveInfluencers: { type: Boolean, default: false },
+  preApproveBrands: { type: Boolean, default: false },
+});
+export const AppSettingsModel = model("AppSettings", AppSettingsSchema);
 
 export const CategorySchema = new Schema({
   name: { type: String, required: true },
