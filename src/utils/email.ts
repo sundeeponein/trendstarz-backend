@@ -1,6 +1,13 @@
 import * as nodemailer from "nodemailer";
 
-export async function sendEmail(to: string, subject: string, text: string) {
+// DEPRECATED: Use sendAppEmail from app-email.service.ts instead.
+export function sendEmail() {
+  throw new Error(
+    "sendEmail is deprecated. Use sendAppEmail from app-email.service.ts",
+  );
+}
+
+export async function sendAppEmail(to: string, subject: string, text: string) {
   const smtpHost = process.env.SMTP_HOST || "smtp.gmail.com";
   const smtpPort = Number(process.env.SMTP_PORT) || 587;
   const smtpUser = process.env.SMTP_USER;
