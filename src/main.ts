@@ -3,6 +3,7 @@ import { ExpressAdapter } from "@nestjs/platform-express";
 import express from "express";
 import { AppModule } from "./app.module";
 import { ResponseInterceptor } from "./response.interceptor";
+import { ValidationPipe } from "@nestjs/common";
 import * as dotenv from "dotenv";
 import helmet from "helmet";
 dotenv.config();
@@ -59,6 +60,15 @@ async function bootstrap() {
   // Standardize API responses
   app.useGlobalInterceptors(new ResponseInterceptor());
 
+  // Validate and strip unknown fields from all request bodies globally.
+  app.useGlobalPipes(
+    new ValidationPipe({
+      whitelist: true,       // Strip properties not in the DTO
+      forbidNonWhitelisted: false, // Don't hard-reject (untyped bodies on other endpoints still pass)
+      transform: true,       // Auto-transform primitives (e.g., @Transform decorators in DTOs)
+    }),
+  );
+
   // Security headers
   app.use(helmet());
 
@@ -72,7 +82,17 @@ async function bootstrap() {
     .filter(Boolean);
 
   app.enableCors({
-    origin: corsOrigins,
+    origin: (
+      origin: string | undefined,
+      callback: (err: Error | null, allow?: boolean) => void,
+    ) => {
+      // Allow requests with no origin (like mobile apps, curl, etc.)
+      if (!origin) return callback(null, true);
+      if (corsOrigins.includes(origin)) {
+        return callback(null, true);
+      }
+      return callback(new Error("Not allowed by CORS"));
+    },
     credentials: true,
   });
 

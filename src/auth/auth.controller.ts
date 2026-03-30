@@ -1,16 +1,21 @@
-import { Controller, Post, Body, Res, Get, Query } from "@nestjs/common";
+import { Controller, Post, Body, Res, Get, Query, UsePipes, ValidationPipe, HttpCode } from "@nestjs/common";
 import type { Response } from "express";
 import { AuthService } from "./auth.service";
+import {
+  LoginDto,
+  ForgotPasswordDto,
+  ResetPasswordDto,
+  SendEmailVerificationDto,
+} from "./dto/auth.dto";
 
 @Controller("auth")
 export class AuthController {
   constructor(private readonly authService: AuthService) {}
 
   @Post("login")
-  async login(
-    @Body() body: { email: string; password: string },
-    @Res() res: Response,
-  ) {
+  @HttpCode(200)
+  @UsePipes(new ValidationPipe({ whitelist: true, transform: true }))
+  async login(@Body() body: LoginDto, @Res() res: Response) {
     try {
       const result = await this.authService.login(body.email, body.password);
       return res.status(200).json(result);
@@ -20,6 +25,11 @@ export class AuthController {
       const message = err?.message || "Login failed";
       return res.status(status).json({ success: false, message });
     }
+  }
+
+  @Get("app-settings")
+  async getAppSettings() {
+    return this.authService.getPublicSettings();
   }
 
   @Post("register-influencer")
@@ -49,18 +59,20 @@ export class AuthController {
   }
 
   @Post("send-email-verification")
-  async sendEmailVerification(@Body() body: { email: string }) {
+  @UsePipes(new ValidationPipe({ whitelist: true, transform: true }))
+  async sendEmailVerification(@Body() body: SendEmailVerificationDto) {
     return this.authService.sendEmailVerificationLink(body.email);
   }
 
   @Get("verify-email")
   async verifyEmail(@Query("token") token: string, @Res() res: Response) {
     try {
-      await this.authService.verifyEmailByToken(token);
+      const result = await this.authService.verifyEmailByToken(token);
       const frontend = (
         process.env.FRONTEND_URL || "http://localhost:4200"
       ).replace(/\/$/, "");
-      return res.redirect(`${frontend}/verify-email?status=success`);
+      const approved = result?.autoApproved ? "&approved=true" : "";
+      return res.redirect(`${frontend}/verify-email?status=success${approved}`);
     } catch {
       const frontend = (
         process.env.FRONTEND_URL || "http://localhost:4200"
@@ -70,12 +82,15 @@ export class AuthController {
   }
 
   @Post("forgot-password")
-  async forgotPassword(@Body() body: { email: string }, @Res() res: Response) {
+  @HttpCode(200)
+  @UsePipes(new ValidationPipe({ whitelist: true, transform: true }))
+  async forgotPassword(@Body() body: ForgotPasswordDto, @Res() res: Response) {
     try {
       await this.authService.forgotPassword(body.email);
+      // Always return the same response — never reveal whether the email exists.
       return res
         .status(200)
-        .json({ message: "Reset email sent if user exists." });
+        .json({ message: "If that email is registered, a reset link has been sent." });
     } catch (err) {
       return res
         .status(400)
@@ -84,8 +99,9 @@ export class AuthController {
   }
 
   @Post("reset-password")
+  @UsePipes(new ValidationPipe({ whitelist: true, transform: true }))
   async resetPassword(
-    @Body() body: { token: string; newPassword: string },
+    @Body() body: ResetPasswordDto,
     @Res() res: Response,
   ) {
     try {

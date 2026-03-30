@@ -5,7 +5,7 @@ import {
 } from "@nestjs/common";
 import { InjectModel } from "@nestjs/mongoose";
 import { Model } from "mongoose";
-import { sendEmail } from "../utils/email";
+import { sendAppEmail } from "../utils/app-email.service";
 
 @Injectable()
 export class CampaignInvitesService {
@@ -40,7 +40,11 @@ export class CampaignInvitesService {
         .lean();
       if (influencer?.email) {
         const text = `Hi ${influencer.name || ""},\n\nYou have a new campaign invite from ${brand?.brandName || "a brand"} for "${campaign.title}".\nLog in to TrendStarz to respond.\n`;
-        await sendEmail(influencer.email, "New Campaign Invite", text);
+        await sendAppEmail({
+          to: influencer.email,
+          subject: "New Campaign Invite",
+          text,
+        });
       }
     } catch (e) {
       console.error("Failed to send invite email:", e);
@@ -97,7 +101,11 @@ export class CampaignInvitesService {
           .lean();
         if (brand?.email) {
           const text = `Hi ${brand.brandName || ""},\n\n${influencer?.name || "An influencer"} has accepted your campaign invite for "${campaign?.title || ""}".\n`;
-          await sendEmail(brand.email, "Campaign Invite Accepted", text);
+          await sendAppEmail({
+            to: brand.email,
+            subject: "Campaign Invite Accepted",
+            text,
+          });
         }
       } catch (e) {
         console.error("Failed to send acceptance email:", e);

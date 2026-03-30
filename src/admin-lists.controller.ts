@@ -19,7 +19,6 @@ import {
   SocialMediaModel,
   LanguageModel,
   TierModel,
-  AppSettingsModel,
 } from "./database/schemas/profile.schemas";
 import { InjectModel } from "@nestjs/mongoose";
 import { Model } from "mongoose";
@@ -45,29 +44,34 @@ export class AdminListsController {
     @InjectModel("Brand") private readonly brandModel: Model<any>,
     @InjectModel("AppSettings") private readonly appSettingsModel: Model<any>,
   ) {}
-    // --- App Settings Endpoints ---
-    @Get("settings")
-    async getAppSettings() {
-      // Always return the single settings document (create if not exists)
-      let settings = await this.appSettingsModel.findOne();
-      if (!settings) {
-        settings = await this.appSettingsModel.create({});
-      }
-      return settings;
-    }
 
-    @Patch("settings")
-    async patchAppSettings(@Body() body: Record<string, unknown>) {
-      // Update the single settings document (upsert)
-      let settings = await this.appSettingsModel.findOne();
-      if (!settings) {
-        settings = await this.appSettingsModel.create(body);
-      } else {
-        Object.assign(settings, body);
-        await settings.save();
-      }
-      return settings;
-    }
+  @Get("settings")
+  async getSettings() {
+    // These are the defaults from the schema
+    const defaults = {
+      preApproveInfluencers: false,
+      influencerRequireEmailVerified: true,
+      influencerRequireMobileVerified: false,
+      preApproveBrands: false,
+      brandRequireEmailVerified: true,
+      brandRequireMobileVerified: false,
+    };
+    const settings = await this.appSettingsModel.findOne({}).lean();
+    const merged = { ...defaults, ...(settings || {}) };
+    console.log("[ADMIN][GET /admin/settings] Returning:", merged);
+    return merged;
+  }
+
+  @Patch("settings")
+  async updateSettings(@Body() body: Record<string, any>) {
+    console.log("[ADMIN][PATCH /admin/settings] Incoming body:", body);
+    // Only update fields present in the request body
+    const settings = await this.appSettingsModel
+      .findOneAndUpdate({}, { $set: body }, { upsert: true, new: true })
+      .lean();
+    console.log("[ADMIN][PATCH /admin/settings] Updated settings:", settings);
+    return { success: true, settings };
+  }
   // Debug endpoint to log influencer and brand data
   @Get("debug-users")
   async debugUsers() {

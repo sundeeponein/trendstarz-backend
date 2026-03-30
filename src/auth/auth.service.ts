@@ -1,4 +1,3 @@
-/* eslint-disable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-argument, @typescript-eslint/no-unsafe-return */
 import {
   Injectable,
   UnauthorizedException,
@@ -9,7 +8,7 @@ import * as crypto from "crypto";
 import * as jwt from "jsonwebtoken";
 import { InjectModel } from "@nestjs/mongoose";
 import { Model } from "mongoose";
-import { sendEmail } from "../utils/email";
+import { sendAppEmail } from "../utils/app-email.service";
 import { getJwtSecret } from "./jwt-secret";
 
 type AnyUserDoc = {
@@ -32,11 +31,14 @@ export class AuthService {
   }
 
   private async findAnyUserByEmail(email: string): Promise<AnyUserDoc | null> {
-    return (
-      (await this.userModel.findOne({ email })) ||
-      (await this.influencerModel.findOne({ email })) ||
-      (await this.brandModel.findOne({ email }))
-    );
+    // Parallel queries — eliminates sequential round-trips and prevents
+    // timing-based user-enumeration across collections.
+    const [adminUser, influencer, brand] = await Promise.all([
+      this.userModel.findOne({ email }),
+      this.influencerModel.findOne({ email }),
+      this.brandModel.findOne({ email }),
+    ]);
+    return adminUser || influencer || brand || null;
   }
 
   async sendEmailVerificationLink(email: string) {
@@ -64,7 +66,8 @@ export class AuthService {
       { expiresIn: "1h" },
     );
 
-    const verifyUrl = `${this.getFrontendBaseUrl()}/verify-email?token=${encodeURIComponent(token)}`;
+    const backendUrl = process.env.BACKEND_URL || "http://localhost:3000";
+    const verifyUrl = `${backendUrl}/api/auth/verify-email?token=${encodeURIComponent(token)}`;
     const html = `
       <p>Hi,</p>
       <p>Please verify your Trendstarz email address by clicking the link below:</p>
@@ -73,7 +76,12 @@ export class AuthService {
     `;
     const text = `Please verify your Trendstarz email address: ${verifyUrl}`;
 
-    await sendEmail(normalizedEmail, "Verify your Trendstarz email", text);
+    await sendAppEmail({
+      to: normalizedEmail,
+      subject: "Verify your Trendstarz email",
+      text,
+      html,
+    });
     // Keep html for future providers that support rich templates.
     void html;
 
@@ -96,19 +104,71 @@ export class AuthService {
       throw new BadRequestException("Invalid verification token payload");
     }
 
-    const user = await this.findAnyUserByEmail(
-      String(decoded.email).toLowerCase(),
-    );
+    const normalizedEmail = String(decoded.email).toLowerCase();
+
+    // Parallel lookup — we need to know the user TYPE to apply the correct pre-approve setting.
+    const [adminUser, influencer, brand] = await Promise.all([
+      this.userModel.findOne({ email: normalizedEmail }),
+      this.influencerModel.findOne({ email: normalizedEmail }),
+      this.brandModel.findOne({ email: normalizedEmail }),
+    ]);
+
+    const user = adminUser || influencer || brand;
     if (!user) {
       throw new BadRequestException("User not found for verification token");
     }
 
     if (!user.isEmailVerified) {
       user.isEmailVerified = true;
+      let autoApproved = false;
+
+      // Auto-approve only after email is verified (secure: not at registration time).
+      // The email condition is inherently satisfied here (we just verified it).
+      // Mobile condition gates approval until mobile verification is also done (future feature).
+      if (influencer && !adminUser) {
+        const settings = (await this.appSettingsModel
+          .findOne({})
+          .lean()) as any;
+        const mobileOk =
+          !settings?.influencerRequireMobileVerified ||
+          !!influencer.isMobileVerified;
+        if (
+          settings?.preApproveInfluencers &&
+          mobileOk &&
+          influencer.status === "pending"
+        ) {
+          influencer.status = "accepted";
+          autoApproved = true;
+        }
+      } else if (brand && !adminUser) {
+        const settings = (await this.appSettingsModel
+          .findOne({})
+          .lean()) as any;
+        const mobileOk =
+          !settings?.brandRequireMobileVerified || !!brand.isMobileVerified;
+        if (
+          settings?.preApproveBrands &&
+          mobileOk &&
+          brand.status === "pending"
+        ) {
+          brand.status = "accepted";
+          autoApproved = true;
+        }
+      }
+
       await user.save();
+      return {
+        success: true,
+        autoApproved,
+        message: "Email verified successfully.",
+      };
     }
 
-    return { success: true, message: "Email verified successfully." };
+    return {
+      success: true,
+      autoApproved: false,
+      message: "Email already verified.",
+    };
   }
 
   async forgotPassword(email: string) {
@@ -128,33 +188,52 @@ export class AuthService {
     await user.save();
     // Send email (use your email util)
     const resetUrl = `${process.env.FRONTEND_URL || "http://localhost:4200"}/reset-password?token=${resetToken}`;
-    const text = `Hey ${user.name || user.email},\n\nWe’ve received a request to reset your password for your account. Click the link below to create a new password:\n${resetUrl}\n\nIf you didn’t request to change your password, then don’t worry! Your password is still safe and you can delete this email.`;
-    await sendEmail(user.email, "Reset your password", text);
+    const text = `Reset your Trendstarz password: ${resetUrl}`;
+    await sendAppEmail({
+      to: user.email,
+      subject: "Reset your password",
+      text,
+    });
   }
 
   async resetPassword(token: string, newPassword: string) {
     if (!token || !newPassword) {
       throw new BadRequestException("Token and new password are required");
     }
-    const user =
-      (await this.userModel.findOne({
-        resetToken: token,
-        resetTokenExpires: { $gt: Date.now() },
-      })) ||
-      (await this.influencerModel.findOne({
-        resetToken: token,
-        resetTokenExpires: { $gt: Date.now() },
-      })) ||
-      (await this.brandModel.findOne({
-        resetToken: token,
-        resetTokenExpires: { $gt: Date.now() },
-      }));
+    if (newPassword.length < 8) {
+      throw new BadRequestException("Password must be at least 8 characters.");
+    }
+    if (newPassword.length > 128) {
+      throw new BadRequestException("Password must not exceed 128 characters.");
+    }
+
+    // Hash the incoming raw token to compare against the stored hash.
+    const tokenHash = crypto.createHash("sha256").update(token).digest("hex");
+    const now = Date.now();
+
+    // Parallel lookup across collections.
+    const [adminUser, influencer, brand] = await Promise.all([
+      this.userModel.findOne({
+        resetToken: tokenHash,
+        resetTokenExpires: { $gt: now },
+      }),
+      this.influencerModel.findOne({
+        resetToken: tokenHash,
+        resetTokenExpires: { $gt: now },
+      }),
+      this.brandModel.findOne({
+        resetToken: tokenHash,
+        resetTokenExpires: { $gt: now },
+      }),
+    ]);
+    const user = adminUser || influencer || brand;
+
     if (!user) {
       throw new BadRequestException("Invalid or expired reset token");
     }
     user.password = await bcrypt.hash(newPassword, 10);
-    user.resetToken = undefined;
-    user.resetTokenExpires = undefined;
+    user.resetToken = null;
+    user.resetTokenExpires = null;
     await user.save();
     return { success: true, message: "Password reset successfully." };
   }
@@ -167,6 +246,7 @@ export class AuthService {
     @InjectModel("State") private readonly stateModel: Model<any>,
     @InjectModel("Language") private readonly languageModel: Model<any>,
     @InjectModel("SocialMedia") private readonly socialMediaModel: Model<any>,
+    @InjectModel("AppSettings") private readonly appSettingsModel: Model<any>,
   ) {}
 
   private isObjectId(val: string): boolean {
@@ -179,7 +259,12 @@ export class AuthService {
     languages?: string[];
     socialMedia?: any[];
   }) {
-    const { categories = [], location = {}, languages = [], socialMedia = [] } = data;
+    const {
+      categories = [],
+      location = {},
+      languages = [],
+      socialMedia = [],
+    } = data;
 
     // Batch fetch all IDs at once
     const catIds = categories.filter((v) => this.isObjectId(v));
@@ -187,12 +272,19 @@ export class AuthService {
     const smIds = socialMedia
       .map((sm) => sm.platform)
       .filter((v: string) => v && this.isObjectId(v));
-    const stateId = location.state && this.isObjectId(location.state) ? location.state : null;
+    const stateId =
+      location.state && this.isObjectId(location.state) ? location.state : null;
 
     const [catDocs, langDocs, smDocs, stateDoc] = await Promise.all([
-      catIds.length ? this.categoryModel.find({ _id: { $in: catIds } }).lean() : [],
-      langIds.length ? this.languageModel.find({ _id: { $in: langIds } }).lean() : [],
-      smIds.length ? this.socialMediaModel.find({ _id: { $in: smIds } }).lean() : [],
+      catIds.length
+        ? this.categoryModel.find({ _id: { $in: catIds } }).lean()
+        : [],
+      langIds.length
+        ? this.languageModel.find({ _id: { $in: langIds } }).lean()
+        : [],
+      smIds.length
+        ? this.socialMediaModel.find({ _id: { $in: smIds } }).lean()
+        : [],
       stateId ? this.stateModel.findById(stateId).lean() : null,
     ]);
 
@@ -202,7 +294,7 @@ export class AuthService {
 
     const categoryNames = categories.map((v) => catMap.get(v) || v);
     const languageNames = languages.map((v) => langMap.get(v) || v);
-    const stateName = stateDoc ? (stateDoc as any).name : (location.state || "");
+    const stateName = stateDoc ? (stateDoc as any).name : location.state || "";
     const socialMediaMapped = socialMedia.map((sm: any) => ({
       ...sm,
       platform: smMap.get(sm.platform) || sm.platform,
@@ -211,72 +303,65 @@ export class AuthService {
     return { categoryNames, languageNames, stateName, socialMediaMapped };
   }
 
-  // Admin login implementation
+  // Admin / influencer / brand login
   async login(email: string, password: string) {
-    // Try to find admin user
-    const user = await this.userModel.findOne({ email, role: "admin" });
-    if (user) {
-      const isMatch = await bcrypt.compare(password, user.password);
-      if (!isMatch) {
-        throw new UnauthorizedException("Invalid credentials");
-      }
-      // Generate JWT token
+    const normalizedEmail = (email || "").trim().toLowerCase();
+
+    // Fetch all three collections in parallel to eliminate sequential DB round-trips
+    // and prevent timing-based enumeration of which collection a user belongs to.
+    const [adminUser, influencer, brand] = await Promise.all([
+      this.userModel.findOne({ email: normalizedEmail, role: "admin" }),
+      this.influencerModel.findOne({ email: normalizedEmail }),
+      this.brandModel.findOne({ email: normalizedEmail }),
+    ]);
+
+    if (adminUser) {
+      const isMatch = await bcrypt.compare(password, adminUser.password);
+      if (!isMatch) throw new UnauthorizedException("Invalid credentials");
       const token = jwt.sign(
-        { userId: user._id, email: user.email, role: user.role },
+        { userId: adminUser._id, email: adminUser.email, role: adminUser.role },
         getJwtSecret(),
         { expiresIn: "7d" },
       );
       return {
         token,
-        userType: user.role,
+        userType: adminUser.role,
         user: {
-          id: user._id,
-          name: user.name,
-          email: user.email,
-          role: user.role,
+          id: adminUser._id,
+          name: adminUser.name,
+          email: adminUser.email,
+          role: adminUser.role,
           profileImage:
-            user.profileImages && user.profileImages.length > 0
-              ? user.profileImages[0].url
+            Array.isArray(adminUser.profileImages) &&
+            adminUser.profileImages.length > 0
+              ? adminUser.profileImages[0].url
               : null,
         },
       };
     }
-    // Check influencer
-    const influencer = await this.influencerModel.findOne({ email });
+
     if (influencer) {
       const isMatch = await bcrypt.compare(password, influencer.password);
-      if (!isMatch) {
-        throw new UnauthorizedException("Invalid credentials");
-      }
+      if (!isMatch) throw new UnauthorizedException("Invalid credentials");
       if (influencer.status === "pending") {
         throw new UnauthorizedException(
           "Your account is pending approval. Please wait for admin to activate your account.",
         );
       }
-      // Use display name if available, fallback to empty string (never email)
       const displayName =
         influencer.name && influencer.name !== influencer.email
           ? influencer.name
           : "";
-      // Use first profile image URL if available
-      let profileImageUrl = null;
-      if (
+      const profileImageUrl =
         Array.isArray(influencer.profileImages) &&
         influencer.profileImages.length > 0 &&
         influencer.profileImages[0].url
-      ) {
-        profileImageUrl = influencer.profileImages[0].url;
-      }
+          ? influencer.profileImages[0].url
+          : null;
 
-      // Generate JWT token
+      // Keep JWT payload minimal — no PII beyond userId/email/role.
       const token = jwt.sign(
-        {
-          userId: influencer._id,
-          email: influencer.email,
-          role: "influencer",
-          name: displayName,
-          profileImage: profileImageUrl,
-        },
+        { userId: influencer._id, email: influencer.email, role: "influencer" },
         getJwtSecret(),
         { expiresIn: "7d" },
       );
@@ -292,33 +377,23 @@ export class AuthService {
         },
       };
     }
-    // Check brand
-    const brand = await this.brandModel.findOne({ email });
+
     if (brand) {
       const isMatch = await bcrypt.compare(password, brand.password);
-      if (!isMatch) {
-        throw new UnauthorizedException("Invalid credentials");
-      }
+      if (!isMatch) throw new UnauthorizedException("Invalid credentials");
       if (brand.status === "pending") {
         throw new UnauthorizedException(
           "Your account is pending approval. Please wait for admin to activate your account.",
         );
       }
-      // Use display name if available, fallback to email
       const displayName = brand.brandName || brand.email;
-      // Always return brandLogo as an array of objects (even if empty)
       const brandLogoArr = Array.isArray(brand.brandLogo)
         ? brand.brandLogo
         : [];
-      // Generate JWT token with brandLogo as array
+
+      // Keep JWT payload minimal — no PII beyond userId/email/role.
       const token = jwt.sign(
-        {
-          userId: brand._id,
-          email: brand.email,
-          role: "brand",
-          name: displayName,
-          brandLogo: brandLogoArr,
-        },
+        { userId: brand._id, email: brand.email, role: "brand" },
         getJwtSecret(),
         { expiresIn: "7d" },
       );
@@ -334,6 +409,7 @@ export class AuthService {
         },
       };
     }
+
     throw new UnauthorizedException("Invalid credentials");
   }
 
@@ -381,6 +457,7 @@ export class AuthService {
       socialMedia: socialMediaMapped,
       profileImages: normalizedProfileImages,
     });
+    // Status stays "pending" until email is verified — auto-approve (if enabled) is applied in verifyEmailByToken.
     console.log("Influencer payload:", influencer);
     try {
       const saved = await influencer.save();
@@ -414,15 +491,25 @@ export class AuthService {
   async registerBrand(data: any) {
     // Check duplicates up front so the API can return all conflicting fields together.
     const existingBrandUsernameRegex = data.brandUsername
-      ? new RegExp(`^${String(data.brandUsername).replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`, "i")
+      ? new RegExp(
+          `^${String(data.brandUsername).replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`,
+          "i",
+        )
       : null;
 
-    const [existingEmail, existingPhone, existingBrandName, existingBrandUsername] = await Promise.all([
+    const [
+      existingEmail,
+      existingPhone,
+      existingBrandName,
+      existingBrandUsername,
+    ] = await Promise.all([
       data.email ? this.brandModel.findOne({ email: data.email }) : null,
       data.phoneNumber
         ? this.brandModel.findOne({ phoneNumber: data.phoneNumber })
         : null,
-      data.brandName ? this.brandModel.findOne({ brandName: data.brandName }) : null,
+      data.brandName
+        ? this.brandModel.findOne({ brandName: data.brandName })
+        : null,
       existingBrandUsernameRegex
         ? this.brandModel.findOne({ brandUsername: existingBrandUsernameRegex })
         : null,
@@ -453,6 +540,7 @@ export class AuthService {
       languages: languageNames,
       socialMedia: socialMediaMapped,
     });
+    // Status stays "pending" until email is verified — auto-approve (if enabled) is applied in verifyEmailByToken.
     const savedBrand = await brand.save();
     try {
       await this.sendEmailVerificationLink(savedBrand.email);
@@ -460,6 +548,20 @@ export class AuthService {
       console.error("Failed to send brand verification email:", verifyMailErr);
     }
     return { success: true, message: "Brand registered", brand: savedBrand };
+  }
+
+  async getPublicSettings() {
+    const settings = (await this.appSettingsModel.findOne({}).lean()) as any;
+    return {
+      preApproveInfluencers: !!settings?.preApproveInfluencers,
+      influencerRequireEmailVerified:
+        settings?.influencerRequireEmailVerified !== false,
+      influencerRequireMobileVerified:
+        !!settings?.influencerRequireMobileVerified,
+      preApproveBrands: !!settings?.preApproveBrands,
+      brandRequireEmailVerified: settings?.brandRequireEmailVerified !== false,
+      brandRequireMobileVerified: !!settings?.brandRequireMobileVerified,
+    };
   }
 
   async findUserByEmail(email: string) {
