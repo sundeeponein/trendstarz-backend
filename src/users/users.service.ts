@@ -56,13 +56,24 @@ export class UsersService {
       // Delete all images from Cloudinary
       if (user.profileImages && Array.isArray(user.profileImages)) {
         for (const img of user.profileImages) {
-          const publicId = typeof img === "object" ? img.public_id : (typeof img === "string" ? img : null);
+          const publicId =
+            typeof img === "object"
+              ? img.public_id
+              : typeof img === "string"
+                ? img
+                : null;
           if (publicId) {
             try {
               await this.cloudinaryService.deleteImage(publicId);
-              console.log(`[DELETE] Deleted influencer image from Cloudinary: ${publicId}`);
+              console.log(
+                `[DELETE] Deleted influencer image from Cloudinary: ${publicId}`,
+              );
             } catch (err) {
-              console.error("[DELETE] Error deleting influencer image from Cloudinary:", err, img);
+              console.error(
+                "[DELETE] Error deleting influencer image from Cloudinary:",
+                err,
+                img,
+              );
               errors.push({ type: "influencer", publicId, error: err });
             }
           }
@@ -98,13 +109,24 @@ export class UsersService {
       const errors: any[] = [];
       if (user.brandLogo && Array.isArray(user.brandLogo)) {
         for (const img of user.brandLogo) {
-          const publicId = typeof img === "object" ? img.public_id : (typeof img === "string" ? img : null);
+          const publicId =
+            typeof img === "object"
+              ? img.public_id
+              : typeof img === "string"
+                ? img
+                : null;
           if (publicId) {
             try {
               await this.cloudinaryService.deleteImage(publicId);
-              console.log(`[DELETE] Deleted brand logo from Cloudinary: ${publicId}`);
+              console.log(
+                `[DELETE] Deleted brand logo from Cloudinary: ${publicId}`,
+              );
             } catch (cloudErr) {
-              console.error("[DELETE] Error deleting brand logo from Cloudinary:", cloudErr, img);
+              console.error(
+                "[DELETE] Error deleting brand logo from Cloudinary:",
+                cloudErr,
+                img,
+              );
               errors.push({ type: "brandLogo", publicId, error: cloudErr });
             }
           }
@@ -112,13 +134,24 @@ export class UsersService {
       }
       if (user.products && Array.isArray(user.products)) {
         for (const img of user.products) {
-          const publicId = typeof img === "object" ? img.public_id : (typeof img === "string" ? img : null);
+          const publicId =
+            typeof img === "object"
+              ? img.public_id
+              : typeof img === "string"
+                ? img
+                : null;
           if (publicId) {
             try {
               await this.cloudinaryService.deleteImage(publicId);
-              console.log(`[DELETE] Deleted brand product image from Cloudinary: ${publicId}`);
+              console.log(
+                `[DELETE] Deleted brand product image from Cloudinary: ${publicId}`,
+              );
             } catch (cloudErr) {
-              console.error("[DELETE] Error deleting brand product image from Cloudinary:", cloudErr, img);
+              console.error(
+                "[DELETE] Error deleting brand product image from Cloudinary:",
+                cloudErr,
+                img,
+              );
               errors.push({ type: "brandProduct", publicId, error: cloudErr });
             }
           }
@@ -172,12 +205,20 @@ export class UsersService {
     // Use case-insensitive find instead of scanning all brands
     const decoded = slugify(brandName);
     // Try direct match (replacing hyphens with spaces for stored names)
-    let user: any = await this.brandModel.findOne({
-      brandName: new RegExp(`^${this.escapeRegex(brandName.replace(/-/g, " "))}$`, "i"),
-    }).lean();
+    let user: any = await this.brandModel
+      .findOne({
+        brandName: new RegExp(
+          `^${this.escapeRegex(brandName.replace(/-/g, " "))}$`,
+          "i",
+        ),
+      })
+      .lean();
     // Fallback: slug-based match on brandName field only
     if (!user) {
-      const candidates = await this.brandModel.find({}).select("brandName").lean();
+      const candidates = await this.brandModel
+        .find({})
+        .select("brandName")
+        .lean();
       const match = candidates.find(
         (b: any) => slugify(b.brandName) === decoded,
       );
@@ -514,7 +555,10 @@ export class UsersService {
       filter.categories = query.category;
     }
     if (query.state) {
-      filter["location.state"] = new RegExp(`^${this.escapeRegex(query.state)}$`, "i");
+      filter["location.state"] = new RegExp(
+        `^${this.escapeRegex(query.state)}$`,
+        "i",
+      );
     }
     const page = query.page || 1;
     const limit = query.limit || 20;
@@ -658,17 +702,17 @@ export class UsersService {
     // Admin can permanently delete from there.
     let user: any = await this.influencerModel.findByIdAndUpdate(
       id,
-      { status: 'deleted' },
-      { new: true }
+      { status: "deleted" },
+      { new: true },
     );
-    if (user) return { message: 'Influencer soft-deleted', user };
+    if (user) return { message: "Influencer soft-deleted", user };
     user = await this.brandModel.findByIdAndUpdate(
       id,
-      { status: 'deleted' },
-      { new: true }
+      { status: "deleted" },
+      { new: true },
     );
-    if (user) return { message: 'Brand soft-deleted', user };
-    return { message: 'User not found', id };
+    if (user) return { message: "Brand soft-deleted", user };
+    return { message: "User not found", id };
   }
   async setPremium(
     id: string,
@@ -731,6 +775,8 @@ export class UsersService {
       premiumStart: user.premiumStart || null,
       premiumEnd: user.premiumEnd || null,
       promotionalPrice: user.promotionalPrice,
+      isEmailVerified: user.isEmailVerified || false,
+      isMobileVerified: user.isMobileVerified || false,
     };
   }
 
@@ -759,6 +805,8 @@ export class UsersService {
       premiumDuration: user.premiumDuration || null,
       premiumStart: user.premiumStart || null,
       premiumEnd: user.premiumEnd || null,
+      isEmailVerified: user.isEmailVerified || false,
+      isMobileVerified: user.isMobileVerified || false,
     };
   }
 
