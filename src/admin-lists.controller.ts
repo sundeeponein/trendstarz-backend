@@ -19,6 +19,7 @@ import {
   SocialMediaModel,
   LanguageModel,
   TierModel,
+  AppSettingsModel,
 } from "./database/schemas/profile.schemas";
 import { InjectModel } from "@nestjs/mongoose";
 import { Model } from "mongoose";
@@ -42,7 +43,31 @@ export class AdminListsController {
   constructor(
     @InjectModel("Influencer") private readonly influencerModel: Model<any>,
     @InjectModel("Brand") private readonly brandModel: Model<any>,
+    @InjectModel("AppSettings") private readonly appSettingsModel: Model<any>,
   ) {}
+    // --- App Settings Endpoints ---
+    @Get("settings")
+    async getAppSettings() {
+      // Always return the single settings document (create if not exists)
+      let settings = await this.appSettingsModel.findOne();
+      if (!settings) {
+        settings = await this.appSettingsModel.create({});
+      }
+      return settings;
+    }
+
+    @Patch("settings")
+    async patchAppSettings(@Body() body: Record<string, unknown>) {
+      // Update the single settings document (upsert)
+      let settings = await this.appSettingsModel.findOne();
+      if (!settings) {
+        settings = await this.appSettingsModel.create(body);
+      } else {
+        Object.assign(settings, body);
+        await settings.save();
+      }
+      return settings;
+    }
   // Debug endpoint to log influencer and brand data
   @Get("debug-users")
   async debugUsers() {

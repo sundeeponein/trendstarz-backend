@@ -1,3 +1,14 @@
+// AppSettings schema for admin toggles and global settings
+export const AppSettingsSchema = new Schema({
+  preApproveInfluencers: { type: Boolean, default: false },
+  influencerRequireEmailVerified: { type: Boolean, default: false },
+  influencerRequireMobileVerified: { type: Boolean, default: false },
+  preApproveBrands: { type: Boolean, default: false },
+  brandRequireEmailVerified: { type: Boolean, default: false },
+  brandRequireMobileVerified: { type: Boolean, default: false },
+  // Add more global settings here as needed
+});
+export const AppSettingsModel = model("AppSettings", AppSettingsSchema);
 import { Schema, Types, model } from "mongoose";
 
 export const TierSchema = new Schema({
