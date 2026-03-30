@@ -58,18 +58,18 @@ export class AdminListsController {
     };
     const settings = await this.appSettingsModel.findOne({}).lean();
     const merged = { ...defaults, ...(settings || {}) };
-    console.log('[ADMIN][GET /admin/settings] Returning:', merged);
+    console.log("[ADMIN][GET /admin/settings] Returning:", merged);
     return merged;
   }
 
   @Patch("settings")
   async updateSettings(@Body() body: Record<string, any>) {
-    console.log('[ADMIN][PATCH /admin/settings] Incoming body:', body);
+    console.log("[ADMIN][PATCH /admin/settings] Incoming body:", body);
     // Only update fields present in the request body
     const settings = await this.appSettingsModel
       .findOneAndUpdate({}, { $set: body }, { upsert: true, new: true })
       .lean();
-    console.log('[ADMIN][PATCH /admin/settings] Updated settings:', settings);
+    console.log("[ADMIN][PATCH /admin/settings] Updated settings:", settings);
     return { success: true, settings };
   }
   // Debug endpoint to log influencer and brand data
