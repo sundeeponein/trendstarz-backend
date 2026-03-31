@@ -753,7 +753,10 @@ export class UsersService {
     return { message: "User not found", id };
   }
 
-  async upgradeSelfPremium(userId: string, premiumDuration: "1m" | "3m" | "1y") {
+  async upgradeSelfPremium(
+    userId: string,
+    premiumDuration: "1m" | "3m" | "1y",
+  ) {
     const update: any = { isPremium: true };
     update.premiumDuration = premiumDuration;
     const now = new Date();
@@ -765,9 +768,15 @@ export class UsersService {
     update.premiumEnd = end;
     // Try influencer first, then brand
     const influencer = await this.influencerModel.findByIdAndUpdate(userId, update, { new: true });
-    if (influencer) return { message: "Premium upgraded", user: influencer, userType: "influencer" };
+    if (influencer)
+      return {
+        message: "Premium upgraded",
+        user: influencer,
+        userType: "influencer",
+      };
     const brand = await this.brandModel.findByIdAndUpdate(userId, update, { new: true });
-    if (brand) return { message: "Premium upgraded", user: brand, userType: "brand" };
+    if (brand)
+      return { message: "Premium upgraded", user: brand, userType: "brand" };
     return { message: "User not found", id: userId };
   }
 
@@ -903,9 +912,7 @@ export class UsersService {
     for (const key of allowedFields) {
       if (update[key] !== undefined) updateData[key] = update[key];
     }
-    if (update.paymentOption) {
-      updateData.isPremium = update.paymentOption === "premium";
-    }
+    // NOTE: isPremium is intentionally excluded — it is only set via upgradeSelfPremium or admin setPremium
     const updated = await this.influencerModel.findByIdAndUpdate(
       userId,
       updateData,
@@ -1044,9 +1051,7 @@ export class UsersService {
     }
     // Remove price if present
     if ("price" in updateData) delete updateData.price;
-    if (update.paymentOption) {
-      updateData.isPremium = update.paymentOption === "premium";
-    }
+    // NOTE: isPremium is intentionally excluded — it is only set via upgradeSelfPremium or admin setPremium
     const updated = await this.brandModel.findByIdAndUpdate(
       userId,
       updateData,
