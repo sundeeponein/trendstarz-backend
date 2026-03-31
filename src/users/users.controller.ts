@@ -135,6 +135,16 @@ export class UsersController {
     return this.usersService.deletePermanently(id);
   }
 
+  @UseGuards(JwtAuthGuard)
+  @Patch("me/premium")
+  async upgradeSelfPremium(
+    @Req() req: any,
+    @Body() body: { premiumDuration: "1m" | "3m" | "1y" },
+  ) {
+    const userId = req.user?.userId || req.user?.sub || req.user?.id;
+    return this.usersService.upgradeSelfPremium(userId, body.premiumDuration);
+  }
+
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Patch(":id/premium")
   async setPremium(
