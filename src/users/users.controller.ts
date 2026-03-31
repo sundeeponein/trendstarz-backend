@@ -105,6 +105,17 @@ export class UsersController {
     );
   }
 
+  // Self-service premium upgrade — placed BEFORE all /:id routes to prevent route shadowing
+  @UseGuards(JwtAuthGuard)
+  @Patch("self/upgrade-premium")
+  async upgradeSelfPremium(
+    @Req() req: any,
+    @Body() body: { premiumDuration: "1m" | "3m" | "1y" },
+  ) {
+    const userId = req.user?.userId || req.user?.sub || req.user?.id;
+    return this.usersService.upgradeSelfPremium(userId, body.premiumDuration);
+  }
+
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Patch(":id/accept")
   async acceptUser(@Param("id") id: string) {

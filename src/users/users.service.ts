@@ -753,6 +753,24 @@ export class UsersService {
     return { message: "User not found", id };
   }
 
+  async upgradeSelfPremium(userId: string, premiumDuration: "1m" | "3m" | "1y") {
+    const update: any = { isPremium: true };
+    update.premiumDuration = premiumDuration;
+    const now = new Date();
+    update.premiumStart = now;
+    const end = new Date(now);
+    if (premiumDuration === "1m") end.setMonth(end.getMonth() + 1);
+    else if (premiumDuration === "3m") end.setMonth(end.getMonth() + 3);
+    else if (premiumDuration === "1y") end.setFullYear(end.getFullYear() + 1);
+    update.premiumEnd = end;
+    // Try influencer first, then brand
+    const influencer = await this.influencerModel.findByIdAndUpdate(userId, update, { new: true });
+    if (influencer) return { message: "Premium upgraded", user: influencer, userType: "influencer" };
+    const brand = await this.brandModel.findByIdAndUpdate(userId, update, { new: true });
+    if (brand) return { message: "Premium upgraded", user: brand, userType: "brand" };
+    return { message: "User not found", id: userId };
+  }
+
   async getInfluencerProfileById(userId: string) {
     const user = await this.influencerModel.findById(userId).lean();
     if (!user || Array.isArray(user)) return null;
