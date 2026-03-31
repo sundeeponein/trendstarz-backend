@@ -1,4 +1,4 @@
-import { Controller, Post, Body, UseGuards, Req } from "@nestjs/common";
+import { Controller, Post, Body, UseGuards, Req, BadRequestException } from "@nestjs/common";
 import { JwtAuthGuard } from "../auth/jwt-auth.guard";
 import { PaymentService } from "./payment.service";
 import { RazorpayService } from "./razorpay.service";
