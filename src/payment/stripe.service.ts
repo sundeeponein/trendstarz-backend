@@ -11,11 +11,16 @@ export class StripeService {
     });
   }
 
-  async createPaymentIntent(amount: number, currency: string = "inr") {
+  async createPaymentIntent(amount: number, currency: string = "inr", metadata?: Record<string, string>) {
     const paymentIntent = await this.stripe.paymentIntents.create({
       amount,
       currency,
+      ...(metadata ? { metadata } : {}),
     });
     return paymentIntent.client_secret;
+  }
+
+  async retrievePaymentIntent(paymentIntentId: string) {
+    return await this.stripe.paymentIntents.retrieve(paymentIntentId);
   }
 }
