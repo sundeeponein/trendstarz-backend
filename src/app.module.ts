@@ -28,6 +28,9 @@ import {
 import { AuthService } from "./auth/auth.service";
 import { AuthController } from "./auth/auth.controller";
 import { AdminUserTableController } from "./admin/admin-user-table.controller";
+import { PaymentController } from "./payment/payment.controller";
+import { PaymentService } from "./payment/payment.service";
+import { RazorpayService } from "./payment/razorpay.service";
 import { UsersModule } from "./users/users.module";
 import { CampaignsModule } from "./campaigns/campaigns.module";
 import { CloudinaryService } from "./cloudinary.service";
@@ -73,13 +76,15 @@ import { HealthController } from "./health.controller";
     AuthController,
     HealthController,
     AdminUserTableController,
+    PaymentController
     // SeedController,
-    // PaymentController
   ],
   providers: [
     AppService,
     AuthService,
-    MongoLogger /*, PaymentService, StripeService*/,
+    MongoLogger,
+    PaymentService,
+    RazorpayService,
   ],
 })
 export class AppModule {}
