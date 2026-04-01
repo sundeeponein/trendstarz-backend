@@ -91,7 +91,7 @@ export class PaymentService {
       .sort({ createdAt: -1 })
       .skip(skip)
       .limit(limit)
-      .populate("userId", "username brandUsername email name brandName");
+      .populate("userId", "username brandUsername email name brandName profileImages brandLogo phoneNumber categories location");
 
     const total = await this.paymentModel.countDocuments({
       status: "pending",
@@ -189,7 +189,7 @@ export class PaymentService {
       .sort({ createdAt: -1 })
       .skip(skip)
       .limit(limit)
-      .populate("userId", "username brandUsername email name brandName")
+      .populate("userId", "username brandUsername email name brandName profileImages brandLogo phoneNumber categories location")
       .lean();
     return { success: true, payments };
   }
@@ -197,7 +197,7 @@ export class PaymentService {
   async getPaymentById(paymentId: string) {
     const payment = await this.paymentModel
       .findById(paymentId)
-      .populate("userId", "username brandUsername email name brandName");
+      .populate("userId", "username brandUsername email name brandName profileImages brandLogo phoneNumber categories location");
     return { success: true, payment };
   }
 }
