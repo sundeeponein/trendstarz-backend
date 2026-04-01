@@ -1,13 +1,3 @@
-  /**
-   * Get recent payments for a user (all statuses)
-   */
-  async getPaymentsByUser(userId: string, limit = 5) {
-    return this.paymentModel
-      .find({ userId })
-      .sort({ createdAt: -1 })
-      .limit(limit)
-      .lean();
-  }
 import { Injectable } from "@nestjs/common";
 import { InjectModel } from "@nestjs/mongoose";
 import { Model } from "mongoose";
@@ -23,10 +13,18 @@ export class PaymentService {
     @InjectModel("Payment") private readonly paymentModel: Model<Payment>,
   ) {}
 
-  async confirmUpgrade(
-    userId: string,
-    premiumDuration: "1m" | "3m" | "1y",
-  ) {
+  /**
+   * Get recent payments for a user (all statuses)
+   */
+  async getPaymentsByUser(userId: string, limit = 5) {
+    return this.paymentModel
+      .find({ userId })
+      .sort({ createdAt: -1 })
+      .limit(limit)
+      .lean();
+  }
+
+  async confirmUpgrade(userId: string, premiumDuration: "1m" | "3m" | "1y") {
     const update: any = { isPremium: true, premiumDuration };
     const now = new Date();
     update.premiumStart = now;
@@ -36,14 +34,16 @@ export class PaymentService {
     else if (premiumDuration === "1y") end.setFullYear(end.getFullYear() + 1);
     update.premiumEnd = end;
 
-    const influencer = await InfluencerModel.findByIdAndUpdate(
-      userId, update, { new: true },
-    );
-    if (influencer) return { success: true, message: "Premium activated", premiumEnd: end };
-    const brand = await BrandModel.findByIdAndUpdate(
-      userId, update, { new: true },
-    );
-    if (brand) return { success: true, message: "Premium activated", premiumEnd: end };
+    const influencer = await InfluencerModel.findByIdAndUpdate(userId, update, {
+      new: true,
+    });
+    if (influencer)
+      return { success: true, message: "Premium activated", premiumEnd: end };
+    const brand = await BrandModel.findByIdAndUpdate(userId, update, {
+      new: true,
+    });
+    if (brand)
+      return { success: true, message: "Premium activated", premiumEnd: end };
     return { success: false, message: "User not found" };
   }
 
@@ -112,7 +112,8 @@ export class PaymentService {
     const end = new Date(now);
     if (payment.premiumDuration === "1m") end.setMonth(end.getMonth() + 1);
     else if (payment.premiumDuration === "3m") end.setMonth(end.getMonth() + 3);
-    else if (payment.premiumDuration === "1y") end.setFullYear(end.getFullYear() + 1);
+    else if (payment.premiumDuration === "1y")
+      end.setFullYear(end.getFullYear() + 1);
 
     let upgraded = false;
     if (payment.userType === "Influencer") {
@@ -151,7 +152,10 @@ export class PaymentService {
     payment.approvedAt = new Date();
     await payment.save();
 
-    return { success: true, message: "Payment approved. User upgraded to premium." };
+    return {
+      success: true,
+      message: "Payment approved. User upgraded to premium.",
+    };
   }
 
   async rejectPayment(paymentId: string, rejectionReason: string) {
@@ -169,7 +173,8 @@ export class PaymentService {
   }
 
   async getPaymentById(paymentId: string) {
-    return await this.paymentModel.findById(paymentId).populate("userId", "username email");
+    return await this.paymentModel
+      .findById(paymentId)
+      .populate("userId", "username email");
   }
 }
-
