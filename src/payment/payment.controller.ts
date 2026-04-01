@@ -147,8 +147,8 @@ export class PaymentController {
   @UseGuards(JwtAuthGuard)
   @Get(":id")
   async getPaymentById(@Param("id") paymentId: string) {
-    const payment = await this.paymentService.getPaymentById(paymentId);
-    if (!payment) throw new BadRequestException("Payment not found");
-    return payment;
+    const result = await this.paymentService.getPaymentById(paymentId);
+    if (!result.payment) throw new BadRequestException("Payment not found");
+    return result;
   }
 }

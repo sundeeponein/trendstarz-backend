@@ -17,11 +17,12 @@ export class PaymentService {
    * Get recent payments for a user (all statuses)
    */
   async getPaymentsByUser(userId: string, limit = 5) {
-    return this.paymentModel
+    const payments = await this.paymentModel
       .find({ userId })
       .sort({ createdAt: -1 })
       .limit(limit)
       .lean();
+    return { success: true, payments };
   }
 
   async confirmUpgrade(userId: string, premiumDuration: "1m" | "3m" | "1y") {
@@ -92,13 +93,19 @@ export class PaymentService {
       .sort({ createdAt: -1 })
       .skip(skip)
       .limit(limit)
-      .populate("userId", "username email");
+      .populate("userId", "username brandUsername email name brandName");
 
     const total = await this.paymentModel.countDocuments({
       status: "pending",
     });
 
-    return { payments, total, page, pages: Math.ceil(total / limit) };
+    return {
+      success: true,
+      payments,
+      total,
+      page,
+      pages: Math.ceil(total / limit),
+    };
   }
 
   async approvePayment(paymentId: string, adminId: string) {
@@ -179,18 +186,20 @@ export class PaymentService {
     limit = 50,
   ) {
     const skip = (page - 1) * limit;
-    return this.paymentModel
+    const payments = await this.paymentModel
       .find({ status })
       .sort({ createdAt: -1 })
       .skip(skip)
       .limit(limit)
-      .populate("userId", "username email")
+      .populate("userId", "username brandUsername email name brandName")
       .lean();
+    return { success: true, payments };
   }
 
   async getPaymentById(paymentId: string) {
-    return await this.paymentModel
+    const payment = await this.paymentModel
       .findById(paymentId)
-      .populate("userId", "username email");
+      .populate("userId", "username brandUsername email name brandName");
+    return { success: true, payment };
   }
 }
