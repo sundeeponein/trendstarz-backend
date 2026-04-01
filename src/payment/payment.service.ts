@@ -1,16 +1,14 @@
 import { Injectable } from "@nestjs/common";
 import { InjectModel } from "@nestjs/mongoose";
 import { Model } from "mongoose";
-import {
-  InfluencerModel,
-  BrandModel,
-} from "../database/schemas/profile.schemas";
 import { Payment } from "../database/schemas/payment.schema";
 
 @Injectable()
 export class PaymentService {
   constructor(
     @InjectModel("Payment") private readonly paymentModel: Model<Payment>,
+    @InjectModel("Influencer") private readonly influencerModel: Model<any>,
+    @InjectModel("Brand") private readonly brandModel: Model<any>,
   ) {}
 
   /**
@@ -35,12 +33,12 @@ export class PaymentService {
     else if (premiumDuration === "1y") end.setFullYear(end.getFullYear() + 1);
     update.premiumEnd = end;
 
-    const influencer = await InfluencerModel.findByIdAndUpdate(userId, update, {
+    const influencer = await this.influencerModel.findByIdAndUpdate(userId, update, {
       new: true,
     });
     if (influencer)
       return { success: true, message: "Premium activated", premiumEnd: end };
-    const brand = await BrandModel.findByIdAndUpdate(userId, update, {
+    const brand = await this.brandModel.findByIdAndUpdate(userId, update, {
       new: true,
     });
     if (brand)
@@ -125,7 +123,7 @@ export class PaymentService {
 
     let upgraded = false;
     if (payment.userType === "Influencer") {
-      const result = await InfluencerModel.findByIdAndUpdate(
+      const result = await this.influencerModel.findByIdAndUpdate(
         payment.userId,
         {
           isPremium: true,
@@ -137,7 +135,7 @@ export class PaymentService {
       );
       if (result) upgraded = true;
     } else {
-      const result = await BrandModel.findByIdAndUpdate(
+      const result = await this.brandModel.findByIdAndUpdate(
         payment.userId,
         {
           isPremium: true,
