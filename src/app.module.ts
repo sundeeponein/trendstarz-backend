@@ -24,13 +24,12 @@ import {
   TierSchema,
   AppSettingsSchema,
 } from "./database/schemas/profile.schemas";
+import { PaymentSchema } from "./database/schemas/payment.schema";
 
 import { AuthService } from "./auth/auth.service";
 import { AuthController } from "./auth/auth.controller";
 import { AdminUserTableController } from "./admin/admin-user-table.controller";
-import { PaymentController } from "./payment/payment.controller";
-import { PaymentService } from "./payment/payment.service";
-import { RazorpayService } from "./payment/razorpay.service";
+import { PaymentModule } from "./payment/payment.module";
 import { UsersModule } from "./users/users.module";
 import { CampaignsModule } from "./campaigns/campaigns.module";
 import { CloudinaryService } from "./cloudinary.service";
@@ -60,10 +59,12 @@ import { HealthController } from "./health.controller";
       { name: "Brand", schema: BrandSchema, collection: "brands" },
       { name: "Tier", schema: TierSchema, collection: "tiers" },
       { name: "AppSettings", schema: AppSettingsSchema, collection: "appsettings" },
+      { name: "Payment", schema: PaymentSchema, collection: "payments" },
     ]),
     UsersModule,
     CampaignsModule,
     OtpModule,
+    PaymentModule,
   ],
   controllers: [
     AppController,
@@ -76,15 +77,13 @@ import { HealthController } from "./health.controller";
     AuthController,
     HealthController,
     AdminUserTableController,
-    PaymentController
     // SeedController,
   ],
   providers: [
     AppService,
     AuthService,
     MongoLogger,
-    PaymentService,
-    RazorpayService,
+    CloudinaryService,
   ],
 })
 export class AppModule {}
