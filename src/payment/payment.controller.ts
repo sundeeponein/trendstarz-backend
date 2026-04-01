@@ -1,14 +1,3 @@
-  /**
-   * Get current user's recent payments (pending, approved, rejected)
-   * GET /payment/my
-   */
-  @UseGuards(JwtAuthGuard)
-  @Get('my')
-  async getMyPayments(@Req() req: any, @Query('limit') limit: string = '5') {
-    const userId = req.user?.userId;
-    if (!userId) throw new BadRequestException('Not authenticated');
-    return this.paymentService.getPaymentsByUser(userId, parseInt(limit));
-  }
 import {
   Controller,
   Post,
@@ -20,7 +9,6 @@ import {
   Req,
   BadRequestException,
   Query,
-  Inject,
 } from "@nestjs/common";
 import { JwtAuthGuard } from "../auth/jwt-auth.guard";
 import { RolesGuard } from "../auth/roles.guard";
@@ -29,6 +17,18 @@ import { PaymentService } from "./payment.service";
 @Controller("payment")
 export class PaymentController {
   constructor(private readonly paymentService: PaymentService) {}
+
+  /**
+   * Get current user's recent payments (pending, approved, rejected)
+   * GET /payment/my
+   */
+  @UseGuards(JwtAuthGuard)
+  @Get("my")
+  async getMyPayments(@Req() req: any, @Query("limit") limit: string = "5") {
+    const userId = req.user?.userId;
+    if (!userId) throw new BadRequestException("Not authenticated");
+    return this.paymentService.getPaymentsByUser(userId, parseInt(limit));
+  }
 
   /**
    * Record a pending UPI payment
@@ -130,4 +130,3 @@ export class PaymentController {
     return payment;
   }
 }
-
