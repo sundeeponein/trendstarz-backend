@@ -1,3 +1,13 @@
+  /**
+   * Get recent payments for a user (all statuses)
+   */
+  async getPaymentsByUser(userId: string, limit = 5) {
+    return this.paymentModel
+      .find({ userId })
+      .sort({ createdAt: -1 })
+      .limit(limit)
+      .lean();
+  }
 import { Injectable } from "@nestjs/common";
 import { InjectModel } from "@nestjs/mongoose";
 import { Model } from "mongoose";

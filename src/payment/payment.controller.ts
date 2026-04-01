@@ -1,3 +1,14 @@
+  /**
+   * Get current user's recent payments (pending, approved, rejected)
+   * GET /payment/my
+   */
+  @UseGuards(JwtAuthGuard)
+  @Get('my')
+  async getMyPayments(@Req() req: any, @Query('limit') limit: string = '5') {
+    const userId = req.user?.userId;
+    if (!userId) throw new BadRequestException('Not authenticated');
+    return this.paymentService.getPaymentsByUser(userId, parseInt(limit));
+  }
 import {
   Controller,
   Post,
