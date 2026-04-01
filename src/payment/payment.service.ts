@@ -55,6 +55,7 @@ export class PaymentService {
     amount: number,
     premiumDuration: "1m" | "3m" | "1y",
     paymentMethod: "upi" | "qr" = "upi",
+    userType: "Influencer" | "Brand" = "Influencer",
   ) {
     // Check if transaction ID already exists
     const existing = await this.paymentModel.findOne({ transactionId });
@@ -68,7 +69,7 @@ export class PaymentService {
     // Create pending payment record
     const payment = new this.paymentModel({
       userId,
-      userType: "Influencer", // Will be determined by the controller
+      userType,
       transactionId,
       amount,
       premiumDuration,
@@ -170,6 +171,21 @@ export class PaymentService {
     await payment.save();
 
     return { success: true, message: "Payment rejected." };
+  }
+
+  async getPaymentsByStatus(
+    status: "approved" | "rejected" | "pending",
+    page = 1,
+    limit = 50,
+  ) {
+    const skip = (page - 1) * limit;
+    return this.paymentModel
+      .find({ status })
+      .sort({ createdAt: -1 })
+      .skip(skip)
+      .limit(limit)
+      .populate("userId", "username email")
+      .lean();
   }
 
   async getPaymentById(paymentId: string) {

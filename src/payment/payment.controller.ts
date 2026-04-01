@@ -68,6 +68,7 @@ export class PaymentController {
       amount,
       body.premiumDuration,
       body.paymentMethod || "upi",
+      body.userType || "Influencer",
     );
   }
 
@@ -115,6 +116,27 @@ export class PaymentController {
     return this.paymentService.rejectPayment(
       paymentId,
       body.reason || "No reason provided",
+    );
+  }
+
+  /**
+   * Get payments by status (Admin only)
+   * GET /payment/by-status?status=approved|rejected
+   */
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Get("by-status")
+  async getPaymentsByStatus(
+    @Query("status") status: string,
+    @Query("page") page: string = "1",
+    @Query("limit") limit: string = "50",
+  ) {
+    if (!status || !["approved", "rejected", "pending"].includes(status)) {
+      throw new BadRequestException("Invalid status");
+    }
+    return this.paymentService.getPaymentsByStatus(
+      status as "approved" | "rejected" | "pending",
+      parseInt(page),
+      parseInt(limit),
     );
   }
 
