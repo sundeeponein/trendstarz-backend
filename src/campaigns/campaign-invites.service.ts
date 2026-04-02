@@ -18,12 +18,54 @@ export class CampaignInvitesService {
   ) {}
 
   async create(brandId: string, data: any) {
+      async applyToCampaign(influencerId: string, campaignId: string) {
+        // Enforce influencer campaign application limit (admin-manageable)
+        const { getAppPlansService } = require("../plans/plans.service");
+        const plansService = await getAppPlansService();
+        const caps = await plansService.getUserPlanCapabilities(influencerId);
+        const maxApplications = caps.limits.find((l: any) => l.key === "maxCampaignApplications")?.value ?? 2;
+        // Count applications this month
+        const now = new Date();
+        const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+        const appCount = await this.inviteModel.countDocuments({
+          influencerId,
+          createdAt: { $gte: monthStart },
+          status: { $in: ["pending", "accepted"] },
+        });
+        if (appCount >= maxApplications) {
+          throw new BadRequestException(`Plan limit: Only ${maxApplications} campaign applications per month allowed. Upgrade for more.`);
+        }
+        // Create application (invite with status 'pending')
+        const invite = new this.inviteModel({ influencerId, campaignId, status: "pending" });
+        return await invite.save();
+      }
     const campaign: any = await this.campaignModel
       .findById(data.campaignId)
       .lean();
     if (!campaign) throw new NotFoundException("Campaign not found");
     if (String(campaign.brandId) !== brandId) {
       throw new BadRequestException("Not your campaign");
+    }
+    // Enforce invite limits for brands (admin-manageable)
+    const { getAppPlansService } = require("../plans/plans.service");
+    const plansService = await getAppPlansService();
+    const caps = await plansService.getUserPlanCapabilities(brandId);
+    const maxInvitesPerCampaign = caps.limits.find((l: any) => l.key === "maxInvitesPerCampaign")?.value ?? 2;
+    const maxInvitesPerMonth = caps.limits.find((l: any) => l.key === "maxInvitesPerMonth")?.value ?? 1;
+    // Count invites for this campaign
+    const inviteCount = await this.inviteModel.countDocuments({ campaignId: data.campaignId });
+    if (inviteCount >= maxInvitesPerCampaign) {
+      throw new BadRequestException(`Plan limit: Only ${maxInvitesPerCampaign} invites per campaign allowed. Upgrade for more.`);
+    }
+    // Count invites sent this month
+    const now = new Date();
+    const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+    const monthInviteCount = await this.inviteModel.countDocuments({
+      brandId,
+      createdAt: { $gte: monthStart },
+    });
+    if (monthInviteCount >= maxInvitesPerMonth) {
+      throw new BadRequestException(`Plan limit: Only ${maxInvitesPerMonth} campaign(s) with invites per month allowed. Upgrade for more.`);
     }
     const invite = new this.inviteModel({ ...data, brandId });
     const saved = await invite.save();

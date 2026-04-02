@@ -20,6 +20,23 @@ export class CampaignsService {
   ) {}
 
   async create(brandId: string, data: any) {
+    // Enforce campaign creation limit for brands (admin-manageable)
+    const brand = await this.brandModel.findById(brandId).lean();
+    if (!brand) throw new NotFoundException("Brand not found");
+    // Lazy load PlansService to avoid circular dep
+    const { getAppPlansService } = require("../plans/plans.service");
+    const plansService = await getAppPlansService();
+    const caps = await plansService.getUserPlanCapabilities(brandId);
+    const maxCampaigns = caps.limits.find((l: any) => l.key === "maxCampaigns")?.value ?? 1;
+    const now = new Date();
+    const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+    const count = await this.campaignModel.countDocuments({
+      brandId,
+      createdAt: { $gte: monthStart },
+    });
+    if (count >= maxCampaigns) {
+      throw new BadRequestException(`Plan limit: Only ${maxCampaigns} campaign(s) per month allowed. Upgrade for more.`);
+    }
     const campaign = new this.campaignModel({ ...data, brandId });
     return await campaign.save();
   }
