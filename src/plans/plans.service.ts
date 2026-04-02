@@ -197,59 +197,6 @@ export class PlansService {
     return { success: true, subscriptions: subs };
   }
 
-  // ── Seeding default plans ─────────────────────────────────────────────────
-
-  async seedDefaultPlans() {
-    const count = await this.planModel.countDocuments();
-    if (count > 0) return { seeded: false, message: "Plans already exist" };
-
-
-    const defaultPlans = [
-      {
-        name: "Pro",
-        userType: "INFLUENCER",
-        price: { monthly: 399, yearly: 2999 },
-        features: [
-          { key: "socialMediaVisibility", label: "Show Social Media Links", value: true },
-          { key: "contactVisibility", label: "Show Contact Details", value: true },
-          { key: "priorityListing", label: "Priority Listing in Search", value: true },
-        ],
-        limits: [
-          { key: "maxImages", label: "Max Images Upload", value: 20 },
-          { key: "maxCampaigns", label: "Max Campaigns", value: 10 },
-          { key: "maxCampaignApplications", label: "Max Campaigns Apply", value: 10 },
-        ],
-        policies: { imageRetentionDaysAfterExpiry: 45 },
-        highlight: true,
-        isActive: true,
-        sortOrder: 1,
-      },
-      {
-        name: "Pro",
-        userType: "BRAND",
-        price: { monthly: 399, yearly: 2999 },
-        features: [
-          { key: "socialMediaVisibility", label: "Show Social Media Links", value: true },
-          { key: "contactVisibility", label: "Show Contact Details", value: true },
-          { key: "priorityListing", label: "Priority Listing in Search", value: true },
-        ],
-        limits: [
-          { key: "maxProductImages", label: "Max Product Images", value: 10 },
-          { key: "maxCampaigns", label: "Max Campaigns", value: 10 },
-          { key: "maxInvitesPerCampaign", label: "Max Invites Per Campaign", value: 10 },
-          { key: "maxInviteSelectOptions", label: "Max Invite Select Options", value: 10 },
-        ],
-        policies: { imageRetentionDaysAfterExpiry: 45 },
-        highlight: true,
-        isActive: true,
-        sortOrder: 1,
-      },
-    ];
-
-    await this.planModel.insertMany(defaultPlans);
-    return { seeded: true, message: "Default plans created" };
-  }
-
   /** Get the first active Pro plan for the matching userType (used by payment approval) */
   async findProPlanForUserType(userType: "Influencer" | "Brand") {
     const mapped = userType === "Influencer" ? "INFLUENCER" : "BRAND";
