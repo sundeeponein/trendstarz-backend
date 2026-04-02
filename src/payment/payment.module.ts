@@ -8,6 +8,7 @@ import {
   InfluencerSchema,
   BrandSchema,
 } from "../database/schemas/profile.schemas";
+import { PlansModule } from "../plans/plans.module";
 
 @Module({
   imports: [
@@ -16,6 +17,7 @@ import {
       { name: "Influencer", schema: InfluencerSchema, collection: "influencers" },
       { name: "Brand", schema: BrandSchema, collection: "brands" },
     ]),
+    PlansModule,
   ],
   controllers: [PaymentController],
   providers: [PaymentService, RazorpayService],
