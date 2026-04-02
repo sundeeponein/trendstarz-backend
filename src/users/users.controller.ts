@@ -27,12 +27,18 @@ export class UsersController {
 
   @Get("influencers/:id")
   async getInfluencerById(@Param("id") id: string) {
-    return this.usersService.getInfluencerById(id);
+    const profile = await this.usersService.getInfluencerById(id);
+    if (!profile) return null;
+    const caps = await this.usersService['plansService'].getUserPlanCapabilities(String((profile as any)._id));
+    return this.usersService.applyPlanFilter(profile, caps);
   }
 
   @Get("influencers/username/:username")
   async getInfluencerByUsername(@Param("username") username: string) {
-    return this.usersService.getInfluencerByUsername(username);
+    const profile = await this.usersService.getInfluencerByUsername(username);
+    if (!profile) return null;
+    const caps = await this.usersService['plansService'].getUserPlanCapabilities(String((profile as any)._id));
+    return this.usersService.applyPlanFilter(profile, caps);
   }
 
   @Get("check-username/:username")
@@ -51,6 +57,10 @@ export class UsersController {
     if (userId !== id) {
       throw new ForbiddenException("You can only update your own images");
     }
+    // Enforce plan image limit before saving
+    const incomingImages: any[] =
+      body.profileImages ?? body.brandLogo ?? body.products ?? [];
+    await this.usersService.checkImageUploadLimit(id, incomingImages.length);
     return this.usersService.updateUserImages(id, body);
   }
 

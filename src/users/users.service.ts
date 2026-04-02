@@ -1,10 +1,10 @@
-/* eslint-disable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-argument, @typescript-eslint/no-unsafe-return, @typescript-eslint/no-require-imports */
-import { Injectable } from "@nestjs/common";
+import { Injectable, BadRequestException } from "@nestjs/common";
 import { CloudinaryService } from "../cloudinary.service";
 import { InfluencerProfileDto, BrandProfileDto } from "./dto/profile.dto";
 import * as bcrypt from "bcryptjs";
 import { InjectModel } from "@nestjs/mongoose";
 import { Model } from "mongoose";
+import { PlansService } from "../plans/plans.service";
 
 @Injectable()
 export class UsersService {
@@ -187,7 +187,38 @@ export class UsersService {
     private readonly cloudinaryService: CloudinaryService,
     @InjectModel("Influencer") private readonly influencerModel: Model<any>,
     @InjectModel("Brand") private readonly brandModel: Model<any>,
+    private readonly plansService: PlansService,
   ) {}
+
+  /** Throw if the user has already reached their maxImages plan limit */
+  async checkImageUploadLimit(userId: string, currentCount: number) {
+    const limit = await this.plansService.getLimit(userId, "maxImages");
+    if (currentCount >= limit) {
+      throw new BadRequestException(
+        `Image upload limit reached. Your plan allows ${limit} image(s). Upgrade to upload more.`,
+      );
+    }
+  }
+
+  /**
+   * Apply plan-based visibility filters to a public profile.
+   * Hides socialMedia and contact when plan features are disabled.
+   */
+  applyPlanFilter(profile: any, caps: any) {
+    const featureVal = (key: string) => {
+      const f = (caps?.features ?? []).find((x: any) => x.key === key);
+      return f ? f.value : false;
+    };
+    const result = { ...profile };
+    if (!featureVal("socialMediaVisibility")) {
+      result.socialMedia = [];
+    }
+    if (!featureVal("contactVisibility")) {
+      result.contact = null;
+      result.phoneNumber = undefined;
+    }
+    return result;
+  }
 
   async getBrandByName(brandName: string) {
     // Slugify helper
@@ -443,8 +474,10 @@ export class UsersService {
       const savedInfluencer = await influencer.save();
       return savedInfluencer;
     } catch (err) {
-      if (err.code === 11000) {
-        const field = Object.keys(err.keyPattern)[0];
+      if ((err as { code?: number }).code === 11000) {
+        const field = Object.keys(
+          (err as { keyPattern?: Record<string, unknown> }).keyPattern ?? {},
+        )[0];
         throw new Error(`${field} already exists`);
       }
       throw err;
@@ -514,9 +547,11 @@ export class UsersService {
       const savedBrand = await brand.save();
       return savedBrand;
     } catch (err) {
-      if (err.code === 11000) {
+      if ((err as { code?: number }).code === 11000) {
         // Find which field is duplicated
-        const field = Object.keys(err.keyPattern)[0];
+        const field = Object.keys(
+          (err as { keyPattern?: Record<string, unknown> }).keyPattern ?? {},
+        )[0];
         throw new Error(`${field} already exists`);
       }
       throw err;
@@ -767,14 +802,20 @@ export class UsersService {
     else if (premiumDuration === "1y") end.setFullYear(end.getFullYear() + 1);
     update.premiumEnd = end;
     // Try influencer first, then brand
-    const influencer = await this.influencerModel.findByIdAndUpdate(userId, update, { new: true });
+    const influencer = await this.influencerModel.findByIdAndUpdate(
+      userId,
+      update,
+      { new: true },
+    );
     if (influencer)
       return {
         message: "Premium upgraded",
         user: influencer,
         userType: "influencer",
       };
-    const brand = await this.brandModel.findByIdAndUpdate(userId, update, { new: true });
+    const brand = await this.brandModel.findByIdAndUpdate(userId, update, {
+      new: true,
+    });
     if (brand)
       return { message: "Premium upgraded", user: brand, userType: "brand" };
     return { message: "User not found", id: userId };

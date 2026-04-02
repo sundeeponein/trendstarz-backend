@@ -34,6 +34,7 @@ import { UsersModule } from "./users/users.module";
 import { CampaignsModule } from "./campaigns/campaigns.module";
 import { CloudinaryService } from "./cloudinary.service";
 import { HealthController } from "./health.controller";
+import { PlansModule } from "./plans/plans.module";
 
 @Module({
   imports: [
@@ -65,6 +66,7 @@ import { HealthController } from "./health.controller";
     CampaignsModule,
     OtpModule,
     PaymentModule,
+    PlansModule,
   ],
   controllers: [
     AppController,
