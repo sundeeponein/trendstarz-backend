@@ -1,3 +1,9 @@
+// Polyfill global `crypto` for Node.js < 19 (e.g. Node 18 on Railway)
+import { webcrypto } from "node:crypto";
+if (!globalThis.crypto) {
+  Object.defineProperty(globalThis, "crypto", { value: webcrypto });
+}
+
 import { NestFactory } from "@nestjs/core";
 import { ExpressAdapter } from "@nestjs/platform-express";
 import express from "express";
@@ -63,9 +69,9 @@ async function bootstrap() {
   // Validate and strip unknown fields from all request bodies globally.
   app.useGlobalPipes(
     new ValidationPipe({
-      whitelist: true,       // Strip properties not in the DTO
+      whitelist: true, // Strip properties not in the DTO
       forbidNonWhitelisted: false, // Don't hard-reject (untyped bodies on other endpoints still pass)
-      transform: true,       // Auto-transform primitives (e.g., @Transform decorators in DTOs)
+      transform: true, // Auto-transform primitives (e.g., @Transform decorators in DTOs)
     }),
   );
 
