@@ -3,6 +3,7 @@ import { MongooseModule } from "@nestjs/mongoose";
 import { ScheduleModule } from "@nestjs/schedule";
 import { PlansService } from "./plans.service";
 import { PlansController } from "./plans.controller";
+import { PlansConfigController } from "./plans-config.controller";
 import { ImageCleanupService } from "./image-cleanup.service";
 import { PlanSchema, SubscriptionSchema } from "../database/schemas/plan.schema";
 import { InfluencerSchema, BrandSchema } from "../database/schemas/profile.schemas";
@@ -17,7 +18,7 @@ import { InfluencerSchema, BrandSchema } from "../database/schemas/profile.schem
       { name: "Brand", schema: BrandSchema, collection: "brands" },
     ]),
   ],
-  controllers: [PlansController],
+  controllers: [PlansController, PlansConfigController],
   providers: [PlansService, ImageCleanupService],
   exports: [PlansService],
 })

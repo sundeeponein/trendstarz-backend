@@ -1,0 +1,94 @@
+{
+  "plans": [
+    {
+      "name": "Influencer Free",
+      "userType": "INFLUENCER",
+      "price": { "monthly": 0, "yearly": 0 },
+      "features": [
+        { "key": "publicProfileListing", "label": "Public profile listing", "value": true },
+        { "key": "socialMediaVisibility", "label": "Show social media links", "value": true },
+        { "key": "contactVisibility", "label": "Contact details visible to brands", "value": false },
+        { "key": "priorityListing", "label": "Priority search ranking", "value": false },
+        { "key": "analyticsDashboard", "label": "Analytics dashboard", "value": false }
+      ],
+      "limits": [
+        { "key": "maxProductImages", "label": "Product images", "value": 3 },
+        { "key": "maxActiveCampaigns", "label": "Active campaign", "value": 1 },
+        { "key": "maxInvitesPerCampaign", "label": "Invites / campaign", "value": 2 },
+        { "key": "maxInviteOptions", "label": "Invite options", "value": 5 }
+      ],
+      "policies": { "imageRetentionDaysAfterExpiry": 45 },
+      "highlight": false,
+      "isActive": true,
+      "sortOrder": 0
+    },
+    {
+      "name": "Influencer Pro",
+      "userType": "INFLUENCER",
+      "price": { "monthly": 399, "yearly": 2999 },
+      "features": [
+        { "key": "publicProfileListing", "label": "Public profile listing", "value": true },
+        { "key": "socialMediaVisibility", "label": "Show social media links", "value": true },
+        { "key": "contactVisibility", "label": "Contact details visible to brands", "value": true },
+        { "key": "priorityListing", "label": "Priority search ranking", "value": true },
+        { "key": "analyticsDashboard", "label": "Analytics dashboard", "value": true }
+      ],
+      "limits": [
+        { "key": "maxProductImages", "label": "Product images", "value": 10 },
+        { "key": "maxActiveCampaigns", "label": "Active campaigns", "value": 10 },
+        { "key": "maxInvitesPerCampaign", "label": "Invites / campaign", "value": -1 },
+        { "key": "maxInviteOptions", "label": "Invite options", "value": -1 }
+      ],
+      "policies": { "imageRetentionDaysAfterExpiry": 45 },
+      "highlight": true,
+      "isActive": true,
+      "sortOrder": 1
+    },
+    {
+      "name": "Brand Free",
+      "userType": "BRAND",
+      "price": { "monthly": 0, "yearly": 0 },
+      "features": [
+        { "key": "browseInfluencerProfiles", "label": "Browse influencer profiles", "value": true },
+        { "key": "viewSocialLinks", "label": "View public social links", "value": true },
+        { "key": "viewContactDetails", "label": "View contact details", "value": true },
+        { "key": "advancedSearchFilters", "label": "Advanced search filters", "value": false },
+        { "key": "campaignAnalytics", "label": "Campaign analytics", "value": false },
+        { "key": "bulkOutreachTools", "label": "Bulk outreach tools", "value": false }
+      ],
+      "limits": [
+        { "key": "maxActiveCampaigns", "label": "Active campaign", "value": 1 },
+        { "key": "maxInvitesPerCampaign", "label": "Invites / campaign", "value": 5 },
+        { "key": "maxTeamSeats", "label": "Team seat", "value": 1 },
+        { "key": "analytics", "label": "Analytics", "value": 0 }
+      ],
+      "policies": { "imageRetentionDaysAfterExpiry": 45 },
+      "highlight": false,
+      "isActive": true,
+      "sortOrder": 0
+    },
+    {
+      "name": "Brand Pro",
+      "userType": "BRAND",
+      "price": { "monthly": 999, "yearly": 7999 },
+      "features": [
+        { "key": "browseInfluencerProfiles", "label": "Browse influencer profiles", "value": true },
+        { "key": "viewSocialLinks", "label": "View public social links", "value": true },
+        { "key": "viewContactDetails", "label": "Unlock full contact details", "value": true },
+        { "key": "advancedSearchFilters", "label": "Advanced search & filters", "value": true },
+        { "key": "campaignAnalyticsDashboard", "label": "Campaign analytics dashboard", "value": true },
+        { "key": "bulkOutreachTools", "label": "Bulk outreach tools", "value": true }
+      ],
+      "limits": [
+        { "key": "maxActiveCampaigns", "label": "Active campaigns", "value": 10 },
+        { "key": "maxInvitesPerCampaign", "label": "Invites / campaign", "value": -1 },
+        { "key": "maxTeamSeats", "label": "Team seats", "value": 5 },
+        { "key": "analytics", "label": "Analytics", "value": 1 }
+      ],
+      "policies": { "imageRetentionDaysAfterExpiry": 45 },
+      "highlight": true,
+      "isActive": true,
+      "sortOrder": 1
+    }
+  ]
+}

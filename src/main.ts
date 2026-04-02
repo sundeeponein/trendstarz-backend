@@ -28,37 +28,7 @@ async function bootstrap() {
   const app = await NestFactory.create(AppModule, new ExpressAdapter(server));
   logMemory("after NestFactory.create");
 
-  const smtpHost = process.env.SMTP_HOST || null;
-  const smtpPort = process.env.SMTP_PORT || null;
-  const smtpUser = process.env.SMTP_USER || "";
-  const smtpConfigured = !!(
-    process.env.SMTP_HOST &&
-    process.env.SMTP_PORT &&
-    process.env.SMTP_USER &&
-    process.env.SMTP_PASS
-  );
-  const [local, domain] = smtpUser.split("@");
-  const userMasked = smtpUser
-    ? `${local ? `${local.slice(0, 2)}***` : "***"}${domain ? `@${domain}` : ""}`
-    : null;
-  const nodeEnv = process.env.NODE_ENV || "development";
-  const mode =
-    nodeEnv === "production"
-      ? smtpConfigured
-        ? "smtp"
-        : "error"
-      : smtpConfigured
-        ? "smtp"
-        : "console-fallback";
 
-  console.log("[EMAIL] Runtime SMTP status:", {
-    nodeEnv,
-    mode,
-    smtpConfigured,
-    host: smtpHost,
-    port: smtpPort,
-    userMasked,
-  });
 
   // Set global API prefix for all routes
   app.setGlobalPrefix("api");
