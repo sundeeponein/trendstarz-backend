@@ -1,3 +1,10 @@
+// Helper for lazy loading PlansService in campaign modules
+import { app } from "../app.module";
+export async function getAppPlansService() {
+  // Wait for app to be initialized if needed
+  if (!app) throw new Error("AppModule not initialized");
+  return app.get(PlansService);
+}
 /* eslint-disable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-argument, @typescript-eslint/no-unsafe-return */
 import {
   Injectable,
@@ -200,31 +207,21 @@ export class PlansService {
     const count = await this.planModel.countDocuments();
     if (count > 0) return { seeded: false, message: "Plans already exist" };
 
+
     const defaultPlans = [
       {
         name: "Pro",
         userType: "INFLUENCER",
         price: { monthly: 399, yearly: 2999 },
         features: [
-          {
-            key: "socialMediaVisibility",
-            label: "Show Social Media Links",
-            value: true,
-          },
-          {
-            key: "contactVisibility",
-            label: "Show Contact Details",
-            value: true,
-          },
-          {
-            key: "priorityListing",
-            label: "Priority Listing in Search",
-            value: true,
-          },
+          { key: "socialMediaVisibility", label: "Show Social Media Links", value: true },
+          { key: "contactVisibility", label: "Show Contact Details", value: true },
+          { key: "priorityListing", label: "Priority Listing in Search", value: true },
         ],
         limits: [
           { key: "maxImages", label: "Max Images Upload", value: 20 },
           { key: "maxCampaigns", label: "Max Campaigns", value: 10 },
+          { key: "maxCampaignApplications", label: "Max Campaigns Apply", value: 10 },
         ],
         policies: { imageRetentionDaysAfterExpiry: 45 },
         highlight: true,
@@ -236,25 +233,15 @@ export class PlansService {
         userType: "BRAND",
         price: { monthly: 399, yearly: 2999 },
         features: [
-          {
-            key: "socialMediaVisibility",
-            label: "Show Social Media Links",
-            value: true,
-          },
-          {
-            key: "contactVisibility",
-            label: "Show Contact Details",
-            value: true,
-          },
-          {
-            key: "priorityListing",
-            label: "Priority Listing in Search",
-            value: true,
-          },
+          { key: "socialMediaVisibility", label: "Show Social Media Links", value: true },
+          { key: "contactVisibility", label: "Show Contact Details", value: true },
+          { key: "priorityListing", label: "Priority Listing in Search", value: true },
         ],
         limits: [
-          { key: "maxImages", label: "Max Product Images", value: 10 },
+          { key: "maxProductImages", label: "Max Product Images", value: 10 },
           { key: "maxCampaigns", label: "Max Campaigns", value: 10 },
+          { key: "maxInvitesPerCampaign", label: "Max Invites Per Campaign", value: 10 },
+          { key: "maxInviteSelectOptions", label: "Max Invite Select Options", value: 10 },
         ],
         policies: { imageRetentionDaysAfterExpiry: 45 },
         highlight: true,

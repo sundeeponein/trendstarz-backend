@@ -106,8 +106,15 @@ export const FREE_PLAN_DEFAULTS = {
     },
   ],
   limits: [
+    // Influencer free plan
     { key: "maxImages", label: "Max Images Upload", value: 2 },
     { key: "maxCampaigns", label: "Max Campaigns", value: 1 },
+    { key: "maxCampaignApplications", label: "Max Campaigns Apply", value: 2 },
+    // Brand free plan
+    { key: "maxProductImages", label: "Max Product Images", value: 3 },
+    { key: "maxInvitesPerCampaign", label: "Max Invites Per Campaign", value: 2 },
+    { key: "maxInvitesPerMonth", label: "Max Campaigns Per Month", value: 1 },
+    { key: "maxInviteSelectOptions", label: "Max Invite Select Options", value: 5 },
   ],
   policies: { imageRetentionDaysAfterExpiry: 45 },
 };
