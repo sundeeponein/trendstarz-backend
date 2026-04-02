@@ -18,27 +18,6 @@ export class CampaignInvitesService {
   ) {}
 
   async create(brandId: string, data: any) {
-      async applyToCampaign(influencerId: string, campaignId: string) {
-        // Enforce influencer campaign application limit (admin-manageable)
-        const { getAppPlansService } = require("../plans/plans.service");
-        const plansService = await getAppPlansService();
-        const caps = await plansService.getUserPlanCapabilities(influencerId);
-        const maxApplications = caps.limits.find((l: any) => l.key === "maxCampaignApplications")?.value ?? 2;
-        // Count applications this month
-        const now = new Date();
-        const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
-        const appCount = await this.inviteModel.countDocuments({
-          influencerId,
-          createdAt: { $gte: monthStart },
-          status: { $in: ["pending", "accepted"] },
-        });
-        if (appCount >= maxApplications) {
-          throw new BadRequestException(`Plan limit: Only ${maxApplications} campaign applications per month allowed. Upgrade for more.`);
-        }
-        // Create application (invite with status 'pending')
-        const invite = new this.inviteModel({ influencerId, campaignId, status: "pending" });
-        return await invite.save();
-      }
     const campaign: any = await this.campaignModel
       .findById(data.campaignId)
       .lean();
@@ -142,7 +121,7 @@ export class CampaignInvitesService {
           .select("title")
           .lean();
         if (brand?.email) {
-          const text = `Hi ${brand.brandName || ""},\n\n${influencer?.name || "An influencer"} has accepted your campaign invite for "${campaign?.title || ""}".\n`;
+          const text = `Hi ${brand.brandName || ""},\n\n${influencer?.name || "An influencer"} has accepted your campaign invite for \"${campaign?.title || ""}\".\n`;
           await sendAppEmail({
             to: brand.email,
             subject: "Campaign Invite Accepted",
@@ -175,4 +154,26 @@ export class CampaignInvitesService {
     invite.analytics = analytics;
     return invite.save();
   }
+
+  async applyToCampaign(influencerId: string, campaignId: string) {
+    const { getAppPlansService } = require("../plans/plans.service");
+    const plansService = await getAppPlansService();
+    const caps = await plansService.getUserPlanCapabilities(influencerId);
+    const maxApplications = caps.limits.find((l: any) => l.key === "maxCampaignApplications")?.value ?? 2;
+    // Count applications this month
+    const now = new Date();
+    const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+    const appCount = await this.inviteModel.countDocuments({
+      influencerId,
+      createdAt: { $gte: monthStart },
+      status: { $in: ["pending", "accepted"] },
+    });
+    if (appCount >= maxApplications) {
+      throw new BadRequestException(`Plan limit: Only ${maxApplications} campaign applications per month allowed. Upgrade for more.`);
+    }
+    // Create application (invite with status 'pending')
+    const invite = new this.inviteModel({ influencerId, campaignId, status: "pending" });
+    return await invite.save();
+  }
+
 }

@@ -1,10 +1,6 @@
 // Helper for lazy loading PlansService in campaign modules
-import { app } from "../app.module";
-export async function getAppPlansService() {
-  // Wait for app to be initialized if needed
-  if (!app) throw new Error("AppModule not initialized");
-  return app.get(PlansService);
-}
+// TODO: Refactor getAppPlansService to use proper app instance or inject PlansService directly.
+// export async function getAppPlansService() { ... }
 /* eslint-disable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-argument, @typescript-eslint/no-unsafe-return */
 import {
   Injectable,
