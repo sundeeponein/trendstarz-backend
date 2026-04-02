@@ -8,6 +8,7 @@ import {
   InfluencerSchema,
   BrandSchema,
 } from "../database/schemas/profile.schemas";
+import { PlansModule } from "../plans/plans.module";
 
 @Module({
   imports: [
@@ -19,6 +20,7 @@ import {
       },
       { name: "Brand", schema: BrandSchema, collection: "brands" },
     ]),
+    PlansModule,
   ],
   controllers: [UsersController, BrandsController],
   providers: [UsersService, CloudinaryService],
