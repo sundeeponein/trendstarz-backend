@@ -52,11 +52,9 @@ export class PlansController {
   /** POST /plans/admin/seed — seed default plans */
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Post("admin/seed")
-  seed() {
-    return this.plansService.seedDefaultPlans();
-  }
-
-  // ── Public / user endpoints ───────────────────────────────────────────────
+  // seed() {
+  //   return this.plansService.seedDefaultPlans();
+  // }
 
   /** GET /plans?userType=INFLUENCER|BRAND — active plans */
   @Get()
