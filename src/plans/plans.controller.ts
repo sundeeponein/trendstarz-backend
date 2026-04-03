@@ -42,27 +42,27 @@ export class PlansController {
     return this.plansService.update(id, dto);
   }
 
-  /** DELETE /plans/admin/:id — delete plan */
+  /** DELETE /plans/admin/:id — delete plan **/
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Delete("admin/:id")
   remove(@Param("id") id: string) {
     return this.plansService.remove(id);
   }
 
-  /** POST /plans/admin/seed — seed default plans */
+  /** POST /plans/admin/seed — seed default plans **/
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Post("admin/seed")
   // seed() {
   //   return this.plansService.seedDefaultPlans();
   // }
 
-  /** GET /plans?userType=INFLUENCER|BRAND — active plans */
+  /** GET /plans?userType=INFLUENCER|BRAND — active plans **/
   @Get()
   listActive(@Query("userType") userType?: string) {
     return this.plansService.listActive(userType);
   }
 
-  /** GET /plans/my/subscription — current user subscription */
+  /** GET /plans/my/subscription — current user subscription **/
   @UseGuards(JwtAuthGuard)
   @Get("my/subscription")
   async mySubscription(@Req() req: any) {
@@ -72,7 +72,7 @@ export class PlansController {
     return { success: true, subscription: sub };
   }
 
-  /** GET /plans/my/capabilities — full plan caps (features + limits) */
+  /** GET /plans/my/capabilities — full plan caps (features + limits) **/
   @UseGuards(JwtAuthGuard)
   @Get("my/capabilities")
   async myCapabilities(@Req() req: any) {
