@@ -59,7 +59,11 @@ import { PlansModule } from "./plans/plans.module";
       },
       { name: "Brand", schema: BrandSchema, collection: "brands" },
       { name: "Tier", schema: TierSchema, collection: "tiers" },
-      { name: "AppSettings", schema: AppSettingsSchema, collection: "appsettings" },
+      {
+        name: "AppSettings",
+        schema: AppSettingsSchema,
+        collection: "appsettings",
+      },
       { name: "Payment", schema: PaymentSchema, collection: "payments" },
     ]),
     UsersModule,
@@ -81,11 +85,6 @@ import { PlansModule } from "./plans/plans.module";
     AdminUserTableController,
     // SeedController,
   ],
-  providers: [
-    AppService,
-    AuthService,
-    MongoLogger,
-    CloudinaryService,
-  ],
+  providers: [AppService, AuthService, MongoLogger, CloudinaryService],
 })
 export class AppModule {}
