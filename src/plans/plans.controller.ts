@@ -91,7 +91,7 @@ export class PlansController {
     return this.plansService.getUserSubscriptions(userId);
   }
 
-  /** GET /plans/admin/user/:userId/capabilities — admin view of a user's plan */
+  /** GET /plans/admin/user/:userId/capabilities — admin view of a user's plan **/
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Get("admin/user/:userId/capabilities")
   async userCapabilities(@Param("userId") userId: string) {
