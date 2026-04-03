@@ -10,9 +10,11 @@ import { CampaignsController } from "./campaigns.controller";
 import { CampaignsService } from "./campaigns.service";
 import { CampaignInvitesController } from "./campaign-invites.controller";
 import { CampaignInvitesService } from "./campaign-invites.service";
+import { PlansModule } from "../plans/plans.module";
 
 @Module({
   imports: [
+    PlansModule,
     MongooseModule.forFeature([
       { name: "Campaign", schema: CampaignSchema, collection: "campaigns" },
       {
