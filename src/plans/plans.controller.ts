@@ -49,13 +49,6 @@ export class PlansController {
     return this.plansService.remove(id);
   }
 
-  /** POST /plans/admin/seed — seed default plans **/
-  @UseGuards(JwtAuthGuard, RolesGuard)
-  @Post("admin/seed")
-  // seed() {
-  //   return this.plansService.seedDefaultPlans();
-  // }
-
   /** GET /plans?userType=INFLUENCER|BRAND — active plans **/
   @Get()
   listActive(@Query("userType") userType?: string) {
