@@ -10,7 +10,7 @@
   "license": "UNLICENSED",
   "scripts": {
     "build": "node node_modules/@nestjs/cli/bin/nest.js build",
-    "start": "NODE_OPTIONS=--max-old-space-size=2048 node node_modules/@nestjs/cli/bin/nest.js start",
+    "start": "npm run build && node dist/main.js",
     "start:dev": "node node_modules/@nestjs/cli/bin/nest.js start --watch",
     "build:prod": "node node_modules/@nestjs/cli/bin/nest.js build --configuration production",
     "start:prod": "node dist/main.js",
