@@ -5,6 +5,7 @@ import {
 } from "@nestjs/common";
 import { InjectModel } from "@nestjs/mongoose";
 import { Model } from "mongoose";
+import { PlansService } from "../plans/plans.service";
 
 const VALID_TRANSITIONS: Record<string, string[]> = {
   draft: ["active"],
@@ -17,6 +18,7 @@ export class CampaignsService {
   constructor(
     @InjectModel("Campaign") private readonly campaignModel: Model<any>,
     @InjectModel("Brand") private readonly brandModel: Model<any>,
+    private readonly plansService: PlansService,
   ) {}
 
   async create(brandId: string, data: any) {
@@ -24,9 +26,7 @@ export class CampaignsService {
     const brand = await this.brandModel.findById(brandId).lean();
     if (!brand) throw new NotFoundException("Brand not found");
     // Lazy load PlansService to avoid circular dep
-    const { getAppPlansService } = require("../plans/plans.service");
-    const plansService = await getAppPlansService();
-    const caps = await plansService.getUserPlanCapabilities(brandId);
+    const caps = await this.plansService.getUserPlanCapabilities(brandId);
     const maxCampaigns = caps.limits.find((l: any) => l.key === "maxCampaigns")?.value ?? 1;
     const now = new Date();
     const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);

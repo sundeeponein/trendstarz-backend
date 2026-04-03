@@ -6,6 +6,7 @@ import {
 import { InjectModel } from "@nestjs/mongoose";
 import { Model } from "mongoose";
 import { sendAppEmail } from "../utils/app-email.service";
+import { PlansService } from "../plans/plans.service";
 
 @Injectable()
 export class CampaignInvitesService {
@@ -15,6 +16,7 @@ export class CampaignInvitesService {
     @InjectModel("Campaign") private readonly campaignModel: Model<any>,
     @InjectModel("Brand") private readonly brandModel: Model<any>,
     @InjectModel("Influencer") private readonly influencerModel: Model<any>,
+    private readonly plansService: PlansService,
   ) {}
 
   async create(brandId: string, data: any) {
@@ -26,25 +28,25 @@ export class CampaignInvitesService {
       throw new BadRequestException("Not your campaign");
     }
     // Enforce invite limits for brands (admin-manageable)
-    const { getAppPlansService } = require("../plans/plans.service");
-    const plansService = await getAppPlansService();
-    const caps = await plansService.getUserPlanCapabilities(brandId);
-    const maxInvitesPerCampaign = caps.limits.find((l: any) => l.key === "maxInvitesPerCampaign")?.value ?? 2;
-    const maxInvitesPerMonth = caps.limits.find((l: any) => l.key === "maxInvitesPerMonth")?.value ?? 1;
+    const caps = await this.plansService.getUserPlanCapabilities(brandId);
+    const maxInvitesPerCampaign = caps.limits.find((l: any) => l.key === "maxInvitesPerCampaign")?.value ?? 5;
+    const maxInvitesPerMonthEntry = caps.limits.find((l: any) => l.key === "maxInvitesPerMonth");
     // Count invites for this campaign
     const inviteCount = await this.inviteModel.countDocuments({ campaignId: data.campaignId });
-    if (inviteCount >= maxInvitesPerCampaign) {
+    if (maxInvitesPerCampaign !== -1 && inviteCount >= maxInvitesPerCampaign) {
       throw new BadRequestException(`Plan limit: Only ${maxInvitesPerCampaign} invites per campaign allowed. Upgrade for more.`);
     }
-    // Count invites sent this month
-    const now = new Date();
-    const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
-    const monthInviteCount = await this.inviteModel.countDocuments({
-      brandId,
-      createdAt: { $gte: monthStart },
-    });
-    if (monthInviteCount >= maxInvitesPerMonth) {
-      throw new BadRequestException(`Plan limit: Only ${maxInvitesPerMonth} campaign(s) with invites per month allowed. Upgrade for more.`);
+    // Per-month cap only applies when explicitly set in the plan
+    if (maxInvitesPerMonthEntry !== undefined && maxInvitesPerMonthEntry.value !== -1) {
+      const now = new Date();
+      const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+      const monthInviteCount = await this.inviteModel.countDocuments({
+        brandId,
+        createdAt: { $gte: monthStart },
+      });
+      if (monthInviteCount >= maxInvitesPerMonthEntry.value) {
+        throw new BadRequestException(`Plan limit: Only ${maxInvitesPerMonthEntry.value} campaign(s) with invites per month allowed. Upgrade for more.`);
+      }
     }
     const invite = new this.inviteModel({ ...data, brandId });
     const saved = await invite.save();
@@ -156,9 +158,7 @@ export class CampaignInvitesService {
   }
 
   async applyToCampaign(influencerId: string, campaignId: string) {
-    const { getAppPlansService } = require("../plans/plans.service");
-    const plansService = await getAppPlansService();
-    const caps = await plansService.getUserPlanCapabilities(influencerId);
+    const caps = await this.plansService.getUserPlanCapabilities(influencerId);
     const maxApplications = caps.limits.find((l: any) => l.key === "maxCampaignApplications")?.value ?? 2;
     // Count applications this month
     const now = new Date();
