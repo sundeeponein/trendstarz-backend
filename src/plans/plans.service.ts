@@ -58,7 +58,11 @@ export class PlansService {
 
   async listActive(userType?: string) {
     const query: any = { isActive: true };
-    if (userType) query.$or = [{ userType }, { userType: "ALL" }];
+    if (userType) {
+      // Normalize userType to uppercase for compatibility
+      const normalized = userType.toUpperCase();
+      query.$or = [{ userType: normalized }, { userType: "ALL" }];
+    }
     const plans = await this.planModel
       .find(query)
       .sort({ sortOrder: 1 })
