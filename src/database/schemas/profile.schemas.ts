@@ -209,6 +209,11 @@ export const CampaignSchema = new Schema(
     budgetMax: { type: Number },
     timelineStart: { type: Date },
     timelineEnd: { type: Date },
+    categories: [{ type: String }],
+    deliverables: [{ type: String }],
+    minFollowerCount: { type: Number },
+    platformPreference: { type: String },
+    specialInstructions: { type: String },
   },
   { timestamps: true },
 );
