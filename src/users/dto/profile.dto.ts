@@ -1,10 +1,3 @@
-export class ImageDto {
-  @IsString()
-  url: string;
-
-  @IsString()
-  public_id: string;
-}
 import {
   IsString,
   IsEmail,
@@ -16,13 +9,20 @@ import {
   ValidateNested,
   IsNumber,
   ArrayMaxSize,
-  ArrayMinSize,
 } from "class-validator";
 import { Type } from "class-transformer";
 
+export class ImageDto {
+  @IsString()
+  url!: string;
+
+  @IsString()
+  public_id!: string;
+}
+
 export class LocationDto {
   @IsMongoId()
-  state: string;
+  state!: string;
 }
 
 export class BrandLocationDto extends LocationDto {
@@ -33,81 +33,104 @@ export class BrandLocationDto extends LocationDto {
 
 export class ContactDto {
   @IsBoolean()
-  whatsapp: boolean;
+  whatsapp!: boolean;
 
   @IsBoolean()
-  email: boolean;
+  email!: boolean;
 
   @IsBoolean()
-  call: boolean;
+  call!: boolean;
+}
+
+export class ContentTypeDto {
+  @IsString()
+  name!: string;
+
+  @IsBoolean()
+  @IsOptional()
+  enabled?: boolean;
+
+  @IsNumber()
+  @IsOptional()
+  price?: number;
 }
 
 export class SocialMediaDto {
-  @IsMongoId()
-  platform: string;
+  @IsString()
+  platform!: string;
 
   @IsString()
-  handle: string;
+  handle!: string;
 
   @IsString()
-  tier: string;
+  @IsOptional()
+  tier?: string;
 
   @IsNumber()
-  followersCount: number;
+  @IsOptional()
+  followersCount?: number;
+
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => ContentTypeDto)
+  @IsOptional()
+  contentTypes?: ContentTypeDto[];
 }
 
 export class InfluencerProfileDto {
   @IsNumber()
-  promotionalPrice: number;
-  @IsString()
-  password: string;
+  promotionalPrice!: number;
 
   @IsString()
-  name: string;
+  password!: string;
+
+  @IsString()
+  name!: string;
 
   @IsEmail()
-  email: string;
+  email!: string;
 
   @IsString()
-  phoneNumber: string;
+  phoneNumber!: string;
 
   @IsString()
-  username: string;
+  username!: string;
 
   @IsArray()
   @ArrayMaxSize(3)
   @ValidateNested({ each: true })
   @Type(() => ImageDto)
-  profileImages: ImageDto[];
+  profileImages!: ImageDto[];
 
   @IsBoolean()
-  isPremium: boolean;
+  isPremium!: boolean;
 
   @IsArray()
   @IsMongoId({ each: true })
-  categories: string[];
+  categories!: string[];
 
   @IsArray()
   @IsMongoId({ each: true })
-  languages: string[];
+  languages!: string[];
 
   @Type(() => LocationDto)
   @ValidateNested()
-  location: LocationDto;
+  location!: LocationDto;
 
   @IsArray()
   @ValidateNested({ each: true })
   @Type(() => SocialMediaDto)
-  socialMedia: SocialMediaDto[];
+  socialMedia!: SocialMediaDto[];
 
   @Type(() => ContactDto)
   @ValidateNested()
-  contact: ContactDto;
+  contact!: ContactDto;
 }
 
 export class BrandProfileDto {
   @IsNumber()
-  promotionalPrice: number;
+  promotionalPrice!: number;
+
   @IsArray()
   @ValidateNested({ each: true })
   @Type(() => SocialMediaDto)
@@ -117,38 +140,39 @@ export class BrandProfileDto {
   @IsString()
   @IsOptional()
   googleMapAddress?: string;
-  @IsString()
-  password: string;
 
   @IsString()
-  brandName: string;
+  password!: string;
+
+  @IsString()
+  brandName!: string;
 
   @IsEmail()
-  email: string;
+  email!: string;
 
   @IsString()
-  phoneNumber: string;
+  phoneNumber!: string;
 
   @IsArray()
   @ArrayMaxSize(3)
   @ValidateNested({ each: true })
   @Type(() => ImageDto)
-  brandLogo: ImageDto[];
+  brandLogo!: ImageDto[];
 
   @IsBoolean()
-  isPremium: boolean;
+  isPremium!: boolean;
 
   @IsArray()
   @IsMongoId({ each: true })
-  categories: string[];
+  categories!: string[];
 
   @IsArray()
   @IsMongoId({ each: true })
-  languages: string[];
+  languages!: string[];
 
   @Type(() => BrandLocationDto)
   @ValidateNested()
-  location: BrandLocationDto;
+  location!: BrandLocationDto;
 
   @IsArray()
   @ArrayMaxSize(3)
@@ -159,5 +183,5 @@ export class BrandProfileDto {
 
   @Type(() => ContactDto)
   @ValidateNested()
-  contact: ContactDto;
+  contact!: ContactDto;
 }
