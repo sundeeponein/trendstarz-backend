@@ -8,8 +8,9 @@ import { Model } from "mongoose";
 import { PlansService } from "../plans/plans.service";
 
 const VALID_TRANSITIONS: Record<string, string[]> = {
-  draft: ["active"],
-  active: ["completed"],
+  draft:     ["pending", "active"],
+  pending:   ["active", "draft"],
+  active:    ["pending", "completed"],
   completed: [],
 };
 

@@ -202,7 +202,7 @@ export const CampaignSchema = new Schema(
     },
     status: {
       type: String,
-      enum: ["draft", "active", "completed"],
+      enum: ["draft", "pending", "active", "completed"],
       default: "draft",
     },
     budgetMin: { type: Number },
