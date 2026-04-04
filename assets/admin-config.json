@@ -1,9 +1,86 @@
 {
   "socialMediaPlatforms": [
-    { "name": "Instagram", "visible": true },
-    { "name": "YouTube", "visible": true },
-    { "name": "Twitter", "visible": true },
-    { "name": "Facebook", "visible": true }
+    {
+      "name": "YouTube",
+      "visible": true,
+      "icon": "bi-youtube",
+      "color": "#FF0000",
+      "handleLabel": "Handle",
+      "followersLabel": "Subscribers",
+      "contentTypes": [
+        { "name": "Video", "visible": true },
+        { "name": "Shorts", "visible": true },
+        { "name": "Live stream", "visible": true },
+        { "name": "Community post", "visible": true }
+      ]
+    },
+    {
+      "name": "Instagram",
+      "visible": true,
+      "icon": "bi-instagram",
+      "color": "#E1306C",
+      "handleLabel": "Handle",
+      "followersLabel": "Followers",
+      "contentTypes": [
+        { "name": "Photo post", "visible": true },
+        { "name": "Reel", "visible": true },
+        { "name": "Story (24h)", "visible": true },
+        { "name": "Live", "visible": true },
+        { "name": "Collab post", "visible": true }
+      ]
+    },
+    {
+      "name": "Facebook",
+      "visible": true,
+      "icon": "bi-facebook",
+      "color": "#1877F2",
+      "handleLabel": "Page name",
+      "followersLabel": "Followers",
+      "contentTypes": [
+        { "name": "Post", "visible": true },
+        { "name": "Reel", "visible": true },
+        { "name": "Story", "visible": true },
+        { "name": "Live", "visible": true }
+      ]
+    },
+    {
+      "name": "TikTok",
+      "visible": true,
+      "icon": "bi-tiktok",
+      "color": "#010101",
+      "handleLabel": "Handle",
+      "followersLabel": "Followers",
+      "contentTypes": [
+        { "name": "Video", "visible": true },
+        { "name": "Live", "visible": true }
+      ]
+    },
+    {
+      "name": "X / Twitter",
+      "visible": true,
+      "icon": "bi-twitter-x",
+      "color": "#14171A",
+      "handleLabel": "Handle",
+      "followersLabel": "Followers",
+      "contentTypes": [
+        { "name": "Tweet / post", "visible": true },
+        { "name": "Thread", "visible": true },
+        { "name": "X Space", "visible": true }
+      ]
+    },
+    {
+      "name": "LinkedIn",
+      "visible": true,
+      "icon": "bi-linkedin",
+      "color": "#0A66C2",
+      "handleLabel": "Profile URL",
+      "followersLabel": "Followers",
+      "contentTypes": [
+        { "name": "Post", "visible": true },
+        { "name": "Article", "visible": true },
+        { "name": "Video", "visible": true }
+      ]
+    }
   ],
   "categories": [
     { "name": "Fashion", "visible": true },
