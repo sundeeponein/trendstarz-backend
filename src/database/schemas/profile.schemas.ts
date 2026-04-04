@@ -64,6 +64,13 @@ export const InfluencerSchema = new Schema(
         handle: { type: String },
         tier: { type: String },
         followersCount: { type: Number },
+        contentTypes: [
+          {
+            name: { type: String },
+            enabled: { type: Boolean, default: false },
+            price: { type: Number, default: 0 },
+          },
+        ],
       },
     ],
     contact: {
@@ -72,6 +79,7 @@ export const InfluencerSchema = new Schema(
       call: { type: Boolean, default: false },
     },
     promotionalPrice: { type: Number },
+    website: { type: String },
     status: {
       type: String,
       enum: ["pending", "accepted", "declined", "deleted"],
@@ -181,7 +189,16 @@ export const StateModel = model("State", StateSchema);
 export const SocialMediaSchema = new Schema({
   name: { type: String, required: true },
   showInFrontend: { type: Boolean, default: true },
-  tiers: [{ type: String }],
+  icon: { type: String },
+  color: { type: String },
+  handleLabel: { type: String, default: "Handle" },
+  followersLabel: { type: String, default: "Followers" },
+  contentTypes: [
+    {
+      name: { type: String, required: true },
+      visible: { type: Boolean, default: true },
+    },
+  ],
 });
 export const SocialMediaModel = model("SocialMedia", SocialMediaSchema);
 

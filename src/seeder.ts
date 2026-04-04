@@ -130,17 +130,22 @@ export async function seedDatabase() {
     for (const sm of adminConfig.socialMediaPlatforms) {
       try {
         const exists = await SocialMediaModel.findOne({ name: sm.name });
+        const fields = {
+          showInFrontend: sm.visible,
+          icon: sm.icon || null,
+          color: sm.color || null,
+          handleLabel: sm.handleLabel || "Handle",
+          followersLabel: sm.followersLabel || "Followers",
+          contentTypes: (sm.contentTypes || []).map((ct: any) => ({
+            name: ct.name,
+            visible: ct.visible !== false,
+          })),
+        };
         if (!exists) {
-          await SocialMediaModel.create({
-            name: sm.name,
-            showInFrontend: sm.visible,
-          });
+          await SocialMediaModel.create({ name: sm.name, ...fields });
           console.log(`Inserted social media: ${sm.name}`);
         } else {
-          await SocialMediaModel.updateOne(
-            { name: sm.name },
-            { $set: { showInFrontend: sm.visible } },
-          );
+          await SocialMediaModel.updateOne({ name: sm.name }, { $set: fields });
           console.log(`Updated social media: ${sm.name}`);
         }
       } catch (err) {
