@@ -45,6 +45,17 @@ export const InfluencerSchema = new Schema(
         public_id: { type: String, required: true },
       },
     ], // Cloudinary image objects
+    // Soft delete and media fields
+    isDeleted: { type: Boolean, default: false },
+    deletedAt: { type: Date },
+    profileImage: { type: String },
+    profileImagePublicId: { type: String },
+    galleryImages: [
+      {
+        url: String,
+        publicId: String,
+      },
+    ],
     isPremium: { type: Boolean, default: false },
     premiumDuration: {
       type: String,
@@ -121,6 +132,17 @@ export const BrandSchema = new Schema(
         public_id: { type: String, required: true },
       },
     ], // Cloudinary image objects
+    // Soft delete and media fields
+    isDeleted: { type: Boolean, default: false },
+    deletedAt: { type: Date },
+    profileImage: { type: String },
+    profileImagePublicId: { type: String },
+    galleryImages: [
+      {
+        url: String,
+        publicId: String,
+      },
+    ],
     isPremium: { type: Boolean, default: false },
     premiumDuration: {
       type: String,
