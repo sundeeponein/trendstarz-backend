@@ -735,18 +735,53 @@ export class UsersService {
   async deleteUser(id: string) {
     // Try influencer first
     let user: any = await this.influencerModel.findById(id);
-    if (!user) user = await this.brandModel.findById(id);
+    if (!user) {
+      user = await this.brandModel.findById(id);
+    }
     if (!user) return { message: "User not found", id };
+
+    // --- SNAPSHOT LOGIC: Only if user has at least one payment, and only if deleting (soft delete) ---
+    const paymentModel =
+      (this as any).paymentModel || (global as any).paymentModel;
+    if (paymentModel) {
+      // Find all payments for this user
+      const payments = await paymentModel.find({ userId: id });
+      if (payments.length > 0) {
+        // Build snapshot
+        const userSnapshot = {
+          name: user.name || user.brandName,
+          email: user.email,
+        };
+        for (const payment of payments) {
+          if (
+            !payment.userSnapshot ||
+            !payment.userSnapshot.name ||
+            !payment.userSnapshot.email
+          ) {
+            payment.userSnapshot = userSnapshot;
+            await payment.save();
+          }
+        }
+      }
+    }
 
     // Delete profile image
     if (user.profileImagePublicId) {
-      try { await this.cloudinaryService.deleteImage(user.profileImagePublicId); } catch (e) { /* log error */ }
+      try {
+        await this.cloudinaryService.deleteImage(user.profileImagePublicId);
+      } catch {
+        /* log error */
+      }
     }
     // Delete gallery images
     if (user.galleryImages?.length) {
       for (const img of user.galleryImages) {
         if (img.publicId) {
-          try { await this.cloudinaryService.deleteImage(img.publicId); } catch (e) { /* log error */ }
+          try {
+            await this.cloudinaryService.deleteImage(img.publicId);
+          } catch {
+            /* log error */
+          }
         }
       }
     }
