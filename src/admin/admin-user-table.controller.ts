@@ -1,4 +1,4 @@
-import { Controller, Get, Patch, Body, Param, UseGuards } from "@nestjs/common";
+import { Controller, Get, Patch, Body, Param, UseGuards, Query } from "@nestjs/common";
 import { JwtAuthGuard } from "../auth/jwt-auth.guard";
 import { RolesGuard } from "../auth/roles.guard";
 import { InjectModel } from "@nestjs/mongoose";
@@ -22,40 +22,36 @@ export class AdminUserTableController {
 
 
   @Get("influencers")
-  async getInfluencers(@Param() params: any, @Body() body: any, @Body('status') status?: string, @Body('q') q?: string, @Body('category') category?: string) {
-    // Support ?status=deleted for deleted users tab
-    // Use req.query for status param
+  async getInfluencers(
+    @Query('status') status?: string,
+    @Query('q') q?: string,
+    @Query('category') category?: string
+  ) {
     const filter: any = {};
-    // Use req.query for status param
-    let statusParam = '';
-    if (typeof body === 'object' && body && body.status) statusParam = body.status;
-    if (typeof params === 'object' && params && params.status) statusParam = params.status;
-    if (typeof status === 'string') statusParam = status;
-    if (typeof q === 'string') filter.q = q;
-    if (typeof category === 'string') filter.category = category;
-    if (statusParam === 'deleted') {
+    if (status === 'deleted') {
       filter.isDeleted = true;
     } else {
       filter.isDeleted = { $ne: true };
     }
+    if (q) filter.q = q;
+    if (category) filter.category = category;
     return this.influencerModel.find(filter).lean().limit(100);
   }
 
   @Get("brands")
-  async getBrands(@Param() params: any, @Body() body: any, @Body('status') status?: string, @Body('q') q?: string, @Body('category') category?: string) {
-    // Support ?status=deleted for deleted users tab
+  async getBrands(
+    @Query('status') status?: string,
+    @Query('q') q?: string,
+    @Query('category') category?: string
+  ) {
     const filter: any = {};
-    let statusParam = '';
-    if (typeof body === 'object' && body && body.status) statusParam = body.status;
-    if (typeof params === 'object' && params && params.status) statusParam = params.status;
-    if (typeof status === 'string') statusParam = status;
-    if (typeof q === 'string') filter.q = q;
-    if (typeof category === 'string') filter.category = category;
-    if (statusParam === 'deleted') {
+    if (status === 'deleted') {
       filter.isDeleted = true;
     } else {
       filter.isDeleted = { $ne: true };
     }
+    if (q) filter.q = q;
+    if (category) filter.category = category;
     // Always return brandLogo and products fields
     const brands = await this.brandModel.find(filter).lean().limit(100);
     brands.forEach((b) => {
