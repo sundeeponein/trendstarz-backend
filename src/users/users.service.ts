@@ -733,21 +733,33 @@ export class UsersService {
   }
 
   async deleteUser(id: string) {
-    // Soft-delete: set status to 'deleted' so user appears in Deleted Users list.
-    // Admin can permanently delete from there.
-    let user: any = await this.influencerModel.findByIdAndUpdate(
-      id,
-      { status: "deleted" },
-      { new: true },
-    );
-    if (user) return { message: "Influencer soft-deleted", user };
-    user = await this.brandModel.findByIdAndUpdate(
-      id,
-      { status: "deleted" },
-      { new: true },
-    );
-    if (user) return { message: "Brand soft-deleted", user };
-    return { message: "User not found", id };
+    // Try influencer first
+    let user: any = await this.influencerModel.findById(id);
+    if (!user) user = await this.brandModel.findById(id);
+    if (!user) return { message: "User not found", id };
+
+    // Delete profile image
+    if (user.profileImagePublicId) {
+      try { await this.cloudinaryService.deleteImage(user.profileImagePublicId); } catch (e) { /* log error */ }
+    }
+    // Delete gallery images
+    if (user.galleryImages?.length) {
+      for (const img of user.galleryImages) {
+        if (img.publicId) {
+          try { await this.cloudinaryService.deleteImage(img.publicId); } catch (e) { /* log error */ }
+        }
+      }
+    }
+    // Soft delete
+    user.isDeleted = true;
+    user.deletedAt = new Date();
+    // Remove heavy fields
+    user.profileImage = null;
+    user.profileImagePublicId = null;
+    user.galleryImages = [];
+    await user.save();
+
+    return { message: "User soft deleted and media cleaned" };
   }
   async setPremium(
     id: string,

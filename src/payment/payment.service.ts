@@ -67,10 +67,20 @@ export class PaymentService {
       };
     }
 
+    // Fetch user and store snapshot
+    let user;
+    if (userType === 'Influencer') {
+      user = await this.influencerModel.findById(userId).lean();
+    } else {
+      user = await this.brandModel.findById(userId).lean();
+    }
+    const userSnapshot = user ? { name: user.name || user.brandName, email: user.email } : {};
+
     // Create pending payment record
     const payment = new this.paymentModel({
       userId,
       userType,
+      userSnapshot,
       transactionId,
       amount,
       premiumDuration,
