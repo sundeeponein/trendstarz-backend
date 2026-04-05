@@ -343,6 +343,9 @@ export class AuthService {
     if (influencer) {
       const isMatch = await bcrypt.compare(password, influencer.password);
       if (!isMatch) throw new UnauthorizedException("Invalid credentials");
+      if (influencer.isDeleted === true || influencer.isDeleted === 'true') {
+        throw new UnauthorizedException("Your account has been deleted. Please contact support.");
+      }
       if (influencer.status === "pending") {
         throw new UnauthorizedException(
           "Your account is pending approval. Please wait for admin to activate your account.",
@@ -381,6 +384,9 @@ export class AuthService {
     if (brand) {
       const isMatch = await bcrypt.compare(password, brand.password);
       if (!isMatch) throw new UnauthorizedException("Invalid credentials");
+      if (brand.isDeleted === true || brand.isDeleted === 'true') {
+        throw new UnauthorizedException("Your account has been deleted. Please contact support.");
+      }
       if (brand.status === "pending") {
         throw new UnauthorizedException(
           "Your account is pending approval. Please wait for admin to activate your account.",
