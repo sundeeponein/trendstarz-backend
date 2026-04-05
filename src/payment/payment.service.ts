@@ -74,7 +74,13 @@ export class PaymentService {
     } else {
       user = await this.brandModel.findById(userId).lean();
     }
-    const userSnapshot = user ? { name: user.name || user.brandName, email: user.email } : {};
+    let userSnapshot = {};
+    if (user && typeof user === 'object' && !Array.isArray(user)) {
+      userSnapshot = {
+        name: (user as any).name || (user as any).brandName,
+        email: (user as any).email,
+      };
+    }
 
     // Create pending payment record
     const payment = new this.paymentModel({
