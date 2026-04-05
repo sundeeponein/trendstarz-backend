@@ -31,7 +31,7 @@ export class AdminUserTableController {
     if (status === 'deleted') {
       filter.isDeleted = { $in: [true, 'true'] };
     } else {
-      filter.isDeleted = { $ne: true, $ne: 'true' };
+      filter.isDeleted = { $nin: [true, 'true'] };
     }
     if (q) filter.q = q;
     if (category) filter.category = category;
@@ -48,7 +48,7 @@ export class AdminUserTableController {
     if (status === 'deleted') {
       filter.isDeleted = { $in: [true, 'true'] };
     } else {
-      filter.isDeleted = { $ne: true, $ne: 'true' };
+      filter.isDeleted = { $nin: [true, 'true'] };
     }
     if (q) filter.q = q;
     if (category) filter.category = category;
