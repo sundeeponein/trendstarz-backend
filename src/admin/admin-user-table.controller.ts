@@ -54,13 +54,11 @@ export class AdminUserTableController {
     } else {
       filter.isDeleted = { $nin: [true, 'true'] };
     }
+    if (q) filter.q = q;
+    if (category) filter.category = category;
     console.log('[ADMIN][DEBUG] Brand filter:', JSON.stringify(filter));
     const brands = await this.brandModel.find(filter).lean().limit(100);
     console.log('[ADMIN][DEBUG] Brand result count:', brands.length);
-    if (q) filter.q = q;
-    if (category) filter.category = category;
-    // Always return brandLogo and products fields
-    const brands = await this.brandModel.find(filter).lean().limit(100);
     brands.forEach((b) => {
       if (!b.brandLogo) b.brandLogo = [];
       if (!b.products) b.products = [];
