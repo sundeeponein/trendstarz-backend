@@ -29,9 +29,9 @@ export class AdminUserTableController {
   ) {
     const filter: any = {};
     if (status === 'deleted') {
-      filter.isDeleted = true;
+      filter.isDeleted = { $in: [true, 'true'] };
     } else {
-      filter.isDeleted = { $ne: true };
+      filter.isDeleted = { $ne: true, $ne: 'true' };
     }
     if (q) filter.q = q;
     if (category) filter.category = category;
@@ -46,9 +46,9 @@ export class AdminUserTableController {
   ) {
     const filter: any = {};
     if (status === 'deleted') {
-      filter.isDeleted = true;
+      filter.isDeleted = { $in: [true, 'true'] };
     } else {
-      filter.isDeleted = { $ne: true };
+      filter.isDeleted = { $ne: true, $ne: 'true' };
     }
     if (q) filter.q = q;
     if (category) filter.category = category;
