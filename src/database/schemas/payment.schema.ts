@@ -1,9 +1,14 @@
 import { Schema, Document } from 'mongoose';
 
+
 export const PaymentSchema = new Schema(
   {
-    userId: { type: Schema.Types.ObjectId, required: true, refPath: 'userType' },
+    userId: { type: Schema.Types.ObjectId, refPath: 'userType', required: false },
     userType: { type: String, enum: ['Influencer', 'Brand'], required: true },
+    userSnapshot: {
+      name: { type: String },
+      email: { type: String },
+    },
     transactionId: { type: String, required: true, unique: true },
     amount: { type: Number, required: true }, // in paise (e.g., 39900 for ₹399)
     premiumDuration: { type: String, enum: ['1m', '3m', '1y'], required: true },
