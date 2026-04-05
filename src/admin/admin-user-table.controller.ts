@@ -20,15 +20,44 @@ export class AdminUserTableController {
     @InjectModel("Brand") private readonly brandModel: Model<BrandImageDoc>,
   ) {}
 
+
   @Get("influencers")
-  async getInfluencers() {
-    return this.influencerModel.find({ isDeleted: { $ne: true } }).lean().limit(100);
+  async getInfluencers(@Param() params: any, @Body() body: any, @Body('status') status?: string, @Body('q') q?: string, @Body('category') category?: string) {
+    // Support ?status=deleted for deleted users tab
+    // Use req.query for status param
+    const filter: any = {};
+    // Use req.query for status param
+    let statusParam = '';
+    if (typeof body === 'object' && body && body.status) statusParam = body.status;
+    if (typeof params === 'object' && params && params.status) statusParam = params.status;
+    if (typeof status === 'string') statusParam = status;
+    if (typeof q === 'string') filter.q = q;
+    if (typeof category === 'string') filter.category = category;
+    if (statusParam === 'deleted') {
+      filter.isDeleted = true;
+    } else {
+      filter.isDeleted = { $ne: true };
+    }
+    return this.influencerModel.find(filter).lean().limit(100);
   }
 
   @Get("brands")
-  async getBrands() {
+  async getBrands(@Param() params: any, @Body() body: any, @Body('status') status?: string, @Body('q') q?: string, @Body('category') category?: string) {
+    // Support ?status=deleted for deleted users tab
+    const filter: any = {};
+    let statusParam = '';
+    if (typeof body === 'object' && body && body.status) statusParam = body.status;
+    if (typeof params === 'object' && params && params.status) statusParam = params.status;
+    if (typeof status === 'string') statusParam = status;
+    if (typeof q === 'string') filter.q = q;
+    if (typeof category === 'string') filter.category = category;
+    if (statusParam === 'deleted') {
+      filter.isDeleted = true;
+    } else {
+      filter.isDeleted = { $ne: true };
+    }
     // Always return brandLogo and products fields
-    const brands = await this.brandModel.find({ isDeleted: { $ne: true } }).lean().limit(100);
+    const brands = await this.brandModel.find(filter).lean().limit(100);
     brands.forEach((b) => {
       if (!b.brandLogo) b.brandLogo = [];
       if (!b.products) b.products = [];
