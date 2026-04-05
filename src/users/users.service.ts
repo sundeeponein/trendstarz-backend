@@ -48,6 +48,7 @@ export class UsersService {
     return !!brand;
   }
 
+  // Only use this for GDPR requests. Otherwise, always use soft delete.
   async deletePermanently(id: string) {
     // Try influencer first
     let user = await this.influencerModel.findById(id);

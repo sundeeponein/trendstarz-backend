@@ -150,11 +150,16 @@ export class UsersController {
     return this.usersService.restoreUser(id);
   }
 
-  @UseGuards(JwtAuthGuard, RolesGuard)
-  @Delete(":id/permanent")
-  async deletePermanently(@Param("id") id: string) {
-    return this.usersService.deletePermanently(id);
-  }
+  // Permanent delete is now only allowed for GDPR requests. Otherwise, use soft delete.
+  // To enable, uncomment and add GDPR check logic.
+  // @UseGuards(JwtAuthGuard, RolesGuard)
+  // @Delete(":id/permanent")
+  // async deletePermanently(@Param("id") id: string, @Req() req: any) {
+  //   if (!req.isGDPRRequest) {
+  //     throw new ForbiddenException("Permanent delete is only allowed for GDPR requests.");
+  //   }
+  //   return this.usersService.deletePermanently(id);
+  // }
 
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Patch(":id/premium")
