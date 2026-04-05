@@ -22,13 +22,13 @@ export class AdminUserTableController {
 
   @Get("influencers")
   async getInfluencers() {
-    return this.influencerModel.find({}).lean().limit(100);
+    return this.influencerModel.find({ isDeleted: { $ne: true } }).lean().limit(100);
   }
 
   @Get("brands")
   async getBrands() {
     // Always return brandLogo and products fields
-    const brands = await this.brandModel.find({}).lean().limit(100);
+    const brands = await this.brandModel.find({ isDeleted: { $ne: true } }).lean().limit(100);
     brands.forEach((b) => {
       if (!b.brandLogo) b.brandLogo = [];
       if (!b.products) b.products = [];
