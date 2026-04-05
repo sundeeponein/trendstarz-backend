@@ -1,4 +1,12 @@
-import { Controller, Get, Patch, Body, Param, UseGuards, Query } from "@nestjs/common";
+import {
+  Controller,
+  Get,
+  Patch,
+  Body,
+  Param,
+  UseGuards,
+  Query,
+} from "@nestjs/common";
 import { JwtAuthGuard } from "../auth/jwt-auth.guard";
 import { RolesGuard } from "../auth/roles.guard";
 import { InjectModel } from "@nestjs/mongoose";
@@ -20,45 +28,43 @@ export class AdminUserTableController {
     @InjectModel("Brand") private readonly brandModel: Model<BrandImageDoc>,
   ) {}
 
-
   @Get("influencers")
   async getInfluencers(
-    @Query('status') status?: string,
-    @Query('q') q?: string,
-    @Query('category') category?: string
+    @Query("status") status?: string,
+    @Query("q") q?: string,
+    @Query("category") category?: string,
   ) {
     const filter: any = {};
-    if (status === 'deleted') {
-      filter.isDeleted = { $in: [true, 'true'] };
+    if (status === "deleted") {
+      filter.isDeleted = { $in: [true, "true"] };
     } else {
-      filter.isDeleted = { $nin: [true, 'true'] };
+      filter.isDeleted = { $nin: [true, "true"] };
     }
-    console.log('[ADMIN][DEBUG] Influencer filter:', JSON.stringify(filter));
-    const result = await this.influencerModel.find(filter).lean().limit(100);
-    console.log('[ADMIN][DEBUG] Influencer result count:', result.length);
-    return result;
     if (q) filter.q = q;
     if (category) filter.category = category;
-    return this.influencerModel.find(filter).lean().limit(100);
+    console.log("[ADMIN][DEBUG] Influencer filter:", JSON.stringify(filter));
+    const result = await this.influencerModel.find(filter).lean().limit(100);
+    console.log("[ADMIN][DEBUG] Influencer result count:", result.length);
+    return result;
   }
 
   @Get("brands")
   async getBrands(
-    @Query('status') status?: string,
-    @Query('q') q?: string,
-    @Query('category') category?: string
+    @Query("status") status?: string,
+    @Query("q") q?: string,
+    @Query("category") category?: string,
   ) {
     const filter: any = {};
-    if (status === 'deleted') {
-      filter.isDeleted = { $in: [true, 'true'] };
+    if (status === "deleted") {
+      filter.isDeleted = { $in: [true, "true"] };
     } else {
-      filter.isDeleted = { $nin: [true, 'true'] };
+      filter.isDeleted = { $nin: [true, "true"] };
     }
     if (q) filter.q = q;
     if (category) filter.category = category;
-    console.log('[ADMIN][DEBUG] Brand filter:', JSON.stringify(filter));
+    console.log("[ADMIN][DEBUG] Brand filter:", JSON.stringify(filter));
     const brands = await this.brandModel.find(filter).lean().limit(100);
-    console.log('[ADMIN][DEBUG] Brand result count:', brands.length);
+    console.log("[ADMIN][DEBUG] Brand result count:", brands.length);
     brands.forEach((b) => {
       if (!b.brandLogo) b.brandLogo = [];
       if (!b.products) b.products = [];
