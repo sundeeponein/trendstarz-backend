@@ -1,7 +1,6 @@
 // Helper for lazy loading PlansService in campaign modules
 // TODO: Refactor getAppPlansService to use proper app instance or inject PlansService directly.
 // export async function getAppPlansService() { ... }
-/* eslint-disable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-argument, @typescript-eslint/no-unsafe-return */
 import {
   Injectable,
   NotFoundException,
@@ -108,6 +107,22 @@ export class PlansService {
   async create(dto: any) {
     const plan = await this.planModel.create(this.normalizePlanDto(dto));
     return { success: true, plan: this.normalizePlanDocument(plan.toObject()) };
+  }
+
+  async replaceAllFromConfig(configPlans: any[]) {
+    const normalizedPlans = configPlans.map((plan: any, index: number) =>
+      this.normalizePlanDto({
+        ...plan,
+        sortOrder: plan?.sortOrder ?? index,
+      }),
+    );
+
+    await this.planModel.deleteMany({});
+    const insertedPlans = await this.planModel.insertMany(normalizedPlans);
+
+    return insertedPlans.map((plan: any) =>
+      this.normalizePlanDocument(plan.toObject()),
+    );
   }
 
   async update(id: string, dto: any) {
