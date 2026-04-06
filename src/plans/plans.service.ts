@@ -20,6 +20,52 @@ export class PlansService {
     @InjectModel("Brand") private readonly brandModel: Model<any>,
   ) {}
 
+  private normalizeUserType(userType?: string): "INFLUENCER" | "BRAND" {
+    return userType?.toUpperCase() === "BRAND" ? "BRAND" : "INFLUENCER";
+  }
+
+  private durationToBillingCycle(duration: "1m" | "3m" | "1y"): "monthly" | "quarterly" | "yearly" {
+    if (duration === "3m") return "quarterly";
+    if (duration === "1y") return "yearly";
+    return "monthly";
+  }
+
+  private buildPlanCode(name: string, userType: string): string {
+    const typePrefix = this.normalizeUserType(userType).toLowerCase();
+    const slug = name
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/(^-|-$)/g, "");
+    return `${typePrefix}-${slug || "plan"}`;
+  }
+
+  private normalizePlanDto(dto: any, existing?: any) {
+    const userType = this.normalizeUserType(dto?.userType ?? existing?.userType);
+    const name = dto?.name ?? existing?.name ?? "Plan";
+    const code = dto?.code ?? existing?.code ?? this.buildPlanCode(name, userType);
+
+    return {
+      ...dto,
+      code,
+      userType,
+      price: {
+        monthly: dto?.price?.monthly ?? existing?.price?.monthly ?? 0,
+        quarterly: dto?.price?.quarterly ?? existing?.price?.quarterly ?? 0,
+        yearly: dto?.price?.yearly ?? existing?.price?.yearly ?? 0,
+      },
+    };
+  }
+
+  private async resolveUserTypeById(userId: string): Promise<"INFLUENCER" | "BRAND"> {
+    const objectId = new Types.ObjectId(userId);
+    const influencer = await this.influencerModel.exists({ _id: objectId });
+    if (influencer) return "INFLUENCER";
+    const brand = await this.brandModel.exists({ _id: objectId });
+    if (brand) return "BRAND";
+    return "INFLUENCER";
+  }
+
   // ── Admin: CRUD Plans ────────────────────────────────────────────────────
 
   async listAll() {
@@ -37,13 +83,15 @@ export class PlansService {
   }
 
   async create(dto: any) {
-    const plan = await this.planModel.create(dto);
+    const plan = await this.planModel.create(this.normalizePlanDto(dto));
     return { success: true, plan };
   }
 
   async update(id: string, dto: any) {
+    const existing = await this.planModel.findById(id).lean();
+    if (!existing) throw new NotFoundException("Plan not found");
     const plan = await this.planModel
-      .findByIdAndUpdate(id, dto, { new: true })
+      .findByIdAndUpdate(id, this.normalizePlanDto(dto, existing), { new: true })
       .lean();
     if (!plan) throw new NotFoundException("Plan not found");
     return { success: true, plan };
@@ -59,9 +107,7 @@ export class PlansService {
   async listActive(userType?: string) {
     const query: any = { isActive: true };
     if (userType) {
-      // Normalize userType to uppercase for compatibility
-      const normalized = userType.toUpperCase();
-      query.$or = [{ userType: normalized }, { userType: "ALL" }];
+      query.userType = this.normalizeUserType(userType);
     }
     const plans = await this.planModel
       .find(query)
@@ -95,18 +141,21 @@ export class PlansService {
     if (duration === "1m") end.setMonth(end.getMonth() + 1);
     else if (duration === "3m") end.setMonth(end.getMonth() + 3);
     else if (duration === "1y") end.setFullYear(end.getFullYear() + 1);
+    const billingCycle = this.durationToBillingCycle(duration);
 
     const subscription = await this.subscriptionModel.create({
       userId: new Types.ObjectId(userId),
-      userType,
+      userType: this.normalizeUserType(userType),
       planId: plan._id,
+      planCode: plan.code ?? this.buildPlanCode(plan.name, plan.userType),
       planName: plan.name,
+      billingCycle,
+      priceSnapshot: plan.price?.[billingCycle] ?? 0,
       featuresSnapshot: plan.features,
       limitsSnapshot: plan.limits,
       policiesSnapshot: plan.policies,
       startDate: now,
       endDate: end,
-      duration,
       status: "active",
     });
 
@@ -130,12 +179,14 @@ export class PlansService {
   async getUserPlanCapabilities(userId: string) {
     const sub = await this.getActiveSubscription(userId);
     if (!sub) {
+      const userType = await this.resolveUserTypeById(userId);
+      const defaults = FREE_PLAN_DEFAULTS[userType];
       return {
         hasPremium: false,
         planName: "Free",
-        features: FREE_PLAN_DEFAULTS.features,
-        limits: FREE_PLAN_DEFAULTS.limits,
-        policies: FREE_PLAN_DEFAULTS.policies,
+        features: defaults.features,
+        limits: defaults.limits,
+        policies: defaults.policies,
         endDate: null,
       };
     }
@@ -203,11 +254,11 @@ export class PlansService {
 
   /** Get the first active Pro plan for the matching userType (used by payment approval) */
   async findProPlanForUserType(userType: "Influencer" | "Brand") {
-    const mapped = userType === "Influencer" ? "INFLUENCER" : "BRAND";
+    const mapped = this.normalizeUserType(userType);
     const plan = (await this.planModel
       .findOne({
         isActive: true,
-        $or: [{ userType: mapped }, { userType: "ALL" }],
+        userType: mapped,
       })
       .sort({ sortOrder: 1 })
       .lean()) as any;

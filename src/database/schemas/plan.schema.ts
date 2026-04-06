@@ -1,5 +1,8 @@
 import { Schema, Types, model } from "mongoose";
 
+export const USER_TYPES = ["INFLUENCER", "BRAND"] as const;
+export const BILLING_CYCLES = ["monthly", "quarterly", "yearly"] as const;
+
 // ── Feature toggle (boolean) ────────────────────────────────────────────────
 const PlanFeatureSchema = new Schema(
   {
@@ -24,13 +27,16 @@ const PlanLimitSchema = new Schema(
 export const PlanSchema = new Schema(
   {
     name: { type: String, required: true },
+    code: { type: String, required: true, unique: true },
     userType: {
       type: String,
-      enum: ["INFLUENCER", "BRAND", "ALL"],
+      enum: USER_TYPES,
       required: true,
+      index: true,
     },
     price: {
       monthly: { type: Number, default: 0 },
+      quarterly: { type: Number, default: 0 },
       yearly: { type: Number, default: 0 },
     },
     features: { type: [PlanFeatureSchema], default: [] },
@@ -53,7 +59,7 @@ export const SubscriptionSchema = new Schema(
     userId: { type: Types.ObjectId, required: true, index: true },
     userType: {
       type: String,
-      enum: ["Influencer", "Brand"],
+      enum: USER_TYPES,
       required: true,
     },
     planId: {
@@ -61,22 +67,27 @@ export const SubscriptionSchema = new Schema(
       ref: "Plan",
       required: true,
     },
-    planName: { type: String },
-    // snapshot of plan features at time of subscription
+    planCode: { type: String, required: true },
+    planName: { type: String, required: true },
+    billingCycle: {
+      type: String,
+      enum: BILLING_CYCLES,
+      required: true,
+    },
+    priceSnapshot: { type: Number, required: true },
     featuresSnapshot: { type: [PlanFeatureSchema], default: [] },
     limitsSnapshot: { type: [PlanLimitSchema], default: [] },
     policiesSnapshot: {
       imageRetentionDaysAfterExpiry: { type: Number, default: 45 },
     },
     startDate: { type: Date, required: true },
-    endDate: { type: Date, required: true },
-    duration: { type: String, enum: ["1m", "3m", "1y"] },
+    endDate: { type: Date },
     status: {
       type: String,
       enum: ["active", "expired", "cancelled"],
       default: "active",
+      index: true,
     },
-    // set when images are scheduled for cleanup after expiry
     imagesMarkedForDeletionAt: { type: Date, default: null },
   },
   { timestamps: true },
@@ -86,35 +97,82 @@ SubscriptionSchema.index({ endDate: 1, status: 1 });
 
 export const SubscriptionModel = model("Subscription", SubscriptionSchema);
 
-// Default free-tier limits used when user has no active subscription
 export const FREE_PLAN_DEFAULTS = {
-  features: [
-    {
-      key: "socialMediaVisibility",
-      label: "Show Social Media Links",
-      value: false,
-    },
-    {
-      key: "contactVisibility",
-      label: "Show Contact Details",
-      value: false,
-    },
-    {
-      key: "priorityListing",
-      label: "Priority Listing in Search",
-      value: false,
-    },
-  ],
-  limits: [
-    // Influencer free plan
-    { key: "maxImages", label: "Max Images Upload", value: 2 },
-    { key: "maxCampaigns", label: "Max Campaigns", value: 1 },
-    { key: "maxCampaignApplications", label: "Max Campaigns Apply", value: 2 },
-    // Brand free plan
-    { key: "maxProductImages", label: "Max Product Images", value: 3 },
-    { key: "maxInvitesPerCampaign", label: "Max Invites Per Campaign", value: 2 },
-    { key: "maxInvitesPerMonth", label: "Max Campaigns Per Month", value: 1 },
-    { key: "maxInviteSelectOptions", label: "Max Invite Select Options", value: 5 },
-  ],
-  policies: { imageRetentionDaysAfterExpiry: 45 },
+  INFLUENCER: {
+    features: [
+      {
+        key: "publicProfileListing",
+        label: "Public profile listing",
+        value: true,
+      },
+      {
+        key: "socialMediaVisibility",
+        label: "Show social media links",
+        value: true,
+      },
+      {
+        key: "contactVisibility",
+        label: "Contact details visible to brands",
+        value: false,
+      },
+      {
+        key: "priorityListing",
+        label: "Priority search ranking",
+        value: false,
+      },
+      {
+        key: "analyticsDashboard",
+        label: "Analytics dashboard",
+        value: false,
+      },
+    ],
+    limits: [
+      { key: "maxProductImages", label: "Product images", value: 3 },
+      { key: "maxActiveCampaigns", label: "Active campaign", value: 1 },
+      { key: "maxInvitesPerCampaign", label: "Invites / campaign", value: 2 },
+      { key: "maxInviteOptions", label: "Invite options", value: 5 },
+    ],
+    policies: { imageRetentionDaysAfterExpiry: 45 },
+  },
+  BRAND: {
+    features: [
+      {
+        key: "browseInfluencerProfiles",
+        label: "Browse influencer profiles",
+        value: true,
+      },
+      {
+        key: "viewSocialLinks",
+        label: "View public social links",
+        value: true,
+      },
+      {
+        key: "viewContactDetails",
+        label: "View contact details",
+        value: true,
+      },
+      {
+        key: "advancedSearchFilters",
+        label: "Advanced search filters",
+        value: false,
+      },
+      {
+        key: "campaignAnalytics",
+        label: "Campaign analytics",
+        value: false,
+      },
+      {
+        key: "bulkOutreachTools",
+        label: "Bulk outreach tools",
+        value: false,
+      },
+    ],
+    limits: [
+      { key: "maxActiveCampaigns", label: "Active campaign", value: 1 },
+      { key: "maxInvitesPerCampaign", label: "Invites / campaign", value: 5 },
+      { key: "maxTeamSeats", label: "Team seats", value: 1 },
+      { key: "analytics", label: "Analytics", value: 0 },
+    ],
+    policies: { imageRetentionDaysAfterExpiry: 45 },
+  },
 };
