@@ -43,14 +43,15 @@ export class PlansConfigController {
           message: "Invalid config format: no 'plans' array",
         };
       }
-      // Remove all existing plans
-      await this.plansService["planModel"].deleteMany({});
-      // Insert new plans
-      await this.plansService["planModel"].insertMany(config.plans);
+      const plans = await this.plansService.replaceAllFromConfig(config.plans);
       console.log(
         "[PlansConfigController] Plans loaded from config successfully.",
       );
-      return { success: true, message: "Plans loaded from config" };
+      return {
+        success: true,
+        message: `Plans loaded from config (${plans.length} plans)`,
+        plans,
+      };
     } catch (err) {
       console.error("[PlansConfigController] Unexpected error:", err);
       const errorMsg =
