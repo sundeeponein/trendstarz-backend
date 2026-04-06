@@ -720,13 +720,13 @@ export class UsersService {
   async restoreUser(id: string) {
     const influencer = await this.influencerModel.findByIdAndUpdate(
       id,
-      { status: "pending" },
+      { status: "pending", isDeleted: false, deletedAt: null },
       { new: true },
     );
     if (influencer) return { message: "User restored", user: influencer };
     const brand = await this.brandModel.findByIdAndUpdate(
       id,
-      { status: "pending" },
+      { status: "pending", isDeleted: false, deletedAt: null },
       { new: true },
     );
     if (brand) return { message: "User restored", user: brand };
