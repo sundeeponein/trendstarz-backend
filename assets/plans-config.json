@@ -2,6 +2,7 @@
   "plans": [
     {
       "name": "Influencer Free",
+      "code": "influencer-free",
       "userType": "INFLUENCER",
       "price": { "monthly": 0, "quarterly": 0, "yearly": 0 },
       "features": [
@@ -24,6 +25,7 @@
     },
     {
       "name": "Influencer Pro",
+      "code": "influencer-pro",
       "userType": "INFLUENCER",
       "price": { "monthly": 399, "quarterly": 1077, "yearly": 2999 },
       "features": [
@@ -46,14 +48,15 @@
     },
     {
       "name": "Brand Free",
+      "code": "brand-free",
       "userType": "BRAND",
       "price": { "monthly": 0, "quarterly": 0, "yearly": 0 },
       "features": [
         { "key": "browseInfluencerProfiles", "label": "Browse influencer profiles", "value": true },
         { "key": "viewSocialLinks", "label": "View public social links", "value": true },
         { "key": "viewContactDetails", "label": "View contact details", "value": true },
-        { "key": "advancedSearchFilters", "label": "Advanced search filters", "value": false },
-        { "key": "campaignAnalytics", "label": "Campaign analytics", "value": false },
+        { "key": "advancedSearchFilters", "label": "Advanced search & filters", "value": false },
+        { "key": "campaignAnalyticsDashboard", "label": "Campaign analytics dashboard", "value": false },
         { "key": "bulkOutreachTools", "label": "Bulk outreach tools", "value": false }
       ],
       "limits": [
@@ -69,6 +72,7 @@
     },
     {
       "name": "Brand Pro",
+      "code": "brand-pro",
       "userType": "BRAND",
       "price": { "monthly": 999, "quarterly": 2697, "yearly": 7999 },
       "features": [
