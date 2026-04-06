@@ -57,6 +57,19 @@ export class PlansService {
     };
   }
 
+  private normalizePlanDocument(plan: any) {
+    if (!plan) return plan;
+
+    return {
+      ...plan,
+      price: {
+        monthly: plan?.price?.monthly ?? 0,
+        quarterly: plan?.price?.quarterly ?? 0,
+        yearly: plan?.price?.yearly ?? 0,
+      },
+    };
+  }
+
   private async resolveUserTypeById(userId: string): Promise<"INFLUENCER" | "BRAND"> {
     const objectId = new Types.ObjectId(userId);
     const influencer = await this.influencerModel.exists({ _id: objectId });
@@ -73,18 +86,21 @@ export class PlansService {
       .find()
       .sort({ sortOrder: 1, createdAt: 1 })
       .lean();
-    return { success: true, plans };
+    return {
+      success: true,
+      plans: plans.map((plan: any) => this.normalizePlanDocument(plan)),
+    };
   }
 
   async getById(id: string) {
     const plan = await this.planModel.findById(id).lean();
     if (!plan) throw new NotFoundException("Plan not found");
-    return { success: true, plan };
+    return { success: true, plan: this.normalizePlanDocument(plan) };
   }
 
   async create(dto: any) {
     const plan = await this.planModel.create(this.normalizePlanDto(dto));
-    return { success: true, plan };
+    return { success: true, plan: this.normalizePlanDocument(plan.toObject()) };
   }
 
   async update(id: string, dto: any) {
@@ -94,7 +110,7 @@ export class PlansService {
       .findByIdAndUpdate(id, this.normalizePlanDto(dto, existing), { new: true })
       .lean();
     if (!plan) throw new NotFoundException("Plan not found");
-    return { success: true, plan };
+    return { success: true, plan: this.normalizePlanDocument(plan) };
   }
 
   async remove(id: string) {
@@ -113,7 +129,10 @@ export class PlansService {
       .find(query)
       .sort({ sortOrder: 1 })
       .lean();
-    return { success: true, plans };
+    return {
+      success: true,
+      plans: plans.map((plan: any) => this.normalizePlanDocument(plan)),
+    };
   }
 
   // ── Subscription management ──────────────────────────────────────────────
