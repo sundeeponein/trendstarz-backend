@@ -38,8 +38,8 @@
       "limits": [
         { "key": "maxProductImages", "label": "Product images", "value": 10 },
         { "key": "maxActiveCampaigns", "label": "Active campaigns", "value": 10 },
-        { "key": "maxInvitesPerCampaign", "label": "Invites / campaign", "value": -1 },
-        { "key": "maxInviteOptions", "label": "Invite options", "value": -1 }
+        { "key": "maxInvitesPerCampaign", "label": "Invites / campaign", "value": 10 },
+        { "key": "maxInviteOptions", "label": "Invite options", "value": 10 }
       ],
       "policies": { "imageRetentionDaysAfterExpiry": 45 },
       "highlight": true,
@@ -85,9 +85,9 @@
       ],
       "limits": [
         { "key": "maxActiveCampaigns", "label": "Active campaigns", "value": 10 },
-        { "key": "maxInvitesPerCampaign", "label": "Invites / campaign", "value": -1 },
+        { "key": "maxInvitesPerCampaign", "label": "Invites / campaign", "value": 10 },
         { "key": "maxTeamSeats", "label": "Team seats", "value": 5 },
-        { "key": "analytics", "label": "Analytics", "value": 1 }
+        { "key": "analytics", "label": "Analytics", "value": 0 }
       ],
       "policies": { "imageRetentionDaysAfterExpiry": 45 },
       "highlight": true,
