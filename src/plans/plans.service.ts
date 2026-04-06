@@ -24,7 +24,9 @@ export class PlansService {
     return userType?.toUpperCase() === "BRAND" ? "BRAND" : "INFLUENCER";
   }
 
-  private durationToBillingCycle(duration: "1m" | "3m" | "1y"): "monthly" | "quarterly" | "yearly" {
+  private durationToBillingCycle(
+    duration: "1m" | "3m" | "1y",
+  ): "monthly" | "quarterly" | "yearly" {
     if (duration === "3m") return "quarterly";
     if (duration === "1y") return "yearly";
     return "monthly";
@@ -41,9 +43,12 @@ export class PlansService {
   }
 
   private normalizePlanDto(dto: any, existing?: any) {
-    const userType = this.normalizeUserType(dto?.userType ?? existing?.userType);
+    const userType = this.normalizeUserType(
+      dto?.userType ?? existing?.userType,
+    );
     const name = dto?.name ?? existing?.name ?? "Plan";
-    const code = dto?.code ?? existing?.code ?? this.buildPlanCode(name, userType);
+    const code =
+      dto?.code ?? existing?.code ?? this.buildPlanCode(name, userType);
 
     return {
       ...dto,
@@ -70,7 +75,9 @@ export class PlansService {
     };
   }
 
-  private async resolveUserTypeById(userId: string): Promise<"INFLUENCER" | "BRAND"> {
+  private async resolveUserTypeById(
+    userId: string,
+  ): Promise<"INFLUENCER" | "BRAND"> {
     const objectId = new Types.ObjectId(userId);
     const influencer = await this.influencerModel.exists({ _id: objectId });
     if (influencer) return "INFLUENCER";
@@ -107,7 +114,9 @@ export class PlansService {
     const existing = await this.planModel.findById(id).lean();
     if (!existing) throw new NotFoundException("Plan not found");
     const plan = await this.planModel
-      .findByIdAndUpdate(id, this.normalizePlanDto(dto, existing), { new: true })
+      .findByIdAndUpdate(id, this.normalizePlanDto(dto, existing), {
+        new: true,
+      })
       .lean();
     if (!plan) throw new NotFoundException("Plan not found");
     return { success: true, plan: this.normalizePlanDocument(plan) };
