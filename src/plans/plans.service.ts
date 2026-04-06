@@ -24,7 +24,9 @@ export class PlansService {
     return userType?.toUpperCase() === "BRAND" ? "BRAND" : "INFLUENCER";
   }
 
-  private durationToBillingCycle(duration: "1m" | "3m" | "1y"): "monthly" | "quarterly" | "yearly" {
+  private durationToBillingCycle(
+    duration: "1m" | "3m" | "1y",
+  ): "monthly" | "quarterly" | "yearly" {
     if (duration === "3m") return "quarterly";
     if (duration === "1y") return "yearly";
     return "monthly";
@@ -41,9 +43,12 @@ export class PlansService {
   }
 
   private normalizePlanDto(dto: any, existing?: any) {
-    const userType = this.normalizeUserType(dto?.userType ?? existing?.userType);
+    const userType = this.normalizeUserType(
+      dto?.userType ?? existing?.userType,
+    );
     const name = dto?.name ?? existing?.name ?? "Plan";
-    const code = dto?.code ?? existing?.code ?? this.buildPlanCode(name, userType);
+    const code =
+      dto?.code ?? existing?.code ?? this.buildPlanCode(name, userType);
 
     return {
       ...dto,
@@ -57,7 +62,22 @@ export class PlansService {
     };
   }
 
-  private async resolveUserTypeById(userId: string): Promise<"INFLUENCER" | "BRAND"> {
+  private normalizePlanDocument(plan: any) {
+    if (!plan) return plan;
+
+    return {
+      ...plan,
+      price: {
+        monthly: plan?.price?.monthly ?? 0,
+        quarterly: plan?.price?.quarterly ?? 0,
+        yearly: plan?.price?.yearly ?? 0,
+      },
+    };
+  }
+
+  private async resolveUserTypeById(
+    userId: string,
+  ): Promise<"INFLUENCER" | "BRAND"> {
     const objectId = new Types.ObjectId(userId);
     const influencer = await this.influencerModel.exists({ _id: objectId });
     if (influencer) return "INFLUENCER";
@@ -73,28 +93,33 @@ export class PlansService {
       .find()
       .sort({ sortOrder: 1, createdAt: 1 })
       .lean();
-    return { success: true, plans };
+    return {
+      success: true,
+      plans: plans.map((plan: any) => this.normalizePlanDocument(plan)),
+    };
   }
 
   async getById(id: string) {
     const plan = await this.planModel.findById(id).lean();
     if (!plan) throw new NotFoundException("Plan not found");
-    return { success: true, plan };
+    return { success: true, plan: this.normalizePlanDocument(plan) };
   }
 
   async create(dto: any) {
     const plan = await this.planModel.create(this.normalizePlanDto(dto));
-    return { success: true, plan };
+    return { success: true, plan: this.normalizePlanDocument(plan.toObject()) };
   }
 
   async update(id: string, dto: any) {
     const existing = await this.planModel.findById(id).lean();
     if (!existing) throw new NotFoundException("Plan not found");
     const plan = await this.planModel
-      .findByIdAndUpdate(id, this.normalizePlanDto(dto, existing), { new: true })
+      .findByIdAndUpdate(id, this.normalizePlanDto(dto, existing), {
+        new: true,
+      })
       .lean();
     if (!plan) throw new NotFoundException("Plan not found");
-    return { success: true, plan };
+    return { success: true, plan: this.normalizePlanDocument(plan) };
   }
 
   async remove(id: string) {
@@ -113,7 +138,10 @@ export class PlansService {
       .find(query)
       .sort({ sortOrder: 1 })
       .lean();
-    return { success: true, plans };
+    return {
+      success: true,
+      plans: plans.map((plan: any) => this.normalizePlanDocument(plan)),
+    };
   }
 
   // ── Subscription management ──────────────────────────────────────────────
