@@ -343,8 +343,10 @@ export class AuthService {
     if (influencer) {
       const isMatch = await bcrypt.compare(password, influencer.password);
       if (!isMatch) throw new UnauthorizedException("Invalid credentials");
-      if (influencer.isDeleted === true || influencer.isDeleted === 'true') {
-        throw new UnauthorizedException("Your account has been deleted. Please contact support.");
+      if (influencer.isDeleted === true || influencer.isDeleted === "true") {
+        throw new UnauthorizedException(
+          "Your account has been deleted. Please contact support.",
+        );
       }
       if (influencer.status === "pending") {
         throw new UnauthorizedException(
@@ -377,6 +379,8 @@ export class AuthService {
           email: influencer.email,
           role: "influencer",
           profileImage: profileImageUrl,
+          isPremium: !!influencer.isPremium,
+          premiumEnd: influencer.premiumEnd || null,
         },
       };
     }
@@ -384,8 +388,10 @@ export class AuthService {
     if (brand) {
       const isMatch = await bcrypt.compare(password, brand.password);
       if (!isMatch) throw new UnauthorizedException("Invalid credentials");
-      if (brand.isDeleted === true || brand.isDeleted === 'true') {
-        throw new UnauthorizedException("Your account has been deleted. Please contact support.");
+      if (brand.isDeleted === true || brand.isDeleted === "true") {
+        throw new UnauthorizedException(
+          "Your account has been deleted. Please contact support.",
+        );
       }
       if (brand.status === "pending") {
         throw new UnauthorizedException(
@@ -412,6 +418,8 @@ export class AuthService {
           email: brand.email,
           role: "brand",
           brandLogo: brandLogoArr,
+          isPremium: !!brand.isPremium,
+          premiumEnd: brand.premiumEnd || null,
         },
       };
     }
@@ -482,13 +490,15 @@ export class AuthService {
         saved.collection.name,
       );
     } catch (err) {
-      if (err.name === "ValidationError") {
-        console.error("Influencer validation error:", err.errors);
+      const error = err instanceof Error ? err : new Error(String(err));
+      const mongoErr = err as { name?: string; errors?: unknown };
+      if (mongoErr?.name === "ValidationError") {
+        console.error("Influencer validation error:", mongoErr.errors);
       } else {
         console.error("Influencer save error:", err);
       }
       throw new BadRequestException(
-        "Failed to save influencer: " + err.message,
+        "Failed to save influencer: " + error.message,
       );
     }
     return { success: true, message: "Influencer registered", influencer };
