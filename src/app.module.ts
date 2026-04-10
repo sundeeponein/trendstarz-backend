@@ -58,6 +58,7 @@ import { PlansModule } from "./plans/plans.module";
       { name: "AppSettings", schema: AppSettingsSchema, collection: "appsettings" },
       { name: "Payment", schema: PaymentSchema, collection: "payments" },
       { name: "CampaignInvite", schema: CampaignInviteSchema, collection: "campaigninvites" },
+      { name: "Campaign", schema: require('./database/schemas/profile.schemas').CampaignSchema, collection: "campaigns" },
     ]),
     UsersModule,
     CampaignsModule,
