@@ -1,0 +1,96 @@
+import { Injectable, NotFoundException } from "@nestjs/common";
+import { InjectModel } from "@nestjs/mongoose";
+import { Model } from "mongoose";
+
+@Injectable()
+export class DashboardService {
+  constructor(
+    @InjectModel("CampaignInvite") private readonly inviteModel: Model<any>,
+    @InjectModel("Campaign") private readonly campaignModel: Model<any>,
+    @InjectModel("Brand") private readonly brandModel: Model<any>,
+    @InjectModel("Influencer") private readonly influencerModel: Model<any>,
+  ) {}
+
+  async getInfluencerDashboard(userId: string) {
+    const user = await this.influencerModel.findById(userId).lean();
+    if (!user) throw new NotFoundException("Influencer not found");
+    const invites = await this.inviteModel
+      .find({ influencerId: userId })
+      .populate("brandId campaignId")
+      .lean();
+    const stats: Record<string, number> = {
+      invited: 0,
+      accepted: 0,
+      submitted: 0,
+      completed: 0,
+    };
+    const newInvites: any[] = [];
+    const activeCampaigns: any[] = [];
+    const completedCampaigns: any[] = [];
+    for (const invite of invites) {
+      if (
+        typeof invite.status === "string" &&
+        Object.prototype.hasOwnProperty.call(stats, invite.status)
+      ) {
+        stats[invite.status] = (stats[invite.status] || 0) + 1;
+      }
+      if (invite.status === "invited") {
+        newInvites.push({
+          ...invite,
+          brand: invite.brandId,
+          campaign: invite.campaignId,
+        });
+      }
+      if (invite.status === "accepted" || invite.status === "submitted") {
+        activeCampaigns.push({
+          ...invite.campaignId,
+          inviteId: invite._id,
+        });
+      }
+      if (invite.status === "completed") {
+        completedCampaigns.push({
+          ...invite.campaignId,
+          metrics: invite.analytics,
+        });
+      }
+    }
+    return {
+      user: { name: (user as any)?.name || "" },
+      invites: { ...stats, newInvites },
+      activeCampaigns,
+      completedCampaigns,
+    };
+  }
+
+  async getBrandDashboard(userId: string) {
+    const brand = await this.brandModel.findById(userId).lean();
+    if (!brand) throw new NotFoundException("Brand not found");
+    const campaigns = await this.campaignModel.find({ brandId: userId }).lean();
+    let totalInvites = 0;
+    let accepted = 0;
+    let completed = 0;
+    const campaignStats: any[] = [];
+    for (const c of campaigns) {
+      const invites = await this.inviteModel.find({ campaignId: c._id }).lean();
+      const sent = invites.length;
+      const acc = invites.filter((i) => i.status === "accepted").length;
+      const comp = invites.filter((i) => i.status === "completed").length;
+      totalInvites += sent;
+      accepted += acc;
+      completed += comp;
+      campaignStats.push({
+        title: c.title,
+        invitesSent: sent,
+        accepted: acc,
+        completed: comp,
+      });
+    }
+    return {
+      totalCampaigns: campaigns.length,
+      totalInvites,
+      accepted,
+      completed,
+      campaigns: campaignStats,
+    };
+  }
+}
