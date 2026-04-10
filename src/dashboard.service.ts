@@ -1,6 +1,6 @@
 import { Injectable, NotFoundException } from "@nestjs/common";
 import { InjectModel } from "@nestjs/mongoose";
-import { Model } from "mongoose";
+import { Model, Types } from "mongoose";
 
 @Injectable()
 export class DashboardService {
@@ -80,7 +80,9 @@ export class DashboardService {
     if (!brand || Array.isArray(brand)) {
       throw new NotFoundException("Brand not found");
     }
-    const campaigns = await this.campaignModel.find({ brandId: userId }).lean();
+    // Ensure userId is an ObjectId for querying campaigns
+    const brandObjectId = new Types.ObjectId(userId);
+    const campaigns = await this.campaignModel.find({ brandId: brandObjectId }).lean();
     let totalInvites = 0;
     let accepted = 0;
     let completed = 0;

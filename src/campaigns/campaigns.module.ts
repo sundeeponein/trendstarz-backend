@@ -20,7 +20,7 @@ import { PlansModule } from "../plans/plans.module";
       {
         name: "CampaignInvite",
         schema: CampaignInviteSchema,
-        collection: "campaign_invites",
+        collection: "campaigninvites",
       },
       { name: "Brand", schema: BrandSchema, collection: "brands" },
       {
