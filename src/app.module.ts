@@ -1,4 +1,6 @@
 import { Module } from "@nestjs/common";
+import { DashboardController } from './dashboard.controller';
+import { DashboardService } from './dashboard.service';
 import { OtpModule } from "./otp/otp.module";
 import { AppController } from "./app.controller";
 import { AppService } from "./app.service";
@@ -13,6 +15,7 @@ import {
 import { MongooseModule } from "@nestjs/mongoose";
 import { ConfigModule } from "@nestjs/config";
 import { MongoLogger } from "./database/mongo-logger";
+
 import {
   CategorySchema,
   StateSchema,
@@ -25,6 +28,7 @@ import {
   AppSettingsSchema,
 } from "./database/schemas/profile.schemas";
 import { PaymentSchema } from "./database/schemas/payment.schema";
+import { CampaignInviteSchema } from './database/schemas/campaign-invite.schema';
 
 import { AuthService } from "./auth/auth.service";
 import { AuthController } from "./auth/auth.controller";
@@ -45,26 +49,15 @@ import { PlansModule } from "./plans/plans.module";
     MongooseModule.forFeature([
       { name: "Category", schema: CategorySchema, collection: "categories" },
       { name: "State", schema: StateSchema, collection: "states" },
-      {
-        name: "SocialMedia",
-        schema: SocialMediaSchema,
-        collection: "socialmedias",
-      },
+      { name: "SocialMedia", schema: SocialMediaSchema, collection: "socialmedias" },
       { name: "Language", schema: LanguageSchema, collection: "languages" },
       { name: "User", schema: UserSchema, collection: "users" },
-      {
-        name: "Influencer",
-        schema: InfluencerSchema,
-        collection: "influencers",
-      },
+      { name: "Influencer", schema: InfluencerSchema, collection: "influencers" },
       { name: "Brand", schema: BrandSchema, collection: "brands" },
       { name: "Tier", schema: TierSchema, collection: "tiers" },
-      {
-        name: "AppSettings",
-        schema: AppSettingsSchema,
-        collection: "appsettings",
-      },
+      { name: "AppSettings", schema: AppSettingsSchema, collection: "appsettings" },
       { name: "Payment", schema: PaymentSchema, collection: "payments" },
+      { name: "CampaignInvite", schema: CampaignInviteSchema, collection: "campaigninvites" },
     ]),
     UsersModule,
     CampaignsModule,
@@ -83,8 +76,9 @@ import { PlansModule } from "./plans/plans.module";
     AuthController,
     HealthController,
     AdminUserTableController,
+    DashboardController,
     // SeedController,
   ],
-  providers: [AppService, AuthService, MongoLogger, CloudinaryService],
+  providers: [AppService, AuthService, MongoLogger, CloudinaryService, DashboardService],
 })
 export class AppModule {}
