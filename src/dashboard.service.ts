@@ -12,8 +12,10 @@ export class DashboardService {
   ) {}
 
   async getInfluencerDashboard(userId: string) {
-    const user = await this.influencerModel.findById(userId).lean();
-    if (!user) throw new NotFoundException("Influencer not found");
+    const user = (await this.influencerModel.findById(userId).lean()) as any;
+    if (!user || Array.isArray(user)) {
+      throw new NotFoundException("Influencer not found");
+    }
     const invites = await this.inviteModel
       .find({ influencerId: userId })
       .populate("brandId campaignId")
@@ -55,7 +57,18 @@ export class DashboardService {
       }
     }
     return {
-      user: { name: (user as any)?.name || "" },
+      user: {
+        name: user?.name || "",
+        isEmailVerified: user?.isEmailVerified ?? false,
+        isPremium: user?.isPremium ?? false,
+        premiumDuration: user?.premiumDuration ?? null,
+        premiumStart: user?.premiumStart ?? null,
+        premiumEnd: user?.premiumEnd ?? null,
+        categories: user?.categories ?? [],
+        socialMedia: user?.socialMedia ?? [],
+        location: user?.location ?? {},
+        profileImages: user?.profileImages ?? [],
+      },
       invites: { ...stats, newInvites },
       activeCampaigns,
       completedCampaigns,
@@ -63,8 +76,10 @@ export class DashboardService {
   }
 
   async getBrandDashboard(userId: string) {
-    const brand = await this.brandModel.findById(userId).lean();
-    if (!brand) throw new NotFoundException("Brand not found");
+    const brand = (await this.brandModel.findById(userId).lean()) as any;
+    if (!brand || Array.isArray(brand)) {
+      throw new NotFoundException("Brand not found");
+    }
     const campaigns = await this.campaignModel.find({ brandId: userId }).lean();
     let totalInvites = 0;
     let accepted = 0;
@@ -86,6 +101,18 @@ export class DashboardService {
       });
     }
     return {
+      brand: {
+        brandName: brand?.brandName || "",
+        isEmailVerified: brand?.isEmailVerified ?? false,
+        isPremium: brand?.isPremium ?? false,
+        premiumDuration: brand?.premiumDuration ?? null,
+        premiumStart: brand?.premiumStart ?? null,
+        premiumEnd: brand?.premiumEnd ?? null,
+        categories: brand?.categories ?? [],
+        socialMedia: brand?.socialMedia ?? [],
+        location: brand?.location ?? {},
+        brandLogo: brand?.brandLogo ?? [],
+      },
       totalCampaigns: campaigns.length,
       totalInvites,
       accepted,
