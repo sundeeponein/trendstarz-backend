@@ -1,6 +1,7 @@
 import { Module } from "@nestjs/common";
 import { UsersController } from "./users.controller";
 import { BrandsController } from "./brands.controller";
+import { InfluencersController } from './influencers.controller';
 import { UsersService } from "./users.service";
 import { CloudinaryService } from "../cloudinary.service";
 import { MongooseModule } from "@nestjs/mongoose";
@@ -22,7 +23,7 @@ import { PlansModule } from "../plans/plans.module";
     ]),
     PlansModule,
   ],
-  controllers: [UsersController, BrandsController],
+  controllers: [UsersController, BrandsController, InfluencersController],
   providers: [UsersService, CloudinaryService],
 })
 export class UsersModule {}
