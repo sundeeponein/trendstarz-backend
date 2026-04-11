@@ -250,6 +250,18 @@ export const CampaignSchema = new Schema(
     timelineEnd: { type: Date },
     categories: [{ type: String }],
     deliverables: [{ type: String }],
+    socialMedia: [
+      {
+        platform: { type: String },
+        contentTypes: [
+          {
+            name: { type: String },
+            enabled: { type: Boolean, default: false },
+            price: { type: Number, default: 0 },
+          },
+        ],
+      },
+    ],
     minFollowerCount: { type: Number },
     platformPreference: { type: String },
     specialInstructions: { type: String },
