@@ -30,26 +30,27 @@ export class DashboardService {
     const activeCampaigns: any[] = [];
     const completedCampaigns: any[] = [];
     for (const invite of invites) {
-      if (
-        typeof invite.status === "string" &&
-        Object.prototype.hasOwnProperty.call(stats, invite.status)
-      ) {
-        stats[invite.status] = (stats[invite.status] || 0) + 1;
+      const st = invite.status as string;
+      // Map 'pending' → 'invited' for display; 'accepted', 'submitted', 'completed' are direct
+      const mappedStatus = st === 'pending' ? 'invited' : st;
+      if (Object.prototype.hasOwnProperty.call(stats, mappedStatus)) {
+        stats[mappedStatus] = (stats[mappedStatus] || 0) + 1;
       }
-      if (invite.status === "invited") {
+      if (st === "pending") {
         newInvites.push({
           ...invite,
           brand: invite.brandId,
           campaign: invite.campaignId,
         });
       }
-      if (invite.status === "accepted" || invite.status === "submitted") {
+      if (st === "accepted" || st === "submitted") {
         activeCampaigns.push({
           ...invite.campaignId,
           inviteId: invite._id,
+          inviteStatus: st,
         });
       }
-      if (invite.status === "completed") {
+      if (st === "completed") {
         completedCampaigns.push({
           ...invite.campaignId,
           metrics: invite.analytics,
@@ -80,28 +81,52 @@ export class DashboardService {
     if (!brand || Array.isArray(brand)) {
       throw new NotFoundException("Brand not found");
     }
-    // Ensure userId is an ObjectId for querying campaigns
-    const brandObjectId = new Types.ObjectId(userId);
-    const campaigns = await this.campaignModel.find({ brandId: brandObjectId }).lean();
+    // Query campaigns by ObjectId OR brandUsername (string) for legacy compatibility
+    const brandObjectId = Types.ObjectId.isValid(userId) ? new Types.ObjectId(userId) : null;
+    const brandUsername = brand.brandUsername || null;
+    const orConditions: any[] = [];
+    if (brandObjectId) orConditions.push({ brandId: brandObjectId });
+    if (brandUsername) orConditions.push({ brandId: brandUsername });
+    orConditions.push({ brandId: userId });
+    const campaigns = await this.campaignModel
+      .find({ $or: orConditions })
+      .lean();
     let totalInvites = 0;
     let accepted = 0;
     let completed = 0;
     const campaignStats: any[] = [];
     for (const c of campaigns) {
-      const invites = await this.inviteModel.find({ campaignId: c._id }).lean();
+      // Query invites by both ObjectId and string campaignId for legacy compatibility
+      const campaignIdStr = String(c._id);
+      const campaignIdObj = Types.ObjectId.isValid(campaignIdStr) ? new Types.ObjectId(campaignIdStr) : null;
+      const inviteQuery: any[] = [{ campaignId: campaignIdStr }];
+      if (campaignIdObj) inviteQuery.push({ campaignId: campaignIdObj });
+      const invites = await this.inviteModel.find({ $or: inviteQuery }).lean();
       const sent = invites.length;
       const acc = invites.filter((i) => i.status === "accepted").length;
       const comp = invites.filter((i) => i.status === "completed").length;
+      const pend = invites.filter((i) => i.status === "pending").length;
       totalInvites += sent;
       accepted += acc;
       completed += comp;
       campaignStats.push({
+        _id: c._id,
         title: c.title,
+        status: c.status,
+        budgetMin: c.budgetMin,
+        budgetMax: c.budgetMax,
+        timelineStart: c.timelineStart,
+        timelineEnd: c.timelineEnd,
+        categories: c.categories,
         invitesSent: sent,
         accepted: acc,
+        pending: pend,
         completed: comp,
       });
     }
+    const avgResponseRate = totalInvites > 0
+      ? Math.round(((accepted + completed) / totalInvites) * 100)
+      : 0;
     return {
       brand: {
         brandName: brand?.brandName || "",
@@ -116,9 +141,11 @@ export class DashboardService {
         brandLogo: brand?.brandLogo ?? [],
       },
       totalCampaigns: campaigns.length,
+      activeCampaigns: campaigns.filter((c: any) => c.status === 'active').length,
       totalInvites,
       accepted,
       completed,
+      avgResponseRate,
       campaigns: campaignStats,
     };
   }
