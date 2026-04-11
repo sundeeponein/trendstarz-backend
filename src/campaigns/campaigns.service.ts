@@ -93,8 +93,13 @@ export class CampaignsService {
   async update(id: string, brandId: string, data: any) {
     const campaign = await this.campaignModel.findById(id);
     if (!campaign) throw new NotFoundException("Campaign not found");
+    // Allow update if brandId matches ObjectId or brandUsername
     if (String(campaign.brandId) !== brandId) {
-      throw new BadRequestException("Not your campaign");
+      // Try to fetch the brand's username
+      const brand = await this.brandModel.findById(brandId).select('brandUsername').lean();
+      if (!brand || String(campaign.brandId) !== brand.brandUsername) {
+        throw new BadRequestException("Not your campaign");
+      }
     }
 
     // Enforce status transitions
