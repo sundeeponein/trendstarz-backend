@@ -263,13 +263,13 @@ export const CampaignModel = model("Campaign", CampaignSchema);
 export const CampaignInviteSchema = new Schema(
   {
     campaignId: {
-      type: Types.ObjectId,
+      type: Schema.Types.Mixed, // Allow ObjectId or string for legacy compatibility
       ref: "Campaign",
       required: true,
       index: true,
     },
     brandId: {
-      type: Types.ObjectId,
+      type: Schema.Types.Mixed, // Allow ObjectId or string for minimal brand profiles
       ref: "Brand",
       required: true,
       index: true,
@@ -282,7 +282,7 @@ export const CampaignInviteSchema = new Schema(
     },
     status: {
       type: String,
-      enum: ["pending", "accepted", "declined"],
+      enum: ["pending", "accepted", "declined", "submitted", "completed"],
       default: "pending",
     },
     analytics: {

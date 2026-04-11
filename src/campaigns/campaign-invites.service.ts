@@ -82,16 +82,19 @@ export class CampaignInvitesService {
   }
 
   async findByCampaign(campaignId: string) {
-    // Defensive: Always return array, never throw for not found
+    // Query using both string and ObjectId forms to handle legacy/mixed data
     try {
-      // Accept both ObjectId and string campaignId
+      const { Types } = await import('mongoose');
+      const queries: any[] = [{ campaignId }];
+      if (/^[a-fA-F0-9]{24}$/.test(campaignId)) {
+        queries.push({ campaignId: new Types.ObjectId(campaignId) });
+      }
       const invites = await this.inviteModel
-        .find({ campaignId })
-        .populate("influencerId", "name email username profileImages")
+        .find({ $or: queries })
+        .populate("influencerId", "name email username profileImages socialMedia location")
         .lean();
       return Array.isArray(invites) ? invites : [];
     } catch (e) {
-      // If invalid ObjectId or other error, return empty array
       return [];
     }
   }
