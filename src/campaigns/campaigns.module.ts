@@ -2,10 +2,10 @@ import { Module } from "@nestjs/common";
 import { MongooseModule } from "@nestjs/mongoose";
 import {
   CampaignSchema,
-  CampaignInviteSchema,
   BrandSchema,
   InfluencerSchema,
 } from "../database/schemas/profile.schemas";
+import { CampaignInviteSchema } from "../database/schemas/campaign-invite.schema";
 import { CampaignsController } from "./campaigns.controller";
 import { CampaignsService } from "./campaigns.service";
 import { CampaignInvitesController } from "./campaign-invites.controller";

@@ -24,8 +24,13 @@ export class CampaignInvitesService {
       .findById(data.campaignId)
       .lean();
     if (!campaign) throw new NotFoundException("Campaign not found");
+    // Allow if campaign.brandId matches the user's ObjectId OR their brandUsername (string)
     if (String(campaign.brandId) !== brandId) {
-      throw new BadRequestException("Not your campaign");
+      const brand = await this.brandModel.findById(brandId).select('brandUsername').lean();
+      const brandUsername = brand && typeof brand === 'object' && 'brandUsername' in brand ? brand.brandUsername : undefined;
+      if (!brandUsername || String(campaign.brandId) !== brandUsername) {
+        throw new BadRequestException("Not your campaign");
+      }
     }
     // Enforce invite limits for brands (admin-manageable)
     const caps = await this.plansService.getUserPlanCapabilities(brandId);
@@ -77,16 +82,19 @@ export class CampaignInvitesService {
   }
 
   async findByCampaign(campaignId: string) {
-    // Defensive: Always return array, never throw for not found
+    // Query using both string and ObjectId forms to handle legacy/mixed data
     try {
-      // Accept both ObjectId and string campaignId
+      const { Types } = await import('mongoose');
+      const queries: any[] = [{ campaignId }];
+      if (/^[a-fA-F0-9]{24}$/.test(campaignId)) {
+        queries.push({ campaignId: new Types.ObjectId(campaignId) });
+      }
       const invites = await this.inviteModel
-        .find({ campaignId })
-        .populate("influencerId", "name email username profileImages")
+        .find({ $or: queries })
+        .populate("influencerId", "name email username profileImages socialMedia location")
         .lean();
       return Array.isArray(invites) ? invites : [];
     } catch (e) {
-      // If invalid ObjectId or other error, return empty array
       return [];
     }
   }
