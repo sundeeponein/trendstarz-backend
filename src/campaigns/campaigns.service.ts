@@ -95,9 +95,9 @@ export class CampaignsService {
     if (!campaign) throw new NotFoundException("Campaign not found");
     // Allow update if brandId matches ObjectId or brandUsername
     if (String(campaign.brandId) !== brandId) {
-      // Try to fetch the brand's username
       const brand = await this.brandModel.findById(brandId).select('brandUsername').lean();
-      if (!brand || String(campaign.brandId) !== brand.brandUsername) {
+      const brandUsername = brand && typeof brand === 'object' && 'brandUsername' in brand ? brand.brandUsername : undefined;
+      if (!brandUsername || (String(campaign.brandId) !== brandUsername)) {
         throw new BadRequestException("Not your campaign");
       }
     }
