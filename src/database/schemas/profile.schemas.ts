@@ -228,7 +228,7 @@ export const SocialMediaModel = model("SocialMedia", SocialMediaSchema);
 export const CampaignSchema = new Schema(
   {
     brandId: {
-      type: Types.ObjectId,
+      type: Schema.Types.Mixed, // Allow ObjectId or string
       ref: "Brand",
       required: true,
       index: true,
