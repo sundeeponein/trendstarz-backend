@@ -24,7 +24,25 @@ export class CampaignsService {
 
   async create(brandId: string, data: any) {
     // Enforce campaign creation limit for brands (admin-manageable)
-    const brand = await this.brandModel.findById(brandId).lean();
+    let brand = await this.brandModel.findById(brandId).lean();
+    // If brand profile is missing, auto-create a minimal profile
+    if (!brand && brandId && typeof brandId === 'string' && brandId.length === 24 && /^[a-fA-F0-9]{24}$/.test(brandId)) {
+      // Try to create a minimal brand profile (fallback)
+      try {
+        const minimalBrand = new this.brandModel({
+          _id: brandId,
+          brandName: 'Brand',
+          email: '',
+          phoneNumber: '',
+          password: '',
+          status: 'pending',
+        });
+        brand = (await minimalBrand.save()).toObject();
+      } catch (e) {
+        // If creation fails, throw error
+        throw new NotFoundException("Brand not found and could not be auto-created");
+      }
+    }
     if (!brand) throw new NotFoundException("Brand not found");
     // Lazy load PlansService to avoid circular dep
     const caps = await this.plansService.getUserPlanCapabilities(brandId);
