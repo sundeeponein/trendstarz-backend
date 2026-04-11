@@ -71,11 +71,17 @@ export class CampaignsService {
           "i",
         ),
       })
-      .select("_id")
+      .select(["_id", "brandUsername"])
       .lean();
     if (!brand) return [];
+    // Fetch campaigns by both ObjectId and string brandId (brandUsername)
     return this.campaignModel
-      .find({ brandId: brand._id })
+      .find({
+        $or: [
+          { brandId: brand._id },
+          { brandId: brand.brandUsername },
+        ],
+      })
       .sort({ createdAt: -1 })
       .lean();
   }
