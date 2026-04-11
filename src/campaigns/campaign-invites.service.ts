@@ -77,10 +77,18 @@ export class CampaignInvitesService {
   }
 
   async findByCampaign(campaignId: string) {
-    return this.inviteModel
-      .find({ campaignId })
-      .populate("influencerId", "name email username profileImages")
-      .lean();
+    // Defensive: Always return array, never throw for not found
+    try {
+      // Accept both ObjectId and string campaignId
+      const invites = await this.inviteModel
+        .find({ campaignId })
+        .populate("influencerId", "name email username profileImages")
+        .lean();
+      return Array.isArray(invites) ? invites : [];
+    } catch (e) {
+      // If invalid ObjectId or other error, return empty array
+      return [];
+    }
   }
 
   async findByInfluencer(influencerId: string) {
