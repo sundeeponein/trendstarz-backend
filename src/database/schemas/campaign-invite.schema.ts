@@ -1,9 +1,9 @@
 import { Schema } from 'mongoose';
 
 export const CampaignInviteSchema = new Schema({
-  campaignId: { type: Schema.Types.ObjectId, ref: 'Campaign', required: true },
+  campaignId: { type: Schema.Types.Mixed, ref: 'Campaign', required: true },
   influencerId: { type: Schema.Types.ObjectId, ref: 'Influencer', required: true },
-  brandId: { type: Schema.Types.ObjectId, ref: 'Brand', required: true },
+  brandId: { type: Schema.Types.Mixed, ref: 'Brand', required: true }, // Allow ObjectId or string
   status: { type: String, enum: ['pending', 'accepted', 'declined', 'submitted', 'completed'], default: 'pending' },
   analytics: {
     reach: Number,
