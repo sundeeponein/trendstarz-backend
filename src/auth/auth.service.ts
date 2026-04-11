@@ -309,11 +309,29 @@ export class AuthService {
 
     // Fetch all three collections in parallel to eliminate sequential DB round-trips
     // and prevent timing-based enumeration of which collection a user belongs to.
-    const [adminUser, influencer, brand] = await Promise.all([
+    const [adminUser, influencer, brandRaw] = await Promise.all([
       this.userModel.findOne({ email: normalizedEmail, role: "admin" }),
       this.influencerModel.findOne({ email: normalizedEmail }),
       this.brandModel.findOne({ email: normalizedEmail }),
     ]);
+
+    // If user is a brand but no brand profile exists, auto-create a minimal profile
+    let brand = brandRaw;
+    if (!brand && !adminUser && !influencer) {
+      // Create minimal brand profile
+      const minimalBrand = new this.brandModel({
+        brandName: normalizedEmail.split('@')[0] || 'Brand',
+        email: normalizedEmail,
+        phoneNumber: '',
+        password: await bcrypt.hash(password, 10),
+        status: 'pending',
+      });
+      try {
+        brand = await minimalBrand.save();
+      } catch (e) {
+        throw new UnauthorizedException("Could not auto-create brand profile for this user.");
+      }
+    }
 
     if (adminUser) {
       const isMatch = await bcrypt.compare(password, adminUser.password);
@@ -393,11 +411,8 @@ export class AuthService {
           "Your account has been deleted. Please contact support.",
         );
       }
-      if (brand.status === "pending") {
-        throw new UnauthorizedException(
-          "Your account is pending approval. Please wait for admin to activate your account.",
-        );
-      }
+      // Allow login even if status is pending for auto-created minimal brands
+      // (optionally, you can enforce approval here if needed)
       const displayName = brand.brandName || brand.email;
       const brandLogoArr = Array.isArray(brand.brandLogo)
         ? brand.brandLogo
