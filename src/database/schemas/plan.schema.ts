@@ -89,6 +89,7 @@ export const SubscriptionSchema = new Schema(
       index: true,
     },
     imagesMarkedForDeletionAt: { type: Date, default: null },
+    source: { type: String, enum: ["admin", "payment"], default: "payment" },
   },
   { timestamps: true },
 );
