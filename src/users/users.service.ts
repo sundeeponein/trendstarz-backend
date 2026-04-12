@@ -819,20 +819,39 @@ export class UsersService {
       update.premiumStart = null;
       update.premiumEnd = null;
     }
+    let user = null;
+    let userType: "Influencer" | "Brand" = "Influencer";
     if (type === "brand") {
-      const brand = await this.brandModel.findByIdAndUpdate(id, update, {
+      user = await this.brandModel.findByIdAndUpdate(id, update, { new: true });
+      userType = "Brand";
+    } else {
+      user = await this.influencerModel.findByIdAndUpdate(id, update, {
         new: true,
       });
-      if (brand) return { message: "Premium status updated", user: brand };
-    } else {
-      const influencer = await this.influencerModel.findByIdAndUpdate(
-        id,
-        update,
-        { new: true },
-      );
-      if (influencer)
-        return { message: "Premium status updated", user: influencer };
+      userType = "Influencer";
     }
+    if (user && isPremium && premiumDuration) {
+      // Also create/renew Subscription for plan enforcement
+      try {
+        const proPlan =
+          await this.plansService.findProPlanForUserType(userType);
+        await this.plansService.activateSubscription(
+          String(user._id),
+          userType,
+          String(proPlan._id),
+          premiumDuration as "1m" | "3m" | "1y",
+          "admin",
+        );
+      } catch (e) {
+        // Log but do not block admin action
+        console.error(
+          "[ADMIN][setPremium] Failed to activate subscription:",
+          e,
+        );
+      }
+      // Optionally: log somewhere that this was admin-given
+    }
+    if (user) return { message: "Premium status updated", user };
     return { message: "User not found", id };
   }
 

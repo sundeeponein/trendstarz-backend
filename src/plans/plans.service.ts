@@ -167,6 +167,7 @@ export class PlansService {
     userType: "Influencer" | "Brand",
     planId: string,
     duration: "1m" | "3m" | "1y",
+    source: "admin" | "payment" = "payment",
   ) {
     const plan = (await this.planModel.findById(planId).lean()) as any;
     if (!plan) {
@@ -200,6 +201,7 @@ export class PlansService {
       startDate: now,
       endDate: end,
       status: "active",
+      source,
     });
 
     return subscription;
