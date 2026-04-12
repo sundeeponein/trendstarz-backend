@@ -35,9 +35,13 @@ export class PaymentService {
     else if (premiumDuration === "1y") end.setFullYear(end.getFullYear() + 1);
     update.premiumEnd = end;
 
-    const influencer = await this.influencerModel.findByIdAndUpdate(userId, update, {
-      new: true,
-    });
+    const influencer = await this.influencerModel.findByIdAndUpdate(
+      userId,
+      update,
+      {
+        new: true,
+      },
+    );
     if (influencer)
       return { success: true, message: "Premium activated", premiumEnd: end };
     const brand = await this.brandModel.findByIdAndUpdate(userId, update, {
@@ -69,20 +73,20 @@ export class PaymentService {
 
     // Fetch user and store snapshot
     let user;
-    if (userType === 'Influencer') {
+    if (userType === "Influencer") {
       user = await this.influencerModel.findById(userId).lean();
     } else {
       user = await this.brandModel.findById(userId).lean();
     }
     let userSnapshot = {};
-    if (user && typeof user === 'object' && !Array.isArray(user)) {
+    if (user && typeof user === "object" && !Array.isArray(user)) {
       userSnapshot = {
         name: (user as any).name || (user as any).brandName,
         email: (user as any).email,
       };
     }
 
-    // Create pending payment record
+    // Create approved payment record instantly
     const payment = new this.paymentModel({
       userId,
       userType,
@@ -91,13 +95,33 @@ export class PaymentService {
       amount,
       premiumDuration,
       paymentMethod,
-      status: "pending",
+      status: "approved",
+      approvedAt: new Date(),
     });
 
     await payment.save();
+
+    // Instantly upgrade user and activate subscription
+    await this.confirmUpgrade(userId, premiumDuration);
+    try {
+      const plan = await this.plansService.findProPlanForUserType(userType);
+      await this.plansService.activateSubscription(
+        String(userId),
+        userType,
+        String(plan._id),
+        premiumDuration,
+      );
+    } catch (e) {
+      // Non-fatal: subscription creation failed but payment is approved
+      console.error(
+        "[Payment][AutoApproval] subscription activation failed",
+        e,
+      );
+    }
+
     return {
       success: true,
-      message: "Payment recorded. Awaiting admin approval.",
+      message: "Payment successful. Premium activated.",
       paymentId: payment._id,
     };
   }
@@ -109,7 +133,10 @@ export class PaymentService {
       .sort({ createdAt: -1 })
       .skip(skip)
       .limit(limit)
-      .populate("userId", "username brandUsername email name brandName profileImages brandLogo phoneNumber categories location");
+      .populate(
+        "userId",
+        "username brandUsername email name brandName profileImages brandLogo phoneNumber categories location",
+      );
 
     const total = await this.paymentModel.countDocuments({
       status: "pending",
@@ -124,77 +151,7 @@ export class PaymentService {
     };
   }
 
-  async approvePayment(paymentId: string, adminId: string) {
-    const payment = await this.paymentModel.findById(paymentId);
-    if (!payment) return { success: false, message: "Payment not found" };
-    if (payment.status !== "pending") {
-      return { success: false, message: "Payment is not pending" };
-    }
-
-    // Upgrade user to premium
-    const now = new Date();
-    const end = new Date(now);
-    if (payment.premiumDuration === "1m") end.setMonth(end.getMonth() + 1);
-    else if (payment.premiumDuration === "3m") end.setMonth(end.getMonth() + 3);
-    else if (payment.premiumDuration === "1y")
-      end.setFullYear(end.getFullYear() + 1);
-
-    let upgraded = false;
-    if (payment.userType === "Influencer") {
-      const result = await this.influencerModel.findByIdAndUpdate(
-        payment.userId,
-        {
-          isPremium: true,
-          premiumDuration: payment.premiumDuration,
-          premiumStart: now,
-          premiumEnd: end,
-        },
-        { new: true },
-      );
-      if (result) upgraded = true;
-    } else {
-      const result = await this.brandModel.findByIdAndUpdate(
-        payment.userId,
-        {
-          isPremium: true,
-          premiumDuration: payment.premiumDuration,
-          premiumStart: now,
-          premiumEnd: end,
-        },
-        { new: true },
-      );
-      if (result) upgraded = true;
-    }
-
-    if (!upgraded) {
-      return { success: false, message: "User not found" };
-    }
-
-    // Mark payment as approved
-    payment.status = "approved";
-    payment.approvedBy = adminId as any;
-    payment.approvedAt = new Date();
-    await payment.save();
-
-    // Activate / renew subscription based on plan
-    try {
-      const plan = await this.plansService.findProPlanForUserType(payment.userType as "Influencer" | "Brand");
-      await this.plansService.activateSubscription(
-        String(payment.userId),
-        payment.userType as "Influencer" | "Brand",
-        String(plan._id),
-        payment.premiumDuration as "1m" | "3m" | "1y",
-      );
-    } catch (e) {
-      // Non-fatal: subscription creation failed but payment is approved
-      console.error("[PaymentApproval] subscription activation failed", e);
-    }
-
-    return {
-      success: true,
-      message: "Payment approved. User upgraded to premium.",
-    };
-  }
+  // approvePayment is now obsolete (instant approval)
 
   async rejectPayment(paymentId: string, rejectionReason: string) {
     const payment = await this.paymentModel.findById(paymentId);
@@ -221,7 +178,10 @@ export class PaymentService {
       .sort({ createdAt: -1 })
       .skip(skip)
       .limit(limit)
-      .populate("userId", "username brandUsername email name brandName profileImages brandLogo phoneNumber categories location")
+      .populate(
+        "userId",
+        "username brandUsername email name brandName profileImages brandLogo phoneNumber categories location",
+      )
       .lean();
     return { success: true, payments };
   }
@@ -229,7 +189,10 @@ export class PaymentService {
   async getPaymentById(paymentId: string) {
     const payment = await this.paymentModel
       .findById(paymentId)
-      .populate("userId", "username brandUsername email name brandName profileImages brandLogo phoneNumber categories location");
+      .populate(
+        "userId",
+        "username brandUsername email name brandName profileImages brandLogo phoneNumber categories location",
+      );
     return { success: true, payment };
   }
 }
