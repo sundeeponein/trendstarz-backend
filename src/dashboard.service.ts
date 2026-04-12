@@ -26,13 +26,16 @@ export class DashboardService {
       submitted: 0,
       completed: 0,
     };
+    const statusDebug: Record<string, number> = {};
     const newInvites: any[] = [];
     const activeCampaigns: any[] = [];
     const completedCampaigns: any[] = [];
     for (const invite of invites) {
       const st = invite.status as string;
+      // Debug: count all raw statuses
+      statusDebug[st] = (statusDebug[st] || 0) + 1;
       // Map 'pending' → 'invited' for display; 'accepted', 'submitted', 'completed' are direct
-      const mappedStatus = st === 'pending' ? 'invited' : st;
+      const mappedStatus = st === "pending" ? "invited" : st;
       if (Object.prototype.hasOwnProperty.call(stats, mappedStatus)) {
         stats[mappedStatus] = (stats[mappedStatus] || 0) + 1;
       }
@@ -57,6 +60,8 @@ export class DashboardService {
         });
       }
     }
+    // Debug: log status counts
+    console.log("[Dashboard Debug] Invite status counts:", statusDebug);
     return {
       user: {
         name: user?.name || "",
@@ -70,7 +75,7 @@ export class DashboardService {
         location: user?.location ?? {},
         profileImages: user?.profileImages ?? [],
       },
-      invites: { ...stats, newInvites },
+      invites: { ...stats, newInvites, statusDebug },
       activeCampaigns,
       completedCampaigns,
     };
@@ -82,7 +87,9 @@ export class DashboardService {
       throw new NotFoundException("Brand not found");
     }
     // Query campaigns by ObjectId OR brandUsername (string) for legacy compatibility
-    const brandObjectId = Types.ObjectId.isValid(userId) ? new Types.ObjectId(userId) : null;
+    const brandObjectId = Types.ObjectId.isValid(userId)
+      ? new Types.ObjectId(userId)
+      : null;
     const brandUsername = brand.brandUsername || null;
     const orConditions: any[] = [];
     if (brandObjectId) orConditions.push({ brandId: brandObjectId });
@@ -98,7 +105,9 @@ export class DashboardService {
     for (const c of campaigns) {
       // Query invites by both ObjectId and string campaignId for legacy compatibility
       const campaignIdStr = String(c._id);
-      const campaignIdObj = Types.ObjectId.isValid(campaignIdStr) ? new Types.ObjectId(campaignIdStr) : null;
+      const campaignIdObj = Types.ObjectId.isValid(campaignIdStr)
+        ? new Types.ObjectId(campaignIdStr)
+        : null;
       const inviteQuery: any[] = [{ campaignId: campaignIdStr }];
       if (campaignIdObj) inviteQuery.push({ campaignId: campaignIdObj });
       const invites = await this.inviteModel.find({ $or: inviteQuery }).lean();
@@ -124,9 +133,10 @@ export class DashboardService {
         completed: comp,
       });
     }
-    const avgResponseRate = totalInvites > 0
-      ? Math.round(((accepted + completed) / totalInvites) * 100)
-      : 0;
+    const avgResponseRate =
+      totalInvites > 0
+        ? Math.round(((accepted + completed) / totalInvites) * 100)
+        : 0;
     return {
       brand: {
         brandName: brand?.brandName || "",
@@ -141,7 +151,8 @@ export class DashboardService {
         brandLogo: brand?.brandLogo ?? [],
       },
       totalCampaigns: campaigns.length,
-      activeCampaigns: campaigns.filter((c: any) => c.status === 'active').length,
+      activeCampaigns: campaigns.filter((c: any) => c.status === "active")
+        .length,
       totalInvites,
       accepted,
       completed,
