@@ -44,6 +44,7 @@ export class PaymentController {
       premiumDuration: "1m" | "3m" | "1y";
       userType: "Influencer" | "Brand";
       paymentMethod?: "upi" | "qr";
+      finalAmount?: number;
     },
     @Req() req: any,
   ) {
@@ -54,13 +55,25 @@ export class PaymentController {
     if (!["1m", "3m", "1y"].includes(body.premiumDuration))
       throw new BadRequestException("Invalid premium duration");
 
-    // Plan amounts for reference
-    const planAmounts: Record<string, number> = {
-      "1m": 399,
-      "3m": 999,
-      "1y": 2999,
-    };
-    const amount = planAmounts[body.premiumDuration];
+    // Use finalAmount from frontend if provided, else fetch from plan config
+    let amount = body.finalAmount;
+    if (typeof amount !== "number") {
+      // Fetch plan from DB (synced from plans-config.json)
+      const plan =
+        await this.paymentService.plansService.findProPlanForUserType(
+          body.userType,
+        );
+      const billingCycle =
+        body.premiumDuration === "1m"
+          ? "monthly"
+          : body.premiumDuration === "3m"
+            ? "quarterly"
+            : "yearly";
+      amount = plan?.price?.[billingCycle];
+      if (typeof amount !== "number") {
+        throw new BadRequestException("Plan price not found");
+      }
+    }
 
     return this.paymentService.createPendingPayment(
       userId,

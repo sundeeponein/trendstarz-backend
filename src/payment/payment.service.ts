@@ -10,7 +10,7 @@ export class PaymentService {
     @InjectModel("Payment") private readonly paymentModel: Model<Payment>,
     @InjectModel("Influencer") private readonly influencerModel: Model<any>,
     @InjectModel("Brand") private readonly brandModel: Model<any>,
-    private readonly plansService: PlansService,
+    public readonly plansService: PlansService,
   ) {}
 
   /**
