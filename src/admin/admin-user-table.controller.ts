@@ -45,7 +45,10 @@ export class AdminUserTableController {
     if (q) filter.q = q;
     if (category) filter.category = category;
     console.log("[ADMIN][DEBUG] Influencer filter:", JSON.stringify(filter));
-    const influencers = await this.influencerModel.find(filter).lean().limit(100);
+    const influencers = await this.influencerModel
+      .find(filter)
+      .lean()
+      .limit(100);
     console.log("[ADMIN][DEBUG] Influencer result count:", influencers.length);
     await Promise.all(
       influencers.map(async (u) => {
@@ -54,7 +57,7 @@ export class AdminUserTableController {
           .findOne({ userId: u._id, status: "approved" })
           .sort({ approvedAt: -1 })
           .lean();
-      })
+      }),
     );
     return influencers;
   }
@@ -80,15 +83,18 @@ export class AdminUserTableController {
       brands.map(async (b) => {
         if (!b.brandLogo) b.brandLogo = [];
         if (!b.products) b.products = [];
-        if (b.promotionalPrice === undefined && (b as any).price !== undefined) {
+        if (
+          b.promotionalPrice === undefined &&
+          (b as any).price !== undefined
+        ) {
           b.promotionalPrice = (b as any).price;
         }
         // Fetch latest approved payment
-        b.latestPayment = await this.paymentModel
+        (b as any).latestPayment = await this.paymentModel
           .findOne({ userId: b._id, status: "approved" })
           .sort({ approvedAt: -1 })
           .lean();
-      })
+      }),
     );
     return brands;
   }
