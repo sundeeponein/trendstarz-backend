@@ -13,8 +13,8 @@ import { FREE_PLAN_DEFAULTS } from "../database/schemas/plan.schema";
 @Injectable()
 export class PlansService {
   constructor(
-    @InjectModel("Plan") private readonly planModel: Model<any>,
-    @InjectModel("Subscription") private readonly subscriptionModel: Model<any>,
+    @InjectModel("Plan") public readonly planModel: Model<any>,
+    @InjectModel("Subscription") public readonly subscriptionModel: Model<any>,
     @InjectModel("Influencer") private readonly influencerModel: Model<any>,
     @InjectModel("Brand") private readonly brandModel: Model<any>,
   ) {}
