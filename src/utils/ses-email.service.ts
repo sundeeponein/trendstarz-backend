@@ -25,6 +25,11 @@ export class SesEmailService {
         },
       },
     };
-    return this.ses.sendEmail(params).promise();
+    return new Promise((resolve, reject) => {
+      this.ses.sendEmail(params, (err, data) => {
+        if (err) return reject(err);
+        resolve(data);
+      });
+    });
   }
 }
