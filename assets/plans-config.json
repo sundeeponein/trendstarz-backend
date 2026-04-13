@@ -41,6 +41,10 @@
         { "key": "maxInvitesPerCampaign", "label": "Invites / campaign", "value": 10 },
         { "key": "maxInviteOptions", "label": "Invite options", "value": 10 }
       ],
+      "offers": [
+        { "key": "trialPeriodDays", "label": "Trial period (days)", "value": 7 },
+        { "key": "discountOnBrandPro", "label": "Discount on Brand Pro plan (%)", "value": 20 }
+      ],
       "policies": { "imageRetentionDaysAfterExpiry": 45 },
       "highlight": true,
       "isActive": true,
@@ -88,6 +92,10 @@
         { "key": "maxInvitesPerCampaign", "label": "Invites / campaign", "value": 10 },
         { "key": "maxTeamSeats", "label": "Team seats", "value": 5 },
         { "key": "analytics", "label": "Analytics", "value": 0 }
+      ],
+      "offers": [
+        { "key": "trialPeriodDays", "label": "Trial period (days)", "value": 7 },
+        { "key": "discountOnInfluencerPro", "label": "Discount on Influencer Pro plan (%)", "value": 20 }
       ],
       "policies": { "imageRetentionDaysAfterExpiry": 45 },
       "highlight": true,
