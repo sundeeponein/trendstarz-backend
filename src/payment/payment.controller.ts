@@ -94,10 +94,12 @@ export class PaymentController {
    */
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Patch(":id/approve")
-  async approvePayment(@Param("id") paymentId: string, @Req() req: any) {
-    const adminId = req.user?.userId;
-    if (!adminId) throw new BadRequestException("Not authenticated");
-    return this.paymentService.approvePayment(paymentId, adminId);
+  approvePayment() {
+    // Manual approval is obsolete; payments are auto-approved
+    return {
+      success: false,
+      message: "Manual approval is obsolete. All payments are auto-approved.",
+    };
   }
 
   /**
