@@ -86,7 +86,7 @@ export class PaymentService {
       };
     }
 
-    // Create approved payment record instantly
+    // Create payment with status pending
     const payment = new this.paymentModel({
       userId,
       userType,
@@ -95,35 +95,50 @@ export class PaymentService {
       amount,
       premiumDuration,
       paymentMethod,
-      status: "approved",
-      approvedAt: new Date(),
+      status: "pending",
     });
 
     await payment.save();
 
-    // Instantly upgrade user and activate subscription
-    await this.confirmUpgrade(userId, premiumDuration);
+    return {
+      success: true,
+      message: "Payment recorded and pending admin approval.",
+      paymentId: payment._id,
+    };
+  }
+  /**
+   * Approve a pending payment, activate premium and subscription
+   */
+  async approvePayment(paymentId: string, adminId: string) {
+    const payment = await this.paymentModel.findById(paymentId);
+    if (!payment) return { success: false, message: "Payment not found" };
+    if (payment.status !== "pending") {
+      return { success: false, message: "Payment is not pending" };
+    }
+    payment.status = "approved";
+    payment.approvedBy = adminId;
+    payment.approvedAt = new Date();
+    await payment.save();
+
+    // Activate premium for user
+    await this.confirmUpgrade(payment.userId, payment.premiumDuration);
     try {
-      const plan = await this.plansService.findProPlanForUserType(userType);
+      const plan = await this.plansService.findProPlanForUserType(payment.userType);
       await this.plansService.activateSubscription(
-        String(userId),
-        userType,
+        String(payment.userId),
+        payment.userType,
         String(plan._id),
-        premiumDuration,
+        payment.premiumDuration,
       );
     } catch (e) {
       // Non-fatal: subscription creation failed but payment is approved
       console.error(
-        "[Payment][AutoApproval] subscription activation failed",
+        "[Payment][ManualApproval] subscription activation failed",
         e,
       );
     }
 
-    return {
-      success: true,
-      message: "Payment successful. Premium activated.",
-      paymentId: payment._id,
-    };
+    return { success: true, message: "Payment approved and premium activated." };
   }
 
   async getPendingPayments(page = 1, limit = 10) {

@@ -11,6 +11,7 @@ import { JwtAuthGuard } from "../auth/jwt-auth.guard";
 import { RolesGuard } from "../auth/roles.guard";
 import { InjectModel } from "@nestjs/mongoose";
 import { Model } from "mongoose";
+import { Payment } from "../database/schemas/payment.schema";
 
 type BrandImageDoc = {
   brandLogo?: any[];
@@ -26,6 +27,7 @@ export class AdminUserTableController {
   constructor(
     @InjectModel("Influencer") private readonly influencerModel: Model<any>,
     @InjectModel("Brand") private readonly brandModel: Model<BrandImageDoc>,
+    @InjectModel("Payment") private readonly paymentModel: Model<Payment>,
   ) {}
 
   @Get("influencers")
@@ -43,9 +45,18 @@ export class AdminUserTableController {
     if (q) filter.q = q;
     if (category) filter.category = category;
     console.log("[ADMIN][DEBUG] Influencer filter:", JSON.stringify(filter));
-    const result = await this.influencerModel.find(filter).lean().limit(100);
-    console.log("[ADMIN][DEBUG] Influencer result count:", result.length);
-    return result;
+    const influencers = await this.influencerModel.find(filter).lean().limit(100);
+    console.log("[ADMIN][DEBUG] Influencer result count:", influencers.length);
+    await Promise.all(
+      influencers.map(async (u) => {
+        // Fetch latest approved payment
+        u.latestPayment = await this.paymentModel
+          .findOne({ userId: u._id, status: "approved" })
+          .sort({ approvedAt: -1 })
+          .lean();
+      })
+    );
+    return influencers;
   }
 
   @Get("brands")
@@ -65,13 +76,20 @@ export class AdminUserTableController {
     console.log("[ADMIN][DEBUG] Brand filter:", JSON.stringify(filter));
     const brands = await this.brandModel.find(filter).lean().limit(100);
     console.log("[ADMIN][DEBUG] Brand result count:", brands.length);
-    brands.forEach((b) => {
-      if (!b.brandLogo) b.brandLogo = [];
-      if (!b.products) b.products = [];
-      if (b.promotionalPrice === undefined && (b as any).price !== undefined) {
-        b.promotionalPrice = (b as any).price;
-      }
-    });
+    await Promise.all(
+      brands.map(async (b) => {
+        if (!b.brandLogo) b.brandLogo = [];
+        if (!b.products) b.products = [];
+        if (b.promotionalPrice === undefined && (b as any).price !== undefined) {
+          b.promotionalPrice = (b as any).price;
+        }
+        // Fetch latest approved payment
+        b.latestPayment = await this.paymentModel
+          .findOne({ userId: b._id, status: "approved" })
+          .sort({ approvedAt: -1 })
+          .lean();
+      })
+    );
     return brands;
   }
 
