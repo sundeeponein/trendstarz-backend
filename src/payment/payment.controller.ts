@@ -57,6 +57,7 @@ export class PaymentController {
 
     // Use finalAmount from frontend if provided, else fetch from plan config
     let amount = body.finalAmount;
+    let discount = 0;
     if (typeof amount !== "number") {
       // Fetch plan from DB (synced from plans-config.json)
       const plan =
@@ -72,6 +73,62 @@ export class PaymentController {
       amount = plan?.price?.[billingCycle];
       if (typeof amount !== "number") {
         throw new BadRequestException("Plan price not found");
+      }
+
+      // Check for discount offers (cross-plan discount)
+      // Influencer Pro: discountOnBrandPro, Brand Pro: discountOnInfluencerPro
+      if (body.userType === "Brand") {
+        // Check if user has active Influencer Pro subscription
+        const influencerProPlan =
+          await this.paymentService.plansService.planModel
+            .findOne({ code: "influencer-pro", isActive: true })
+            .lean();
+        if (influencerProPlan) {
+          // Find discount offer in Brand Pro
+          const brandProPlan = plan;
+          const discountOffer = (brandProPlan.offers || []).find(
+            (o: any) => o.key === "discountOnInfluencerPro",
+          );
+          if (discountOffer && discountOffer.value > 0) {
+            // Check if user has active Influencer Pro
+            const activeSub =
+              await this.paymentService.plansService.subscriptionModel.findOne({
+                userId,
+                planCode: "influencer-pro",
+                status: "active",
+              });
+            if (activeSub) {
+              discount = discountOffer.value;
+            }
+          }
+        }
+      } else if (body.userType === "Influencer") {
+        // Check if user has active Brand Pro subscription
+        const brandProPlan = await this.paymentService.plansService.planModel
+          .findOne({ code: "brand-pro", isActive: true })
+          .lean();
+        if (brandProPlan) {
+          // Find discount offer in Influencer Pro
+          const influencerProPlan = plan;
+          const discountOffer = (influencerProPlan.offers || []).find(
+            (o: any) => o.key === "discountOnBrandPro",
+          );
+          if (discountOffer && discountOffer.value > 0) {
+            // Check if user has active Brand Pro
+            const activeSub =
+              await this.paymentService.plansService.subscriptionModel.findOne({
+                userId,
+                planCode: "brand-pro",
+                status: "active",
+              });
+            if (activeSub) {
+              discount = discountOffer.value;
+            }
+          }
+        }
+      }
+      if (discount > 0) {
+        amount = Math.round(amount * (1 - discount / 100));
       }
     }
 
@@ -107,12 +164,10 @@ export class PaymentController {
    */
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Patch(":id/approve")
-  approvePayment() {
-    // Manual approval is obsolete; payments are auto-approved
-    return {
-      success: false,
-      message: "Manual approval is obsolete. All payments are auto-approved.",
-    };
+  async approvePayment(@Param("id") paymentId: string, @Req() req: any) {
+    const adminId = req.user?.userId;
+    if (!adminId) throw new BadRequestException("Not authenticated");
+    return await this.paymentService.approvePayment(paymentId, adminId);
   }
 
   /**
