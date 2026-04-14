@@ -10,7 +10,9 @@
         { "key": "socialMediaVisibility", "label": "Show social media links", "value": true },
         { "key": "contactVisibility", "label": "Contact details visible to brands", "value": false },
         { "key": "priorityListing", "label": "Priority search ranking", "value": false },
-        { "key": "analyticsDashboard", "label": "Analytics dashboard", "value": false }
+        { "key": "analyticsDashboard", "label": "Analytics dashboard", "value": false },
+        { "key": "canWriteReview", "label": "Write reviews for brands", "value": false },
+        { "key": "canReadReviews", "label": "View influencer & brand reviews", "value": false }
       ],
       "limits": [
         { "key": "maxProductImages", "label": "Product images", "value": 3 },
@@ -33,7 +35,9 @@
         { "key": "socialMediaVisibility", "label": "Show social media links", "value": true },
         { "key": "contactVisibility", "label": "Contact details visible to brands", "value": true },
         { "key": "priorityListing", "label": "Priority search ranking", "value": true },
-        { "key": "analyticsDashboard", "label": "Analytics dashboard", "value": true }
+        { "key": "analyticsDashboard", "label": "Analytics dashboard", "value": true },
+        { "key": "canWriteReview", "label": "Write reviews for brands", "value": true },
+        { "key": "canReadReviews", "label": "View influencer & brand reviews", "value": true }
       ],
       "limits": [
         { "key": "maxProductImages", "label": "Product images", "value": 10 },
@@ -61,7 +65,8 @@
         { "key": "viewContactDetails", "label": "View contact details", "value": true },
         { "key": "advancedSearchFilters", "label": "Advanced search & filters", "value": false },
         { "key": "campaignAnalyticsDashboard", "label": "Campaign analytics dashboard", "value": false },
-        { "key": "bulkOutreachTools", "label": "Bulk outreach tools", "value": false }
+        { "key": "bulkOutreachTools", "label": "Bulk outreach tools", "value": false },
+        { "key": "canWriteReview", "label": "Write reviews for influencers", "value": false }
       ],
       "limits": [
         { "key": "maxActiveCampaigns", "label": "Active campaign", "value": 1 },
@@ -85,7 +90,8 @@
         { "key": "viewContactDetails", "label": "Unlock full contact details", "value": true },
         { "key": "advancedSearchFilters", "label": "Advanced search & filters", "value": true },
         { "key": "campaignAnalyticsDashboard", "label": "Campaign analytics dashboard", "value": true },
-        { "key": "bulkOutreachTools", "label": "Bulk outreach tools", "value": true }
+        { "key": "bulkOutreachTools", "label": "Bulk outreach tools", "value": true },
+        { "key": "canWriteReview", "label": "Write reviews for influencers", "value": true }
       ],
       "limits": [
         { "key": "maxActiveCampaigns", "label": "Active campaigns", "value": 10 },

@@ -6,6 +6,8 @@ import { Model, Types } from "mongoose";
 export class DashboardService {
   constructor(
     @InjectModel("CampaignInvite") private readonly inviteModel: Model<any>,
+    @InjectModel("CampaignSubmission")
+    private readonly submissionModel: Model<any>,
     @InjectModel("Campaign") private readonly campaignModel: Model<any>,
     @InjectModel("Brand") private readonly brandModel: Model<any>,
     @InjectModel("Influencer") private readonly influencerModel: Model<any>,
@@ -46,16 +48,21 @@ export class DashboardService {
           campaign: invite.campaignId,
         });
       }
-      if (st === "accepted" || st === "submitted") {
+      // Active: accepted, payment_confirmed, working, submitted
+      if (
+        ["accepted", "payment_confirmed", "working", "submitted"].includes(st)
+      ) {
         activeCampaigns.push({
           ...invite.campaignId,
           inviteId: invite._id,
           inviteStatus: st,
         });
       }
-      if (st === "completed") {
+      if (st === "completed" || st === "disputed") {
         completedCampaigns.push({
           ...invite.campaignId,
+          inviteId: invite._id,
+          inviteStatus: st,
           metrics: invite.analytics,
         });
       }

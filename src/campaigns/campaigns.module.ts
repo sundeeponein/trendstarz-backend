@@ -6,6 +6,7 @@ import {
   InfluencerSchema,
 } from "../database/schemas/profile.schemas";
 import { CampaignInviteSchema } from "../database/schemas/campaign-invite.schema";
+import { CampaignSubmissionSchema } from "../database/schemas/campaign-submission.schema";
 import { CampaignsController } from "./campaigns.controller";
 import { CampaignsService } from "./campaigns.service";
 import { CampaignInvitesController } from "./campaign-invites.controller";
@@ -21,6 +22,11 @@ import { PlansModule } from "../plans/plans.module";
         name: "CampaignInvite",
         schema: CampaignInviteSchema,
         collection: "campaigninvites",
+      },
+      {
+        name: "CampaignSubmission",
+        schema: CampaignSubmissionSchema,
+        collection: "campaignsubmissions",
       },
       { name: "Brand", schema: BrandSchema, collection: "brands" },
       {
