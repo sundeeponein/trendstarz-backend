@@ -23,6 +23,16 @@ const PlanLimitSchema = new Schema(
   { _id: false },
 );
 
+// ── Offer (cross-plan discount / trial) ────────────────────────────────────
+const PlanOfferSchema = new Schema(
+  {
+    key: { type: String, required: true },
+    label: { type: String, required: true },
+    value: { type: Number, default: 0 },
+  },
+  { _id: false },
+);
+
 // ── Plan ────────────────────────────────────────────────────────────────────
 export const PlanSchema = new Schema(
   {
@@ -41,6 +51,7 @@ export const PlanSchema = new Schema(
     },
     features: { type: [PlanFeatureSchema], default: [] },
     limits: { type: [PlanLimitSchema], default: [] },
+    offers: { type: [PlanOfferSchema], default: [] },
     policies: {
       imageRetentionDaysAfterExpiry: { type: Number, default: 45 },
     },
@@ -164,12 +175,12 @@ export const FREE_PLAN_DEFAULTS = {
       },
       {
         key: "advancedSearchFilters",
-        label: "Advanced search filters",
+        label: "Advanced search & filters",
         value: false,
       },
       {
-        key: "campaignAnalytics",
-        label: "Campaign analytics",
+        key: "campaignAnalyticsDashboard",
+        label: "Campaign analytics dashboard",
         value: false,
       },
       {
