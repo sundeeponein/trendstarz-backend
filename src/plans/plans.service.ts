@@ -127,7 +127,7 @@ export class PlansService {
   }
 
   async update(id: string, dto: any) {
-    const existing = await this.planModel.findById(id).lean();
+    const existing = (await this.planModel.findById(id).lean()) as any;
     if (!existing) throw new NotFoundException("Plan not found");
     const normalized = this.normalizePlanDto(dto, existing);
     const plan = await this.planModel
