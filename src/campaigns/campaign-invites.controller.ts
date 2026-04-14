@@ -56,4 +56,85 @@ export class CampaignInvitesController {
     const influencerId = req.user?.userId;
     return this.invitesService.submitAnalytics(id, influencerId, body);
   }
+
+  // ── Submission endpoints ───────────────────────────────────────
+  @UseGuards(JwtAuthGuard)
+  @Post(":id/submit")
+  async submitPost(
+    @Param("id") id: string,
+    @Req() req: any,
+    @Body()
+    body: {
+      postUrl: string;
+      postType?: string;
+      captionUsed?: string;
+      postScreenshotUrl: string;
+      insightsScreenshotUrl?: string;
+      viewsCount?: number;
+      likesCount?: number;
+      commentsCount?: number;
+      sharesCount?: number;
+      reachCount?: number;
+    },
+  ) {
+    const influencerId = req.user?.userId;
+    return this.invitesService.submitPost(id, influencerId, body);
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Get(":id/submission")
+  async getSubmission(@Param("id") id: string) {
+    return this.invitesService.getSubmissionByInvite(id);
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Get("campaign/:campaignId/submissions")
+  async getCampaignSubmissions(
+    @Param("campaignId") campaignId: string,
+    @Req() req: any,
+  ) {
+    const brandId = req.user?.userId;
+    return this.invitesService.getSubmissionsByCampaign(campaignId, brandId);
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Patch(":id/review")
+  async reviewSubmission(
+    @Param("id") id: string,
+    @Req() req: any,
+    @Body()
+    body: {
+      action: "approve" | "dispute";
+      feedback?: string;
+      disputeReason?: string;
+    },
+  ) {
+    const brandId = req.user?.userId;
+    return this.invitesService.reviewSubmission(
+      id,
+      brandId,
+      body.action,
+      body.feedback,
+      body.disputeReason,
+    );
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Patch(":id/stats")
+  async updateStats(
+    @Param("id") id: string,
+    @Req() req: any,
+    @Body()
+    body: {
+      viewsCount?: number;
+      likesCount?: number;
+      commentsCount?: number;
+      sharesCount?: number;
+      reachCount?: number;
+      insightsScreenshotUrl?: string;
+    },
+  ) {
+    const influencerId = req.user?.userId;
+    return this.invitesService.updateSubmissionStats(id, influencerId, body);
+  }
 }
