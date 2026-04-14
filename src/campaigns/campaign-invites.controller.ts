@@ -35,6 +35,25 @@ export class CampaignInvitesController {
     return this.invitesService.findByInfluencer(influencerId);
   }
 
+  /**
+   * GET /campaign-invites/brand/completed-with/:influencerId
+   * Brand uses this to check if they have a completed collaboration
+   * with a specific influencer (prerequisite for writing a review).
+   */
+  @UseGuards(JwtAuthGuard)
+  @Get("brand/completed-with/:influencerId")
+  async completedWithInfluencer(
+    @Param("influencerId") influencerId: string,
+    @Req() req: any,
+  ) {
+    const brandId = req.user?.userId;
+    const invite = await this.invitesService.findCompletedByBrandAndInfluencer(
+      brandId,
+      influencerId,
+    );
+    return { invite };
+  }
+
   @UseGuards(JwtAuthGuard)
   @Patch(":id/respond")
   async respond(
