@@ -6,8 +6,6 @@ import { Model, Types } from "mongoose";
 export class DashboardService {
   constructor(
     @InjectModel("CampaignInvite") private readonly inviteModel: Model<any>,
-    @InjectModel("CampaignSubmission")
-    private readonly submissionModel: Model<any>,
     @InjectModel("Campaign") private readonly campaignModel: Model<any>,
     @InjectModel("Brand") private readonly brandModel: Model<any>,
     @InjectModel("Influencer") private readonly influencerModel: Model<any>,
