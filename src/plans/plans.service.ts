@@ -1,6 +1,3 @@
-// Helper for lazy loading PlansService in campaign modules
-// TODO: Refactor getAppPlansService to use proper app instance or inject PlansService directly.
-// export async function getAppPlansService() { ... }
 import {
   Injectable,
   NotFoundException,
@@ -243,7 +240,7 @@ export class PlansService {
     const sub = await this.getActiveSubscription(userId);
     if (!sub) {
       const userType = await this.resolveUserTypeById(userId);
-      const defaults = FREE_PLAN_DEFAULTS[userType];
+      const defaults = FREE_PLAN_DEFAULTS[userType] as any;
       return {
         hasPremium: false,
         planName: "Free",

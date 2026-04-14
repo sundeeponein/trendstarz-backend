@@ -151,6 +151,34 @@ export class CampaignInvitesService {
       .lean();
   }
 
+  /**
+   * Used by brand to find a completed invite with a specific influencer,
+   * so we know the brand is eligible to write a review.
+   */
+  async findCompletedByBrandAndInfluencer(
+    brandId: string,
+    influencerId: string,
+  ) {
+    const { Types } = await import("mongoose");
+    const brandQueries: any[] = [{ brandId }];
+    if (/^[a-fA-F0-9]{24}$/.test(brandId)) {
+      brandQueries.push({ brandId: new Types.ObjectId(brandId) });
+    }
+    const influencerQueries: any[] = [{ influencerId }];
+    if (/^[a-fA-F0-9]{24}$/.test(influencerId)) {
+      influencerQueries.push({ influencerId: new Types.ObjectId(influencerId) });
+    }
+
+    const invite = await this.inviteModel
+      .findOne({
+        $or: brandQueries,
+        $and: [{ $or: influencerQueries }],
+        status: "completed",
+      })
+      .lean();
+    return invite ?? null;
+  }
+
   async respond(
     inviteId: string,
     influencerId: string,
