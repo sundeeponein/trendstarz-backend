@@ -315,13 +315,22 @@ export class PlansService {
   /** Get the first active Pro plan for the matching userType (used by payment approval) */
   async findProPlanForUserType(userType: "Influencer" | "Brand") {
     const mapped = this.normalizeUserType(userType);
-    const plan = (await this.planModel
+    // Prefer the plan with the highest sortOrder that has a non-zero price (i.e. the Pro plan)
+    let plan = (await this.planModel
       .findOne({
         isActive: true,
         userType: mapped,
+        "price.monthly": { $gt: 0 },
       })
-      .sort({ sortOrder: 1 })
+      .sort({ sortOrder: -1 })
       .lean()) as any;
+    // Fallback: any active plan for the type (e.g. if all plans are free)
+    if (!plan) {
+      plan = (await this.planModel
+        .findOne({ isActive: true, userType: mapped })
+        .sort({ sortOrder: -1 })
+        .lean()) as any;
+    }
     if (!plan)
       throw new BadRequestException("No active plan found for user type");
     return plan;
