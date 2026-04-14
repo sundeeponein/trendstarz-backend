@@ -193,6 +193,11 @@ export const FREE_PLAN_DEFAULTS = {
         label: "Write reviews for influencers",
         value: false,
       },
+      {
+        key: "canReadReviews",
+        label: "View influencer & brand reviews",
+        value: false,
+      },
     ],
     limits: [
       { key: "maxActiveCampaigns", label: "Active campaign", value: 1 },

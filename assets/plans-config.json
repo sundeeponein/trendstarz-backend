@@ -66,7 +66,8 @@
         { "key": "advancedSearchFilters", "label": "Advanced search & filters", "value": false },
         { "key": "campaignAnalyticsDashboard", "label": "Campaign analytics dashboard", "value": false },
         { "key": "bulkOutreachTools", "label": "Bulk outreach tools", "value": false },
-        { "key": "canWriteReview", "label": "Write reviews for influencers", "value": false }
+        { "key": "canWriteReview", "label": "Write reviews for influencers", "value": false },
+        { "key": "canReadReviews", "label": "View influencer & brand reviews", "value": false }
       ],
       "limits": [
         { "key": "maxActiveCampaigns", "label": "Active campaign", "value": 1 },
@@ -91,7 +92,8 @@
         { "key": "advancedSearchFilters", "label": "Advanced search & filters", "value": true },
         { "key": "campaignAnalyticsDashboard", "label": "Campaign analytics dashboard", "value": true },
         { "key": "bulkOutreachTools", "label": "Bulk outreach tools", "value": true },
-        { "key": "canWriteReview", "label": "Write reviews for influencers", "value": true }
+        { "key": "canWriteReview", "label": "Write reviews for influencers", "value": true },
+        { "key": "canReadReviews", "label": "View influencer & brand reviews", "value": true }
       ],
       "limits": [
         { "key": "maxActiveCampaigns", "label": "Active campaigns", "value": 10 },
