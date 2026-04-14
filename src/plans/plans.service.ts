@@ -58,6 +58,7 @@ export class PlansService {
         quarterly: dto?.price?.quarterly ?? existing?.price?.quarterly ?? 0,
         yearly: dto?.price?.yearly ?? existing?.price?.yearly ?? 0,
       },
+      offers: dto?.offers ?? existing?.offers ?? [],
     };
   }
 
@@ -128,10 +129,27 @@ export class PlansService {
   async update(id: string, dto: any) {
     const existing = await this.planModel.findById(id).lean();
     if (!existing) throw new NotFoundException("Plan not found");
+    const normalized = this.normalizePlanDto(dto, existing);
     const plan = await this.planModel
-      .findByIdAndUpdate(id, this.normalizePlanDto(dto, existing), {
-        new: true,
-      })
+      .findByIdAndUpdate(
+        id,
+        {
+          $set: {
+            name: normalized.name,
+            code: normalized.code,
+            userType: normalized.userType,
+            price: normalized.price,
+            features: normalized.features ?? existing.features,
+            limits: normalized.limits ?? existing.limits,
+            offers: normalized.offers ?? existing.offers ?? [],
+            policies: normalized.policies ?? existing.policies,
+            highlight: normalized.highlight ?? existing.highlight,
+            isActive: normalized.isActive ?? existing.isActive,
+            sortOrder: normalized.sortOrder ?? existing.sortOrder,
+          },
+        },
+        { new: true },
+      )
       .lean();
     if (!plan) throw new NotFoundException("Plan not found");
     return { success: true, plan: this.normalizePlanDocument(plan) };
