@@ -126,6 +126,16 @@ export const FREE_PLAN_DEFAULTS = {
         label: "Analytics dashboard",
         value: false,
       },
+      {
+        key: "canWriteReview",
+        label: "Write reviews for brands",
+        value: false,
+      },
+      {
+        key: "canReadReviews",
+        label: "View influencer & brand reviews",
+        value: false,
+      },
     ],
     limits: [
       { key: "maxProductImages", label: "Product images", value: 3 },
@@ -165,6 +175,11 @@ export const FREE_PLAN_DEFAULTS = {
       {
         key: "bulkOutreachTools",
         label: "Bulk outreach tools",
+        value: false,
+      },
+      {
+        key: "canWriteReview",
+        label: "Write reviews for influencers",
         value: false,
       },
     ],
