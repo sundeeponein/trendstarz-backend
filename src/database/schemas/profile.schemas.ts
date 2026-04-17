@@ -68,6 +68,7 @@ export const InfluencerSchema = new Schema(
     languages: [{ type: String }],
     location: {
       state: { type: String },
+      district: { type: String },
     },
     socialMedia: [
       {
@@ -104,6 +105,7 @@ export const InfluencerSchema = new Schema(
 InfluencerSchema.index({ status: 1 });
 InfluencerSchema.index({ categories: 1 });
 InfluencerSchema.index({ "location.state": 1 });
+InfluencerSchema.index({ "location.district": 1 });
 InfluencerSchema.index({ resetToken: 1 }, { sparse: true });
 
 export const InfluencerModel = model("Influencer", InfluencerSchema);
@@ -156,6 +158,7 @@ export const BrandSchema = new Schema(
     website: { type: String },
     location: {
       state: { type: String },
+      district: { type: String },
       googleMapLink: { type: String },
     },
     products: [
@@ -207,6 +210,14 @@ export const StateSchema = new Schema({
   showInFrontend: { type: Boolean, default: true },
 });
 export const StateModel = model("State", StateSchema);
+
+export const DistrictSchema = new Schema({
+  name: { type: String, required: true },
+  state: { type: String, required: true },
+  showInFrontend: { type: Boolean, default: true },
+});
+DistrictSchema.index({ state: 1 });
+export const DistrictModel = model("District", DistrictSchema);
 
 export const SocialMediaSchema = new Schema({
   name: { type: String, required: true },

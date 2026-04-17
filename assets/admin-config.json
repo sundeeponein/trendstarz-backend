@@ -124,33 +124,279 @@
     { "name": "Mega / Celebrity", "visible": true, "icon": "👑", "desc": "1,000,001+ followers" }
   ],
   "locations": [
-    { "state": "Andhra Pradesh", "visible": true },
-    { "state": "Arunachal Pradesh", "visible": true },
-    { "state": "Assam", "visible": true },
-    { "state": "Bihar", "visible": true },
-    { "state": "Chhattisgarh", "visible": true },
-    { "state": "Goa", "visible": true },
-    { "state": "Gujarat", "visible": true },
-    { "state": "Haryana", "visible": true },
-    { "state": "Himachal Pradesh", "visible": true },
-    { "state": "Jharkhand", "visible": true },
-    { "state": "Karnataka", "visible": true },
-    { "state": "Kerala", "visible": true },
-    { "state": "Madhya Pradesh", "visible": true },
-    { "state": "Maharashtra", "visible": true },
-    { "state": "Manipur", "visible": true },
-    { "state": "Meghalaya", "visible": true },
-    { "state": "Mizoram", "visible": true },
-    { "state": "Nagaland", "visible": true },
-    { "state": "Odisha", "visible": true },
-    { "state": "Punjab", "visible": true },
-    { "state": "Rajasthan", "visible": true },
-    { "state": "Sikkim", "visible": true },
-    { "state": "Tamil Nadu", "visible": true },
-    { "state": "Telangana", "visible": true },
-    { "state": "Tripura", "visible": true },
-    { "state": "Uttar Pradesh", "visible": true },
-    { "state": "Uttarakhand", "visible": true },
-    { "state": "West Bengal", "visible": true }
+    { "state": "Andhra Pradesh", "visible": true,
+      "districts": [
+        { "name": "Anantapur", "visible": true },
+        { "name": "Chittoor", "visible": true },
+        { "name": "East Godavari", "visible": true },
+        { "name": "Guntur", "visible": true },
+        { "name": "Krishna", "visible": true },
+        { "name": "Kurnool", "visible": true },
+        { "name": "Nellore", "visible": true },
+        { "name": "Prakasam", "visible": true },
+        { "name": "Srikakulam", "visible": true },
+        { "name": "Visakhapatnam", "visible": true },
+        { "name": "Vizianagaram", "visible": true },
+        { "name": "West Godavari", "visible": true },
+        { "name": "YSR Kadapa", "visible": true }
+      ]
+    },
+    { "state": "Arunachal Pradesh", "visible": true,
+      "districts": [
+        { "name": "Tawang", "visible": true },
+        { "name": "West Kameng", "visible": true },
+        { "name": "East Kameng", "visible": true },
+        { "name": "Papum Pare", "visible": true },
+        { "name": "Itanagar Capital Complex", "visible": true }
+      ]
+    },
+    { "state": "Assam", "visible": true,
+      "districts": [
+        { "name": "Kamrup Metropolitan", "visible": true },
+        { "name": "Kamrup", "visible": true },
+        { "name": "Nagaon", "visible": true },
+        { "name": "Dibrugarh", "visible": true },
+        { "name": "Jorhat", "visible": true },
+        { "name": "Sivasagar", "visible": true },
+        { "name": "Tinsukia", "visible": true }
+      ]
+    },
+    { "state": "Bihar", "visible": true,
+      "districts": [
+        { "name": "Patna", "visible": true },
+        { "name": "Gaya", "visible": true },
+        { "name": "Muzaffarpur", "visible": true },
+        { "name": "Bhagalpur", "visible": true },
+        { "name": "Purnia", "visible": true },
+        { "name": "Darbhanga", "visible": true }
+      ]
+    },
+    { "state": "Chhattisgarh", "visible": true,
+      "districts": [
+        { "name": "Raipur", "visible": true },
+        { "name": "Bilaspur", "visible": true },
+        { "name": "Durg", "visible": true },
+        { "name": "Rajnandgaon", "visible": true },
+        { "name": "Korba", "visible": true }
+      ]
+    },
+    { "state": "Goa", "visible": true,
+      "districts": [
+        { "name": "North Goa", "visible": true },
+        { "name": "South Goa", "visible": true }
+      ]
+    },
+    { "state": "Gujarat", "visible": true,
+      "districts": [
+        { "name": "Ahmedabad", "visible": true },
+        { "name": "Surat", "visible": true },
+        { "name": "Vadodara", "visible": true },
+        { "name": "Rajkot", "visible": true },
+        { "name": "Bhavnagar", "visible": true },
+        { "name": "Junagadh", "visible": true },
+        { "name": "Gandhinagar", "visible": true },
+        { "name": "Kutch", "visible": true }
+      ]
+    },
+    { "state": "Haryana", "visible": true,
+      "districts": [
+        { "name": "Gurugram", "visible": true },
+        { "name": "Faridabad", "visible": true },
+        { "name": "Panipat", "visible": true },
+        { "name": "Ambala", "visible": true },
+        { "name": "Hisar", "visible": true },
+        { "name": "Karnal", "visible": true },
+        { "name": "Rohtak", "visible": true }
+      ]
+    },
+    { "state": "Himachal Pradesh", "visible": true,
+      "districts": [
+        { "name": "Shimla", "visible": true },
+        { "name": "Kangra", "visible": true },
+        { "name": "Mandi", "visible": true },
+        { "name": "Kullu", "visible": true },
+        { "name": "Solan", "visible": true }
+      ]
+    },
+    { "state": "Jharkhand", "visible": true,
+      "districts": [
+        { "name": "Ranchi", "visible": true },
+        { "name": "Jamshedpur", "visible": true },
+        { "name": "Dhanbad", "visible": true },
+        { "name": "Bokaro", "visible": true },
+        { "name": "Hazaribagh", "visible": true }
+      ]
+    },
+    { "state": "Karnataka", "visible": true,
+      "districts": [
+        { "name": "Bengaluru Urban", "visible": true },
+        { "name": "Bengaluru Rural", "visible": true },
+        { "name": "Mysuru", "visible": true },
+        { "name": "Mangaluru (Dakshina Kannada)", "visible": true },
+        { "name": "Hubli-Dharwad", "visible": true },
+        { "name": "Belagavi", "visible": true },
+        { "name": "Udupi", "visible": true },
+        { "name": "Tumakuru", "visible": true }
+      ]
+    },
+    { "state": "Kerala", "visible": true,
+      "districts": [
+        { "name": "Thiruvananthapuram", "visible": true },
+        { "name": "Ernakulam", "visible": true },
+        { "name": "Kozhikode", "visible": true },
+        { "name": "Thrissur", "visible": true },
+        { "name": "Kollam", "visible": true },
+        { "name": "Malappuram", "visible": true },
+        { "name": "Palakkad", "visible": true }
+      ]
+    },
+    { "state": "Madhya Pradesh", "visible": true,
+      "districts": [
+        { "name": "Bhopal", "visible": true },
+        { "name": "Indore", "visible": true },
+        { "name": "Jabalpur", "visible": true },
+        { "name": "Gwalior", "visible": true },
+        { "name": "Ujjain", "visible": true },
+        { "name": "Sagar", "visible": true }
+      ]
+    },
+    { "state": "Maharashtra", "visible": true,
+      "districts": [
+        { "name": "Mumbai", "visible": true },
+        { "name": "Pune", "visible": true },
+        { "name": "Nagpur", "visible": true },
+        { "name": "Thane", "visible": true },
+        { "name": "Nashik", "visible": true },
+        { "name": "Aurangabad", "visible": true },
+        { "name": "Solapur", "visible": true },
+        { "name": "Kolhapur", "visible": true },
+        { "name": "Ratnagiri", "visible": true },
+        { "name": "Satara", "visible": true }
+      ]
+    },
+    { "state": "Manipur", "visible": true,
+      "districts": [
+        { "name": "Imphal East", "visible": true },
+        { "name": "Imphal West", "visible": true },
+        { "name": "Bishnupur", "visible": true }
+      ]
+    },
+    { "state": "Meghalaya", "visible": true,
+      "districts": [
+        { "name": "East Khasi Hills", "visible": true },
+        { "name": "West Garo Hills", "visible": true },
+        { "name": "Ri Bhoi", "visible": true }
+      ]
+    },
+    { "state": "Mizoram", "visible": true,
+      "districts": [
+        { "name": "Aizawl", "visible": true },
+        { "name": "Lunglei", "visible": true }
+      ]
+    },
+    { "state": "Nagaland", "visible": true,
+      "districts": [
+        { "name": "Kohima", "visible": true },
+        { "name": "Dimapur", "visible": true },
+        { "name": "Mokokchung", "visible": true }
+      ]
+    },
+    { "state": "Odisha", "visible": true,
+      "districts": [
+        { "name": "Khordha", "visible": true },
+        { "name": "Cuttack", "visible": true },
+        { "name": "Ganjam", "visible": true },
+        { "name": "Balasore", "visible": true },
+        { "name": "Sambalpur", "visible": true }
+      ]
+    },
+    { "state": "Punjab", "visible": true,
+      "districts": [
+        { "name": "Ludhiana", "visible": true },
+        { "name": "Amritsar", "visible": true },
+        { "name": "Jalandhar", "visible": true },
+        { "name": "Patiala", "visible": true },
+        { "name": "Bathinda", "visible": true },
+        { "name": "Mohali (SAS Nagar)", "visible": true }
+      ]
+    },
+    { "state": "Rajasthan", "visible": true,
+      "districts": [
+        { "name": "Jaipur", "visible": true },
+        { "name": "Jodhpur", "visible": true },
+        { "name": "Udaipur", "visible": true },
+        { "name": "Kota", "visible": true },
+        { "name": "Ajmer", "visible": true },
+        { "name": "Bikaner", "visible": true },
+        { "name": "Alwar", "visible": true }
+      ]
+    },
+    { "state": "Sikkim", "visible": true,
+      "districts": [
+        { "name": "Gangtok", "visible": true },
+        { "name": "Namchi", "visible": true }
+      ]
+    },
+    { "state": "Tamil Nadu", "visible": true,
+      "districts": [
+        { "name": "Chennai", "visible": true },
+        { "name": "Coimbatore", "visible": true },
+        { "name": "Madurai", "visible": true },
+        { "name": "Tiruchirappalli", "visible": true },
+        { "name": "Salem", "visible": true },
+        { "name": "Tirunelveli", "visible": true },
+        { "name": "Erode", "visible": true },
+        { "name": "Vellore", "visible": true }
+      ]
+    },
+    { "state": "Telangana", "visible": true,
+      "districts": [
+        { "name": "Hyderabad", "visible": true },
+        { "name": "Rangareddy", "visible": true },
+        { "name": "Warangal", "visible": true },
+        { "name": "Karimnagar", "visible": true },
+        { "name": "Nizamabad", "visible": true },
+        { "name": "Khammam", "visible": true },
+        { "name": "Medchal-Malkajgiri", "visible": true }
+      ]
+    },
+    { "state": "Tripura", "visible": true,
+      "districts": [
+        { "name": "Agartala (West Tripura)", "visible": true },
+        { "name": "Sepahijala", "visible": true }
+      ]
+    },
+    { "state": "Uttar Pradesh", "visible": true,
+      "districts": [
+        { "name": "Lucknow", "visible": true },
+        { "name": "Noida (Gautam Buddh Nagar)", "visible": true },
+        { "name": "Ghaziabad", "visible": true },
+        { "name": "Kanpur", "visible": true },
+        { "name": "Agra", "visible": true },
+        { "name": "Varanasi", "visible": true },
+        { "name": "Prayagraj", "visible": true },
+        { "name": "Meerut", "visible": true }
+      ]
+    },
+    { "state": "Uttarakhand", "visible": true,
+      "districts": [
+        { "name": "Dehradun", "visible": true },
+        { "name": "Haridwar", "visible": true },
+        { "name": "Nainital", "visible": true },
+        { "name": "Udham Singh Nagar", "visible": true }
+      ]
+    },
+    { "state": "West Bengal", "visible": true,
+      "districts": [
+        { "name": "Kolkata", "visible": true },
+        { "name": "Howrah", "visible": true },
+        { "name": "North 24 Parganas", "visible": true },
+        { "name": "South 24 Parganas", "visible": true },
+        { "name": "Hooghly", "visible": true },
+        { "name": "Darjeeling", "visible": true },
+        { "name": "Bardhaman", "visible": true },
+        { "name": "Nadia", "visible": true }
+      ]
+    }
   ]
 }
