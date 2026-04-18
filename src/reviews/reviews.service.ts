@@ -13,8 +13,6 @@ export class ReviewsService {
   constructor(
     @InjectModel("Review") private readonly reviewModel: Model<any>,
     @InjectModel("CampaignInvite") private readonly inviteModel: Model<any>,
-    @InjectModel("Brand") private readonly brandModel: Model<any>,
-    @InjectModel("Influencer") private readonly influencerModel: Model<any>,
     private readonly plansService: PlansService,
   ) {}
 

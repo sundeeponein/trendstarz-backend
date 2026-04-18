@@ -27,6 +27,7 @@ export async function seedDatabase() {
   const LanguageModel = app.get<Model<any>>(getModelToken("Language"));
   const SocialMediaModel = app.get<Model<any>>(getModelToken("SocialMedia"));
   const StateModel = app.get<Model<any>>(getModelToken("State"));
+  const DistrictModel = app.get<Model<any>>(getModelToken("District"));
   const UserModel = app.get<Model<any>>(getModelToken("User"));
   const InfluencerModel = app.get<Model<any>>(getModelToken("Influencer"));
   const BrandModel = app.get<Model<any>>(getModelToken("Brand"));
@@ -88,6 +89,35 @@ export async function seedDatabase() {
         }
       } catch (err) {
         console.error(`Error inserting/updating state ${loc.state}:`, err);
+      }
+    }
+  }
+
+  // Seed districts nested under states
+  if (adminConfig?.locations) {
+    for (const loc of adminConfig.locations) {
+      if (loc.districts) {
+        for (const dist of loc.districts) {
+          try {
+            let distDoc = await DistrictModel.findOne({ name: dist.name, state: loc.state });
+            if (!distDoc) {
+              distDoc = await DistrictModel.create({
+                name: dist.name,
+                state: loc.state,
+                showInFrontend: dist.visible,
+              });
+              console.log(`Inserted district: ${dist.name} (${loc.state})`);
+            } else {
+              await DistrictModel.updateOne(
+                { name: dist.name, state: loc.state },
+                { $set: { showInFrontend: dist.visible } },
+              );
+              console.log(`Updated district: ${dist.name} (${loc.state})`);
+            }
+          } catch (err) {
+            console.error(`Error inserting/updating district ${dist.name}:`, err);
+          }
+        }
       }
     }
   }

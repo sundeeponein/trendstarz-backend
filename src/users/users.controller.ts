@@ -7,7 +7,6 @@ import {
   Param,
   Get,
   Req,
-  Delete,
   Query,
   ForbiddenException,
 } from "@nestjs/common";
@@ -15,7 +14,7 @@ import { JwtAuthGuard } from "../auth/jwt-auth.guard";
 import { RolesGuard } from "../auth/roles.guard";
 import { InfluencerProfileDto, BrandProfileDto } from "./dto/profile.dto";
 import { UsersService } from "./users.service";
-import type { Request } from "express";
+import { Request } from "express";
 
 @Controller("users")
 export class UsersController {
