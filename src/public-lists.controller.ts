@@ -1,4 +1,4 @@
-import { Controller, Get } from "@nestjs/common";
+import { Controller, Get, Query } from "@nestjs/common";
 import { InjectModel } from "@nestjs/mongoose";
 import { Model } from "mongoose";
 
@@ -47,6 +47,21 @@ export class StatesController {
   async getAll() {
     const states = await this.stateModel.find({}).lean().limit(100);
     return states.length ? states : [];
+  }
+}
+
+@Controller("districts")
+export class DistrictsController {
+  constructor(
+    @InjectModel("District") private readonly districtModel: Model<any>,
+  ) {}
+
+  @Get()
+  async getAll(@Query("state") state?: string) {
+    const filter: any = {};
+    if (state) filter.state = state;
+    const districts = await this.districtModel.find(filter).lean().limit(1000);
+    return districts.length ? districts : [];
   }
 }
 

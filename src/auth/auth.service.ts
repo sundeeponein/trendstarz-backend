@@ -23,13 +23,6 @@ type AnyUserDoc = {
 
 @Injectable()
 export class AuthService {
-  private getFrontendBaseUrl(): string {
-    return (process.env.FRONTEND_URL || "http://localhost:4200").replace(
-      /\/$/,
-      "",
-    );
-  }
-
   private async findAnyUserByEmail(email: string): Promise<AnyUserDoc | null> {
     // Parallel queries — eliminates sequential round-trips and prevents
     // timing-based user-enumeration across collections.
@@ -444,6 +437,12 @@ export class AuthService {
 
   async registerInfluencer(data: any) {
     console.log("registerInfluencer called with data:", data);
+    if (!data.password || data.password.length < 8) {
+      throw new BadRequestException("Password must be at least 8 characters.");
+    }
+    if (data.confirmPassword && data.password !== data.confirmPassword) {
+      throw new BadRequestException("Passwords do not match.");
+    }
     // Check duplicates up front so the API can return all conflicting fields together.
     const [existingEmail, existingUsername, existingPhone] = await Promise.all([
       data.email ? this.influencerModel.findOne({ email: data.email }) : null,
@@ -520,6 +519,12 @@ export class AuthService {
   }
 
   async registerBrand(data: any) {
+    if (!data.password || data.password.length < 8) {
+      throw new BadRequestException("Password must be at least 8 characters.");
+    }
+    if (data.confirmPassword && data.password !== data.confirmPassword) {
+      throw new BadRequestException("Passwords do not match.");
+    }
     // Check duplicates up front so the API can return all conflicting fields together.
     const existingBrandUsernameRegex = data.brandUsername
       ? new RegExp(

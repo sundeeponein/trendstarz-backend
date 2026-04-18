@@ -16,6 +16,7 @@ import { RolesGuard } from "./auth/roles.guard";
 import {
   CategoryModel,
   StateModel,
+  DistrictModel,
   SocialMediaModel,
   LanguageModel,
   TierModel,
@@ -34,6 +35,7 @@ interface BatchVisibilityBody {
   categories?: VisibilityItem[];
   languages?: VisibilityItem[];
   states?: VisibilityItem[];
+  districts?: VisibilityItem[];
 }
 
 @Controller("admin")
@@ -225,6 +227,36 @@ export class AdminListsController {
     return StateModel.findByIdAndDelete(id);
   }
 
+  // Districts
+  @Get("districts")
+  async getDistricts(@Query("state") state?: string) {
+    const filter: any = {};
+    if (state) filter.state = state;
+    return DistrictModel.find(filter).lean().limit(1000);
+  }
+  @Post("districts")
+  async addDistrict(@Body() body: { name: string; state: string }) {
+    return DistrictModel.create(body);
+  }
+  @Patch("districts/:id")
+  async patchDistrict(
+    @Param("id") id: string,
+    @Body() body: Record<string, unknown>,
+  ) {
+    return DistrictModel.findByIdAndUpdate(id, body, { new: true });
+  }
+  @Put("districts/:id")
+  async updateDistrictFull(
+    @Param("id") id: string,
+    @Body() body: Record<string, unknown>,
+  ) {
+    return DistrictModel.findByIdAndUpdate(id, body, { new: true });
+  }
+  @Delete("districts/:id")
+  async deleteDistrict(@Param("id") id: string) {
+    return DistrictModel.findByIdAndDelete(id);
+  }
+
   // Languages
   @Get("languages")
   async getLanguages() {
@@ -336,8 +368,17 @@ export class AdminListsController {
             showInFrontend: s.showInFrontend,
           });
           if (!result) {
-            // console.error(`[BatchUpdate] State not found:`, s);
             throw new BadRequestException(`State not found: ${s._id}`);
+          }
+        }
+      }
+      if (body.districts) {
+        for (const d of body.districts) {
+          const result = await DistrictModel.findByIdAndUpdate(d._id, {
+            showInFrontend: d.showInFrontend,
+          });
+          if (!result) {
+            throw new BadRequestException(`District not found: ${d._id}`);
           }
         }
       }

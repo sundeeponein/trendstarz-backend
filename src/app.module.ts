@@ -8,6 +8,7 @@ import { AdminListsController } from "./admin-lists.controller";
 import {
   CategoriesController,
   StatesController,
+  DistrictsController,
   SocialMediaController,
   TiersController,
   LanguagesController,
@@ -19,6 +20,7 @@ import { MongoLogger } from "./database/mongo-logger";
 import {
   CategorySchema,
   StateSchema,
+  DistrictSchema,
   SocialMediaSchema,
   LanguageSchema,
   UserSchema,
@@ -52,6 +54,7 @@ import { ReviewsModule } from "./reviews/reviews.module";
     MongooseModule.forFeature([
       { name: "Category", schema: CategorySchema, collection: "categories" },
       { name: "State", schema: StateSchema, collection: "states" },
+      { name: "District", schema: DistrictSchema, collection: "districts" },
       {
         name: "SocialMedia",
         schema: SocialMediaSchema,
@@ -100,6 +103,7 @@ import { ReviewsModule } from "./reviews/reviews.module";
     AdminListsController,
     CategoriesController,
     StatesController,
+    DistrictsController,
     SocialMediaController,
     TiersController,
     LanguagesController,
