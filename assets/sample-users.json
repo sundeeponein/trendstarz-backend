@@ -6,54 +6,5 @@
     "email": "admin@trendstarz.com",
     "password": "admin123",
     "visible": true
-  },
-  {
-    "_id": "6568f1a1e1b1c1a1a1a1a1a1",
-  "name": "Alice Influencer",
-  "email": "alice@trendstarz.com",
-  "password": "test123",
-    "phoneNumber": "9876543210",
-    "username": "alice_influencer",
-    "profileImages": [{ "url": "https://example.com/alice.jpg", "public_id": "sample/alice" }],
-    "isPremium": true,
-    "categories": ["Fashion"],
-    "location": { "state": "Goa" },
-    "socialMedia": [
-      { "platform": "instagram", "handle": "@alice", "tier": "A", "followersCount": 12000 }
-    ],
-    "contact": { "whatsapp": true, "email": true, "call": false },
-    "status": "accepted"
-  },
-  {
-    "_id": "6568f1a1e1b1c1a1a1a1a1a2",
-  "name": "Bob Influencer",
-  "email": "bob@trendstarz.com",
-  "password": "test123",
-    "phoneNumber": "9876543211",
-    "username": "bob_influencer",
-    "profileImages": [{ "url": "https://example.com/bob.jpg", "public_id": "sample/bob" }],
-    "isPremium": false,
-    "categories": ["Tech", "Gaming"],
-    "location": { "state": "Maharashtra" },
-    "socialMedia": [
-      { "platform": "twitter", "handle": "@bob", "tier": "B", "followersCount": 8000 }
-    ],
-    "contact": { "whatsapp": false, "email": true, "call": true },
-    "status": "pending"
-  },
-  {
-    "_id": "6568f1a1e1b1c1a1a1a1a1a3",
-  "name": "Carol Brand",
-  "brandName": "Carol's Cosmetics",
-  "email": "carol@trendstarz.com",
-  "password": "test123",
-    "phoneNumber": "9876543212",
-    "brandLogo": ["https://example.com/carol-logo.jpg"],
-    "isPremium": true,
-    "categories": ["Fashion"],
-    "location": { "state": "Goa", "googleMapLink": "https://maps.example.com/carol" },
-    "products": ["Lipstick", "Foundation"],
-    "contact": { "whatsapp": true, "email": false, "call": true },
-    "status": "accepted"
   }
 ]
