@@ -6,5 +6,78 @@
     "email": "admin@trendstarz.com",
     "password": "admin123",
     "visible": true
+  },
+  {
+    "name": "Alice Influencer",
+    "email": "alice@trendstarz.com",
+    "password": "tesT@123",
+    "phoneNumber": "9876543210",
+    "username": "alice_influencer",
+    "profileImages": [{ "url": "https://example.com/alice.jpg", "public_id": "sample/alice" }],
+    "isPremium": true,
+    "categories": ["Fashion"],
+    "languages": ["English", "Hindi"],
+    "location": { "state": "Goa", "district": "North Goa" },
+    "socialMedia": [
+      { "platform": "instagram", "handle": "@alice", "tier": "Nano", "followersCount": 12000, "contentTypes": [{ "name": "Reel", "enabled": true, "price": 500 }] }
+    ],
+    "contact": { "whatsapp": true, "email": true, "call": false },
+    "promotionalPrice": 999,
+    "status": "accepted"
+  },
+  {
+    "name": "Bob Influencer",
+    "email": "bob@trendstarz.com",
+    "password": "tesT@123",
+    "phoneNumber": "9876543211",
+    "username": "bob_influencer",
+    "profileImages": [{ "url": "https://example.com/bob.jpg", "public_id": "sample/bob" }],
+    "isPremium": false,
+    "categories": ["Tech", "Gaming"],
+    "languages": ["English"],
+    "location": { "state": "Maharashtra", "district": "Mumbai" },
+    "socialMedia": [
+      { "platform": "twitter", "handle": "@bob", "tier": "Micro", "followersCount": 8000, "contentTypes": [{ "name": "Tweet / post", "enabled": true, "price": 200 }] }
+    ],
+    "contact": { "whatsapp": false, "email": true, "call": true },
+    "promotionalPrice": 499,
+    "status": "pending"
+  },
+  {
+    "brandName": "Carol's Cosmetics",
+    "brandUsername": "carol_cosmetics",
+    "email": "carol@trendstarz.com",
+    "password": "tesT@123",
+    "phoneNumber": "9876543212",
+    "brandLogo": [{ "url": "https://example.com/carol-logo.jpg", "public_id": "sample/carol-logo" }],
+    "isPremium": true,
+    "categories": ["Fashion"],
+    "languages": ["English"],
+    "location": { "state": "Goa", "district": "North Goa", "googleMapLink": "https://maps.example.com/carol" },
+    "products": [
+      { "url": "https://example.com/lipstick.jpg", "public_id": "sample/lipstick" },
+      { "url": "https://example.com/foundation.jpg", "public_id": "sample/foundation" }
+    ],
+    "contact": { "whatsapp": true, "email": false, "call": true },
+    "promotionalPrice": 1999,
+    "status": "accepted"
+  },
+  {
+    "brandName": "Techify",
+    "brandUsername": "techify_brand",
+    "email": "techify@trendstarz.com",
+    "password": "tesT@123",
+    "phoneNumber": "9876543213",
+    "brandLogo": [{ "url": "https://example.com/techify-logo.jpg", "public_id": "sample/techify-logo" }],
+    "isPremium": false,
+    "categories": ["Tech"],
+    "languages": ["English", "Hindi"],
+    "location": { "state": "Maharashtra", "district": "Mumbai" },
+    "products": [
+      { "url": "https://example.com/gadget.jpg", "public_id": "sample/gadget" }
+    ],
+    "contact": { "whatsapp": true, "email": true, "call": false },
+    "promotionalPrice": 999,
+    "status": "pending"
   }
 ]
