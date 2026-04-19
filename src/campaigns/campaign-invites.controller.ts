@@ -9,6 +9,7 @@ import {
   Req,
 } from "@nestjs/common";
 import { JwtAuthGuard } from "../auth/jwt-auth.guard";
+import { RolesGuard } from "../auth/roles.guard";
 import { CampaignInvitesService } from "./campaign-invites.service";
 
 @Controller("campaign-invites")
@@ -59,10 +60,15 @@ export class CampaignInvitesController {
   async respond(
     @Param("id") id: string,
     @Req() req: any,
-    @Body() body: { status: "accepted" | "declined" },
+    @Body() body: { status: "accepted" | "declined"; selectedPostDate?: string },
   ) {
     const influencerId = req.user?.userId;
-    return this.invitesService.respond(id, influencerId, body.status);
+    return this.invitesService.respond(
+      id,
+      influencerId,
+      body.status,
+      body.selectedPostDate,
+    );
   }
 
   @UseGuards(JwtAuthGuard)
@@ -155,5 +161,11 @@ export class CampaignInvitesController {
   ) {
     const influencerId = req.user?.userId;
     return this.invitesService.updateSubmissionStats(id, influencerId, body);
+  }
+
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Post("admin/auto-approve-stale")
+  async autoApproveStale() {
+    return this.invitesService.autoApproveStaleSubmissions();
   }
 }

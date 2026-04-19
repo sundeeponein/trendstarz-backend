@@ -228,9 +228,23 @@ export class AdminListsController {
 
   // Districts
   @Get("districts")
-  async getDistricts(@Query("state") state?: string) {
+  async getDistricts(
+    @Query("state") state?: string,
+    @Query("stateId") stateId?: string,
+  ) {
+    let resolvedState = (state || "").trim();
+
+    if (!resolvedState && stateId) {
+      const stateDoc: any = await this.stateModel.findById(stateId).lean();
+      resolvedState = String(stateDoc?.name || "").trim();
+    }
+
     const filter: any = {};
-    if (state) filter.state = state;
+    if (resolvedState) {
+      const escaped = resolvedState.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      filter.state = new RegExp(`^${escaped}$`, "i");
+    }
+
     return this.districtModel.find(filter).lean().limit(1000);
   }
   @Post("districts")

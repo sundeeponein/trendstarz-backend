@@ -27,6 +27,8 @@ export const CampaignInviteSchema = new Schema({
     engagement: Number,
     clicks: Number,
   },
+  selectedPostDate: { type: Date },
+  acceptedAt: { type: Date },
   createdAt: { type: Date, default: Date.now },
   updatedAt: { type: Date, default: Date.now },
 });

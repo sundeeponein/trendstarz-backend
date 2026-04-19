@@ -196,6 +196,9 @@ export const AppSettingsSchema = new Schema({
   preApproveBrands: { type: Boolean, default: false },
   brandRequireEmailVerified: { type: Boolean, default: true },
   brandRequireMobileVerified: { type: Boolean, default: false },
+  platformFeeEnabled: { type: Boolean, default: false },
+  platformFeePercent: { type: Number, default: 10 },
+  feeActivationDate: { type: Date },
 });
 export const AppSettingsModel = model("AppSettings", AppSettingsSchema);
 
@@ -246,6 +249,12 @@ export const CampaignSchema = new Schema(
     },
     title: { type: String, required: true },
     description: { type: String },
+    campaignType: {
+      type: String,
+      enum: ["paid_collab", "product", "invite_location", "pay_to_join"],
+      default: "paid_collab",
+      index: true,
+    },
     image: {
       url: { type: String },
       public_id: { type: String },
@@ -257,8 +266,14 @@ export const CampaignSchema = new Schema(
     },
     budgetMin: { type: Number },
     budgetMax: { type: Number },
+    pricePerInfluencer: { type: Number }, // paise
+    maxInfluencers: { type: Number },
+    estimatedBudget: { type: Number }, // paise
     timelineStart: { type: Date },
     timelineEnd: { type: Date },
+    startDate: { type: Date },
+    endDate: { type: Date },
+    platforms: [{ type: String }],
     categories: [{ type: String }],
     deliverables: [{ type: String }],
     socialMedia: [

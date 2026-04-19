@@ -22,6 +22,64 @@ export class CampaignsService {
     private readonly plansService: PlansService,
   ) {}
 
+  private normalizeCampaignPayload(data: any) {
+    const normalized: any = { ...data };
+
+    const startDate = data.startDate || data.timelineStart;
+    const endDate = data.endDate || data.timelineEnd;
+    if (startDate) {
+      normalized.startDate = new Date(startDate);
+      normalized.timelineStart = normalized.startDate;
+    }
+    if (endDate) {
+      normalized.endDate = new Date(endDate);
+      normalized.timelineEnd = normalized.endDate;
+    }
+
+    if (normalized.startDate && normalized.endDate) {
+      if (new Date(normalized.endDate) < new Date(normalized.startDate)) {
+        throw new BadRequestException("End date must be on or after start date");
+      }
+    }
+
+    if (data.campaignType) {
+      normalized.campaignType = String(data.campaignType);
+    }
+
+    if (data.pricePerInfluencer !== undefined && data.pricePerInfluencer !== null) {
+      const p = Number(data.pricePerInfluencer);
+      if (!Number.isFinite(p) || p <= 0) {
+        throw new BadRequestException("pricePerInfluencer must be greater than 0 (paise)");
+      }
+      normalized.pricePerInfluencer = Math.round(p);
+    }
+
+    if (data.maxInfluencers !== undefined && data.maxInfluencers !== null) {
+      const m = Number(data.maxInfluencers);
+      if (!Number.isFinite(m) || m <= 0) {
+        throw new BadRequestException("maxInfluencers must be greater than 0");
+      }
+      normalized.maxInfluencers = Math.round(m);
+    }
+
+    if (normalized.pricePerInfluencer && normalized.maxInfluencers) {
+      normalized.estimatedBudget =
+        normalized.pricePerInfluencer * normalized.maxInfluencers;
+      // Backward compatibility for existing budget cards (stored in rupees)
+      normalized.budgetMin = Math.floor(normalized.estimatedBudget / 100);
+      normalized.budgetMax = Math.floor(normalized.estimatedBudget / 100);
+    }
+
+    if (Array.isArray(data.platforms)) {
+      normalized.platforms = data.platforms;
+      if (!data.platformPreference && data.platforms.length) {
+        normalized.platformPreference = String(data.platforms[0]).toLowerCase();
+      }
+    }
+
+    return normalized;
+  }
+
   async create(brandId: string, data: any) {
     // Enforce campaign creation limit for brands (admin-manageable)
     let brand = await this.brandModel.findById(brandId).lean();
@@ -66,7 +124,8 @@ export class CampaignsService {
         `Plan limit: Only ${maxCampaigns} active campaign(s) allowed. Upgrade for more.`,
       );
     }
-    const campaign = new this.campaignModel({ ...data, brandId });
+    const normalized = this.normalizeCampaignPayload(data);
+    const campaign = new this.campaignModel({ ...normalized, brandId });
     return await campaign.save();
   }
 
@@ -126,7 +185,8 @@ export class CampaignsService {
       }
     }
 
-    Object.assign(campaign, data);
+    const normalized = this.normalizeCampaignPayload(data);
+    Object.assign(campaign, normalized);
     return campaign.save();
   }
 

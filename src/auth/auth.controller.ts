@@ -12,6 +12,29 @@ import {
 export class AuthController {
   constructor(private readonly authService: AuthService) {}
 
+  private formatRegistrationError(err: any, fallbackMessage: string) {
+    const status = err?.status || 400;
+    const response = typeof err?.getResponse === "function" ? err.getResponse() : err?.response;
+
+    if (response && typeof response === "object") {
+      const message = (response as any).message ?? err?.message ?? fallbackMessage;
+      const duplicateFields = (response as any).duplicateFields;
+      return {
+        status,
+        body: {
+          success: false,
+          message,
+          ...(Array.isArray(duplicateFields) ? { duplicateFields } : {}),
+        },
+      };
+    }
+
+    return {
+      status,
+      body: { success: false, message: err?.message || fallbackMessage },
+    };
+  }
+
   @Post("login")
   @HttpCode(200)
   @UsePipes(new ValidationPipe({ whitelist: true, transform: true }))
@@ -39,9 +62,8 @@ export class AuthController {
       return res.status(201).json(result);
     } catch (err: any) {
       console.error("Auth registerInfluencer error:", err);
-      const status = err?.status || 400;
-      const message = err?.message || "Registration failed";
-      return res.status(status).json({ success: false, message });
+      const formatted = this.formatRegistrationError(err, "Registration failed");
+      return res.status(formatted.status).json(formatted.body);
     }
   }
 
@@ -52,9 +74,8 @@ export class AuthController {
       return res.status(201).json(result);
     } catch (err: any) {
       console.error("Auth registerBrand error:", err);
-      const status = err?.status || 400;
-      const message = err?.message || "Registration failed";
-      return res.status(status).json({ success: false, message });
+      const formatted = this.formatRegistrationError(err, "Registration failed");
+      return res.status(formatted.status).json(formatted.body);
     }
   }
 
