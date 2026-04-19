@@ -13,14 +13,7 @@ import {
 } from "@nestjs/common";
 import { JwtAuthGuard } from "./auth/jwt-auth.guard";
 import { RolesGuard } from "./auth/roles.guard";
-import {
-  CategoryModel,
-  StateModel,
-  DistrictModel,
-  SocialMediaModel,
-  LanguageModel,
-  TierModel,
-} from "./database/schemas/profile.schemas";
+// Removed direct model imports; use @InjectModel for all models
 import { InjectModel } from "@nestjs/mongoose";
 import { Model } from "mongoose";
 
@@ -42,6 +35,12 @@ interface BatchVisibilityBody {
 @UseGuards(JwtAuthGuard, RolesGuard)
 export class AdminListsController {
   constructor(
+    @InjectModel("Tier") private readonly tierModel: Model<any>,
+    @InjectModel("State") private readonly stateModel: Model<any>,
+    @InjectModel("District") private readonly districtModel: Model<any>,
+    @InjectModel("Category") private readonly categoryModel: Model<any>,
+    @InjectModel("SocialMedia") private readonly socialMediaModel: Model<any>,
+    @InjectModel("Language") private readonly languageModel: Model<any>,
     @InjectModel("Influencer") private readonly influencerModel: Model<any>,
     @InjectModel("Brand") private readonly brandModel: Model<any>,
     @InjectModel("AppSettings") private readonly appSettingsModel: Model<any>,
@@ -120,8 +119,8 @@ export class AdminListsController {
   // Admin dashboard endpoints for influencers and brands
   @Get("influencers")
   async getAllInfluencers(@Query("status") status?: string) {
-    let filter: any = {};
-    if (status === 'deleted') {
+    const filter: any = {};
+    if (status === "deleted") {
       filter.isDeleted = true;
     } else if (status) {
       filter.status = status;
@@ -135,8 +134,8 @@ export class AdminListsController {
 
   @Get("brands")
   async getAllBrands(@Query("status") status?: string) {
-    let filter: any = {};
-    if (status === 'deleted') {
+    const filter: any = {};
+    if (status === "deleted") {
       filter.isDeleted = true;
     } else if (status) {
       filter.status = status;
@@ -152,7 +151,7 @@ export class AdminListsController {
     @Param("id") id: string,
     @Body() body: Record<string, unknown>,
   ) {
-    return StateModel.findByIdAndUpdate(id, body, { new: true });
+    return this.stateModel.findByIdAndUpdate(id, body, { new: true });
   }
 
   @Patch("categories/:id")
@@ -160,7 +159,7 @@ export class AdminListsController {
     @Param("id") id: string,
     @Body() body: Record<string, unknown>,
   ) {
-    return CategoryModel.findByIdAndUpdate(id, body, { new: true });
+    return this.categoryModel.findByIdAndUpdate(id, body, { new: true });
   }
 
   @Patch("languages/:id")
@@ -168,7 +167,7 @@ export class AdminListsController {
     @Param("id") id: string,
     @Body() body: Record<string, unknown>,
   ) {
-    return LanguageModel.findByIdAndUpdate(id, body, { new: true });
+    return this.languageModel.findByIdAndUpdate(id, body, { new: true });
   }
 
   @Patch("social-media/:id")
@@ -176,55 +175,55 @@ export class AdminListsController {
     @Param("id") id: string,
     @Body() body: Record<string, unknown>,
   ) {
-    return SocialMediaModel.findByIdAndUpdate(id, body, { new: true });
+    return this.socialMediaModel.findByIdAndUpdate(id, body, { new: true });
   }
   @Patch("tiers/:id")
   async patchTier(
     @Param("id") id: string,
     @Body() body: Record<string, unknown>,
   ) {
-    return TierModel.findByIdAndUpdate(id, body, { new: true });
+    return this.tierModel.findByIdAndUpdate(id, body, { new: true });
   }
   // Categories
   @Get("categories")
   async getCategories() {
-    return CategoryModel.find().lean().limit(100);
+    return this.categoryModel.find().lean().limit(100);
   }
   @Post("categories")
   async addCategory(@Body() body: { name: string }) {
-    return CategoryModel.create(body);
+    return this.categoryModel.create(body);
   }
   @Put("categories/:id")
   async updateCategoryFull(
     @Param("id") id: string,
     @Body() body: Record<string, unknown>,
   ) {
-    return CategoryModel.findByIdAndUpdate(id, body, { new: true });
+    return this.categoryModel.findByIdAndUpdate(id, body, { new: true });
   }
   @Delete("categories/:id")
   async deleteCategory(@Param("id") id: string) {
-    return CategoryModel.findByIdAndDelete(id);
+    return this.categoryModel.findByIdAndDelete(id);
   }
 
   // States
   @Get("states")
   async getStates() {
-    return StateModel.find().lean().limit(100);
+    return this.stateModel.find().lean().limit(100);
   }
   @Post("states")
   async addState(@Body() body: { name: string }) {
-    return StateModel.create(body);
+    return this.stateModel.create(body);
   }
   @Put("states/:id")
   async updateStateFull(
     @Param("id") id: string,
     @Body() body: Record<string, unknown>,
   ) {
-    return StateModel.findByIdAndUpdate(id, body, { new: true });
+    return this.stateModel.findByIdAndUpdate(id, body, { new: true });
   }
   @Delete("states/:id")
   async deleteState(@Param("id") id: string) {
-    return StateModel.findByIdAndDelete(id);
+    return this.stateModel.findByIdAndDelete(id);
   }
 
   // Districts
@@ -232,60 +231,58 @@ export class AdminListsController {
   async getDistricts(@Query("state") state?: string) {
     const filter: any = {};
     if (state) filter.state = state;
-    return DistrictModel.find(filter).lean().limit(1000);
+    return this.districtModel.find(filter).lean().limit(1000);
   }
   @Post("districts")
   async addDistrict(@Body() body: { name: string; state: string }) {
-    return DistrictModel.create(body);
+    return this.districtModel.create(body);
   }
   @Patch("districts/:id")
   async patchDistrict(
     @Param("id") id: string,
     @Body() body: Record<string, unknown>,
   ) {
-    return DistrictModel.findByIdAndUpdate(id, body, { new: true });
+    return this.districtModel.findByIdAndUpdate(id, body, { new: true });
   }
   @Put("districts/:id")
   async updateDistrictFull(
     @Param("id") id: string,
     @Body() body: Record<string, unknown>,
   ) {
-    return DistrictModel.findByIdAndUpdate(id, body, { new: true });
+    return this.districtModel.findByIdAndUpdate(id, body, { new: true });
   }
   @Delete("districts/:id")
   async deleteDistrict(@Param("id") id: string) {
-    return DistrictModel.findByIdAndDelete(id);
+    return this.districtModel.findByIdAndDelete(id);
   }
 
   // Languages
   @Get("languages")
   async getLanguages() {
-    return LanguageModel.find().lean().limit(100);
+    return this.languageModel.find().lean().limit(100);
   }
   @Post("languages")
   async addLanguage(@Body() body: { name: string }) {
-    return LanguageModel.create(body);
+    return this.languageModel.create(body);
   }
   @Put("languages/:id")
   async updateLanguageFull(
     @Param("id") id: string,
     @Body() body: Record<string, unknown>,
   ) {
-    return LanguageModel.findByIdAndUpdate(id, body, { new: true });
+    return this.languageModel.findByIdAndUpdate(id, body, { new: true });
   }
   @Delete("languages/:id")
   async deleteLanguage(@Param("id") id: string) {
-    return LanguageModel.findByIdAndDelete(id);
+    return this.languageModel.findByIdAndDelete(id);
   }
 
   // Social Media
   @Get("social-media")
   async getSocialMedia() {
     // Return all social media entries with new fields
-    return SocialMediaModel.find(
-      {},
-      { socialMedia: 1, handleName: 1, tier: 1, followersCount: 1 },
-    )
+    return this.socialMediaModel
+      .find({}, { socialMedia: 1, handleName: 1, tier: 1, followersCount: 1 })
       .lean()
       .limit(100);
   }
@@ -300,84 +297,87 @@ export class AdminListsController {
     },
   ) {
     // Create new social media entry with all fields
-    return SocialMediaModel.create(body);
+    return this.socialMediaModel.create(body);
   }
   @Put("social-media/:id")
   async updateSocialMediaFull(
     @Param("id") id: string,
     @Body() body: Record<string, unknown>,
   ) {
-    return SocialMediaModel.findByIdAndUpdate(id, body, { new: true });
+    return this.socialMediaModel.findByIdAndUpdate(id, body, { new: true });
   }
   @Delete("social-media/:id")
   async deleteSocialMedia(@Param("id") id: string) {
-    return SocialMediaModel.findByIdAndDelete(id);
+    return this.socialMediaModel.findByIdAndDelete(id);
   }
 
   @Post("batch-update-visibility")
   async batchUpdateVisibility(@Body() body: BatchVisibilityBody) {
     try {
+      // Debug: print incoming payload
+      console.log(
+        "[BatchUpdate][INCOMING PAYLOAD]:",
+        JSON.stringify(body, null, 2),
+      );
       // Each key is an array of {_id, showInFrontend}
       if (body.tiers) {
         for (const t of body.tiers) {
-          const result = await TierModel.findByIdAndUpdate(t._id, {
+          const result = await this.tierModel.findByIdAndUpdate(t._id, {
             showInFrontend: t.showInFrontend,
           });
           if (!result) {
-            // console.error(`[BatchUpdate] Tier not found:`, t);
             throw new BadRequestException(`Tier not found: ${t._id}`);
           }
         }
       }
       if (body.socialMedia) {
         for (const s of body.socialMedia) {
-          const result = await SocialMediaModel.findByIdAndUpdate(s._id, {
+          const result = await this.socialMediaModel.findByIdAndUpdate(s._id, {
             showInFrontend: s.showInFrontend,
           });
           if (!result) {
-            // console.error(`[BatchUpdate] SocialMedia not found:`, s);
             throw new BadRequestException(`SocialMedia not found: ${s._id}`);
           }
         }
       }
       if (body.categories) {
         for (const c of body.categories) {
-          const result = await CategoryModel.findByIdAndUpdate(c._id, {
+          const result = await this.categoryModel.findByIdAndUpdate(c._id, {
             showInFrontend: c.showInFrontend,
           });
           if (!result) {
-            // console.error(`[BatchUpdate] Category not found:`, c);
             throw new BadRequestException(`Category not found: ${c._id}`);
           }
         }
       }
       if (body.languages) {
         for (const l of body.languages) {
-          const result = await LanguageModel.findByIdAndUpdate(l._id, {
+          const result = await this.languageModel.findByIdAndUpdate(l._id, {
             showInFrontend: l.showInFrontend,
           });
           if (!result) {
-            // console.error(`[BatchUpdate] Language not found:`, l);
             throw new BadRequestException(`Language not found: ${l._id}`);
           }
         }
       }
       if (body.states) {
         for (const s of body.states) {
-          const result = await StateModel.findByIdAndUpdate(s._id, {
+          const result = await this.stateModel.findByIdAndUpdate(s._id, {
             showInFrontend: s.showInFrontend,
           });
           if (!result) {
+            console.error(`[BatchUpdate][ERROR] State not found:`, s);
             throw new BadRequestException(`State not found: ${s._id}`);
           }
         }
       }
       if (body.districts) {
         for (const d of body.districts) {
-          const result = await DistrictModel.findByIdAndUpdate(d._id, {
+          const result = await this.districtModel.findByIdAndUpdate(d._id, {
             showInFrontend: d.showInFrontend,
           });
           if (!result) {
+            console.error(`[BatchUpdate][ERROR] District not found:`, d);
             throw new BadRequestException(`District not found: ${d._id}`);
           }
         }
