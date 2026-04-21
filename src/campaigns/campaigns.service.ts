@@ -130,7 +130,9 @@ export class CampaignsService {
   }
 
   async findByBrandId(brandId: string) {
-    return this.campaignModel.find({ brandId }).sort({ createdAt: -1 }).lean();
+    const results = await this.campaignModel.find({ brandId }).sort({ createdAt: -1 }).lean();
+    console.log('[DEBUG] findByBrandId:', brandId, typeof brandId, '| found:', results.length);
+    return results;
   }
 
   async findByBrandName(brandName: string) {
@@ -138,16 +140,20 @@ export class CampaignsService {
       .findOne({
         brandName: new RegExp(
           `^${brandName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`,
-          "i",
+          "i" // Case-insensitive match
         ),
       })
       .select(["_id", "brandUsername"])
       .lean();
     if (!brand) return [];
-    // Fetch campaigns by both ObjectId and string brandId (brandUsername)
+    // Fetch campaigns by ObjectId, string version of ObjectId, and brandUsername
     return this.campaignModel
       .find({
-        $or: [{ brandId: brand._id }, { brandId: brand.brandUsername }],
+        $or: [
+          { brandId: brand._id },
+          { brandId: String(brand._id) },
+          { brandId: brand.brandUsername },
+        ],
       })
       .sort({ createdAt: -1 })
       .lean();

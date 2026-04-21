@@ -1,4 +1,6 @@
 import { Injectable } from "@nestjs/common";
+import * as fs from "fs";
+import * as path from "path";
 // Always use require and v2 to avoid ESM/CJS issues
 const cloudinary = require("cloudinary").v2;
 
@@ -27,16 +29,53 @@ if (
   });
 }
 
+
 @Injectable()
 export class CloudinaryService {
   async uploadImage(file: string, folder = "profile_images") {
-    setCloudinaryConfig();
-    // file: base64 string or file path
-    return await cloudinary.uploader.upload(file, {
-      folder,
-      resource_type: "image",
-      overwrite: true,
-    });
+    // If running in production, use Cloudinary
+    if (process.env.NODE_ENV === "production") {
+      setCloudinaryConfig();
+      return await cloudinary.uploader.upload(file, {
+        folder,
+        resource_type: "image",
+        overwrite: true,
+      });
+    }
+
+    // Otherwise, save to local assets/local-images
+    // file can be a base64 string or a file path
+    let buffer: Buffer;
+    let ext = ".jpg";
+    if (file.startsWith("data:image/")) {
+      // base64 data URL
+      const matches = file.match(/^data:image\/(\w+);base64,(.+)$/);
+      if (!matches) throw new Error("Invalid base64 image string");
+      ext = "." + matches[1];
+      buffer = Buffer.from(matches[2], "base64");
+    } else if (fs.existsSync(file)) {
+      buffer = fs.readFileSync(file);
+      ext = path.extname(file) || ".jpg";
+    } else {
+      throw new Error("Unsupported file format for local upload");
+    }
+
+    // Generate unique filename
+    const filename = `${folder}_${Date.now()}_${Math.random().toString(36).substring(2, 8)}${ext}`;
+    const localDir = path.join(__dirname, "../assets/local-images");
+    if (!fs.existsSync(localDir)) {
+      fs.mkdirSync(localDir, { recursive: true });
+    }
+    const localPath = path.join(localDir, filename);
+    fs.writeFileSync(localPath, buffer);
+
+    // Return a local URL and pseudo public_id
+    return {
+      secure_url: `/assets/local-images/${filename}`,
+      url: `/assets/local-images/${filename}`,
+      public_id: filename,
+      local: true,
+    };
   }
 
   async deleteImage(publicId: string) {

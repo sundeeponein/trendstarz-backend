@@ -7,7 +7,7 @@ import * as bcrypt from "bcryptjs";
 import * as fs from "fs";
 import * as path from "path";
 
-export async function seedDatabase() {
+export async function seedDatabase(section?: string) {
   // Load admin-config.json for visibility data
   // Try both possible paths for admin-config.json
   let adminConfig = null;
@@ -33,153 +33,173 @@ export async function seedDatabase() {
   const BrandModel = app.get<Model<any>>(getModelToken("Brand"));
   // ...existing code...
 
-  // Seed all categories
-  if (adminConfig?.categories) {
-    for (const cat of adminConfig.categories) {
-      const exists = await CategoryModel.findOne({ name: cat.name });
-      if (!exists) {
-        await CategoryModel.create({
-          name: cat.name,
-          showInFrontend: cat.visible,
-        });
-      } else {
-        await CategoryModel.updateOne(
-          { name: cat.name },
-          { $set: { showInFrontend: cat.visible } },
-        );
-      }
-    }
-  }
-
-  // Seed all languages
-  if (adminConfig?.languages) {
-    for (const lang of adminConfig.languages) {
-      const exists = await LanguageModel.findOne({ name: lang.name });
-      if (!exists) {
-        await LanguageModel.create({
-          name: lang.name,
-          showInFrontend: lang.visible,
-        });
-      } else {
-        await LanguageModel.updateOne(
-          { name: lang.name },
-          { $set: { showInFrontend: lang.visible } },
-        );
-      }
-    }
-  }
-
-  // Seed all Indian states
-  if (adminConfig?.locations) {
-    for (const loc of adminConfig.locations) {
-      try {
-        let stateDoc = await StateModel.findOne({ name: loc.state });
-        if (!stateDoc) {
-          stateDoc = await StateModel.create({
-            name: loc.state,
-            showInFrontend: loc.visible,
+  // Only seed the requested section if provided
+  if (!section || section === "categories") {
+    // Seed all categories
+    if (adminConfig?.categories) {
+      for (const cat of adminConfig.categories) {
+        const exists = await CategoryModel.findOne({ name: cat.name });
+        if (!exists) {
+          await CategoryModel.create({
+            name: cat.name,
+            showInFrontend: cat.visible,
           });
-          console.log(`Inserted state: ${loc.state}`);
         } else {
-          await StateModel.updateOne(
-            { name: loc.state },
-            { $set: { showInFrontend: loc.visible } },
+          await CategoryModel.updateOne(
+            { name: cat.name },
+            { $set: { showInFrontend: cat.visible } },
           );
-          console.log(`Updated state: ${loc.state}`);
         }
-      } catch (err) {
-        console.error(`Error inserting/updating state ${loc.state}:`, err);
       }
     }
   }
-
-  // Seed districts nested under states
-  if (adminConfig?.locations) {
-    for (const loc of adminConfig.locations) {
-      if (loc.districts) {
-        for (const dist of loc.districts) {
-          try {
-            let distDoc = await DistrictModel.findOne({ name: dist.name, state: loc.state });
-            if (!distDoc) {
-              distDoc = await DistrictModel.create({
+  if (!section || section === "languages") {
+    // Seed all languages
+    if (adminConfig?.languages) {
+      for (const lang of adminConfig.languages) {
+        const exists = await LanguageModel.findOne({ name: lang.name });
+        if (!exists) {
+          await LanguageModel.create({
+            name: lang.name,
+            showInFrontend: lang.visible,
+          });
+        } else {
+          await LanguageModel.updateOne(
+            { name: lang.name },
+            { $set: { showInFrontend: lang.visible } },
+          );
+        }
+      }
+    }
+  }
+  if (!section || section === "locations") {
+    // Seed all Indian states
+    if (adminConfig?.locations) {
+      for (const loc of adminConfig.locations) {
+        try {
+          let stateDoc = await StateModel.findOne({ name: loc.state });
+          if (!stateDoc) {
+            stateDoc = await StateModel.create({
+              name: loc.state,
+              showInFrontend: loc.visible,
+            });
+            console.log(`Inserted state: ${loc.state}`);
+          } else {
+            await StateModel.updateOne(
+              { name: loc.state },
+              { $set: { showInFrontend: loc.visible } },
+            );
+            console.log(`Updated state: ${loc.state}`);
+          }
+        } catch (err) {
+          console.error(`Error inserting/updating state ${loc.state}:`, err);
+        }
+      }
+    }
+    // Seed districts nested under states
+    if (adminConfig?.locations) {
+      for (const loc of adminConfig.locations) {
+        if (loc.districts) {
+          for (const dist of loc.districts) {
+            try {
+              let distDoc = await DistrictModel.findOne({
                 name: dist.name,
                 state: loc.state,
-                showInFrontend: dist.visible,
               });
-              console.log(`Inserted district: ${dist.name} (${loc.state})`);
-            } else {
-              await DistrictModel.updateOne(
-                { name: dist.name, state: loc.state },
-                { $set: { showInFrontend: dist.visible } },
+              if (!distDoc) {
+                distDoc = await DistrictModel.create({
+                  name: dist.name,
+                  state: loc.state,
+                  showInFrontend: dist.visible,
+                });
+                console.log(`Inserted district: ${dist.name} (${loc.state})`);
+              } else {
+                await DistrictModel.updateOne(
+                  { name: dist.name, state: loc.state },
+                  { $set: { showInFrontend: dist.visible } },
+                );
+                console.log(`Updated district: ${dist.name} (${loc.state})`);
+              }
+            } catch (err) {
+              console.error(
+                `Error inserting/updating district ${dist.name}:`,
+                err,
               );
-              console.log(`Updated district: ${dist.name} (${loc.state})`);
             }
-          } catch (err) {
-            console.error(`Error inserting/updating district ${dist.name}:`, err);
           }
         }
       }
     }
   }
-
-  // Seed tiers with icon and count
-  if (adminConfig?.tiers) {
-    const TierModel = app.get<Model<any>>(getModelToken("Tier"));
-    for (const tier of adminConfig.tiers) {
-      try {
-        const exists = await TierModel.findOne({ name: tier.name });
-        if (!exists) {
-          await TierModel.create({
-            name: tier.name,
-            icon: tier.icon,
-            desc: tier.desc,
-            showInFrontend: tier.visible,
-          });
-          console.log(`Inserted tier: ${tier.name}`);
-        } else {
-          await TierModel.updateOne(
-            { name: tier.name },
-            {
-              $set: {
-                icon: tier.icon,
-                desc: tier.desc,
-                showInFrontend: tier.visible,
+  if (!section || section === "tiers") {
+    // Seed tiers with icon and count
+    if (adminConfig?.tiers) {
+      const TierModel = app.get<Model<any>>(getModelToken("Tier"));
+      for (const tier of adminConfig.tiers) {
+        try {
+          const exists = await TierModel.findOne({ name: tier.name });
+          if (!exists) {
+            await TierModel.create({
+              name: tier.name,
+              icon: tier.icon,
+              desc: tier.desc,
+              showInFrontend: tier.visible,
+            });
+            console.log(`Inserted tier: ${tier.name}`);
+          } else {
+            await TierModel.updateOne(
+              { name: tier.name },
+              {
+                $set: {
+                  icon: tier.icon,
+                  desc: tier.desc,
+                  showInFrontend: tier.visible,
+                },
               },
-            },
-          );
-          console.log(`Updated tier: ${tier.name}`);
+            );
+            console.log(`Updated tier: ${tier.name}`);
+          }
+        } catch (err) {
+          console.error(`Error inserting/updating tier ${tier.name}:`, err);
         }
-      } catch (err) {
-        console.error(`Error inserting/updating tier ${tier.name}:`, err);
       }
+      const tierCount = await TierModel.countDocuments();
+      console.log(`Seeded Tiers. Total count: ${tierCount}`);
     }
-    const tierCount = await TierModel.countDocuments();
-    console.log(`Seeded Tiers. Total count: ${tierCount}`);
   }
-  if (adminConfig?.socialMediaPlatforms) {
-    for (const sm of adminConfig.socialMediaPlatforms) {
-      try {
-        const exists = await SocialMediaModel.findOne({ name: sm.name });
-        const fields = {
-          showInFrontend: sm.visible,
-          icon: sm.icon || null,
-          color: sm.color || null,
-          handleLabel: sm.handleLabel || "Handle",
-          followersLabel: sm.followersLabel || "Followers",
-          contentTypes: (sm.contentTypes || []).map((ct: any) => ({
-            name: ct.name,
-            visible: ct.visible !== false,
-          })),
-        };
-        if (!exists) {
-          await SocialMediaModel.create({ name: sm.name, ...fields });
-          console.log(`Inserted social media: ${sm.name}`);
-        } else {
-          await SocialMediaModel.updateOne({ name: sm.name }, { $set: fields });
-          console.log(`Updated social media: ${sm.name}`);
+  if (!section || section === "socialMediaPlatforms") {
+    // Seed social media platforms
+    if (adminConfig?.socialMediaPlatforms) {
+      for (const sm of adminConfig.socialMediaPlatforms) {
+        try {
+          const exists = await SocialMediaModel.findOne({ name: sm.name });
+          const fields = {
+            showInFrontend: sm.visible,
+            icon: sm.icon || null,
+            color: sm.color || null,
+            handleLabel: sm.handleLabel || "Handle",
+            followersLabel: sm.followersLabel || "Followers",
+            contentTypes: (sm.contentTypes || []).map((ct: any) => ({
+              name: ct.name,
+              visible: ct.visible !== false,
+            })),
+          };
+          if (!exists) {
+            await SocialMediaModel.create({ name: sm.name, ...fields });
+            console.log(`Inserted social media: ${sm.name}`);
+          } else {
+            await SocialMediaModel.updateOne(
+              { name: sm.name },
+              { $set: fields },
+            );
+            console.log(`Updated social media: ${sm.name}`);
+          }
+        } catch (err) {
+          console.error(
+            `Error inserting/updating social media ${sm.name}:`,
+            err,
+          );
         }
-      } catch (err) {
-        console.error(`Error inserting/updating social media ${sm.name}:`, err);
       }
     }
   }

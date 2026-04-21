@@ -66,7 +66,7 @@ export class DashboardService {
       }
     }
     // Debug: log status counts
-    console.log("[Dashboard Debug] Invite status counts:", statusDebug);
+    // console.log("[Dashboard Debug] Invite status counts:", statusDebug);
     return {
       user: {
         name: user?.name || "",
@@ -91,18 +91,26 @@ export class DashboardService {
     if (!brand || Array.isArray(brand)) {
       throw new NotFoundException("Brand not found");
     }
-    // Query campaigns by ObjectId OR brandUsername (string) for legacy compatibility
-    const brandObjectId = Types.ObjectId.isValid(userId)
-      ? new Types.ObjectId(userId)
-      : null;
-    const brandUsername = brand.brandUsername || null;
-    const orConditions: any[] = [];
-    if (brandObjectId) orConditions.push({ brandId: brandObjectId });
-    if (brandUsername) orConditions.push({ brandId: brandUsername });
-    orConditions.push({ brandId: userId });
-    const campaigns = await this.campaignModel
-      .find({ $or: orConditions })
-      .lean();
+    // Build robust brandId matchers for dashboard
+    const brandMatchers = [];
+    if (userId) brandMatchers.push({ brandId: String(userId) });
+    if (brand?._id) brandMatchers.push({ brandId: String(brand._id) });
+    if (brand?.brandName) brandMatchers.push({ brandId: brand.brandName });
+    if (brand?.brandUsername)
+      brandMatchers.push({ brandId: brand.brandUsername });
+    // Debug: log userId and brandMatchers
+    // console.log("[Dashboard Debug] userId:", userId);
+    // console.log("[Dashboard Debug] brandMatchers:", brandMatchers);
+    // Find campaigns for this brand (robust matching)
+    const campaigns = await this.campaignModel.find({
+      $or: brandMatchers,
+    });
+    // Debug: log all campaign brandId values
+    const allCampaigns = await this.campaignModel.find({}).lean();
+    console.log(
+      // "[Dashboard Debug] All campaign brandIds:",
+      allCampaigns.map((c) => c.brandId),
+    );
     let totalInvites = 0;
     let accepted = 0;
     let completed = 0;
@@ -155,14 +163,19 @@ export class DashboardService {
         location: brand?.location ?? {},
         brandLogo: brand?.brandLogo ?? [],
       },
-      totalCampaigns: campaigns.length,
+      totalCampaigns: campaigns.length, // All campaigns, regardless of status
       activeCampaigns: campaigns.filter((c: any) => c.status === "active")
+        .length,
+      draftCampaigns: campaigns.filter((c: any) => c.status === "draft").length,
+      completedCampaigns: campaigns.filter((c: any) => c.status === "completed")
+        .length,
+      pendingCampaigns: campaigns.filter((c: any) => c.status === "pending")
         .length,
       totalInvites,
       accepted,
       completed,
       avgResponseRate,
-      campaigns: campaignStats,
+      campaigns: campaignStats, // All campaigns, all statuses
     };
   }
 }

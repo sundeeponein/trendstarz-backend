@@ -1,10 +1,19 @@
 import { Injectable, BadRequestException } from "@nestjs/common";
+import * as fs from "fs";
+import * as path from "path";
+import { v4 as uuidv4 } from "uuid";
 import { CloudinaryService } from "../cloudinary.service";
 import { InfluencerProfileDto, BrandProfileDto } from "./dto/profile.dto";
 import * as bcrypt from "bcryptjs";
 import { InjectModel } from "@nestjs/mongoose";
 import { Model } from "mongoose";
 import { PlansService } from "../plans/plans.service";
+
+const USE_LOCAL_IMAGES = process.env.USE_LOCAL_IMAGES === "true";
+const LOCAL_IMAGE_DIR = path.resolve(__dirname, "../../assets/local-images");
+if (USE_LOCAL_IMAGES && !fs.existsSync(LOCAL_IMAGE_DIR)) {
+  fs.mkdirSync(LOCAL_IMAGE_DIR, { recursive: true });
+}
 
 @Injectable()
 export class UsersService {
@@ -440,25 +449,17 @@ export class UsersService {
       if (dto.profileImages && dto.profileImages.length) {
         const uploadedImages = [];
         for (const img of dto.profileImages) {
-          if (typeof img === "object" && img.url && img.public_id) {
-            uploadedImages.push(img);
-          } else if (typeof img === "string") {
-            if ((img as string).startsWith("http")) {
-              uploadedImages.push({ url: img, public_id: "" });
-            } else {
-              const result = await this.cloudinaryService.uploadImage(
-                img,
-                "profile_images",
-              );
-              uploadedImages.push({
-                url: result.secure_url,
-                public_id: result.public_id,
-              });
-            }
-          } else {
-            // fallback for unknown type
-            uploadedImages.push({ url: "", public_id: "" });
-          }
+          const imgStr = img as unknown as string;
+          const buffer = imgStr.startsWith("data:")
+            ? Buffer.from(imgStr.split(",")[1], "base64")
+            : fs.readFileSync(imgStr);
+          const filename = uuidv4() + ".jpg";
+          const filePath = path.join(LOCAL_IMAGE_DIR, filename);
+          fs.writeFileSync(filePath, buffer);
+          uploadedImages.push({
+            url: `/assets/local-images/${filename}`,
+            public_id: filename,
+          });
         }
         dto.profileImages = uploadedImages;
       }
@@ -490,48 +491,34 @@ export class UsersService {
       if (dto.brandLogo && dto.brandLogo.length) {
         const uploadedImages = [];
         for (const img of dto.brandLogo) {
-          if (typeof img === "object" && img.url && img.public_id) {
-            uploadedImages.push(img);
-          } else if (typeof img === "string") {
-            if ((img as string).startsWith("http")) {
-              uploadedImages.push({ url: img, public_id: "" });
-            } else {
-              const result = await this.cloudinaryService.uploadImage(
-                img,
-                "profile_images",
-              );
-              uploadedImages.push({
-                url: result.secure_url,
-                public_id: result.public_id,
-              });
-            }
-          } else {
-            uploadedImages.push({ url: "", public_id: "" });
-          }
+          const imgStr = img as unknown as string;
+          const buffer = imgStr.startsWith("data:")
+            ? Buffer.from(imgStr.split(",")[1], "base64")
+            : fs.readFileSync(imgStr);
+          const filename = uuidv4() + ".jpg";
+          const filePath = path.join(LOCAL_IMAGE_DIR, filename);
+          fs.writeFileSync(filePath, buffer);
+          uploadedImages.push({
+            url: `/assets/local-images/${filename}`,
+            public_id: filename,
+          });
         }
         dto.brandLogo = uploadedImages;
       }
       if (dto.products && dto.products.length) {
         const uploadedProducts = [];
         for (const img of dto.products) {
-          if (typeof img === "object" && img.url && img.public_id) {
-            uploadedProducts.push(img);
-          } else if (typeof img === "string") {
-            if ((img as string).startsWith("http")) {
-              uploadedProducts.push({ url: img, public_id: "" });
-            } else {
-              const result = await this.cloudinaryService.uploadImage(
-                img,
-                "profile_images",
-              );
-              uploadedProducts.push({
-                url: result.secure_url,
-                public_id: result.public_id,
-              });
-            }
-          } else {
-            uploadedProducts.push({ url: "", public_id: "" });
-          }
+          const imgStr = img as unknown as string;
+          const buffer = imgStr.startsWith("data:")
+            ? Buffer.from(imgStr.split(",")[1], "base64")
+            : fs.readFileSync(imgStr);
+          const filename = uuidv4() + ".jpg";
+          const filePath = path.join(LOCAL_IMAGE_DIR, filename);
+          fs.writeFileSync(filePath, buffer);
+          uploadedProducts.push({
+            url: `/assets/local-images/${filename}`,
+            public_id: filename,
+          });
         }
         dto.products = uploadedProducts;
       }
@@ -918,7 +905,16 @@ export class UsersService {
   async getBrandProfileById(userId: string) {
     const user = await this.brandModel.findById(userId).lean();
     if (!user || Array.isArray(user)) return null;
+    // Attach planCapabilities from PlansService
+    let planCapabilities = null;
+    try {
+      planCapabilities =
+        await this.plansService.getUserPlanCapabilities(userId);
+    } catch {
+      planCapabilities = null;
+    }
     return {
+      _id: user._id?.toString() || user.id?.toString() || "",
       brandName: user.brandName,
       brandUsername:
         (user as any).brandUsername || (user as any).username || "",
@@ -942,6 +938,7 @@ export class UsersService {
       premiumEnd: user.premiumEnd || null,
       isEmailVerified: user.isEmailVerified || false,
       isMobileVerified: user.isMobileVerified || false,
+      planCapabilities,
     };
   }
 

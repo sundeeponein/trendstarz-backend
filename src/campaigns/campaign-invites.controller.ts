@@ -12,9 +12,44 @@ import { JwtAuthGuard } from "../auth/jwt-auth.guard";
 import { RolesGuard } from "../auth/roles.guard";
 import { CampaignInvitesService } from "./campaign-invites.service";
 
+import { UseInterceptors, UploadedFile } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
+import { diskStorage } from 'multer';
+import * as path from 'path';
+import * as fs from 'fs';
+import { v4 as uuidv4 } from 'uuid';
+
 @Controller("campaign-invites")
 export class CampaignInvitesController {
   constructor(private readonly invitesService: CampaignInvitesService) {}
+
+  @UseGuards(JwtAuthGuard)
+  @Post(":id/upload-image")
+  @UseInterceptors(FileInterceptor('file', {
+    storage: diskStorage({
+      destination: (req: any, file: any, cb: any) => {
+        const dest = path.join(__dirname, '../assets/local-images/campaign_proofs');
+        if (!fs.existsSync(dest)) {
+          fs.mkdirSync(dest, { recursive: true });
+        }
+        cb(null, dest);
+      },
+      filename: (req: any, file: any, cb: any) => {
+        const ext = path.extname(file.originalname);
+        cb(null, uuidv4() + ext);
+      },
+    }),
+  }))
+  async uploadCampaignProof(
+    @Param('id') id: string,
+    @UploadedFile() file: Express.Multer.File,
+    @Req() req: any
+  ) {
+    // Return the local URL for the uploaded file
+    const filename = file.filename;
+    const url = `/assets/local-images/campaign_proofs/${filename}`;
+    return { url };
+  }
 
   @UseGuards(JwtAuthGuard)
   @Post()
@@ -34,6 +69,13 @@ export class CampaignInvitesController {
   async findByInfluencer(@Req() req: any) {
     const influencerId = req.user?.userId;
     return this.invitesService.findByInfluencer(influencerId);
+  }
+
+  /** GET /campaign-invites/:id — get a single invite with campaign platform/deliverable info */
+  @UseGuards(JwtAuthGuard)
+  @Get(":id")
+  async findOne(@Param("id") id: string, @Req() req: any) {
+    return this.invitesService.findOneWithCampaign(id);
   }
 
   /**
@@ -60,7 +102,8 @@ export class CampaignInvitesController {
   async respond(
     @Param("id") id: string,
     @Req() req: any,
-    @Body() body: { status: "accepted" | "declined"; selectedPostDate?: string },
+    @Body()
+    body: { status: "accepted" | "declined"; selectedPostDate?: string },
   ) {
     const influencerId = req.user?.userId;
     return this.invitesService.respond(
@@ -106,6 +149,8 @@ export class CampaignInvitesController {
     return this.invitesService.submitPost(id, influencerId, body);
   }
 
+  // Local image upload endpoint
+  @UseGuards(JwtAuthGuard)
   @UseGuards(JwtAuthGuard)
   @Get(":id/submission")
   async getSubmission(@Param("id") id: string) {

@@ -79,7 +79,9 @@ export class CampaignInvitesService {
       invite.status = "completed";
       await invite.save();
 
-      const txs = await this.campaignTransactionModel.find({ inviteId: invite._id });
+      const txs = await this.campaignTransactionModel.find({
+        inviteId: invite._id,
+      });
       for (const tx of txs) {
         tx.workStatus = "approved";
         tx.payoutStatus =
@@ -96,7 +98,7 @@ export class CampaignInvitesService {
           await sendAppEmail({
             to: influencer.email,
             subject: "Campaign auto-approved after 48h",
-            text: `Hi ${influencer.name || ""},\n\nYour submission for \"${campaign?.title || "campaign"}\" was auto-approved after 48 hours with no brand review. Payout is now queued for processing.`,
+            text: `Hi ${influencer.name || ""},\n\nYour submission for \\"${campaign?.title || "campaign"}\\" was auto-approved after 48 hours with no brand review. Payout is now queued for processing.`,
           });
         }
       } catch (e) {
@@ -215,7 +217,7 @@ export class CampaignInvitesService {
         )
         .lean();
       return Array.isArray(invites) ? invites : [];
-    } catch (e) {
+    } catch {
       return [];
     }
   }
@@ -246,7 +248,9 @@ export class CampaignInvitesService {
     }
     const influencerQueries: any[] = [{ influencerId }];
     if (/^[a-fA-F0-9]{24}$/.test(influencerId)) {
-      influencerQueries.push({ influencerId: new Types.ObjectId(influencerId) });
+      influencerQueries.push({
+        influencerId: new Types.ObjectId(influencerId),
+      });
     }
 
     const invite = await this.inviteModel
@@ -257,6 +261,16 @@ export class CampaignInvitesService {
       })
       .lean();
     return invite ?? null;
+  }
+
+  async findOneWithCampaign(inviteId: string) {
+    const invite = (await this.inviteModel.findById(inviteId).lean()) as any;
+    if (!invite) throw new NotFoundException("Invite not found");
+    const campaign: any = await this.campaignModel
+      .findById(invite.campaignId)
+      .select("title platforms socialMedia deliverables specialInstructions")
+      .lean();
+    return { invite, campaign };
   }
 
   async respond(
@@ -297,7 +311,10 @@ export class CampaignInvitesService {
         throw new BadRequestException("selectedPostDate is invalid");
       }
 
-      if (selected < new Date(campaignStart) || selected > new Date(campaignEnd)) {
+      if (
+        selected < new Date(campaignStart) ||
+        selected > new Date(campaignEnd)
+      ) {
         throw new BadRequestException(
           "selectedPostDate must be between campaign start and end dates",
         );
@@ -406,16 +423,21 @@ export class CampaignInvitesService {
     },
   ) {
     const invite = await this.inviteModel.findById(inviteId);
+    console.log("[submitPost] invite:", invite);
+    console.log("[submitPost] influencerId:", influencerId);
+    console.log("[submitPost] data:", data);
     if (!invite) throw new NotFoundException("Invite not found");
     if (String(invite.influencerId) !== influencerId) {
       throw new BadRequestException("Not your invite");
     }
-    if (!["accepted", "payment_confirmed", "working"].includes(invite.status)) {
-      throw new BadRequestException("Can only submit for active invites");
+    if (!["accepted", "payment_confirmed", "working", "submitted"].includes(invite.status)) {
+      throw new BadRequestException(
+        `Can only submit for active invites. Status was: ${invite.status}`,
+      );
     }
     if (!data.postUrl) throw new BadRequestException("Post URL is required");
     if (!data.postScreenshotUrl)
-      throw new BadRequestException("Post screenshot is required");
+      throw new BadRequestException("Post screenshot is required"); // Commented for local testing: allow submission without screenshot
 
     const postPlatform = detectPlatform(data.postUrl);
     const engagementRate = computeEngagementRate(data);
