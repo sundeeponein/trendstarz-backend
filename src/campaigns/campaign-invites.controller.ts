@@ -103,7 +103,12 @@ export class CampaignInvitesController {
     @Param("id") id: string,
     @Req() req: any,
     @Body()
-    body: { status: "accepted" | "declined"; selectedPostDate?: string },
+    body: {
+      status: "accepted" | "declined";
+      selectedPostDate?: string;
+      selectedPlatform?: string;
+      selectedContentType?: string;
+    },
   ) {
     const influencerId = req.user?.userId;
     return this.invitesService.respond(
@@ -111,6 +116,8 @@ export class CampaignInvitesController {
       influencerId,
       body.status,
       body.selectedPostDate,
+      body.selectedPlatform,
+      body.selectedContentType,
     );
   }
 

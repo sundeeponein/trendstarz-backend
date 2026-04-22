@@ -278,6 +278,8 @@ export class CampaignInvitesService {
     influencerId: string,
     status: "accepted" | "declined",
     selectedPostDate?: string,
+    selectedPlatform?: string,
+    selectedContentType?: string,
   ) {
     const invite = await this.inviteModel.findById(inviteId);
     if (!invite) throw new NotFoundException("Invite not found");
@@ -294,7 +296,7 @@ export class CampaignInvitesService {
       }
       const campaign: any = await this.campaignModel
         .findById(invite.campaignId)
-        .select("startDate endDate timelineStart timelineEnd")
+        .select("startDate endDate timelineStart timelineEnd socialMedia")
         .lean();
       if (!campaign) throw new NotFoundException("Campaign not found");
 
@@ -322,6 +324,19 @@ export class CampaignInvitesService {
 
       invite.selectedPostDate = selected;
       invite.acceptedAt = new Date();
+
+      // Store chosen platform/content type and resolve agreed amount
+      if (selectedPlatform) (invite as any).selectedPlatform = selectedPlatform;
+      if (selectedContentType) (invite as any).selectedContentType = selectedContentType;
+      if (selectedPlatform && selectedContentType && campaign.socialMedia?.length) {
+        const smEntry = campaign.socialMedia.find(
+          (sm: any) => (sm.platform || '').toLowerCase() === selectedPlatform.toLowerCase()
+        );
+        const ctEntry = smEntry?.contentTypes?.find(
+          (ct: any) => (ct.name || '').toLowerCase() === selectedContentType.toLowerCase() && ct.enabled
+        );
+        if (ctEntry?.price) (invite as any).agreedAmount = Number(ctEntry.price);
+      }
     }
 
     invite.status = status;
