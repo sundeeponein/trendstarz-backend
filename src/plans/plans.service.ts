@@ -103,7 +103,10 @@ export class PlansService {
   }
 
   async create(dto: any) {
-    const plan = await this.planModel.create(this.normalizePlanDto(dto));
+    const normalized = this.normalizePlanDto(dto);
+    const plan = await this.planModel.create({
+      ...normalized,
+    });
     return { success: true, plan: this.normalizePlanDocument(plan.toObject()) };
   }
 
