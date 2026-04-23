@@ -55,10 +55,10 @@
       "sortOrder": 1
     },
     {
-      "name": "Influencer Admin (Pro)",
-      "code": "influencer-admin-pro",
+      "name": "Influencer (Early Access)",
+      "code": "influencer-early-access",
       "userType": "INFLUENCER",
-      "price": { "monthly": 3},
+      "price": { "monthly": 229, "quarterly": 599, "yearly": 2099 },
       "features": [
         { "key": "publicProfileListing", "label": "Public profile listing", "value": true },
         { "key": "socialMediaVisibility", "label": "Show social media links", "value": true },
@@ -76,7 +76,7 @@
       ],
       "offers": [
         { "key": "trialPeriodDays", "label": "Trial period (days)", "value": 0 },
-        { "key": "discountOnBrandPro", "label": "Discount on Brand Pro plan (%)", "value": 0 }
+        { "key": "discountOnBrandPro", "label": "Discount on Brand Pro plan (%)", "value": 30 }
       ],
       "policies": { "imageRetentionDaysAfterExpiry": 45 },
       "highlight": false,
@@ -140,10 +140,10 @@
       "sortOrder": 1
     },
     {
-      "name": "Brand Admin (Pro)",
-      "code": "brand-admin-pro",
+      "name": "Brand (Early Access)",
+      "code": "brand-early-access",
       "userType": "BRAND",
-      "price": { "monthly": 9},
+      "price": { "monthly": 999, "quarterly": 2699, "yearly": 9589 },
       "features": [
         { "key": "browseInfluencerProfiles", "label": "Browse influencer profiles", "value": true },
         { "key": "viewSocialLinks", "label": "View public social links", "value": true },
@@ -162,7 +162,7 @@
       ],
       "offers": [
         { "key": "trialPeriodDays", "label": "Trial period (days)", "value": 0 },
-        { "key": "discountOnInfluencerPro", "label": "Discount on Influencer Pro plan (%)", "value": 0 }
+        { "key": "discountOnInfluencerPro", "label": "Discount on Influencer Pro plan (%)", "value": 30 }
       ],
       "policies": { "imageRetentionDaysAfterExpiry": 45 },
       "highlight": false,
