@@ -58,7 +58,7 @@
       "name": "Influencer (Early Access)",
       "code": "influencer-early-access",
       "userType": "INFLUENCER",
-      "price": { "monthly": 229, "quarterly": 599, "yearly": 2099 },
+      "price": { "monthly": 399, "quarterly": 1079, "yearly": 3789 },
       "features": [
         { "key": "publicProfileListing", "label": "Public profile listing", "value": true },
         { "key": "socialMediaVisibility", "label": "Show social media links", "value": true },
@@ -79,8 +79,8 @@
         { "key": "discountOnBrandPro", "label": "Discount on Brand Pro plan (%)", "value": 30 }
       ],
       "policies": { "imageRetentionDaysAfterExpiry": 45 },
-      "highlight": false,
-      "isActive": false,
+      "highlight": true,
+      "isActive": true,
       "sortOrder": 2
     },
     {
@@ -165,8 +165,8 @@
         { "key": "discountOnInfluencerPro", "label": "Discount on Influencer Pro plan (%)", "value": 30 }
       ],
       "policies": { "imageRetentionDaysAfterExpiry": 45 },
-      "highlight": false,
-      "isActive": false,
+      "highlight": true,
+      "isActive": true,
       "sortOrder": 2
     }
   ]
