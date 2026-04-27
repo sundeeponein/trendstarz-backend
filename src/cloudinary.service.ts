@@ -1,40 +1,46 @@
 import { Injectable } from "@nestjs/common";
 import * as fs from "fs";
 import * as path from "path";
-// Always use require and v2 to avoid ESM/CJS issues
-const cloudinary = require("cloudinary").v2;
+import { v2 as cloudinary } from "cloudinary";
+
+function getLocalImagesDir(): string {
+  return path.join(__dirname, "../assets/local-images");
+}
+
+function isCloudinaryEnabled(): boolean {
+  if (typeof process.env.CLOUDINARY_ENABLED === "string") {
+    return process.env.CLOUDINARY_ENABLED.toLowerCase() === "true";
+  }
+  return process.env.NODE_ENV === "production";
+}
+
+function hasCloudinaryCredentials(): boolean {
+  return Boolean(
+    process.env.CLOUDINARY_CLOUD_NAME &&
+    process.env.CLOUDINARY_API_KEY &&
+    process.env.CLOUDINARY_API_SECRET,
+  );
+}
 
 function setCloudinaryConfig() {
+  if (!hasCloudinaryCredentials()) {
+    throw new Error(
+      "Cloudinary is enabled but credentials are missing (CLOUDINARY_CLOUD_NAME / CLOUDINARY_API_KEY / CLOUDINARY_API_SECRET).",
+    );
+  }
+
   cloudinary.config({
     cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
     api_key: process.env.CLOUDINARY_API_KEY,
     api_secret: process.env.CLOUDINARY_API_SECRET,
   });
 }
-
-// Ensure all Cloudinary env vars are present
-if (
-  !process.env.CLOUDINARY_CLOUD_NAME ||
-  !process.env.CLOUDINARY_API_KEY ||
-  !process.env.CLOUDINARY_API_SECRET
-) {
-  console.error(
-    "[Cloudinary ENV ERROR] Missing Cloudinary environment variables!",
-  );
-} else {
-  cloudinary.config({
-    cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
-    api_key: process.env.CLOUDINARY_API_KEY,
-    api_secret: process.env.CLOUDINARY_API_SECRET,
-  });
-}
-
 
 @Injectable()
 export class CloudinaryService {
   async uploadImage(file: string, folder = "profile_images") {
-    // If running in production, use Cloudinary
-    if (process.env.NODE_ENV === "production") {
+    // Use Cloudinary only when explicitly enabled (or production default).
+    if (isCloudinaryEnabled()) {
       setCloudinaryConfig();
       return await cloudinary.uploader.upload(file, {
         folder,
@@ -62,7 +68,7 @@ export class CloudinaryService {
 
     // Generate unique filename
     const filename = `${folder}_${Date.now()}_${Math.random().toString(36).substring(2, 8)}${ext}`;
-    const localDir = path.join(__dirname, "../assets/local-images");
+    const localDir = getLocalImagesDir();
     if (!fs.existsSync(localDir)) {
       fs.mkdirSync(localDir, { recursive: true });
     }
@@ -79,6 +85,24 @@ export class CloudinaryService {
   }
 
   async deleteImage(publicId: string) {
+    if (!publicId) {
+      return { result: "not_found", reason: "empty_public_id" };
+    }
+
+    // Local/development mode: delete from local assets if present.
+    if (
+      !isCloudinaryEnabled() ||
+      publicId.startsWith("/assets/local-images/")
+    ) {
+      const filename = path.basename(publicId);
+      const localPath = path.join(getLocalImagesDir(), filename);
+      if (fs.existsSync(localPath)) {
+        fs.unlinkSync(localPath);
+        return { result: "ok", local: true, deleted: filename };
+      }
+      return { result: "not_found", local: true, attempted: filename };
+    }
+
     setCloudinaryConfig();
     // Strip file extension if present (Cloudinary public_id never includes extension)
     const strippedId = publicId.replace(/\.[^/.]+$/, "");
@@ -87,7 +111,10 @@ export class CloudinaryService {
     if (!strippedId.includes("/")) {
       variants.push(`client-side/uploads/${strippedId}`);
       variants.push(`uploads/${strippedId}`);
-    } else if (!strippedId.startsWith("client-side/") && !strippedId.startsWith("uploads/")) {
+    } else if (
+      !strippedId.startsWith("client-side/") &&
+      !strippedId.startsWith("uploads/")
+    ) {
       variants.push(`client-side/uploads/${strippedId}`);
     }
     let lastResult: any = null;
@@ -106,7 +133,10 @@ export class CloudinaryService {
         lastResult = err;
       }
     }
-    console.warn("[Cloudinary] Image not found or could not be deleted for original public_id:", publicId);
+    console.warn(
+      "[Cloudinary] Image not found or could not be deleted for original public_id:",
+      publicId,
+    );
     return lastResult;
   }
 }

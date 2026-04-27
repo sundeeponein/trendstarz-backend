@@ -1,5 +1,22 @@
-import { Controller, Post, Body, Res, Get, Query, UsePipes, ValidationPipe, HttpCode } from "@nestjs/common";
+import {
+  Controller,
+  Post,
+  Body,
+  Res,
+  Get,
+  Query,
+  UsePipes,
+  ValidationPipe,
+  HttpCode,
+  UseInterceptors,
+  UploadedFile,
+} from "@nestjs/common";
 import type { Response } from "express";
+import { FileInterceptor } from "@nestjs/platform-express";
+import { diskStorage } from "multer";
+import * as fs from "fs";
+import * as path from "path";
+import { v4 as uuidv4 } from "uuid";
 import { AuthService } from "./auth.service";
 import {
   LoginDto,
@@ -77,6 +94,31 @@ export class AuthController {
       const formatted = this.formatRegistrationError(err, "Registration failed");
       return res.status(formatted.status).json(formatted.body);
     }
+  }
+
+  @Post("upload-image")
+  @UseInterceptors(
+    FileInterceptor("file", {
+      storage: diskStorage({
+        destination: (req: any, file: any, cb: any) => {
+          const dest = path.resolve(process.cwd(), "assets/local-images");
+          if (!fs.existsSync(dest)) {
+            fs.mkdirSync(dest, { recursive: true });
+          }
+          cb(null, dest);
+        },
+        filename: (req: any, file: any, cb: any) => {
+          const ext = path.extname(file.originalname || "") || ".jpg";
+          cb(null, `${uuidv4()}${ext}`);
+        },
+      }),
+    }),
+  )
+  async uploadImage(@UploadedFile() file: Express.Multer.File) {
+    return {
+      url: `/assets/local-images/${file.filename}`,
+      public_id: file.filename,
+    };
   }
 
   @Post("send-email-verification")

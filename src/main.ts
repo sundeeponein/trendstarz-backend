@@ -29,8 +29,8 @@ async function bootstrap() {
   const app = await NestFactory.create(AppModule, new ExpressAdapter(server));
   logMemory("after NestFactory.create");
 
-  // Serve static files for local image uploads
-  server.use('/assets', express.static(path.join(__dirname, 'assets')));
+  // Serve static files for local image uploads from backend/assets
+  server.use('/assets', express.static(path.resolve(process.cwd(), 'assets')));
 
 
 

@@ -56,6 +56,15 @@ export class AdminListsController {
       preApproveBrands: false,
       brandRequireEmailVerified: true,
       brandRequireMobileVerified: false,
+      platformFeeEnabled: false,
+      platformFeePercent: 10,
+      gstPercent: 18,
+      supportContactEnabled: true,
+      supportContactEmail: "support@trendstarz.in",
+      supportContactPhone: "",
+      supportContactWhatsapp: "",
+      supportContactMessage:
+        "For now, please contact our team to complete campaign payments. Our admin will update the payment status once received.",
     };
     const settings = await this.appSettingsModel.findOne({}).lean();
     const merged = { ...defaults, ...(settings || {}) };
@@ -76,6 +85,9 @@ export class AdminListsController {
   // Debug endpoint to log influencer and brand data
   @Get("debug-users")
   async debugUsers() {
+    if (process.env.NODE_ENV === "production") {
+      throw new BadRequestException("Debug endpoint is disabled in production");
+    }
     try {
       const influencers = await this.influencerModel.find({}).lean().limit(5);
       const brands = await this.brandModel.find({}).lean().limit(5);
@@ -89,6 +101,9 @@ export class AdminListsController {
   // Debug endpoint to check stored public_ids for a specific user (for Cloudinary deletion troubleshooting)
   @Get("debug-user-images/:id")
   async debugUserImages(@Param("id") id: string) {
+    if (process.env.NODE_ENV === "production") {
+      throw new BadRequestException("Debug endpoint is disabled in production");
+    }
     let user: any = await this.influencerModel.findById(id).lean();
     if (user) {
       return {

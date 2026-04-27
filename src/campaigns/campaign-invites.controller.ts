@@ -28,7 +28,7 @@ export class CampaignInvitesController {
   @UseInterceptors(FileInterceptor('file', {
     storage: diskStorage({
       destination: (req: any, file: any, cb: any) => {
-        const dest = path.join(__dirname, '../assets/local-images/campaign_proofs');
+        const dest = path.resolve(process.cwd(), 'assets/local-images/campaign_proofs');
         if (!fs.existsSync(dest)) {
           fs.mkdirSync(dest, { recursive: true });
         }

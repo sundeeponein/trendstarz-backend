@@ -326,16 +326,24 @@ export class CampaignInvitesService {
       invite.acceptedAt = new Date();
 
       // Store chosen platform/content type and resolve agreed amount
-      if (selectedPlatform) (invite as any).selectedPlatform = selectedPlatform;
-      if (selectedContentType) (invite as any).selectedContentType = selectedContentType;
-      if (selectedPlatform && selectedContentType && campaign.socialMedia?.length) {
+      if (selectedPlatform) invite.selectedPlatform = selectedPlatform;
+      if (selectedContentType) invite.selectedContentType = selectedContentType;
+      if (
+        selectedPlatform &&
+        selectedContentType &&
+        campaign.socialMedia?.length
+      ) {
         const smEntry = campaign.socialMedia.find(
-          (sm: any) => (sm.platform || '').toLowerCase() === selectedPlatform.toLowerCase()
+          (sm: any) =>
+            (sm.platform || "").toLowerCase() ===
+            selectedPlatform.toLowerCase(),
         );
         const ctEntry = smEntry?.contentTypes?.find(
-          (ct: any) => (ct.name || '').toLowerCase() === selectedContentType.toLowerCase() && ct.enabled
+          (ct: any) =>
+            (ct.name || "").toLowerCase() ===
+              selectedContentType.toLowerCase() && ct.enabled,
         );
-        if (ctEntry?.price) (invite as any).agreedAmount = Number(ctEntry.price);
+        if (ctEntry?.price) invite.agreedAmount = Number(ctEntry.price);
       }
     }
 
@@ -445,7 +453,11 @@ export class CampaignInvitesService {
     if (String(invite.influencerId) !== influencerId) {
       throw new BadRequestException("Not your invite");
     }
-    if (!["accepted", "payment_confirmed", "working", "submitted"].includes(invite.status)) {
+    if (
+      !["accepted", "payment_confirmed", "working", "submitted"].includes(
+        invite.status,
+      )
+    ) {
       throw new BadRequestException(
         `Can only submit for active invites. Status was: ${invite.status}`,
       );

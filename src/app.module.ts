@@ -12,6 +12,7 @@ import {
   SocialMediaController,
   TiersController,
   LanguagesController,
+  PublicSupportContactController,
 } from "./public-lists.controller";
 import { MongooseModule } from "@nestjs/mongoose";
 import { ConfigModule } from "@nestjs/config";
@@ -109,6 +110,7 @@ import { PaymentsPayoutsModule } from "./payments-payouts/payments-payouts.modul
     SocialMediaController,
     TiersController,
     LanguagesController,
+    PublicSupportContactController,
     AuthController,
     HealthController,
     AdminUserTableController,
