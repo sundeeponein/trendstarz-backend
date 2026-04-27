@@ -288,16 +288,23 @@ export class PlansService {
   }
 
   /** Find expired subscriptions for image cleanup */
-  async getSubscriptionsForImageCleanup(retentionDays: number) {
-    const cutoff = new Date();
-    cutoff.setDate(cutoff.getDate() - retentionDays);
-    return this.subscriptionModel
-      .find({
-        status: "expired",
-        endDate: { $lte: cutoff },
-        imagesMarkedForDeletionAt: null,
-      })
-      .lean();
+  async getSubscriptionsForImageCleanup(retentionDays?: number) {
+    const query: any = {
+      status: "expired",
+      imagesMarkedForDeletionAt: null,
+    };
+
+    if (
+      typeof retentionDays === "number" &&
+      Number.isFinite(retentionDays) &&
+      retentionDays > 0
+    ) {
+      const cutoff = new Date();
+      cutoff.setDate(cutoff.getDate() - retentionDays);
+      query.endDate = { $lte: cutoff };
+    }
+
+    return this.subscriptionModel.find(query).lean();
   }
 
   async markImagesDeleted(subscriptionId: string) {

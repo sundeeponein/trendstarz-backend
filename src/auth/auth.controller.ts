@@ -18,6 +18,7 @@ import * as fs from "fs";
 import * as path from "path";
 import { v4 as uuidv4 } from "uuid";
 import { AuthService } from "./auth.service";
+import { CloudinaryService } from "../cloudinary.service";
 import {
   LoginDto,
   ForgotPasswordDto,
@@ -27,7 +28,10 @@ import {
 
 @Controller("auth")
 export class AuthController {
-  constructor(private readonly authService: AuthService) {}
+  constructor(
+    private readonly authService: AuthService,
+    private readonly cloudinaryService: CloudinaryService,
+  ) {}
 
   private formatRegistrationError(err: any, fallbackMessage: string) {
     const status = err?.status || 400;
@@ -114,10 +118,27 @@ export class AuthController {
       }),
     }),
   )
-  async uploadImage(@UploadedFile() file: Express.Multer.File) {
+  async uploadImage(
+    @UploadedFile() file: Express.Multer.File,
+    @Body("folder") folder?: string,
+  ) {
+    const targetFolder =
+      typeof folder === "string" && /^[a-zA-Z0-9_-]+$/.test(folder)
+        ? folder
+        : "registration_images";
+
+    const uploaded = await this.cloudinaryService.uploadImage(
+      file.path,
+      targetFolder,
+    );
+
+    if (file?.path && fs.existsSync(file.path)) {
+      fs.unlinkSync(file.path);
+    }
+
     return {
-      url: `/assets/local-images/${file.filename}`,
-      public_id: file.filename,
+      url: uploaded.secure_url || uploaded.url,
+      public_id: uploaded.public_id,
     };
   }
 

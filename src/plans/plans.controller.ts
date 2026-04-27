@@ -12,12 +12,16 @@ import {
   BadRequestException,
 } from "@nestjs/common";
 import { PlansService } from "./plans.service";
+import { ImageCleanupService } from "./image-cleanup.service";
 import { JwtAuthGuard } from "../auth/jwt-auth.guard";
 import { RolesGuard } from "../auth/roles.guard";
 
 @Controller("plans")
 export class PlansController {
-  constructor(private readonly plansService: PlansService) {}
+  constructor(
+    private readonly plansService: PlansService,
+    private readonly imageCleanupService: ImageCleanupService,
+  ) {}
 
   // ── Admin endpoints ───────────────────────────────────────────────────────
 
@@ -90,5 +94,27 @@ export class PlansController {
   async userCapabilities(@Param("userId") userId: string) {
     const caps = await this.plansService.getUserPlanCapabilities(userId);
     return { success: true, ...caps };
+  }
+
+  /**
+   * GET /plans/admin/cleanup-preview?userId=...&subscriptionId=...
+   * Read-only preview for cleanup eligibility (no data mutation).
+   */
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Get("admin/cleanup-preview")
+  async cleanupPreview(
+    @Query("userId") userId?: string,
+    @Query("subscriptionId") subscriptionId?: string,
+  ) {
+    if (!userId && !subscriptionId) {
+      throw new BadRequestException(
+        "Provide at least one query parameter: userId or subscriptionId",
+      );
+    }
+
+    return this.imageCleanupService.previewCleanupEligibility({
+      userId,
+      subscriptionId,
+    });
   }
 }

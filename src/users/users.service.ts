@@ -17,6 +17,80 @@ if (USE_LOCAL_IMAGES && !fs.existsSync(LOCAL_IMAGE_DIR)) {
 
 @Injectable()
 export class UsersService {
+  private extractMediaPublicIds(user: any): string[] {
+    const publicIds = new Set<string>();
+
+    const addPublicId = (value: unknown) => {
+      if (typeof value === "string" && value.trim()) {
+        publicIds.add(value);
+      }
+    };
+
+    addPublicId(user?.profileImagePublicId);
+
+    for (const img of user?.profileImages ?? []) {
+      addPublicId(typeof img === "object" ? img?.public_id : img);
+    }
+
+    for (const img of user?.brandLogo ?? []) {
+      addPublicId(typeof img === "object" ? img?.public_id : img);
+    }
+
+    for (const img of user?.products ?? []) {
+      addPublicId(typeof img === "object" ? img?.public_id : img);
+    }
+
+    for (const img of user?.galleryImages ?? []) {
+      addPublicId(typeof img === "object" ? img?.publicId : img);
+    }
+
+    return [...publicIds];
+  }
+
+  private async removeStoredMedia(publicIds: string[]): Promise<void> {
+    for (const publicId of publicIds) {
+      try {
+        await this.cloudinaryService.deleteImage(publicId);
+      } catch (err) {
+        console.error("[MEDIA CLEANUP] Failed to delete image:", publicId, err);
+      }
+    }
+  }
+
+  private clearUserMediaFields(user: any) {
+    user.profileImage = null;
+    user.profileImagePublicId = null;
+    user.profileImages = [];
+    user.brandLogo = [];
+    user.products = [];
+    user.galleryImages = [];
+  }
+
+  async cleanupUserMediaById(id: string): Promise<{
+    removedCount: number;
+    userType: "Influencer" | "Brand" | null;
+    user: any;
+  }> {
+    let user: any = await this.influencerModel.findById(id);
+    let userType: "Influencer" | "Brand" | null = user ? "Influencer" : null;
+
+    if (!user) {
+      user = await this.brandModel.findById(id);
+      userType = user ? "Brand" : null;
+    }
+
+    if (!user) {
+      return { removedCount: 0, userType: null, user: null };
+    }
+
+    const publicIds = this.extractMediaPublicIds(user);
+    await this.removeStoredMedia(publicIds);
+    this.clearUserMediaFields(user);
+    await user.save();
+
+    return { removedCount: publicIds.length, userType, user };
+  }
+
   private escapeRegex(value: string): string {
     return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   }
@@ -753,36 +827,21 @@ export class UsersService {
       }
     }
 
-    // Delete profile image
-    if (user.profileImagePublicId) {
-      try {
-        await this.cloudinaryService.deleteImage(user.profileImagePublicId);
-      } catch {
-        /* log error */
-      }
-    }
-    // Delete gallery images
-    if (user.galleryImages?.length) {
-      for (const img of user.galleryImages) {
-        if (img.publicId) {
-          try {
-            await this.cloudinaryService.deleteImage(img.publicId);
-          } catch {
-            /* log error */
-          }
-        }
-      }
-    }
+    const publicIds = this.extractMediaPublicIds(user);
+    await this.removeStoredMedia(publicIds);
+
     // Soft delete
     user.isDeleted = true;
     user.deletedAt = new Date();
+    user.status = "deleted";
     // Remove heavy fields
-    user.profileImage = null;
-    user.profileImagePublicId = null;
-    user.galleryImages = [];
+    this.clearUserMediaFields(user);
     await user.save();
 
-    return { message: "User soft deleted and media cleaned" };
+    return {
+      message: "User soft deleted and media cleaned",
+      removedImages: publicIds.length,
+    };
   }
   async setPremium(
     id: string,

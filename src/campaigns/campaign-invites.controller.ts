@@ -18,10 +18,14 @@ import { diskStorage } from 'multer';
 import * as path from 'path';
 import * as fs from 'fs';
 import { v4 as uuidv4 } from 'uuid';
+import { CloudinaryService } from '../cloudinary.service';
 
 @Controller("campaign-invites")
 export class CampaignInvitesController {
-  constructor(private readonly invitesService: CampaignInvitesService) {}
+  constructor(
+    private readonly invitesService: CampaignInvitesService,
+    private readonly cloudinaryService: CloudinaryService,
+  ) {}
 
   @UseGuards(JwtAuthGuard)
   @Post(":id/upload-image")
@@ -45,10 +49,19 @@ export class CampaignInvitesController {
     @UploadedFile() file: Express.Multer.File,
     @Req() req: any
   ) {
-    // Return the local URL for the uploaded file
-    const filename = file.filename;
-    const url = `/assets/local-images/campaign_proofs/${filename}`;
-    return { url };
+    const uploaded = await this.cloudinaryService.uploadImage(
+      file.path,
+      'campaign_proofs',
+    );
+
+    if (file?.path && fs.existsSync(file.path)) {
+      fs.unlinkSync(file.path);
+    }
+
+    return {
+      url: uploaded.secure_url || uploaded.url,
+      public_id: uploaded.public_id,
+    };
   }
 
   @UseGuards(JwtAuthGuard)
