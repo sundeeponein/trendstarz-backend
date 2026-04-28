@@ -14,6 +14,7 @@ import { CampaignsService } from "./campaigns.service";
 import { CampaignInvitesController } from "./campaign-invites.controller";
 import { CampaignInvitesService } from "./campaign-invites.service";
 import { PlansModule } from "../plans/plans.module";
+import { CloudinaryService } from "../cloudinary.service";
 
 @Module({
   imports: [
@@ -49,6 +50,6 @@ import { PlansModule } from "../plans/plans.module";
     ]),
   ],
   controllers: [CampaignsController, CampaignInvitesController],
-  providers: [CampaignsService, CampaignInvitesService],
+  providers: [CampaignsService, CampaignInvitesService, CloudinaryService],
 })
 export class CampaignsModule {}
