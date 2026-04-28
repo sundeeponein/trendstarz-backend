@@ -17,6 +17,99 @@ if (USE_LOCAL_IMAGES && !fs.existsSync(LOCAL_IMAGE_DIR)) {
 
 @Injectable()
 export class UsersService {
+  private slugify(text: string): string {
+    return (text || "")
+      .toString()
+      .toLowerCase()
+      .replace(/\s+/g, "-")
+      .replace(/[^a-z0-9-]/g, "")
+      .replace(/-+/g, "-")
+      .replace(/^-+/, "")
+      .replace(/-+$/, "");
+  }
+
+  private async findBrandByNameOrSlug(brandName: string): Promise<any | null> {
+    const normalized = (brandName || "").trim();
+    if (!normalized) return null;
+
+    let brand = await this.brandModel
+      .findOne({
+        brandName: new RegExp(
+          `^${this.escapeRegex(normalized.replace(/-/g, " "))}$`,
+          "i",
+        ),
+      })
+      .lean();
+
+    if (brand) return brand;
+
+    const decoded = this.slugify(normalized);
+    const candidates = await this.brandModel
+      .find({})
+      .select("_id brandName")
+      .lean();
+    const match = candidates.find(
+      (b: any) => this.slugify(b.brandName || "") === decoded,
+    );
+    if (!match) return null;
+
+    return this.brandModel.findById(match._id).lean();
+  }
+
+  async trackInfluencerProfileImpression(username: string) {
+    if (!username) return { tracked: false };
+    const now = new Date();
+    const updated = await this.influencerModel.updateOne(
+      { username },
+      {
+        $inc: { "profileTraffic.impressions": 1 },
+        $set: { "profileTraffic.lastImpressionAt": now },
+      },
+    );
+    return { tracked: (updated.modifiedCount || 0) > 0 };
+  }
+
+  async trackInfluencerProfileClick(username: string) {
+    if (!username) return { tracked: false };
+    const now = new Date();
+    const updated = await this.influencerModel.updateOne(
+      { username },
+      {
+        $inc: { "profileTraffic.clicks": 1 },
+        $set: { "profileTraffic.lastClickAt": now },
+      },
+    );
+    return { tracked: (updated.modifiedCount || 0) > 0 };
+  }
+
+  async trackBrandProfileImpression(brandName: string) {
+    const brand = await this.findBrandByNameOrSlug(brandName);
+    if (!brand?._id) return { tracked: false };
+    const now = new Date();
+    const updated = await this.brandModel.updateOne(
+      { _id: brand._id },
+      {
+        $inc: { "profileTraffic.impressions": 1 },
+        $set: { "profileTraffic.lastImpressionAt": now },
+      },
+    );
+    return { tracked: (updated.modifiedCount || 0) > 0 };
+  }
+
+  async trackBrandProfileClick(brandName: string) {
+    const brand = await this.findBrandByNameOrSlug(brandName);
+    if (!brand?._id) return { tracked: false };
+    const now = new Date();
+    const updated = await this.brandModel.updateOne(
+      { _id: brand._id },
+      {
+        $inc: { "profileTraffic.clicks": 1 },
+        $set: { "profileTraffic.lastClickAt": now },
+      },
+    );
+    return { tracked: (updated.modifiedCount || 0) > 0 };
+  }
+
   private extractMediaPublicIds(user: any): string[] {
     const publicIds = new Set<string>();
 
@@ -305,42 +398,7 @@ export class UsersService {
   }
 
   async getBrandByName(brandName: string) {
-    // Slugify helper
-    function slugify(text: string): string {
-      return text
-        .toString()
-        .toLowerCase()
-        .replace(/\s+/g, "-")
-        .replace(/[^a-z0-9-]/g, "")
-        .replace(/-+/g, "-")
-        .replace(/^-+/, "")
-        .replace(/-+$/, "");
-    }
-
-    // Use case-insensitive find instead of scanning all brands
-    const decoded = slugify(brandName);
-    // Try direct match (replacing hyphens with spaces for stored names)
-    let user: any = await this.brandModel
-      .findOne({
-        brandName: new RegExp(
-          `^${this.escapeRegex(brandName.replace(/-/g, " "))}$`,
-          "i",
-        ),
-      })
-      .lean();
-    // Fallback: slug-based match on brandName field only
-    if (!user) {
-      const candidates = await this.brandModel
-        .find({})
-        .select("brandName")
-        .lean();
-      const match = candidates.find(
-        (b: any) => slugify(b.brandName) === decoded,
-      );
-      if (match) {
-        user = await this.brandModel.findById(match._id).lean();
-      }
-    }
+    const user: any = await this.findBrandByNameOrSlug(brandName);
     if (!user) return null;
     const {
       _id,
@@ -358,6 +416,7 @@ export class UsersService {
       promotionalPrice,
       languages,
       contact,
+      profileTraffic,
     } = user;
     return {
       _id,
@@ -375,6 +434,12 @@ export class UsersService {
       promotionalPrice,
       languages,
       contact,
+      profileTraffic: profileTraffic || {
+        impressions: 0,
+        clicks: 0,
+        lastImpressionAt: null,
+        lastClickAt: null,
+      },
     };
   }
 
@@ -684,6 +749,7 @@ export class UsersService {
       socialMedia,
       isPremium,
       promotionalPrice,
+      profileTraffic,
     } = user;
     return {
       _id,
@@ -698,6 +764,12 @@ export class UsersService {
       socialMedia,
       isPremium,
       promotionalPrice,
+      profileTraffic: profileTraffic || {
+        impressions: 0,
+        clicks: 0,
+        lastImpressionAt: null,
+        lastClickAt: null,
+      },
     };
   }
   async getInfluencerById(id: string) {
@@ -716,6 +788,7 @@ export class UsersService {
       location,
       socialMedia,
       isPremium,
+      profileTraffic,
     } = user;
     return {
       _id,
@@ -730,6 +803,12 @@ export class UsersService {
       socialMedia,
       isPremium,
       promotionalPrice,
+      profileTraffic: profileTraffic || {
+        impressions: 0,
+        clicks: 0,
+        lastImpressionAt: null,
+        lastClickAt: null,
+      },
     };
   }
 

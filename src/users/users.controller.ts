@@ -40,6 +40,16 @@ export class UsersController {
     return this.usersService.applyPlanFilter(profile, caps);
   }
 
+  @Post("influencers/username/:username/track-impression")
+  async trackInfluencerProfileImpression(@Param("username") username: string) {
+    return this.usersService.trackInfluencerProfileImpression(username);
+  }
+
+  @Post("influencers/username/:username/track-click")
+  async trackInfluencerProfileClick(@Param("username") username: string) {
+    return this.usersService.trackInfluencerProfileClick(username);
+  }
+
   @Get("check-username/:username")
   async checkUsername(@Param("username") username: string) {
     return this.usersService.checkUsername(username);
@@ -90,6 +100,16 @@ export class UsersController {
       page: page ? parseInt(page, 10) : undefined,
       limit: limit ? parseInt(limit, 10) : undefined,
     });
+  }
+
+  @Post("brands/name/:brandName/track-impression")
+  async trackBrandProfileImpression(@Param("brandName") brandName: string) {
+    return this.usersService.trackBrandProfileImpression(brandName);
+  }
+
+  @Post("brands/name/:brandName/track-click")
+  async trackBrandProfileClick(@Param("brandName") brandName: string) {
+    return this.usersService.trackBrandProfileClick(brandName);
   }
 
   @Get("influencers")

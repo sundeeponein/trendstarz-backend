@@ -79,6 +79,12 @@ export class DashboardService {
         socialMedia: user?.socialMedia ?? [],
         location: user?.location ?? {},
         profileImages: user?.profileImages ?? [],
+        profileTraffic: {
+          impressions: user?.profileTraffic?.impressions ?? 0,
+          clicks: user?.profileTraffic?.clicks ?? 0,
+          lastImpressionAt: user?.profileTraffic?.lastImpressionAt ?? null,
+          lastClickAt: user?.profileTraffic?.lastClickAt ?? null,
+        },
       },
       invites: { ...stats, newInvites, statusDebug },
       activeCampaigns,
@@ -162,6 +168,12 @@ export class DashboardService {
         socialMedia: brand?.socialMedia ?? [],
         location: brand?.location ?? {},
         brandLogo: brand?.brandLogo ?? [],
+        profileTraffic: {
+          impressions: brand?.profileTraffic?.impressions ?? 0,
+          clicks: brand?.profileTraffic?.clicks ?? 0,
+          lastImpressionAt: brand?.profileTraffic?.lastImpressionAt ?? null,
+          lastClickAt: brand?.profileTraffic?.lastClickAt ?? null,
+        },
       },
       totalCampaigns: campaigns.length, // All campaigns, regardless of status
       activeCampaigns: campaigns.filter((c: any) => c.status === "active")

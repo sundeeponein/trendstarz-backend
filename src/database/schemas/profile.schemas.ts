@@ -90,6 +90,18 @@ export const InfluencerSchema = new Schema(
       email: { type: Boolean, default: false },
       call: { type: Boolean, default: false },
     },
+    signupAttribution: {
+      source: { type: String },
+      audience: { type: String },
+      referrerPath: { type: String },
+      capturedAt: { type: Date },
+    },
+    profileTraffic: {
+      impressions: { type: Number, default: 0 },
+      clicks: { type: Number, default: 0 },
+      lastImpressionAt: { type: Date, default: null },
+      lastClickAt: { type: Date, default: null },
+    },
     promotionalPrice: { type: Number },
     website: { type: String },
     status: {
@@ -171,6 +183,18 @@ export const BrandSchema = new Schema(
       whatsapp: { type: Boolean, default: false },
       email: { type: Boolean, default: false },
       call: { type: Boolean, default: false },
+    },
+    signupAttribution: {
+      source: { type: String },
+      audience: { type: String },
+      referrerPath: { type: String },
+      capturedAt: { type: Date },
+    },
+    profileTraffic: {
+      impressions: { type: Number, default: 0 },
+      clicks: { type: Number, default: 0 },
+      lastImpressionAt: { type: Date, default: null },
+      lastClickAt: { type: Date, default: null },
     },
     promotionalPrice: { type: Number },
     status: {

@@ -476,6 +476,16 @@ export class AuthService {
           .slice(0, 1)
       : [];
 
+    const signupAttribution = {
+      source:
+        data?.signupAttribution?.source || data?.source || data?.utm_source || null,
+      audience:
+        data?.signupAttribution?.audience || data?.audience || null,
+      referrerPath:
+        data?.signupAttribution?.referrerPath || data?.referrerPath || null,
+      capturedAt: new Date(),
+    };
+
     const influencer = new this.influencerModel({
       ...data,
       password: hashedPassword,
@@ -484,11 +494,16 @@ export class AuthService {
       languages: languageNames,
       socialMedia: socialMediaMapped,
       profileImages: normalizedProfileImages,
+      signupAttribution,
     });
     // Status stays "pending" until email is verified — auto-approve (if enabled) is applied in verifyEmailByToken.
     console.log("Influencer payload:", influencer);
     try {
       const saved = await influencer.save();
+      console.log(
+        "Influencer signup attribution:",
+        saved?.signupAttribution || signupAttribution,
+      );
       try {
         await this.sendEmailVerificationLink(saved.email);
       } catch (verifyMailErr) {
@@ -568,6 +583,15 @@ export class AuthService {
       await this.resolveIdsToNames(data);
     // Hash password
     const hashedPassword = await bcrypt.hash(data.password, 10);
+    const signupAttribution = {
+      source:
+        data?.signupAttribution?.source || data?.source || data?.utm_source || null,
+      audience:
+        data?.signupAttribution?.audience || data?.audience || null,
+      referrerPath:
+        data?.signupAttribution?.referrerPath || data?.referrerPath || null,
+      capturedAt: new Date(),
+    };
     const brand = new this.brandModel({
       ...data,
       password: hashedPassword,
@@ -575,9 +599,14 @@ export class AuthService {
       location: { state: stateName },
       languages: languageNames,
       socialMedia: socialMediaMapped,
+      signupAttribution,
     });
     // Status stays "pending" until email is verified — auto-approve (if enabled) is applied in verifyEmailByToken.
     const savedBrand = await brand.save();
+    console.log(
+      "Brand signup attribution:",
+      savedBrand?.signupAttribution || signupAttribution,
+    );
     try {
       await this.sendEmailVerificationLink(savedBrand.email);
     } catch (verifyMailErr) {
