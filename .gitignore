@@ -8,6 +8,7 @@
 /.vscode/
 /.idea/
 .DS_Store
+startup.log
 
 # Environment files
 .env
