@@ -22,7 +22,10 @@ export const CampaignSubmissionSchema = new Schema(
     },
     captionUsed: { type: String },
 
-    postScreenshotUrl: { type: String, required: true },
+    postScreenshotUrl: {
+      type: String,
+      required: process.env.NODE_ENV === "production",
+    },
     insightsScreenshotUrl: { type: String },
 
     viewsCount: { type: Number },

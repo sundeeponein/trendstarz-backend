@@ -9,11 +9,60 @@ import {
   Req,
 } from "@nestjs/common";
 import { JwtAuthGuard } from "../auth/jwt-auth.guard";
+import { RolesGuard } from "../auth/roles.guard";
 import { CampaignInvitesService } from "./campaign-invites.service";
+
+import { UseInterceptors, UploadedFile } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
+import { diskStorage } from 'multer';
+import * as path from 'path';
+import * as fs from 'fs';
+import { v4 as uuidv4 } from 'uuid';
+import { CloudinaryService } from '../cloudinary.service';
 
 @Controller("campaign-invites")
 export class CampaignInvitesController {
-  constructor(private readonly invitesService: CampaignInvitesService) {}
+  constructor(
+    private readonly invitesService: CampaignInvitesService,
+    private readonly cloudinaryService: CloudinaryService,
+  ) {}
+
+  @UseGuards(JwtAuthGuard)
+  @Post(":id/upload-image")
+  @UseInterceptors(FileInterceptor('file', {
+    storage: diskStorage({
+      destination: (req: any, file: any, cb: any) => {
+        const dest = path.resolve(process.cwd(), 'assets/local-images/campaign_proofs');
+        if (!fs.existsSync(dest)) {
+          fs.mkdirSync(dest, { recursive: true });
+        }
+        cb(null, dest);
+      },
+      filename: (req: any, file: any, cb: any) => {
+        const ext = path.extname(file.originalname);
+        cb(null, uuidv4() + ext);
+      },
+    }),
+  }))
+  async uploadCampaignProof(
+    @Param('id') id: string,
+    @UploadedFile() file: Express.Multer.File,
+    @Req() req: any
+  ) {
+    const uploaded = await this.cloudinaryService.uploadImage(
+      file.path,
+      'campaign_proofs',
+    );
+
+    if (file?.path && fs.existsSync(file.path)) {
+      fs.unlinkSync(file.path);
+    }
+
+    return {
+      url: uploaded.secure_url || uploaded.url,
+      public_id: uploaded.public_id,
+    };
+  }
 
   @UseGuards(JwtAuthGuard)
   @Post()
@@ -33,6 +82,13 @@ export class CampaignInvitesController {
   async findByInfluencer(@Req() req: any) {
     const influencerId = req.user?.userId;
     return this.invitesService.findByInfluencer(influencerId);
+  }
+
+  /** GET /campaign-invites/:id — get a single invite with campaign platform/deliverable info */
+  @UseGuards(JwtAuthGuard)
+  @Get(":id")
+  async findOne(@Param("id") id: string, @Req() req: any) {
+    return this.invitesService.findOneWithCampaign(id);
   }
 
   /**
@@ -59,10 +115,23 @@ export class CampaignInvitesController {
   async respond(
     @Param("id") id: string,
     @Req() req: any,
-    @Body() body: { status: "accepted" | "declined" },
+    @Body()
+    body: {
+      status: "accepted" | "declined";
+      selectedPostDate?: string;
+      selectedPlatform?: string;
+      selectedContentType?: string;
+    },
   ) {
     const influencerId = req.user?.userId;
-    return this.invitesService.respond(id, influencerId, body.status);
+    return this.invitesService.respond(
+      id,
+      influencerId,
+      body.status,
+      body.selectedPostDate,
+      body.selectedPlatform,
+      body.selectedContentType,
+    );
   }
 
   @UseGuards(JwtAuthGuard)
@@ -100,6 +169,8 @@ export class CampaignInvitesController {
     return this.invitesService.submitPost(id, influencerId, body);
   }
 
+  // Local image upload endpoint
+  @UseGuards(JwtAuthGuard)
   @UseGuards(JwtAuthGuard)
   @Get(":id/submission")
   async getSubmission(@Param("id") id: string) {
@@ -155,5 +226,11 @@ export class CampaignInvitesController {
   ) {
     const influencerId = req.user?.userId;
     return this.invitesService.updateSubmissionStats(id, influencerId, body);
+  }
+
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Post("admin/auto-approve-stale")
+  async autoApproveStale() {
+    return this.invitesService.autoApproveStaleSubmissions();
   }
 }

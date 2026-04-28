@@ -9,9 +9,7 @@
       "followersLabel": "Subscribers",
       "contentTypes": [
         { "name": "Video", "visible": true },
-        { "name": "Shorts", "visible": true },
-        { "name": "Live stream", "visible": true },
-        { "name": "Community post", "visible": true }
+        { "name": "Shorts", "visible": true }
       ]
     },
     {
@@ -24,9 +22,7 @@
       "contentTypes": [
         { "name": "Photo post", "visible": true },
         { "name": "Reel", "visible": true },
-        { "name": "Story (24h)", "visible": true },
-        { "name": "Live", "visible": true },
-        { "name": "Collab post", "visible": true }
+        { "name": "Story (24h)", "visible": true }
       ]
     },
     {
@@ -38,14 +34,12 @@
       "followersLabel": "Followers",
       "contentTypes": [
         { "name": "Post", "visible": true },
-        { "name": "Reel", "visible": true },
-        { "name": "Story", "visible": true },
-        { "name": "Live", "visible": true }
+        { "name": "Reel", "visible": true }
       ]
     },
     {
       "name": "TikTok",
-      "visible": true,
+      "visible": false,
       "icon": "bi-tiktok",
       "color": "#010101",
       "handleLabel": "Handle",
@@ -63,9 +57,7 @@
       "handleLabel": "Handle",
       "followersLabel": "Followers",
       "contentTypes": [
-        { "name": "Tweet / post", "visible": true },
-        { "name": "Thread", "visible": true },
-        { "name": "X Space", "visible": true }
+        { "name": "Tweet / post", "visible": true }
       ]
     },
     {
@@ -77,7 +69,6 @@
       "followersLabel": "Followers",
       "contentTypes": [
         { "name": "Post", "visible": true },
-        { "name": "Article", "visible": true },
         { "name": "Video", "visible": true }
       ]
     }

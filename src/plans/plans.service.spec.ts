@@ -7,8 +7,6 @@ describe("PlansService", () => {
   let service: PlansService;
   let planModel: any;
   let subscriptionModel: any;
-  let influencerModel: any;
-  let brandModel: any;
 
   const VALID_USER_ID = "507f1f77bcf86cd799439011";
   const VALID_PLAN_ID = "507f1f77bcf86cd799439012";
@@ -72,6 +70,7 @@ describe("PlansService", () => {
         lean: jest.fn().mockResolvedValue(mockSubscription),
       }),
       find: jest.fn().mockReturnValue({
+        lean: jest.fn().mockResolvedValue([mockSubscription]),
         sort: jest.fn().mockReturnValue({
           lean: jest.fn().mockResolvedValue([mockSubscription]),
         }),
@@ -105,8 +104,6 @@ describe("PlansService", () => {
     service = module.get<PlansService>(PlansService);
     planModel = module.get(getModelToken("Plan"));
     subscriptionModel = module.get(getModelToken("Subscription"));
-    influencerModel = module.get(getModelToken("Influencer"));
-    brandModel = module.get(getModelToken("Brand"));
   });
 
   describe("listAll", () => {
@@ -184,7 +181,7 @@ describe("PlansService", () => {
 
   describe("activateSubscription", () => {
     it("should expire existing subscriptions and create new one", async () => {
-      const result = await service.activateSubscription(
+      await service.activateSubscription(
         VALID_USER_ID,
         "Influencer",
         VALID_PLAN_ID,
@@ -277,6 +274,29 @@ describe("PlansService", () => {
       const result = await service.getUserSubscriptions(VALID_USER_ID);
       expect(result.success).toBe(true);
       expect(result.subscriptions).toHaveLength(1);
+    });
+  });
+
+  describe("getSubscriptionsForImageCleanup", () => {
+    it("applies endDate cutoff when retentionDays is provided", async () => {
+      await service.getSubscriptionsForImageCleanup(45);
+
+      expect(subscriptionModel.find).toHaveBeenCalledWith(
+        expect.objectContaining({
+          status: "expired",
+          imagesMarkedForDeletionAt: null,
+          endDate: expect.any(Object),
+        }),
+      );
+    });
+
+    it("omits endDate cutoff when retentionDays is not provided", async () => {
+      await service.getSubscriptionsForImageCleanup();
+
+      expect(subscriptionModel.find).toHaveBeenCalledWith({
+        status: "expired",
+        imagesMarkedForDeletionAt: null,
+      });
     });
   });
 });

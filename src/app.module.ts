@@ -12,6 +12,7 @@ import {
   SocialMediaController,
   TiersController,
   LanguagesController,
+  PublicSupportContactController,
 } from "./public-lists.controller";
 import { MongooseModule } from "@nestjs/mongoose";
 import { ConfigModule } from "@nestjs/config";
@@ -44,6 +45,7 @@ import { CloudinaryService } from "./cloudinary.service";
 import { HealthController } from "./health.controller";
 import { PlansModule } from "./plans/plans.module";
 import { ReviewsModule } from "./reviews/reviews.module";
+import { PaymentsPayoutsModule } from "./payments-payouts/payments-payouts.module";
 
 @Module({
   imports: [
@@ -97,6 +99,7 @@ import { ReviewsModule } from "./reviews/reviews.module";
     PaymentModule,
     PlansModule,
     ReviewsModule,
+    PaymentsPayoutsModule,
   ],
   controllers: [
     AppController,
@@ -107,6 +110,7 @@ import { ReviewsModule } from "./reviews/reviews.module";
     SocialMediaController,
     TiersController,
     LanguagesController,
+    PublicSupportContactController,
     AuthController,
     HealthController,
     AdminUserTableController,

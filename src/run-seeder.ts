@@ -5,8 +5,9 @@ if (!globalThis.crypto) {
 }
 
 import { seedDatabase } from "./seeder";
+const section = process.argv[2]; // e.g. "socialMediaPlatforms"
 
-seedDatabase()
+seedDatabase(section)
   .then(() => {
     console.log("🌱 Seeder finished successfully");
     process.exit(0);

@@ -12,10 +12,14 @@ import {
 } from "@nestjs/common";
 import { JwtAuthGuard } from "../auth/jwt-auth.guard";
 import { CampaignsService } from "./campaigns.service";
+import { CampaignInvitesService } from "./campaign-invites.service";
 
 @Controller("campaigns")
 export class CampaignsController {
-  constructor(private readonly campaignsService: CampaignsService) {}
+  constructor(
+    private readonly campaignsService: CampaignsService,
+    private readonly campaignInvitesService: CampaignInvitesService,
+  ) {}
 
   @UseGuards(JwtAuthGuard)
   @Post()
@@ -45,6 +49,31 @@ export class CampaignsController {
   async update(@Param("id") id: string, @Req() req: any, @Body() body: any) {
     const brandId = req.user?.userId;
     return this.campaignsService.update(id, brandId, body);
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Post(":id/invite-influencers")
+  async inviteInfluencers(
+    @Param("id") id: string,
+    @Req() req: any,
+    @Body() body: { influencerIds: string[] },
+  ) {
+    const brandId = req.user?.userId;
+    const influencerIds = Array.isArray(body?.influencerIds)
+      ? body.influencerIds
+      : [];
+    if (!influencerIds.length) {
+      return { success: true, invites: [], count: 0 };
+    }
+    const invites = [];
+    for (const influencerId of influencerIds) {
+      const invite = await this.campaignInvitesService.create(brandId, {
+        campaignId: id,
+        influencerId,
+      });
+      invites.push(invite);
+    }
+    return { success: true, invites, count: invites.length };
   }
 
   @UseGuards(JwtAuthGuard)

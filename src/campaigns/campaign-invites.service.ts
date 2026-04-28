@@ -3,6 +3,7 @@ import {
   BadRequestException,
   NotFoundException,
 } from "@nestjs/common";
+import { Cron, CronExpression } from "@nestjs/schedule";
 import { InjectModel } from "@nestjs/mongoose";
 import { Model } from "mongoose";
 import { sendAppEmail } from "../utils/app-email.service";
@@ -38,8 +39,80 @@ export class CampaignInvitesService {
     @InjectModel("Campaign") private readonly campaignModel: Model<any>,
     @InjectModel("Brand") private readonly brandModel: Model<any>,
     @InjectModel("Influencer") private readonly influencerModel: Model<any>,
+    @InjectModel("CampaignTransaction")
+    private readonly campaignTransactionModel: Model<any>,
     private readonly plansService: PlansService,
   ) {}
+
+  @Cron(CronExpression.EVERY_HOUR)
+  async autoApproveStaleSubmissionsCron() {
+    await this.autoApproveStaleSubmissions();
+  }
+
+  async autoApproveStaleSubmissions() {
+    const cutoff = new Date(Date.now() - 48 * 60 * 60 * 1000);
+    const staleSubmissions = await this.submissionModel
+      .find({ status: "submitted", submittedAt: { $lte: cutoff } })
+      .lean();
+
+    let autoApprovedCount = 0;
+
+    for (const stale of staleSubmissions) {
+      const submission = await this.submissionModel.findById(stale._id);
+      if (!submission || submission.status !== "submitted") continue;
+
+      const invite = await this.inviteModel.findById(submission.inviteId);
+      if (!invite) continue;
+
+      const campaign: any = await this.campaignModel
+        .findById(invite.campaignId)
+        .select("title")
+        .lean();
+
+      submission.status = "approved";
+      submission.brandFeedback =
+        submission.brandFeedback ||
+        "Auto-approved after 48h without brand review.";
+      submission.reviewedAt = new Date();
+      await submission.save();
+
+      invite.status = "completed";
+      await invite.save();
+
+      const txs = await this.campaignTransactionModel.find({
+        inviteId: invite._id,
+      });
+      for (const tx of txs) {
+        tx.workStatus = "approved";
+        tx.payoutStatus =
+          tx.collectionStatus === "verified" ? "processing" : "pending";
+        await tx.save();
+      }
+
+      try {
+        const influencer: any = await this.influencerModel
+          .findById(invite.influencerId)
+          .select("email name")
+          .lean();
+        if (influencer?.email) {
+          await sendAppEmail({
+            to: influencer.email,
+            subject: "Campaign auto-approved after 48h",
+            text: `Hi ${influencer.name || ""},\n\nYour submission for \\"${campaign?.title || "campaign"}\\" was auto-approved after 48 hours with no brand review. Payout is now queued for processing.`,
+          });
+        }
+      } catch (e) {
+        console.error("Failed to send auto-approval email:", e);
+      }
+
+      autoApprovedCount++;
+    }
+
+    return {
+      success: true,
+      autoApprovedCount,
+    };
+  }
 
   async create(brandId: string, data: any) {
     const campaign: any = await this.campaignModel
@@ -72,6 +145,12 @@ export class CampaignInvitesService {
     const inviteCount = await this.inviteModel.countDocuments({
       campaignId: data.campaignId,
     });
+    const maxInfluencers = Number(campaign?.maxInfluencers || 0);
+    if (maxInfluencers > 0 && inviteCount >= maxInfluencers) {
+      throw new BadRequestException(
+        `Campaign limit reached: max ${maxInfluencers} influencers can be invited.`,
+      );
+    }
     if (maxInvitesPerCampaign !== -1 && inviteCount >= maxInvitesPerCampaign) {
       throw new BadRequestException(
         `Plan limit: Only ${maxInvitesPerCampaign} invites per campaign allowed. Upgrade for more.`,
@@ -138,7 +217,7 @@ export class CampaignInvitesService {
         )
         .lean();
       return Array.isArray(invites) ? invites : [];
-    } catch (e) {
+    } catch {
       return [];
     }
   }
@@ -146,7 +225,10 @@ export class CampaignInvitesService {
   async findByInfluencer(influencerId: string) {
     return this.inviteModel
       .find({ influencerId })
-      .populate("campaignId", "title description status budgetMin budgetMax")
+      .populate(
+        "campaignId",
+        "title description status budgetMin budgetMax campaignType pricePerInfluencer maxInfluencers startDate endDate timelineStart timelineEnd deliverables platforms",
+      )
       .populate("brandId", "brandName brandLogo")
       .lean();
   }
@@ -166,7 +248,9 @@ export class CampaignInvitesService {
     }
     const influencerQueries: any[] = [{ influencerId }];
     if (/^[a-fA-F0-9]{24}$/.test(influencerId)) {
-      influencerQueries.push({ influencerId: new Types.ObjectId(influencerId) });
+      influencerQueries.push({
+        influencerId: new Types.ObjectId(influencerId),
+      });
     }
 
     const invite = await this.inviteModel
@@ -179,10 +263,23 @@ export class CampaignInvitesService {
     return invite ?? null;
   }
 
+  async findOneWithCampaign(inviteId: string) {
+    const invite = (await this.inviteModel.findById(inviteId).lean()) as any;
+    if (!invite) throw new NotFoundException("Invite not found");
+    const campaign: any = await this.campaignModel
+      .findById(invite.campaignId)
+      .select("title platforms socialMedia deliverables specialInstructions")
+      .lean();
+    return { invite, campaign };
+  }
+
   async respond(
     inviteId: string,
     influencerId: string,
     status: "accepted" | "declined",
+    selectedPostDate?: string,
+    selectedPlatform?: string,
+    selectedContentType?: string,
   ) {
     const invite = await this.inviteModel.findById(inviteId);
     if (!invite) throw new NotFoundException("Invite not found");
@@ -192,6 +289,64 @@ export class CampaignInvitesService {
     if (invite.status !== "pending") {
       throw new BadRequestException("Invite already responded to");
     }
+
+    if (status === "accepted") {
+      if (!selectedPostDate) {
+        throw new BadRequestException("selectedPostDate is required to accept");
+      }
+      const campaign: any = await this.campaignModel
+        .findById(invite.campaignId)
+        .select("startDate endDate timelineStart timelineEnd socialMedia")
+        .lean();
+      if (!campaign) throw new NotFoundException("Campaign not found");
+
+      const campaignStart = campaign.startDate || campaign.timelineStart;
+      const campaignEnd = campaign.endDate || campaign.timelineEnd;
+      if (!campaignStart || !campaignEnd) {
+        throw new BadRequestException(
+          "Campaign timeline is incomplete. Contact support.",
+        );
+      }
+
+      const selected = new Date(selectedPostDate);
+      if (Number.isNaN(selected.getTime())) {
+        throw new BadRequestException("selectedPostDate is invalid");
+      }
+
+      if (
+        selected < new Date(campaignStart) ||
+        selected > new Date(campaignEnd)
+      ) {
+        throw new BadRequestException(
+          "selectedPostDate must be between campaign start and end dates",
+        );
+      }
+
+      invite.selectedPostDate = selected;
+      invite.acceptedAt = new Date();
+
+      // Store chosen platform/content type and resolve agreed amount
+      if (selectedPlatform) invite.selectedPlatform = selectedPlatform;
+      if (selectedContentType) invite.selectedContentType = selectedContentType;
+      if (
+        selectedPlatform &&
+        selectedContentType &&
+        campaign.socialMedia?.length
+      ) {
+        const smEntry = campaign.socialMedia.find(
+          (sm: any) =>
+            (sm.platform || "").toLowerCase() ===
+            selectedPlatform.toLowerCase(),
+        );
+        const ctEntry = smEntry?.contentTypes?.find(
+          (ct: any) =>
+            (ct.name || "").toLowerCase() ===
+              selectedContentType.toLowerCase() && ct.enabled,
+        );
+        if (ctEntry?.price) invite.agreedAmount = Number(ctEntry.price);
+      }
+    }
+
     invite.status = status;
     const updated = await invite.save();
 
@@ -291,16 +446,25 @@ export class CampaignInvitesService {
     },
   ) {
     const invite = await this.inviteModel.findById(inviteId);
+    console.log("[submitPost] invite:", invite);
+    console.log("[submitPost] influencerId:", influencerId);
+    console.log("[submitPost] data:", data);
     if (!invite) throw new NotFoundException("Invite not found");
     if (String(invite.influencerId) !== influencerId) {
       throw new BadRequestException("Not your invite");
     }
-    if (!["accepted", "payment_confirmed", "working"].includes(invite.status)) {
-      throw new BadRequestException("Can only submit for active invites");
+    if (
+      !["accepted", "payment_confirmed", "working", "submitted"].includes(
+        invite.status,
+      )
+    ) {
+      throw new BadRequestException(
+        `Can only submit for active invites. Status was: ${invite.status}`,
+      );
     }
     if (!data.postUrl) throw new BadRequestException("Post URL is required");
     if (!data.postScreenshotUrl)
-      throw new BadRequestException("Post screenshot is required");
+      throw new BadRequestException("Post screenshot is required"); // Commented for local testing: allow submission without screenshot
 
     const postPlatform = detectPlatform(data.postUrl);
     const engagementRate = computeEngagementRate(data);
@@ -333,6 +497,11 @@ export class CampaignInvitesService {
     // Update invite status to submitted
     invite.status = "submitted";
     await invite.save();
+
+    await this.campaignTransactionModel.updateMany(
+      { inviteId },
+      { $set: { workStatus: "submitted" } },
+    );
 
     // Notify brand
     try {
@@ -435,6 +604,14 @@ export class CampaignInvitesService {
       invite.status = "completed";
       await invite.save();
 
+      const txs = await this.campaignTransactionModel.find({ inviteId });
+      for (const tx of txs) {
+        tx.workStatus = "approved";
+        tx.payoutStatus =
+          tx.collectionStatus === "verified" ? "processing" : "pending";
+        await tx.save();
+      }
+
       // Notify influencer
       try {
         const influencer: any = await this.influencerModel
@@ -460,6 +637,11 @@ export class CampaignInvitesService {
 
       invite.status = "disputed";
       await invite.save();
+
+      await this.campaignTransactionModel.updateMany(
+        { inviteId },
+        { $set: { workStatus: "disputed", payoutStatus: "skipped" } },
+      );
     }
 
     return { success: true, submission };

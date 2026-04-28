@@ -44,6 +44,87 @@ $ npm run start:dev
 $ npm run start:prod
 ```
 
+## Environment configuration
+
+Set these variables in your deployment environment.
+
+### Required
+
+- `MONGODB_URI`: MongoDB connection string.
+
+### Image upload mode (local vs Cloudinary)
+
+- `CLOUDINARY_ENABLED`
+  - `false` in local/dev: uploads are stored under local `assets/local-images`.
+  - `true` in production: uploads go to Cloudinary.
+
+When `CLOUDINARY_ENABLED=true`, these are required:
+
+- `CLOUDINARY_CLOUD_NAME`
+- `CLOUDINARY_API_KEY`
+- `CLOUDINARY_API_SECRET`
+
+### Media retention and cleanup
+
+The app runs a daily cleanup job (2 AM server time) for media lifecycle management.
+
+- `PREMIUM_MEDIA_RETENTION_DAYS`
+  - Days to wait after premium subscription expiry before trimming media to free-tier limits.
+  - Recommended: `45`
+  - Used as fallback. If a subscription snapshot contains
+    `policies.imageRetentionDaysAfterExpiry`, that plan policy takes precedence.
+
+- `DELETED_USER_MEDIA_RETENTION_DAYS`
+  - Days to keep media for soft-deleted users before purging stored files.
+  - Recommended: `45`
+
+Backward-compatible fallback:
+
+- `MEDIA_RETENTION_DAYS`
+  - Used when the two specific variables above are not set.
+
+### Example values
+
+Local/dev:
+
+```env
+MONGODB_URI=mongodb://localhost:27017/trendstarz
+CLOUDINARY_ENABLED=false
+PREMIUM_MEDIA_RETENTION_DAYS=45
+DELETED_USER_MEDIA_RETENTION_DAYS=45
+```
+
+Production:
+
+```env
+MONGODB_URI=<your-prod-mongo-uri>
+CLOUDINARY_ENABLED=true
+CLOUDINARY_CLOUD_NAME=<your-cloud-name>
+CLOUDINARY_API_KEY=<your-api-key>
+CLOUDINARY_API_SECRET=<your-api-secret>
+PREMIUM_MEDIA_RETENTION_DAYS=45
+DELETED_USER_MEDIA_RETENTION_DAYS=45
+```
+
+## Notes
+
+- User documents are soft-deleted to preserve payment history and auditability.
+- Stored media is purged according to retention settings to control storage usage.
+- Avoid running hard-delete scripts for deleted users unless you have a legal/compliance requirement.
+
+### Admin cleanup preview (dry run)
+
+Use this admin-only endpoint to inspect eligibility before nightly cleanup runs.
+
+- `GET /api/plans/admin/cleanup-preview?userId=<USER_ID>`
+- `GET /api/plans/admin/cleanup-preview?subscriptionId=<SUBSCRIPTION_ID>`
+
+Behavior:
+
+- Read-only (`dryRun: true` in response)
+- Returns premium-expiry cleanup eligibility and soft-deleted-user media purge eligibility
+- Does not delete data or update any records
+
 ## Run tests
 
 ```bash

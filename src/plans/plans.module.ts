@@ -5,21 +5,36 @@ import { PlansService } from "./plans.service";
 import { PlansController } from "./plans.controller";
 import { PlansConfigController } from "./plans-config.controller";
 import { ImageCleanupService } from "./image-cleanup.service";
-import { PlanSchema, SubscriptionSchema } from "../database/schemas/plan.schema";
-import { InfluencerSchema, BrandSchema } from "../database/schemas/profile.schemas";
+import {
+  PlanSchema,
+  SubscriptionSchema,
+} from "../database/schemas/plan.schema";
+import {
+  InfluencerSchema,
+  BrandSchema,
+} from "../database/schemas/profile.schemas";
+import { CloudinaryService } from "../cloudinary.service";
 
 @Module({
   imports: [
     ScheduleModule.forRoot(),
     MongooseModule.forFeature([
       { name: "Plan", schema: PlanSchema, collection: "plans" },
-      { name: "Subscription", schema: SubscriptionSchema, collection: "subscriptions" },
-      { name: "Influencer", schema: InfluencerSchema, collection: "influencers" },
+      {
+        name: "Subscription",
+        schema: SubscriptionSchema,
+        collection: "subscriptions",
+      },
+      {
+        name: "Influencer",
+        schema: InfluencerSchema,
+        collection: "influencers",
+      },
       { name: "Brand", schema: BrandSchema, collection: "brands" },
     ]),
   ],
   controllers: [PlansController, PlansConfigController],
-  providers: [PlansService, ImageCleanupService],
+  providers: [PlansService, ImageCleanupService, CloudinaryService],
   exports: [PlansService],
 })
 export class PlansModule {}

@@ -27,6 +27,12 @@ export const CampaignInviteSchema = new Schema({
     engagement: Number,
     clicks: Number,
   },
+  selectedPostDate: { type: Date },
+  // Influencer's chosen content type when accepting
+  selectedPlatform: { type: String },
+  selectedContentType: { type: String },
+  agreedAmount: { type: Number },
+  acceptedAt: { type: Date },
   createdAt: { type: Date, default: Date.now },
   updatedAt: { type: Date, default: Date.now },
 });
