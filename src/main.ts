@@ -13,6 +13,7 @@ import { ValidationPipe } from "@nestjs/common";
 import * as dotenv from "dotenv";
 import helmet from "helmet";
 dotenv.config();
+import * as path from 'path';
 // Removed manual mongoose connection logic. Use only MongooseModule.forRoot in AppModule.
 
 async function bootstrap() {
@@ -27,6 +28,9 @@ async function bootstrap() {
   const server = express();
   const app = await NestFactory.create(AppModule, new ExpressAdapter(server));
   logMemory("after NestFactory.create");
+
+  // Serve static files for local image uploads from backend/assets
+  server.use('/assets', express.static(path.resolve(process.cwd(), 'assets')));
 
 
 

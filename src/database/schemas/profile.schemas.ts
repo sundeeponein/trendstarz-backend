@@ -196,6 +196,21 @@ export const AppSettingsSchema = new Schema({
   preApproveBrands: { type: Boolean, default: false },
   brandRequireEmailVerified: { type: Boolean, default: true },
   brandRequireMobileVerified: { type: Boolean, default: false },
+  platformFeeEnabled: { type: Boolean, default: false },
+  platformFeePercent: { type: Number, default: 10 },
+  gstPercent: { type: Number, default: 18 },
+  feeActivationDate: { type: Date },
+  // Support contact — admin-managed, surfaced as banner on campaign management page
+  // and (post-Razorpay launch) kept as a "Need help?" channel for queries.
+  supportContactEnabled: { type: Boolean, default: true },
+  supportContactEmail: { type: String, default: "support@trendstarz.in" },
+  supportContactPhone: { type: String, default: "" },
+  supportContactWhatsapp: { type: String, default: "" },
+  supportContactMessage: {
+    type: String,
+    default:
+      "For now, please contact our team to complete campaign payments. Our admin will update the payment status once received.",
+  },
 });
 export const AppSettingsModel = model("AppSettings", AppSettingsSchema);
 
@@ -246,6 +261,12 @@ export const CampaignSchema = new Schema(
     },
     title: { type: String, required: true },
     description: { type: String },
+    campaignType: {
+      type: String,
+      enum: ["paid_collab", "product", "invite_location", "pay_to_join"],
+      default: "paid_collab",
+      index: true,
+    },
     image: {
       url: { type: String },
       public_id: { type: String },
@@ -257,8 +278,14 @@ export const CampaignSchema = new Schema(
     },
     budgetMin: { type: Number },
     budgetMax: { type: Number },
+    pricePerInfluencer: { type: Number }, // paise
+    maxInfluencers: { type: Number },
+    estimatedBudget: { type: Number }, // paise
     timelineStart: { type: Date },
     timelineEnd: { type: Date },
+    startDate: { type: Date },
+    endDate: { type: Date },
+    platforms: [{ type: String }],
     categories: [{ type: String }],
     deliverables: [{ type: String }],
     socialMedia: [

@@ -1,25 +1,34 @@
 import { Injectable } from "@nestjs/common";
-// Always use require and v2 to avoid ESM/CJS issues
-const cloudinary = require("cloudinary").v2;
+import * as fs from "fs";
+import * as path from "path";
+import { v2 as cloudinary } from "cloudinary";
 
-function setCloudinaryConfig() {
-  cloudinary.config({
-    cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
-    api_key: process.env.CLOUDINARY_API_KEY,
-    api_secret: process.env.CLOUDINARY_API_SECRET,
-  });
+function getLocalImagesDir(): string {
+  return path.join(__dirname, "../assets/local-images");
 }
 
-// Ensure all Cloudinary env vars are present
-if (
-  !process.env.CLOUDINARY_CLOUD_NAME ||
-  !process.env.CLOUDINARY_API_KEY ||
-  !process.env.CLOUDINARY_API_SECRET
-) {
-  console.error(
-    "[Cloudinary ENV ERROR] Missing Cloudinary environment variables!",
+function isCloudinaryEnabled(): boolean {
+  if (typeof process.env.CLOUDINARY_ENABLED === "string") {
+    return process.env.CLOUDINARY_ENABLED.toLowerCase() === "true";
+  }
+  return process.env.NODE_ENV === "production";
+}
+
+function hasCloudinaryCredentials(): boolean {
+  return Boolean(
+    process.env.CLOUDINARY_CLOUD_NAME &&
+    process.env.CLOUDINARY_API_KEY &&
+    process.env.CLOUDINARY_API_SECRET,
   );
-} else {
+}
+
+function setCloudinaryConfig() {
+  if (!hasCloudinaryCredentials()) {
+    throw new Error(
+      "Cloudinary is enabled but credentials are missing (CLOUDINARY_CLOUD_NAME / CLOUDINARY_API_KEY / CLOUDINARY_API_SECRET).",
+    );
+  }
+
   cloudinary.config({
     cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
     api_key: process.env.CLOUDINARY_API_KEY,
@@ -30,16 +39,70 @@ if (
 @Injectable()
 export class CloudinaryService {
   async uploadImage(file: string, folder = "profile_images") {
-    setCloudinaryConfig();
-    // file: base64 string or file path
-    return await cloudinary.uploader.upload(file, {
-      folder,
-      resource_type: "image",
-      overwrite: true,
-    });
+    // Use Cloudinary only when explicitly enabled (or production default).
+    if (isCloudinaryEnabled()) {
+      setCloudinaryConfig();
+      return await cloudinary.uploader.upload(file, {
+        folder,
+        resource_type: "image",
+        overwrite: true,
+      });
+    }
+
+    // Otherwise, save to local assets/local-images
+    // file can be a base64 string or a file path
+    let buffer: Buffer;
+    let ext = ".jpg";
+    if (file.startsWith("data:image/")) {
+      // base64 data URL
+      const matches = file.match(/^data:image\/(\w+);base64,(.+)$/);
+      if (!matches) throw new Error("Invalid base64 image string");
+      ext = "." + matches[1];
+      buffer = Buffer.from(matches[2], "base64");
+    } else if (fs.existsSync(file)) {
+      buffer = fs.readFileSync(file);
+      ext = path.extname(file) || ".jpg";
+    } else {
+      throw new Error("Unsupported file format for local upload");
+    }
+
+    // Generate unique filename
+    const filename = `${folder}_${Date.now()}_${Math.random().toString(36).substring(2, 8)}${ext}`;
+    const localDir = getLocalImagesDir();
+    if (!fs.existsSync(localDir)) {
+      fs.mkdirSync(localDir, { recursive: true });
+    }
+    const localPath = path.join(localDir, filename);
+    fs.writeFileSync(localPath, buffer);
+
+    // Return a local URL and pseudo public_id
+    return {
+      secure_url: `/assets/local-images/${filename}`,
+      url: `/assets/local-images/${filename}`,
+      public_id: filename,
+      local: true,
+    };
   }
 
   async deleteImage(publicId: string) {
+    if (!publicId) {
+      return { result: "not_found", reason: "empty_public_id" };
+    }
+
+    // Local/development mode: delete from local assets if present.
+    if (
+      !isCloudinaryEnabled() ||
+      publicId.startsWith("/assets/local-images/")
+    ) {
+      const filename = path.basename(publicId);
+      const localPath = path.join(getLocalImagesDir(), filename);
+      if (fs.existsSync(localPath)) {
+        fs.unlinkSync(localPath);
+        return { result: "ok", local: true, deleted: filename };
+      }
+      return { result: "not_found", local: true, attempted: filename };
+    }
+
     setCloudinaryConfig();
     // Strip file extension if present (Cloudinary public_id never includes extension)
     const strippedId = publicId.replace(/\.[^/.]+$/, "");
@@ -48,7 +111,10 @@ export class CloudinaryService {
     if (!strippedId.includes("/")) {
       variants.push(`client-side/uploads/${strippedId}`);
       variants.push(`uploads/${strippedId}`);
-    } else if (!strippedId.startsWith("client-side/") && !strippedId.startsWith("uploads/")) {
+    } else if (
+      !strippedId.startsWith("client-side/") &&
+      !strippedId.startsWith("uploads/")
+    ) {
       variants.push(`client-side/uploads/${strippedId}`);
     }
     let lastResult: any = null;
@@ -67,7 +133,10 @@ export class CloudinaryService {
         lastResult = err;
       }
     }
-    console.warn("[Cloudinary] Image not found or could not be deleted for original public_id:", publicId);
+    console.warn(
+      "[Cloudinary] Image not found or could not be deleted for original public_id:",
+      publicId,
+    );
     return lastResult;
   }
 }

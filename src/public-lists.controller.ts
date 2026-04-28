@@ -77,3 +77,34 @@ export class SocialMediaController {
     return socials.length ? socials : [];
   }
 }
+
+/**
+ * Public, read-only endpoint that exposes only the support-contact fields
+ * from AppSettings. Safe to call from authenticated and unauthenticated
+ * pages (e.g. campaign-management banner). Admin-only fields are NOT returned.
+ *
+ * Post-Razorpay rollout: this endpoint stays. The banner is repurposed as a
+ * "Need help? Contact us" channel for queries; admins can hide it via the
+ * `enabled` flag or update the message copy.
+ */
+@Controller("public/support-contact")
+export class PublicSupportContactController {
+  constructor(
+    @InjectModel("AppSettings") private readonly appSettingsModel: Model<any>,
+  ) {}
+
+  @Get()
+  async get() {
+    const settings: any =
+      (await this.appSettingsModel.findOne({}).lean()) || {};
+    return {
+      enabled: settings.supportContactEnabled !== false,
+      email: settings.supportContactEmail || "support@trendstarz.in",
+      phone: settings.supportContactPhone || "",
+      whatsapp: settings.supportContactWhatsapp || "",
+      message:
+        settings.supportContactMessage ||
+        "For now, please contact our team to complete campaign payments. Our admin will update the payment status once received.",
+    };
+  }
+}

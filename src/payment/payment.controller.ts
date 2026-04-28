@@ -84,12 +84,15 @@ export class PaymentController {
             .findOne({ code: "influencer-pro", isActive: true })
             .lean();
         if (influencerProPlan) {
-          // Find discount offer in Brand Pro
+          // Find discount offer in Brand Pro (robust: check both keys)
           const brandProPlan = plan;
           const discountOffer = (brandProPlan.offers || []).find(
-            (o: any) => o.key === "discountOnInfluencerPro",
+            (o: any) =>
+              ["discountOnInfluencerPro", "discountOnBrandPro"].includes(
+                o.key,
+              ) && o.value > 0,
           );
-          if (discountOffer && discountOffer.value > 0) {
+          if (discountOffer) {
             // Check if user has active Influencer Pro
             const activeSub =
               await this.paymentService.plansService.subscriptionModel.findOne({
@@ -108,12 +111,15 @@ export class PaymentController {
           .findOne({ code: "brand-pro", isActive: true })
           .lean();
         if (brandProPlan) {
-          // Find discount offer in Influencer Pro
+          // Find discount offer in Influencer Pro (robust: check both keys)
           const influencerProPlan = plan;
           const discountOffer = (influencerProPlan.offers || []).find(
-            (o: any) => o.key === "discountOnBrandPro",
+            (o: any) =>
+              ["discountOnBrandPro", "discountOnInfluencerPro"].includes(
+                o.key,
+              ) && o.value > 0,
           );
-          if (discountOffer && discountOffer.value > 0) {
+          if (discountOffer) {
             // Check if user has active Brand Pro
             const activeSub =
               await this.paymentService.plansService.subscriptionModel.findOne({

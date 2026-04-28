@@ -4,9 +4,15 @@ import * as crypto from "crypto";
 
 @Injectable()
 export class RazorpayService {
-  private razorpay: Razorpay;
+  private razorpay: Razorpay | null = null;
 
-  constructor() {
+  constructor() {}
+
+  private getClient(): Razorpay {
+    if (this.razorpay) {
+      return this.razorpay;
+    }
+
     const keyId = process.env.RAZORPAY_KEY_ID;
     const keySecret = process.env.RAZORPAY_KEY_SECRET;
 
@@ -20,6 +26,8 @@ export class RazorpayService {
       key_id: keyId,
       key_secret: keySecret,
     });
+
+    return this.razorpay;
   }
 
   /**
@@ -30,7 +38,8 @@ export class RazorpayService {
     amountPaise: number,
     metadata: { userId: string; premiumDuration: string },
   ) {
-    const order = await (this.razorpay.orders.create as any)({
+    const razorpay = this.getClient();
+    const order = await (razorpay.orders.create as any)({
       amount: amountPaise,
       currency: "INR",
       notes: {
@@ -68,6 +77,7 @@ export class RazorpayService {
    * Fetch the order details to double-check status on the server side.
    */
   async fetchOrder(orderId: string): Promise<any> {
-    return await (this.razorpay.orders.fetch as any)(orderId);
+    const razorpay = this.getClient();
+    return await (razorpay.orders.fetch as any)(orderId);
   }
 }
