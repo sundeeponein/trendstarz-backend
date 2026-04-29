@@ -3,6 +3,7 @@
 
 # Build output
 /dist/
+/assets
 
 # IDE and OS files
 /.vscode/

@@ -28,11 +28,11 @@ export class UsersService {
       .replace(/-+$/, "");
   }
 
-  private async findBrandByNameOrSlug(brandName: string): Promise<any | null> {
+  private async findBrandByNameOrSlug(brandName: string): Promise<any> {
     const normalized = (brandName || "").trim();
     if (!normalized) return null;
 
-    let brand = await this.brandModel
+    const brand = await this.brandModel
       .findOne({
         brandName: new RegExp(
           `^${this.escapeRegex(normalized.replace(/-/g, " "))}$`,
@@ -364,8 +364,53 @@ export class UsersService {
     private readonly cloudinaryService: CloudinaryService,
     @InjectModel("Influencer") private readonly influencerModel: Model<any>,
     @InjectModel("Brand") private readonly brandModel: Model<any>,
+    @InjectModel("CampaignInvite")
+    private readonly campaignInviteModel: Model<any>,
     private readonly plansService: PlansService,
   ) {}
+
+  /** True if the user has an active premium subscription right now. */
+  private isCurrentlyPremium(user: any): boolean {
+    if (!user?.isPremium) return false;
+    if (!user.premiumEnd) return true;
+    return new Date(user.premiumEnd) >= new Date();
+  }
+
+  /**
+   * Decide whether `viewerId` is allowed to see the brand's social media handles.
+   * Rules:
+   *  - Brand owner can always see their own.
+   *  - Premium influencer viewing a premium brand can see them.
+   *  - Any influencer who has a CampaignInvite (not declined) for this brand can see them.
+   */
+  async canViewBrandSocialMedia(
+    brand: any,
+    viewerId?: string | null,
+  ): Promise<boolean> {
+    if (!brand) return false;
+    if (!viewerId) return false;
+    if (String(brand._id) === String(viewerId)) return true;
+    const viewer = await this.influencerModel
+      .findById(viewerId)
+      .select("isPremium premiumEnd")
+      .lean();
+    if (
+      viewer &&
+      this.isCurrentlyPremium(viewer) &&
+      this.isCurrentlyPremium(brand)
+    ) {
+      return true;
+    }
+    const invite = await this.campaignInviteModel
+      .findOne({
+        brandId: brand._id,
+        influencerId: viewerId,
+        status: { $ne: "declined" },
+      })
+      .select("_id")
+      .lean();
+    return !!invite;
+  }
 
   /** Throw if the user has already reached their maxImages plan limit */
   async checkImageUploadLimit(userId: string, currentCount: number) {
@@ -397,9 +442,10 @@ export class UsersService {
     return result;
   }
 
-  async getBrandByName(brandName: string) {
+  async getBrandByName(brandName: string, viewerId?: string | null) {
     const user: any = await this.findBrandByNameOrSlug(brandName);
     if (!user) return null;
+    const allowSocial = await this.canViewBrandSocialMedia(user, viewerId);
     const {
       _id,
       brandName: name,
@@ -425,7 +471,8 @@ export class UsersService {
       phoneNumber,
       categories,
       location: location || { state: "" },
-      socialMedia,
+      socialMedia: allowSocial ? socialMedia : [],
+      socialMediaRestricted: !allowSocial,
       isPremium,
       brandLogo,
       products,
@@ -812,7 +859,7 @@ export class UsersService {
     };
   }
 
-  async getBrands(page = 1, limit = 20) {
+  async getBrands(page = 1, limit = 20, viewerId?: string | null) {
     const skip = (page - 1) * limit;
     const [data, total] = await Promise.all([
       this.brandModel
@@ -822,7 +869,16 @@ export class UsersService {
         .limit(limit),
       this.brandModel.countDocuments({ status: "accepted" }),
     ]);
-    return { data, total, page, limit };
+    const filtered = await Promise.all(
+      (data || []).map(async (brand: any) => {
+        const allow = await this.canViewBrandSocialMedia(brand, viewerId);
+        if (!allow) {
+          return { ...brand, socialMedia: [], socialMediaRestricted: true };
+        }
+        return { ...brand, socialMediaRestricted: false };
+      }),
+    );
+    return { data: filtered, total, page, limit };
   }
 
   async acceptUser(id: string) {

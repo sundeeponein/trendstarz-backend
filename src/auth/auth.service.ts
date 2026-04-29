@@ -237,6 +237,7 @@ export class AuthService {
     @InjectModel("Brand") private readonly brandModel: Model<any>,
     @InjectModel("Category") private readonly categoryModel: Model<any>,
     @InjectModel("State") private readonly stateModel: Model<any>,
+    @InjectModel("District") private readonly districtModel: Model<any>,
     @InjectModel("Language") private readonly languageModel: Model<any>,
     @InjectModel("SocialMedia") private readonly socialMediaModel: Model<any>,
     @InjectModel("AppSettings") private readonly appSettingsModel: Model<any>,
@@ -248,7 +249,7 @@ export class AuthService {
 
   private async resolveIdsToNames(data: {
     categories?: string[];
-    location?: { state?: string };
+    location?: { state?: string; district?: string };
     languages?: string[];
     socialMedia?: any[];
   }) {
@@ -267,19 +268,25 @@ export class AuthService {
       .filter((v: string) => v && this.isObjectId(v));
     const stateId =
       location.state && this.isObjectId(location.state) ? location.state : null;
+    const districtId =
+      location.district && this.isObjectId(location.district)
+        ? location.district
+        : null;
 
-    const [catDocs, langDocs, smDocs, stateDoc] = await Promise.all([
-      catIds.length
-        ? this.categoryModel.find({ _id: { $in: catIds } }).lean()
-        : [],
-      langIds.length
-        ? this.languageModel.find({ _id: { $in: langIds } }).lean()
-        : [],
-      smIds.length
-        ? this.socialMediaModel.find({ _id: { $in: smIds } }).lean()
-        : [],
-      stateId ? this.stateModel.findById(stateId).lean() : null,
-    ]);
+    const [catDocs, langDocs, smDocs, stateDoc, districtDoc] =
+      await Promise.all([
+        catIds.length
+          ? this.categoryModel.find({ _id: { $in: catIds } }).lean()
+          : [],
+        langIds.length
+          ? this.languageModel.find({ _id: { $in: langIds } }).lean()
+          : [],
+        smIds.length
+          ? this.socialMediaModel.find({ _id: { $in: smIds } }).lean()
+          : [],
+        stateId ? this.stateModel.findById(stateId).lean() : null,
+        districtId ? this.districtModel.findById(districtId).lean() : null,
+      ]);
 
     const catMap = new Map(catDocs.map((d: any) => [String(d._id), d.name]));
     const langMap = new Map(langDocs.map((d: any) => [String(d._id), d.name]));
@@ -288,12 +295,21 @@ export class AuthService {
     const categoryNames = categories.map((v) => catMap.get(v) || v);
     const languageNames = languages.map((v) => langMap.get(v) || v);
     const stateName = stateDoc ? (stateDoc as any).name : location.state || "";
+    const districtName = districtDoc
+      ? (districtDoc as any).name
+      : location.district || "";
     const socialMediaMapped = socialMedia.map((sm: any) => ({
       ...sm,
       platform: smMap.get(sm.platform) || sm.platform,
     }));
 
-    return { categoryNames, languageNames, stateName, socialMediaMapped };
+    return {
+      categoryNames,
+      languageNames,
+      stateName,
+      districtName,
+      socialMediaMapped,
+    };
   }
 
   // Admin / influencer / brand login
@@ -313,16 +329,18 @@ export class AuthService {
     if (!brand && !adminUser && !influencer) {
       // Create minimal brand profile
       const minimalBrand = new this.brandModel({
-        brandName: normalizedEmail.split('@')[0] || 'Brand',
+        brandName: normalizedEmail.split("@")[0] || "Brand",
         email: normalizedEmail,
-        phoneNumber: '',
+        phoneNumber: "",
         password: await bcrypt.hash(password, 10),
-        status: 'pending',
+        status: "pending",
       });
       try {
         brand = await minimalBrand.save();
-      } catch (e) {
-        throw new UnauthorizedException("Could not auto-create brand profile for this user.");
+      } catch {
+        throw new UnauthorizedException(
+          "Could not auto-create brand profile for this user.",
+        );
       }
     }
 
@@ -444,20 +462,53 @@ export class AuthService {
       throw new BadRequestException("Passwords do not match.");
     }
     // Check duplicates up front so the API can return all conflicting fields together.
-    const [existingEmail, existingUsername, existingPhone] = await Promise.all([
-      data.email ? this.influencerModel.findOne({ email: data.email }) : null,
+    // Email/phone are checked across ALL roles (influencer, brand, admin) so the same
+    // contact cannot be reused under a different role.
+    const normalizedEmail = data.email
+      ? String(data.email).trim().toLowerCase()
+      : null;
+    const normalizedPhone = data.phoneNumber
+      ? String(data.phoneNumber).trim()
+      : null;
+    // Case-insensitive exact email match — handles legacy records saved with mixed case.
+    const emailRegex = normalizedEmail
+      ? new RegExp(
+          `^${normalizedEmail.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`,
+          "i",
+        )
+      : null;
+    const [
+      existingEmailInfluencer,
+      existingEmailBrand,
+      existingEmailAdmin,
+      existingUsername,
+      existingPhoneInfluencer,
+      existingPhoneBrand,
+      existingPhoneAdmin,
+    ] = await Promise.all([
+      emailRegex ? this.influencerModel.findOne({ email: emailRegex }) : null,
+      emailRegex ? this.brandModel.findOne({ email: emailRegex }) : null,
+      emailRegex ? this.userModel.findOne({ email: emailRegex }) : null,
       data.username
         ? this.influencerModel.findOne({ username: data.username })
         : null,
-      data.phoneNumber
-        ? this.influencerModel.findOne({ phoneNumber: data.phoneNumber })
+      normalizedPhone
+        ? this.influencerModel.findOne({ phoneNumber: normalizedPhone })
+        : null,
+      normalizedPhone
+        ? this.brandModel.findOne({ phoneNumber: normalizedPhone })
+        : null,
+      normalizedPhone
+        ? this.userModel.findOne({ phoneNumber: normalizedPhone })
         : null,
     ]);
 
     const duplicateFields: string[] = [];
-    if (existingEmail) duplicateFields.push("email");
+    if (existingEmailInfluencer || existingEmailBrand || existingEmailAdmin)
+      duplicateFields.push("email");
     if (existingUsername) duplicateFields.push("username");
-    if (existingPhone) duplicateFields.push("phoneNumber");
+    if (existingPhoneInfluencer || existingPhoneBrand || existingPhoneAdmin)
+      duplicateFields.push("phoneNumber");
 
     if (duplicateFields.length) {
       throw new BadRequestException({
@@ -466,8 +517,13 @@ export class AuthService {
       });
     }
     // Map category, state, language, and socialMedia platform IDs to names (batch)
-    const { categoryNames, languageNames, stateName, socialMediaMapped } =
-      await this.resolveIdsToNames(data);
+    const {
+      categoryNames,
+      languageNames,
+      stateName,
+      districtName,
+      socialMediaMapped,
+    } = await this.resolveIdsToNames(data);
     // Hash password
     const hashedPassword = await bcrypt.hash(data.password, 10);
     const normalizedProfileImages = Array.isArray(data.profileImages)
@@ -478,9 +534,11 @@ export class AuthService {
 
     const signupAttribution = {
       source:
-        data?.signupAttribution?.source || data?.source || data?.utm_source || null,
-      audience:
-        data?.signupAttribution?.audience || data?.audience || null,
+        data?.signupAttribution?.source ||
+        data?.source ||
+        data?.utm_source ||
+        null,
+      audience: data?.signupAttribution?.audience || data?.audience || null,
       referrerPath:
         data?.signupAttribution?.referrerPath || data?.referrerPath || null,
       capturedAt: new Date(),
@@ -488,9 +546,11 @@ export class AuthService {
 
     const influencer = new this.influencerModel({
       ...data,
+      email: normalizedEmail || data.email,
+      phoneNumber: normalizedPhone || data.phoneNumber,
       password: hashedPassword,
       categories: categoryNames,
-      location: { state: stateName },
+      location: { state: stateName, district: districtName },
       languages: languageNames,
       socialMedia: socialMediaMapped,
       profileImages: normalizedProfileImages,
@@ -548,15 +608,42 @@ export class AuthService {
         )
       : null;
 
+    // Email/phone are checked across ALL roles (influencer, brand, admin) so the same
+    // contact cannot be reused under a different role.
+    const normalizedEmail = data.email
+      ? String(data.email).trim().toLowerCase()
+      : null;
+    const normalizedPhone = data.phoneNumber
+      ? String(data.phoneNumber).trim()
+      : null;
+    // Case-insensitive exact email match — handles legacy records saved with mixed case.
+    const emailRegex = normalizedEmail
+      ? new RegExp(
+          `^${normalizedEmail.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`,
+          "i",
+        )
+      : null;
     const [
-      existingEmail,
-      existingPhone,
+      existingEmailBrand,
+      existingEmailInfluencer,
+      existingEmailAdmin,
+      existingPhoneBrand,
+      existingPhoneInfluencer,
+      existingPhoneAdmin,
       existingBrandName,
       existingBrandUsername,
     ] = await Promise.all([
-      data.email ? this.brandModel.findOne({ email: data.email }) : null,
-      data.phoneNumber
-        ? this.brandModel.findOne({ phoneNumber: data.phoneNumber })
+      emailRegex ? this.brandModel.findOne({ email: emailRegex }) : null,
+      emailRegex ? this.influencerModel.findOne({ email: emailRegex }) : null,
+      emailRegex ? this.userModel.findOne({ email: emailRegex }) : null,
+      normalizedPhone
+        ? this.brandModel.findOne({ phoneNumber: normalizedPhone })
+        : null,
+      normalizedPhone
+        ? this.influencerModel.findOne({ phoneNumber: normalizedPhone })
+        : null,
+      normalizedPhone
+        ? this.userModel.findOne({ phoneNumber: normalizedPhone })
         : null,
       data.brandName
         ? this.brandModel.findOne({ brandName: data.brandName })
@@ -567,8 +654,10 @@ export class AuthService {
     ]);
 
     const duplicateFields: string[] = [];
-    if (existingEmail) duplicateFields.push("email");
-    if (existingPhone) duplicateFields.push("phoneNumber");
+    if (existingEmailBrand || existingEmailInfluencer || existingEmailAdmin)
+      duplicateFields.push("email");
+    if (existingPhoneBrand || existingPhoneInfluencer || existingPhoneAdmin)
+      duplicateFields.push("phoneNumber");
     if (existingBrandName) duplicateFields.push("brandName");
     if (existingBrandUsername) duplicateFields.push("brandUsername");
 
@@ -579,24 +668,33 @@ export class AuthService {
       });
     }
     // Map category, state, language, and socialMedia platform IDs to names (batch)
-    const { categoryNames, languageNames, stateName, socialMediaMapped } =
-      await this.resolveIdsToNames(data);
+    const {
+      categoryNames,
+      languageNames,
+      stateName,
+      districtName,
+      socialMediaMapped,
+    } = await this.resolveIdsToNames(data);
     // Hash password
     const hashedPassword = await bcrypt.hash(data.password, 10);
     const signupAttribution = {
       source:
-        data?.signupAttribution?.source || data?.source || data?.utm_source || null,
-      audience:
-        data?.signupAttribution?.audience || data?.audience || null,
+        data?.signupAttribution?.source ||
+        data?.source ||
+        data?.utm_source ||
+        null,
+      audience: data?.signupAttribution?.audience || data?.audience || null,
       referrerPath:
         data?.signupAttribution?.referrerPath || data?.referrerPath || null,
       capturedAt: new Date(),
     };
     const brand = new this.brandModel({
       ...data,
+      email: normalizedEmail || data.email,
+      phoneNumber: normalizedPhone || data.phoneNumber,
       password: hashedPassword,
       categories: categoryNames,
-      location: { state: stateName },
+      location: { state: stateName, district: districtName },
       languages: languageNames,
       socialMedia: socialMediaMapped,
       signupAttribution,

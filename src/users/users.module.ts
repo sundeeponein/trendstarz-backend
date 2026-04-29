@@ -9,6 +9,7 @@ import {
   InfluencerSchema,
   BrandSchema,
 } from "../database/schemas/profile.schemas";
+import { CampaignInviteSchema } from "../database/schemas/campaign-invite.schema";
 import { PlansModule } from "../plans/plans.module";
 
 @Module({
@@ -20,6 +21,11 @@ import { PlansModule } from "../plans/plans.module";
         collection: "influencers",
       },
       { name: "Brand", schema: BrandSchema, collection: "brands" },
+      {
+        name: "CampaignInvite",
+        schema: CampaignInviteSchema,
+        collection: "campaigninvites",
+      },
     ]),
     PlansModule,
   ],

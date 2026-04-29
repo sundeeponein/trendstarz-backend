@@ -35,11 +35,14 @@ export class AuthController {
 
   private formatRegistrationError(err: any, fallbackMessage: string) {
     const status = err?.status || 400;
-    const response = typeof err?.getResponse === "function" ? err.getResponse() : err?.response;
+    const response =
+      typeof err?.getResponse === "function"
+        ? err.getResponse()
+        : err?.response;
 
     if (response && typeof response === "object") {
-      const message = (response as any).message ?? err?.message ?? fallbackMessage;
-      const duplicateFields = (response as any).duplicateFields;
+      const message = response.message ?? err?.message ?? fallbackMessage;
+      const duplicateFields = response.duplicateFields;
       return {
         status,
         body: {
@@ -83,7 +86,10 @@ export class AuthController {
       return res.status(201).json(result);
     } catch (err: any) {
       console.error("Auth registerInfluencer error:", err);
-      const formatted = this.formatRegistrationError(err, "Registration failed");
+      const formatted = this.formatRegistrationError(
+        err,
+        "Registration failed",
+      );
       return res.status(formatted.status).json(formatted.body);
     }
   }
@@ -95,7 +101,10 @@ export class AuthController {
       return res.status(201).json(result);
     } catch (err: any) {
       console.error("Auth registerBrand error:", err);
-      const formatted = this.formatRegistrationError(err, "Registration failed");
+      const formatted = this.formatRegistrationError(
+        err,
+        "Registration failed",
+      );
       return res.status(formatted.status).json(formatted.body);
     }
   }
@@ -172,10 +181,10 @@ export class AuthController {
     try {
       await this.authService.forgotPassword(body.email);
       // Always return the same response — never reveal whether the email exists.
-      return res
-        .status(200)
-        .json({ message: "If that email is registered, a reset link has been sent." });
-    } catch (err) {
+      return res.status(200).json({
+        message: "If that email is registered, a reset link has been sent.",
+      });
+    } catch (err: any) {
       return res
         .status(400)
         .json({ message: err.message || "Failed to send reset email." });
@@ -184,17 +193,14 @@ export class AuthController {
 
   @Post("reset-password")
   @UsePipes(new ValidationPipe({ whitelist: true, transform: true }))
-  async resetPassword(
-    @Body() body: ResetPasswordDto,
-    @Res() res: Response,
-  ) {
+  async resetPassword(@Body() body: ResetPasswordDto, @Res() res: Response) {
     try {
       const result = await this.authService.resetPassword(
         body.token,
         body.newPassword,
       );
       return res.status(200).json(result);
-    } catch (err) {
+    } catch (err: any) {
       return res
         .status(400)
         .json({ message: err.message || "Failed to reset password." });
