@@ -10,6 +10,8 @@ import {
   HttpCode,
   UseInterceptors,
   UploadedFile,
+  UseGuards,
+  Req,
 } from "@nestjs/common";
 import type { Response } from "express";
 import { FileInterceptor } from "@nestjs/platform-express";
@@ -19,11 +21,13 @@ import * as path from "path";
 import { v4 as uuidv4 } from "uuid";
 import { AuthService } from "./auth.service";
 import { CloudinaryService } from "../cloudinary.service";
+import { JwtAuthGuard } from "./jwt-auth.guard";
 import {
   LoginDto,
   ForgotPasswordDto,
   ResetPasswordDto,
   SendEmailVerificationDto,
+  ChangePasswordDto,
 } from "./dto/auth.dto";
 
 @Controller("auth")
@@ -204,6 +208,32 @@ export class AuthController {
       return res
         .status(400)
         .json({ message: err.message || "Failed to reset password." });
+    }
+  }
+
+  @Post("change-password")
+  @UseGuards(JwtAuthGuard)
+  @UsePipes(new ValidationPipe({ whitelist: true, transform: true }))
+  async changePassword(
+    @Req() req: any,
+    @Body() body: ChangePasswordDto,
+    @Res() res: Response,
+  ) {
+    try {
+      const userId = req?.user?.userId || req?.user?.sub || req?.user?.id;
+      const role = req?.user?.role;
+      const result = await this.authService.changePassword(
+        String(userId || ""),
+        String(role || ""),
+        body.currentPassword,
+        body.newPassword,
+        body.confirmPassword,
+      );
+      return res.status(200).json(result);
+    } catch (err: any) {
+      return res
+        .status(400)
+        .json({ message: err.message || "Failed to change password." });
     }
   }
 }

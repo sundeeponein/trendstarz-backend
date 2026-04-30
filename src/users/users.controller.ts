@@ -46,19 +46,21 @@ export class UsersController {
   constructor(private readonly usersService: UsersService) {}
 
   @Get("influencers/:id")
-  async getInfluencerById(@Param("id") id: string) {
-    const profile = await this.usersService.getInfluencerById(id);
-    if (!profile) return null;
-    const caps = await this.usersService['plansService'].getUserPlanCapabilities(String((profile as any)._id));
-    return this.usersService.applyPlanFilter(profile, caps);
+  async getInfluencerById(@Param("id") id: string, @Req() req: Request) {
+    const viewerId = extractOptionalViewerId(req);
+    return this.usersService.getInfluencerById(id, viewerId);
   }
 
   @Get("influencers/username/:username")
-  async getInfluencerByUsername(@Param("username") username: string) {
-    const profile = await this.usersService.getInfluencerByUsername(username);
-    if (!profile) return null;
-    const caps = await this.usersService['plansService'].getUserPlanCapabilities(String((profile as any)._id));
-    return this.usersService.applyPlanFilter(profile, caps);
+  async getInfluencerByUsername(
+    @Param("username") username: string,
+    @Req() req: Request,
+  ) {
+    const viewerId = extractOptionalViewerId(req);
+    return this.usersService.getInfluencerByUsername(
+      username,
+      viewerId,
+    );
   }
 
   @Post("influencers/username/:username/track-impression")
@@ -137,10 +139,13 @@ export class UsersController {
   async getInfluencers(
     @Query("page") page?: string,
     @Query("limit") limit?: string,
+    @Req() req?: Request,
   ) {
+    const viewerId = extractOptionalViewerId(req);
     return this.usersService.getInfluencers(
       page ? parseInt(page, 10) : undefined,
       limit ? parseInt(limit, 10) : undefined,
+      viewerId,
     );
   }
 

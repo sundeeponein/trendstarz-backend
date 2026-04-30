@@ -38,6 +38,37 @@ export class PlansService {
     return `${typePrefix}-${slug || "plan"}`;
   }
 
+  private shouldEnableContactAccess(policy: unknown): boolean {
+    return String(policy || "")
+      .toUpperCase()
+      .trim() !== "NONE";
+  }
+
+  private syncContactFeatureFlags(plan: any, userType: "INFLUENCER" | "BRAND") {
+    const features = Array.isArray(plan?.features)
+      ? plan.features.map((feature: any) => ({ ...feature }))
+      : [];
+    const contactEnabled = this.shouldEnableContactAccess(
+      plan?.policies?.contactVisibility,
+    );
+
+    const influencerIndex = features.findIndex(
+      (feature: any) => feature?.key === "contactVisibility",
+    );
+    if (userType === "INFLUENCER" && influencerIndex >= 0) {
+      features[influencerIndex].value = contactEnabled;
+    }
+
+    const brandIndex = features.findIndex(
+      (feature: any) => feature?.key === "viewContactDetails",
+    );
+    if (userType === "BRAND" && brandIndex >= 0) {
+      features[brandIndex].value = contactEnabled;
+    }
+
+    return features;
+  }
+
   private normalizePlanDto(dto: any, existing?: any) {
     const userType = this.normalizeUserType(
       dto?.userType ?? existing?.userType,
@@ -45,6 +76,16 @@ export class PlansService {
     const name = dto?.name ?? existing?.name ?? "Plan";
     const code =
       dto?.code ?? existing?.code ?? this.buildPlanCode(name, userType);
+    const policies = dto?.policies ?? existing?.policies;
+    const features = this.syncContactFeatureFlags(
+      {
+        ...existing,
+        ...dto,
+        policies,
+        features: dto?.features ?? existing?.features ?? [],
+      },
+      userType,
+    );
 
     return {
       ...dto,
@@ -55,12 +96,16 @@ export class PlansService {
         quarterly: dto?.price?.quarterly ?? existing?.price?.quarterly ?? 0,
         yearly: dto?.price?.yearly ?? existing?.price?.yearly ?? 0,
       },
+      features,
+      policies,
       offers: dto?.offers ?? existing?.offers ?? [],
     };
   }
 
   private normalizePlanDocument(plan: any) {
     if (!plan) return plan;
+
+    const userType = this.normalizeUserType(plan?.userType);
 
     return {
       ...plan,
@@ -69,6 +114,7 @@ export class PlansService {
         quarterly: plan?.price?.quarterly ?? 0,
         yearly: plan?.price?.yearly ?? 0,
       },
+      features: this.syncContactFeatureFlags(plan, userType),
     };
   }
 

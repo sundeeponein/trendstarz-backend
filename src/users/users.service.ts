@@ -11,6 +11,17 @@ import { PlansService } from "../plans/plans.service";
 
 const USE_LOCAL_IMAGES = process.env.USE_LOCAL_IMAGES === "true";
 const LOCAL_IMAGE_DIR = path.resolve(__dirname, "../../assets/local-images");
+type ContactVisibilityMode =
+  | "PROFILE"
+  | "AFTER_ACCEPT"
+  | "AFTER_PAYMENT"
+  | "NONE";
+type ExplicitContactVisibilityMode = Exclude<ContactVisibilityMode, never> | null;
+const CONTACT_VISIBILITY_POLICY_BY_TIER: Record<string, ContactVisibilityMode> = {
+  free: "AFTER_ACCEPT",
+  premium: "AFTER_ACCEPT",
+  premiumPro: "AFTER_PAYMENT",
+};
 if (USE_LOCAL_IMAGES && !fs.existsSync(LOCAL_IMAGE_DIR)) {
   fs.mkdirSync(LOCAL_IMAGE_DIR, { recursive: true });
 }
@@ -376,36 +387,97 @@ export class UsersService {
     return new Date(user.premiumEnd) >= new Date();
   }
 
+  private normalizeContactVisibilityMode(
+    raw: unknown,
+  ): ExplicitContactVisibilityMode {
+    const mode = String(raw || "")
+      .toUpperCase()
+      .trim();
+    if (mode === "PROFILE") return "PROFILE";
+    if (mode === "AFTER_PAYMENT") return "AFTER_PAYMENT";
+    if (mode === "AFTER_ACCEPT") return "AFTER_ACCEPT";
+    if (mode === "NONE") return "NONE";
+    return null;
+  }
+
+  private async resolveContactVisibilityMode(
+    viewerId?: string | null,
+  ): Promise<ContactVisibilityMode> {
+    if (!viewerId) return "NONE";
+    try {
+      const caps = await this.plansService.getUserPlanCapabilities(viewerId);
+      const explicit = this.normalizeContactVisibilityMode(
+        caps?.policies?.contactVisibility,
+      );
+      if (explicit) return explicit;
+
+      const planName = String(caps?.planName || "")
+        .toLowerCase()
+        .trim();
+      if (planName.includes("premium pro")) {
+        return CONTACT_VISIBILITY_POLICY_BY_TIER.premiumPro;
+      }
+      if (planName.includes("pro") || caps?.hasPremium) {
+        return CONTACT_VISIBILITY_POLICY_BY_TIER.premium;
+      }
+      return CONTACT_VISIBILITY_POLICY_BY_TIER.free;
+    } catch {
+      return "NONE";
+    }
+  }
+
+  private statusesForContactMode(mode: ContactVisibilityMode): string[] {
+    if (mode === "NONE") return [];
+    if (mode === "AFTER_PAYMENT") {
+      return ["payment_confirmed", "working", "submitted", "completed"];
+    }
+    if (mode === "AFTER_ACCEPT") {
+      return [
+        "accepted",
+        "payment_confirmed",
+        "working",
+        "submitted",
+        "completed",
+      ];
+    }
+    return [];
+  }
+
   /**
    * Decide whether `viewerId` is allowed to see the brand's social media handles.
    * Rules:
    *  - Brand owner can always see their own.
-   *  - Premium influencer viewing a premium brand can see them.
-   *  - Any influencer who has a CampaignInvite (not declined) for this brand can see them.
+   *  - Influencer can see only after campaign relationship is accepted/mutually approved.
    */
   async canViewBrandSocialMedia(
     brand: any,
     viewerId?: string | null,
+    viewerMode?: ContactVisibilityMode,
   ): Promise<boolean> {
     if (!brand) return false;
     if (!viewerId) return false;
     if (String(brand._id) === String(viewerId)) return true;
-    const viewer = await this.influencerModel
+
+    const mode =
+      viewerMode || (await this.resolveContactVisibilityMode(viewerId));
+    if (mode === "NONE") return false;
+    const influencerViewer = await this.influencerModel
       .findById(viewerId)
-      .select("isPremium premiumEnd")
+      .select("_id")
       .lean();
-    if (
-      viewer &&
-      this.isCurrentlyPremium(viewer) &&
-      this.isCurrentlyPremium(brand)
-    ) {
-      return true;
-    }
+    if (!influencerViewer) return false;
+    if (mode === "PROFILE") return true;
+
+    const allowedStatuses = this.statusesForContactMode(mode);
     const invite = await this.campaignInviteModel
       .findOne({
-        brandId: brand._id,
+        $or: [
+          { brandId: brand._id },
+          { brandId: String(brand._id) },
+          { brandId: brand.brandUsername },
+        ],
         influencerId: viewerId,
-        status: { $ne: "declined" },
+        status: { $in: allowedStatuses },
       })
       .select("_id")
       .lean();
@@ -445,7 +517,7 @@ export class UsersService {
   async getBrandByName(brandName: string, viewerId?: string | null) {
     const user: any = await this.findBrandByNameOrSlug(brandName);
     if (!user) return null;
-    const allowSocial = await this.canViewBrandSocialMedia(user, viewerId);
+    const allowAccess = await this.canViewBrandSocialMedia(user, viewerId);
     const {
       _id,
       brandName: name,
@@ -467,20 +539,21 @@ export class UsersService {
     return {
       _id,
       name,
-      email,
-      phoneNumber,
+      email: allowAccess ? email : undefined,
+      phoneNumber: allowAccess ? phoneNumber : undefined,
       categories,
       location: location || { state: "" },
-      socialMedia: allowSocial ? socialMedia : [],
-      socialMediaRestricted: !allowSocial,
+      socialMedia: allowAccess ? socialMedia : [],
+      socialMediaRestricted: !allowAccess,
       isPremium,
       brandLogo,
       products,
-      website,
+      website: allowAccess ? website : undefined,
       googleMapAddress,
       promotionalPrice,
       languages,
-      contact,
+      contact: allowAccess ? contact : undefined,
+      contactRestricted: !allowAccess,
       profileTraffic: profileTraffic || {
         impressions: 0,
         clicks: 0,
@@ -488,6 +561,47 @@ export class UsersService {
         lastClickAt: null,
       },
     };
+  }
+
+  /**
+   * Decide whether `viewerId` may view influencer contact details.
+   * Middleman rule: contact is visible only after campaign is accepted/mutually approved.
+   */
+  private async canViewInfluencerContact(
+    influencer: any,
+    viewerId?: string | null,
+    viewerMode?: ContactVisibilityMode,
+  ): Promise<boolean> {
+    if (!viewerId) return false;
+    if (String(influencer?._id) === String(viewerId)) return true;
+
+    const brand: any = await this.brandModel
+      .findById(viewerId)
+      .select("_id brandUsername")
+      .lean();
+    if (!brand) return false;
+
+    const mode =
+      viewerMode || (await this.resolveContactVisibilityMode(viewerId));
+    if (mode === "NONE") return false;
+    if (mode === "PROFILE") return true;
+
+    const allowedStatuses = this.statusesForContactMode(mode);
+
+    const invite = await this.campaignInviteModel
+      .findOne({
+        influencerId: influencer._id,
+        status: { $in: allowedStatuses },
+        $or: [
+          { brandId: brand._id },
+          { brandId: String(brand._id) },
+          { brandId: brand.brandUsername },
+        ],
+      })
+      .select("_id")
+      .lean();
+
+    return !!invite;
   }
 
   async updateUserImages(
@@ -732,7 +846,7 @@ export class UsersService {
     }
   }
 
-  async getInfluencers(page = 1, limit = 20) {
+  async getInfluencers(page = 1, limit = 20, viewerId?: string | null) {
     const skip = (page - 1) * limit;
 
     // Plan caps for monthly invite reception (key reused: maxInvitesPerCampaign)
@@ -743,20 +857,18 @@ export class UsersService {
     try {
       const { plans } = await this.plansService.listActive("INFLUENCER");
       for (const p of plans || []) {
-        const lim = (p as any)?.limits?.find(
+        const lim = p?.limits?.find(
           (l: any) => l.key === "maxInvitesPerCampaign",
         )?.value;
-        if (typeof lim === "number" && (p as any)?.code) {
-          capByCode[(p as any).code] = lim;
+        if (typeof lim === "number" && p?.code) {
+          capByCode[p.code] = lim;
         }
       }
     } catch {
       // fall back to defaults above
     }
 
-    const all = await this.influencerModel
-      .find({ status: "accepted" })
-      .lean();
+    const all = await this.influencerModel.find({ status: "accepted" }).lean();
 
     // Per-influencer monthly cycle anchored on signup (free) or premiumStart (pro)
     const now = new Date();
@@ -781,7 +893,24 @@ export class UsersService {
     });
 
     const total = eligible.length;
-    const data = eligible.slice(skip, skip + limit);
+    const pageItems = eligible.slice(skip, skip + limit);
+    const viewerMode = await this.resolveContactVisibilityMode(viewerId);
+    const data = await Promise.all(
+      pageItems.map(async (inf: any) => {
+        const allowContact = await this.canViewInfluencerContact(
+          inf,
+          viewerId,
+          viewerMode,
+        );
+        return {
+          ...inf,
+          email: allowContact ? inf.email : undefined,
+          phoneNumber: allowContact ? inf.phoneNumber : undefined,
+          website: allowContact ? inf.website : undefined,
+          contactRestricted: !allowContact,
+        };
+      }),
+    );
     return { data, total, page, limit };
   }
 
@@ -844,9 +973,10 @@ export class UsersService {
   }
 
   // Place this inside UsersService class
-  async getInfluencerByUsername(username: string) {
+  async getInfluencerByUsername(username: string, viewerId?: string | null) {
     const user: any = await this.influencerModel.findOne({ username }).lean();
     if (!user) return null;
+    const allowContact = await this.canViewInfluencerContact(user, viewerId);
     const {
       _id,
       name,
@@ -855,6 +985,7 @@ export class UsersService {
       profileImages,
       email,
       phoneNumber,
+      website,
       categories,
       location,
       socialMedia,
@@ -868,8 +999,10 @@ export class UsersService {
       username: userUsername,
       profileImage,
       profileImages: profileImages || [],
-      email,
-      phoneNumber,
+      email: allowContact ? email : undefined,
+      phoneNumber: allowContact ? phoneNumber : undefined,
+      website: allowContact ? website : undefined,
+      contactRestricted: !allowContact,
       categories,
       location: location || { state: "" },
       socialMedia,
@@ -883,9 +1016,10 @@ export class UsersService {
       },
     };
   }
-  async getInfluencerById(id: string) {
+  async getInfluencerById(id: string, viewerId?: string | null) {
     const user: any = await this.influencerModel.findById(id).lean();
     if (!user) return null;
+    const allowContact = await this.canViewInfluencerContact(user, viewerId);
     const {
       _id,
       name,
@@ -894,6 +1028,7 @@ export class UsersService {
       profileImages,
       email,
       phoneNumber,
+      website,
       promotionalPrice,
       categories,
       location,
@@ -907,8 +1042,10 @@ export class UsersService {
       username,
       profileImage,
       profileImages: profileImages || [],
-      email,
-      phoneNumber,
+      email: allowContact ? email : undefined,
+      phoneNumber: allowContact ? phoneNumber : undefined,
+      website: allowContact ? website : undefined,
+      contactRestricted: !allowContact,
       categories,
       location: location || { state: "" },
       socialMedia,
@@ -933,13 +1070,30 @@ export class UsersService {
         .limit(limit),
       this.brandModel.countDocuments({ status: "accepted" }),
     ]);
+    const viewerMode = await this.resolveContactVisibilityMode(viewerId);
     const filtered = await Promise.all(
       (data || []).map(async (brand: any) => {
-        const allow = await this.canViewBrandSocialMedia(brand, viewerId);
+        const allow = await this.canViewBrandSocialMedia(
+          brand,
+          viewerId,
+          viewerMode,
+        );
         if (!allow) {
-          return { ...brand, socialMedia: [], socialMediaRestricted: true };
+          return {
+            ...brand,
+            socialMedia: [],
+            socialMediaRestricted: true,
+            email: undefined,
+            phoneNumber: undefined,
+            website: undefined,
+            contactRestricted: true,
+          };
         }
-        return { ...brand, socialMediaRestricted: false };
+        return {
+          ...brand,
+          socialMediaRestricted: false,
+          contactRestricted: false,
+        };
       }),
     );
     return { data: filtered, total, page, limit };

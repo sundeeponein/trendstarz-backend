@@ -23,6 +23,28 @@ type AnyUserDoc = {
 
 @Injectable()
 export class AuthService {
+  private isStrongPassword(password: string): boolean {
+    const hasUpper = /[A-Z]/.test(password);
+    const hasLower = /[a-z]/.test(password);
+    const hasNumber = /[0-9]/.test(password);
+    const hasSpecial = /[!@#$%^&*()\-_=+[\]{};:'",.<>/?\\|`~]/.test(password);
+    return hasUpper && hasLower && hasNumber && hasSpecial;
+  }
+
+  private validatePasswordStrength(password: string): void {
+    if (password.length < 8) {
+      throw new BadRequestException("Password must be at least 8 characters.");
+    }
+    if (password.length > 128) {
+      throw new BadRequestException("Password must not exceed 128 characters.");
+    }
+    if (!this.isStrongPassword(password)) {
+      throw new BadRequestException(
+        "Password must include at least 8 characters, one uppercase letter, one lowercase letter, one number, and one special character.",
+      );
+    }
+  }
+
   private async findAnyUserByEmail(email: string): Promise<AnyUserDoc | null> {
     // Parallel queries — eliminates sequential round-trips and prevents
     // timing-based user-enumeration across collections.
@@ -193,12 +215,7 @@ export class AuthService {
     if (!token || !newPassword) {
       throw new BadRequestException("Token and new password are required");
     }
-    if (newPassword.length < 8) {
-      throw new BadRequestException("Password must be at least 8 characters.");
-    }
-    if (newPassword.length > 128) {
-      throw new BadRequestException("Password must not exceed 128 characters.");
-    }
+    this.validatePasswordStrength(newPassword);
 
     // Hash the incoming raw token to compare against the stored hash.
     const tokenHash = crypto.createHash("sha256").update(token).digest("hex");
@@ -229,6 +246,65 @@ export class AuthService {
     user.resetTokenExpires = null;
     await user.save();
     return { success: true, message: "Password reset successfully." };
+  }
+
+  async changePassword(
+    userId: string,
+    role: string,
+    currentPassword: string,
+    newPassword: string,
+    confirmPassword: string,
+  ) {
+    if (!userId) throw new BadRequestException("User not found.");
+    if (!currentPassword) {
+      throw new BadRequestException("Existing password is required.");
+    }
+    if (!newPassword) {
+      throw new BadRequestException("New password is required.");
+    }
+    this.validatePasswordStrength(newPassword);
+    if (!confirmPassword) {
+      throw new BadRequestException("Confirm password is required.");
+    }
+    if (newPassword !== confirmPassword) {
+      throw new BadRequestException("New password and confirm password do not match.");
+    }
+    if (newPassword === currentPassword) {
+      throw new BadRequestException(
+        "New password must be different from existing password.",
+      );
+    }
+
+    let user: any = null;
+    const normalizedRole = String(role || "").toLowerCase();
+    if (normalizedRole === "admin") {
+      user = await this.userModel.findById(userId);
+    } else if (normalizedRole === "influencer") {
+      user = await this.influencerModel.findById(userId);
+    } else if (normalizedRole === "brand") {
+      user = await this.brandModel.findById(userId);
+    } else {
+      const [adminUser, influencer, brand] = await Promise.all([
+        this.userModel.findById(userId),
+        this.influencerModel.findById(userId),
+        this.brandModel.findById(userId),
+      ]);
+      user = adminUser || influencer || brand;
+    }
+
+    if (!user || !user.password) {
+      throw new BadRequestException("User not found.");
+    }
+
+    const isCurrentValid = await bcrypt.compare(currentPassword, user.password);
+    if (!isCurrentValid) {
+      throw new BadRequestException("Existing password is incorrect.");
+    }
+
+    user.password = await bcrypt.hash(newPassword, 10);
+    await user.save();
+
+    return { success: true, message: "Password changed successfully." };
   }
 
   constructor(

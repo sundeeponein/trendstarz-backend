@@ -38,6 +38,21 @@ export class ResetPasswordDto {
   newPassword: string;
 }
 
+export class ChangePasswordDto {
+  @IsString()
+  @IsNotEmpty({ message: "Existing password is required." })
+  currentPassword: string;
+
+  @IsString()
+  @MinLength(8, { message: "Password must be at least 8 characters." })
+  @MaxLength(128, { message: "Password must not exceed 128 characters." })
+  newPassword: string;
+
+  @IsString()
+  @IsNotEmpty({ message: "Confirm password is required." })
+  confirmPassword: string;
+}
+
 export class SendEmailVerificationDto {
   @IsEmail({}, { message: "Please provide a valid email address." })
   @Transform(({ value }: { value: string }) =>
