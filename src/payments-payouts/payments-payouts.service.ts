@@ -386,8 +386,28 @@ export class PaymentsPayoutsService {
     if (tx.payoutStatus === "pending" && tx.workStatus === "approved") {
       tx.payoutStatus = "processing";
     }
- 
+
     await tx.save();
+
+    // Brand pays → unlock contact for the linked invite (paid_collab payment path).
+    // Also advance invite status to payment_confirmed if still in accepted.
+    if (tx.inviteId && tx.transactionType === "paid_collab") {
+      const update: any = {
+        unlocked: true,
+        unlockedAt: new Date(),
+        unlockType: "paid_collab_payment",
+        updatedAt: new Date(),
+      };
+      const invite: any = await this.inviteModel
+        .findById(tx.inviteId)
+        .select("status")
+        .lean();
+      if (invite && invite.status === "accepted") {
+        update.status = "payment_confirmed";
+      }
+      await this.inviteModel.findByIdAndUpdate(tx.inviteId, { $set: update });
+    }
+
     return { success: true, transaction: tx };
   }
 

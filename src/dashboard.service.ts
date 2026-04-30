@@ -34,12 +34,13 @@ export class DashboardService {
       const st = invite.status as string;
       // Debug: count all raw statuses
       statusDebug[st] = (statusDebug[st] || 0) + 1;
-      // Map 'pending' → 'invited' for display; 'accepted', 'submitted', 'completed' are direct
-      const mappedStatus = st === "pending" ? "invited" : st;
+      // Map 'pending'/'invited' -> invited for display; accepted/submitted/completed are direct
+      const mappedStatus =
+        st === "pending" || st === "invited" ? "invited" : st;
       if (Object.prototype.hasOwnProperty.call(stats, mappedStatus)) {
         stats[mappedStatus] = (stats[mappedStatus] || 0) + 1;
       }
-      if (st === "pending") {
+      if (st === "pending" || st === "invited") {
         newInvites.push({
           ...invite,
           brand: invite.brandId,

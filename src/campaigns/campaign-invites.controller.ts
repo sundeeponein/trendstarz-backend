@@ -84,6 +84,13 @@ export class CampaignInvitesController {
     return this.invitesService.findByInfluencer(influencerId);
   }
 
+  @UseGuards(JwtAuthGuard)
+  @Post("campaign/:campaignId/apply")
+  async applyToCampaign(@Param("campaignId") campaignId: string, @Req() req: any) {
+    const influencerId = req.user?.userId;
+    return this.invitesService.applyToCampaign(influencerId, campaignId);
+  }
+
   /** GET /campaign-invites/:id — get a single invite with campaign platform/deliverable info */
   @UseGuards(JwtAuthGuard)
   @Get(":id")
@@ -137,6 +144,106 @@ export class CampaignInvitesController {
       body.selectedPlatform,
       body.selectedContentType,
       body.payout,
+    );
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Post(":id/unlock")
+  async unlockContact(@Param("id") id: string, @Req() req: any) {
+    const brandId = req.user?.userId;
+    return this.invitesService.unlockContact(id, brandId);
+  }
+
+  // ── Fulfillment / brand actions (Slice D) ──────────────────────
+
+  @UseGuards(JwtAuthGuard)
+  @Patch(":id/fulfillment/product")
+  async updateProductFulfillment(
+    @Param("id") id: string,
+    @Req() req: any,
+    @Body()
+    body: {
+      courier?: string;
+      trackingId?: string;
+      trackingUrl?: string;
+      shippedAt?: string;
+      deliveredAt?: string;
+      status?: "pending" | "shipped" | "delivered" | "returned";
+      note?: string;
+    },
+  ) {
+    return this.invitesService.updateProductFulfillment(
+      id,
+      req.user?.userId,
+      body,
+    );
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Patch(":id/fulfillment/check-in")
+  async updateLocationCheckIn(
+    @Param("id") id: string,
+    @Req() req: any,
+    @Body()
+    body: {
+      status?: "pending" | "checked_in" | "no_show" | "cancelled";
+      scheduledAt?: string;
+      checkedInAt?: string;
+      note?: string;
+    },
+  ) {
+    return this.invitesService.updateLocationCheckIn(
+      id,
+      req.user?.userId,
+      body,
+    );
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Patch(":id/due-date")
+  async setDueDate(
+    @Param("id") id: string,
+    @Req() req: any,
+    @Body() body: { dueDate: string | null },
+  ) {
+    return this.invitesService.setInviteDueDate(
+      id,
+      req.user?.userId,
+      body?.dueDate ?? null,
+    );
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Post(":id/remind")
+  async remindInvite(@Param("id") id: string, @Req() req: any) {
+    return this.invitesService.remindInvite(id, req.user?.userId);
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Post(":id/withdraw")
+  async withdrawInvite(
+    @Param("id") id: string,
+    @Req() req: any,
+    @Body() body: { reason?: string },
+  ) {
+    return this.invitesService.withdrawInvite(
+      id,
+      req.user?.userId,
+      body?.reason,
+    );
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Post(":id/report")
+  async reportInviteIssue(
+    @Param("id") id: string,
+    @Req() req: any,
+    @Body() body: { reason: string },
+  ) {
+    return this.invitesService.reportInviteIssue(
+      id,
+      req.user?.userId,
+      body?.reason,
     );
   }
 

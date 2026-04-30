@@ -131,6 +131,17 @@ export class CampaignsService {
         `Plan limit: Only ${maxCampaigns} active campaign(s) allowed. Upgrade for more.`,
       );
     }
+    // Premium-only campaign types: Product & Invite (Free brands can only run Paid)
+    const premiumOnlyTypes = new Set(["product", "invite_location"]);
+    if (
+      data?.campaignType &&
+      premiumOnlyTypes.has(String(data.campaignType)) &&
+      !caps.hasPremium
+    ) {
+      throw new BadRequestException(
+        "Product & Invite campaigns require a Premium plan. Upgrade to unlock these collaboration types.",
+      );
+    }
     const normalized = this.normalizeCampaignPayload(data);
     const campaign = new this.campaignModel({ ...normalized, brandId });
     return await campaign.save();
@@ -149,6 +160,40 @@ export class CampaignsService {
       results.length,
     );
     return results;
+  }
+
+  async findPublic(status: string = "active") {
+    const allowedStatuses = new Set(["active", "pending", "draft", "completed"]);
+    const query: any = {};
+    if (status && allowedStatuses.has(status)) {
+      query.status = status;
+    } else {
+      query.status = "active";
+    }
+    const campaigns: any[] = await this.campaignModel.find(query).sort({ createdAt: -1 }).lean();
+
+    // Enrich campaigns with brand info (name, logo, username)
+    const brandIds = [...new Set(campaigns.map((c) => c.brandId).filter(Boolean))];
+    const brands: any[] = await this.brandModel
+      .find({ _id: { $in: brandIds } })
+      .select("brandName brandUsername brandLogo")
+      .lean();
+    const brandMap = new Map(brands.map((b) => [String(b._id), b]));
+
+    return campaigns.map((c) => {
+      const brand = brandMap.get(String(c.brandId));
+      return {
+        ...c,
+        brand: brand
+          ? {
+              _id: brand._id,
+              name: brand.brandName,
+              username: brand.brandUsername,
+              logo: brand.brandLogo?.[0]?.url || null,
+            }
+          : null,
+      };
+    });
   }
 
   async findByBrandName(brandName: string) {
@@ -204,6 +249,19 @@ export class CampaignsService {
         throw new BadRequestException(
           `Cannot transition from '${campaign.status}' to '${data.status}'`,
         );
+      }
+    }
+
+    // Premium-only campaign types: Product & Invite (Free brands can only run Paid)
+    if (data?.campaignType && data.campaignType !== campaign.campaignType) {
+      const premiumOnlyTypes = new Set(["product", "invite_location"]);
+      if (premiumOnlyTypes.has(String(data.campaignType))) {
+        const caps = await this.plansService.getUserPlanCapabilities(brandId);
+        if (!caps.hasPremium) {
+          throw new BadRequestException(
+            "Product & Invite campaigns require a Premium plan. Upgrade to unlock these collaboration types.",
+          );
+        }
       }
     }
 

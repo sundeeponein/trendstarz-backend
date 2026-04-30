@@ -215,6 +215,8 @@ export const BrandSchema = new Schema(
       enum: ["pending", "accepted", "declined", "deleted"],
       default: "pending",
     },
+    // Growth: 1 free contact-unlock per brand before requiring premium/payment
+    freeUnlocksUsed: { type: Number, default: 0 },
     resetToken: { type: String, default: null },
     resetTokenExpires: { type: Number, default: null },
   },
@@ -338,8 +340,24 @@ export const CampaignSchema = new Schema(
       },
     ],
     minFollowerCount: { type: Number },
+    minInfluencerTier: { type: String },
     platformPreference: { type: String },
     specialInstructions: { type: String },
+    // invite_location specific fields
+    venueName: { type: String },
+    venueAddress: { type: String },
+    venueCity: { type: String },
+    venueDistrict: { type: String },
+    venueState: { type: String },
+    venueGoogleMapUrl: { type: String },
+    productValue: { type: Number },
+    productDescription: { type: String },
+    productPaymentMode: { type: String },
+    productPaymentAmount: { type: Number },
+    inviteBenefits: { type: String },
+    // pay_to_join specific fields
+    payToJoinBenefits: { type: String },
+    payToJoinInstructions: { type: String },
   },
   { timestamps: true },
 );

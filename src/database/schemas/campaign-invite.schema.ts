@@ -19,6 +19,7 @@ export const CampaignInviteSchema = new Schema({
       "submitted",
       "completed",
       "disputed",
+      "withdrawn",
     ],
     default: "pending",
   },
@@ -33,6 +34,51 @@ export const CampaignInviteSchema = new Schema({
   selectedContentType: { type: String },
   agreedAmount: { type: Number },
   acceptedAt: { type: Date },
+  // ── Contact unlock (single-rule: brand pays/premium → both sides see contact) ──
+  unlocked: { type: Boolean, default: false },
+  unlockedAt: { type: Date },
+  unlockType: {
+    type: String,
+    enum: ["premium", "paid_collab_payment", "free_unlock"],
+  },
+  // ── Fulfillment (per campaign type) ──
+  // For `product` campaigns — brand ships sample/product to influencer
+  productFulfillment: {
+    status: {
+      type: String,
+      enum: ["pending", "shipped", "delivered", "returned"],
+      default: "pending",
+    },
+    courier: { type: String },
+    trackingId: { type: String },
+    trackingUrl: { type: String },
+    shippedAt: { type: Date },
+    deliveredAt: { type: Date },
+    note: { type: String },
+  },
+  // For `invite_location` campaigns — influencer visits a location
+  locationVisit: {
+    status: {
+      type: String,
+      enum: ["pending", "checked_in", "no_show", "cancelled"],
+      default: "pending",
+    },
+    scheduledAt: { type: Date },
+    checkedInAt: { type: Date },
+    note: { type: String },
+  },
+  // Generic deadline (content due / visit due / shipping due)
+  dueDate: { type: Date },
+  // ── Brand-side actions ──
+  remindedAt: { type: Date },
+  remindersSent: { type: Number, default: 0 },
+  withdrawnAt: { type: Date },
+  withdrawnReason: { type: String },
+  reportedIssue: {
+    reason: { type: String },
+    reportedAt: { type: Date },
+    resolvedAt: { type: Date },
+  },
   createdAt: { type: Date, default: Date.now },
   updatedAt: { type: Date, default: Date.now },
 });

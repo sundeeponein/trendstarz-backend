@@ -107,12 +107,12 @@
     { "name": "Konkani", "visible": true }
   ],
   "tiers": [
-    { "name": "Starter", "visible": true, "icon": "⭐", "desc": "1-100 followers" },
-    { "name": "Nano", "visible": true, "icon": "🌱", "desc": "101-1,000 followers" },
-    { "name": "Micro", "visible": true, "icon": "🔬", "desc": "1,001-10,000 followers" },
-    { "name": "Mid-Tier", "visible": true, "icon": "🎯", "desc": "10,001-100,000 followers" },
-    { "name": "Macro", "visible": true, "icon": "🚀", "desc": "100,001-1,000,000 followers" },
-    { "name": "Mega / Celebrity", "visible": true, "icon": "👑", "desc": "1,000,001+ followers" }
+    { "name": "Starter", "visible": true, "icon": "⭐", "desc": "1-100" },
+    { "name": "Nano", "visible": true, "icon": "🌱", "desc": "101-1,000" },
+    { "name": "Micro", "visible": true, "icon": "🔬", "desc": "1,001-10,000" },
+    { "name": "Mid-Tier", "visible": true, "icon": "🎯", "desc": "10,001-100,000" },
+    { "name": "Macro", "visible": true, "icon": "🚀", "desc": "100,001-1,000,000 " },
+    { "name": "Mega / Celebrity", "visible": true, "icon": "👑", "desc": "1,000,001+" }
   ],
   "locations": [
     { "state": "Andhra Pradesh", "visible": true,
