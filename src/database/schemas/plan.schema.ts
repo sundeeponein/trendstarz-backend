@@ -201,7 +201,7 @@ export const FREE_PLAN_DEFAULTS = {
     ],
     limits: [
       { key: "maxActiveCampaigns", label: "Active campaign", value: 1 },
-      { key: "maxInvitesPerCampaign", label: "Invites / campaign", value: 5 },
+      { key: "maxInvitesPerCampaign", label: "Invites / campaign", value: 1 },
       { key: "maxTeamSeats", label: "Team seats", value: 1 },
       { key: "analytics", label: "Analytics", value: 0 },
     ],

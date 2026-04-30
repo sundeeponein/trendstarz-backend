@@ -15,9 +15,9 @@
         { "key": "canReadReviews", "label": "View influencer & brand reviews", "value": false }
       ],
       "limits": [
-        { "key": "maxProductImages", "label": "Product images", "value": 3 },
+        { "key": "maxProductImages", "label": "Images", "value": 3 },
         { "key": "maxActiveCampaigns", "label": "Active campaign", "value": 1 },
-        { "key": "maxInvitesPerCampaign", "label": "Invites / campaign", "value": 2 },
+        { "key": "maxInvitesPerCampaign", "label": "Invites received / month", "value": 1 },
         { "key": "maxInviteOptions", "label": "Invite options", "value": 5 }
       ],
       "policies": { "imageRetentionDaysAfterExpiry": 45 },
@@ -40,9 +40,9 @@
         { "key": "canReadReviews", "label": "View influencer & brand reviews", "value": true }
       ],
       "limits": [
-        { "key": "maxProductImages", "label": "Product images", "value": 10 },
+        { "key": "maxProductImages", "label": "Images", "value": 10 },
         { "key": "maxActiveCampaigns", "label": "Active campaigns", "value": 10 },
-        { "key": "maxInvitesPerCampaign", "label": "Invites / campaign", "value": 10 },
+        { "key": "maxInvitesPerCampaign", "label": "Invites received / month", "value": 10 },
         { "key": "maxInviteOptions", "label": "Invite options", "value": 10 }
       ],
       "offers": [
@@ -71,7 +71,7 @@
       ],
       "limits": [
         { "key": "maxActiveCampaigns", "label": "Active campaign", "value": 1 },
-        { "key": "maxInvitesPerCampaign", "label": "Invites / campaign", "value": 5 },
+        { "key": "maxInvitesPerCampaign", "label": "Invites / campaign", "value": 1 },
         { "key": "maxTeamSeats", "label": "Team seat", "value": 1 },
         { "key": "analytics", "label": "Analytics", "value": 0 }
       ],

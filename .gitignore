@@ -3,7 +3,7 @@
 
 # Build output
 /dist/
-/assets
+/assets/local-images/
 
 # IDE and OS files
 /.vscode/

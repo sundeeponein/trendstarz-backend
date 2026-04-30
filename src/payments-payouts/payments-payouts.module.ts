@@ -4,6 +4,7 @@ import {
   CampaignSchema,
   BrandSchema,
   AppSettingsSchema,
+  InfluencerSchema,
 } from "../database/schemas/profile.schemas";
 import { CampaignInviteSchema } from "../database/schemas/campaign-invite.schema";
 import { CampaignTransactionSchema } from "../database/schemas/campaign-transaction.schema";
@@ -25,6 +26,7 @@ import { PaymentsPayoutsService } from "./payments-payouts.service";
         collection: "campaigntransactions",
       },
       { name: "Brand", schema: BrandSchema, collection: "brands" },
+      { name: "Influencer", schema: InfluencerSchema, collection: "influencers" },
       {
         name: "AppSettings",
         schema: AppSettingsSchema,

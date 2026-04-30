@@ -104,6 +104,13 @@ export const InfluencerSchema = new Schema(
     },
     promotionalPrice: { type: Number },
     website: { type: String },
+    // Payout details (where admin sends earned money)
+    payout: {
+      upiId: { type: String, default: "" },
+      mobile: { type: String, default: "" },
+      accountHolderName: { type: String, default: "" },
+      lastConfirmedAt: { type: Date, default: null },
+    },
     status: {
       type: String,
       enum: ["pending", "accepted", "declined", "deleted"],
@@ -114,7 +121,6 @@ export const InfluencerSchema = new Schema(
   },
   { timestamps: true },
 );
-InfluencerSchema.index({ status: 1 });
 InfluencerSchema.index({ categories: 1 });
 InfluencerSchema.index({ "location.state": 1 });
 InfluencerSchema.index({ "location.district": 1 });
@@ -197,6 +203,13 @@ export const BrandSchema = new Schema(
       lastClickAt: { type: Date, default: null },
     },
     promotionalPrice: { type: Number },
+    // Payout details (used for pay_to_join campaigns where brand receives money)
+    payout: {
+      upiId: { type: String, default: "" },
+      mobile: { type: String, default: "" },
+      accountHolderName: { type: String, default: "" },
+      lastConfirmedAt: { type: Date, default: null },
+    },
     status: {
       type: String,
       enum: ["pending", "accepted", "declined", "deleted"],

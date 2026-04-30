@@ -734,15 +734,79 @@ export class UsersService {
 
   async getInfluencers(page = 1, limit = 20) {
     const skip = (page - 1) * limit;
-    const [data, total] = await Promise.all([
-      this.influencerModel
-        .find({ status: "accepted" })
-        .lean()
-        .skip(skip)
-        .limit(limit),
-      this.influencerModel.countDocuments({ status: "accepted" }),
-    ]);
+
+    // Plan caps for monthly invite reception (key reused: maxInvitesPerCampaign)
+    const capByCode: Record<string, number> = {
+      "influencer-free": 1,
+      "influencer-pro": 10,
+    };
+    try {
+      const { plans } = await this.plansService.listActive("INFLUENCER");
+      for (const p of plans || []) {
+        const lim = (p as any)?.limits?.find(
+          (l: any) => l.key === "maxInvitesPerCampaign",
+        )?.value;
+        if (typeof lim === "number" && (p as any)?.code) {
+          capByCode[(p as any).code] = lim;
+        }
+      }
+    } catch {
+      // fall back to defaults above
+    }
+
+    const all = await this.influencerModel
+      .find({ status: "accepted" })
+      .lean();
+
+    // Per-influencer monthly cycle anchored on signup (free) or premiumStart (pro)
+    const now = new Date();
+    const inviteCounts = await Promise.all(
+      all.map(async (inf: any) => {
+        const cycleStart = this.computePlanCycleStart(inf, now);
+        const count = await this.campaignInviteModel.countDocuments({
+          influencerId: inf._id,
+          createdAt: { $gte: cycleStart },
+        });
+        return count;
+      }),
+    );
+
+    const eligible = all.filter((inf: any, idx: number) => {
+      const isPremium = this.isCurrentlyPremium(inf);
+      const cap = isPremium
+        ? capByCode["influencer-pro"]
+        : capByCode["influencer-free"];
+      if (cap === -1) return true;
+      return inviteCounts[idx] < cap;
+    });
+
+    const total = eligible.length;
+    const data = eligible.slice(skip, skip + limit);
     return { data, total, page, limit };
+  }
+
+  /**
+   * Per-user monthly cycle start.
+   * Anchor:
+   *  - Pro user with active premium → premiumStart
+   *  - Otherwise → createdAt (signup)
+   * The current cycle start is the latest anchor + N months that is <= now.
+   */
+  private computePlanCycleStart(user: any, now: Date = new Date()): Date {
+    const isPremium = this.isCurrentlyPremium(user);
+    const anchorRaw =
+      isPremium && user?.premiumStart ? user.premiumStart : user?.createdAt;
+    const anchor = anchorRaw ? new Date(anchorRaw) : new Date(0);
+    if (anchor > now) return anchor;
+
+    const cycle = new Date(anchor);
+    while (true) {
+      const next = new Date(cycle);
+      next.setMonth(next.getMonth() + 1);
+      if (next > now) break;
+      cycle.setTime(next.getTime());
+    }
+    return cycle;
   }
 
   async searchInfluencers(query: {
@@ -1206,6 +1270,7 @@ export class UsersService {
       "socialMedia",
       "contact",
       "promotionalPrice",
+      "payout",
     ];
     const updateData: any = {};
     for (const key of allowedFields) {
@@ -1343,6 +1408,7 @@ export class UsersService {
       "socialMedia",
       "contact",
       "promotionalPrice",
+      "payout",
     ];
     const updateData: any = {};
     for (const key of allowedFields) {
