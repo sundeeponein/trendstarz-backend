@@ -90,8 +90,27 @@ export const InfluencerSchema = new Schema(
       email: { type: Boolean, default: false },
       call: { type: Boolean, default: false },
     },
+    signupAttribution: {
+      source: { type: String },
+      audience: { type: String },
+      referrerPath: { type: String },
+      capturedAt: { type: Date },
+    },
+    profileTraffic: {
+      impressions: { type: Number, default: 0 },
+      clicks: { type: Number, default: 0 },
+      lastImpressionAt: { type: Date, default: null },
+      lastClickAt: { type: Date, default: null },
+    },
     promotionalPrice: { type: Number },
     website: { type: String },
+    // Payout details (where admin sends earned money)
+    payout: {
+      upiId: { type: String, default: "" },
+      mobile: { type: String, default: "" },
+      accountHolderName: { type: String, default: "" },
+      lastConfirmedAt: { type: Date, default: null },
+    },
     status: {
       type: String,
       enum: ["pending", "accepted", "declined", "deleted"],
@@ -102,7 +121,6 @@ export const InfluencerSchema = new Schema(
   },
   { timestamps: true },
 );
-InfluencerSchema.index({ status: 1 });
 InfluencerSchema.index({ categories: 1 });
 InfluencerSchema.index({ "location.state": 1 });
 InfluencerSchema.index({ "location.district": 1 });
@@ -172,7 +190,26 @@ export const BrandSchema = new Schema(
       email: { type: Boolean, default: false },
       call: { type: Boolean, default: false },
     },
+    signupAttribution: {
+      source: { type: String },
+      audience: { type: String },
+      referrerPath: { type: String },
+      capturedAt: { type: Date },
+    },
+    profileTraffic: {
+      impressions: { type: Number, default: 0 },
+      clicks: { type: Number, default: 0 },
+      lastImpressionAt: { type: Date, default: null },
+      lastClickAt: { type: Date, default: null },
+    },
     promotionalPrice: { type: Number },
+    // Payout details (used for pay_to_join campaigns where brand receives money)
+    payout: {
+      upiId: { type: String, default: "" },
+      mobile: { type: String, default: "" },
+      accountHolderName: { type: String, default: "" },
+      lastConfirmedAt: { type: Date, default: null },
+    },
     status: {
       type: String,
       enum: ["pending", "accepted", "declined", "deleted"],

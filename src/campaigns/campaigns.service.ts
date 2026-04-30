@@ -38,7 +38,9 @@ export class CampaignsService {
 
     if (normalized.startDate && normalized.endDate) {
       if (new Date(normalized.endDate) < new Date(normalized.startDate)) {
-        throw new BadRequestException("End date must be on or after start date");
+        throw new BadRequestException(
+          "End date must be on or after start date",
+        );
       }
     }
 
@@ -46,10 +48,15 @@ export class CampaignsService {
       normalized.campaignType = String(data.campaignType);
     }
 
-    if (data.pricePerInfluencer !== undefined && data.pricePerInfluencer !== null) {
+    if (
+      data.pricePerInfluencer !== undefined &&
+      data.pricePerInfluencer !== null
+    ) {
       const p = Number(data.pricePerInfluencer);
       if (!Number.isFinite(p) || p <= 0) {
-        throw new BadRequestException("pricePerInfluencer must be greater than 0 (paise)");
+        throw new BadRequestException(
+          "pricePerInfluencer must be greater than 0 (paise)",
+        );
       }
       normalized.pricePerInfluencer = Math.round(p);
     }
@@ -130,8 +137,17 @@ export class CampaignsService {
   }
 
   async findByBrandId(brandId: string) {
-    const results = await this.campaignModel.find({ brandId }).sort({ createdAt: -1 }).lean();
-    console.log('[DEBUG] findByBrandId:', brandId, typeof brandId, '| found:', results.length);
+    const results = await this.campaignModel
+      .find({ brandId })
+      .sort({ createdAt: -1 })
+      .lean();
+    console.log(
+      "[DEBUG] findByBrandId:",
+      brandId,
+      typeof brandId,
+      "| found:",
+      results.length,
+    );
     return results;
   }
 
@@ -140,7 +156,7 @@ export class CampaignsService {
       .findOne({
         brandName: new RegExp(
           `^${brandName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`,
-          "i" // Case-insensitive match
+          "i", // Case-insensitive match
         ),
       })
       .select(["_id", "brandUsername"])

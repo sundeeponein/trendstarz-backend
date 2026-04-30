@@ -37,7 +37,9 @@ export class ReviewsService {
       throw new BadRequestException("Rating must be between 1 and 5");
     }
 
-    const invite = (await this.inviteModel.findById(data.inviteId).lean()) as any;
+    const invite = (await this.inviteModel
+      .findById(data.inviteId)
+      .lean()) as any;
     if (!invite) throw new NotFoundException("Invite not found");
 
     if (reviewerType === "brand") {

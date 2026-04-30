@@ -23,6 +23,28 @@ type AnyUserDoc = {
 
 @Injectable()
 export class AuthService {
+  private isStrongPassword(password: string): boolean {
+    const hasUpper = /[A-Z]/.test(password);
+    const hasLower = /[a-z]/.test(password);
+    const hasNumber = /[0-9]/.test(password);
+    const hasSpecial = /[!@#$%^&*()\-_=+[\]{};:'",.<>/?\\|`~]/.test(password);
+    return hasUpper && hasLower && hasNumber && hasSpecial;
+  }
+
+  private validatePasswordStrength(password: string): void {
+    if (password.length < 8) {
+      throw new BadRequestException("Password must be at least 8 characters.");
+    }
+    if (password.length > 128) {
+      throw new BadRequestException("Password must not exceed 128 characters.");
+    }
+    if (!this.isStrongPassword(password)) {
+      throw new BadRequestException(
+        "Password must include at least 8 characters, one uppercase letter, one lowercase letter, one number, and one special character.",
+      );
+    }
+  }
+
   private async findAnyUserByEmail(email: string): Promise<AnyUserDoc | null> {
     // Parallel queries — eliminates sequential round-trips and prevents
     // timing-based user-enumeration across collections.
@@ -193,12 +215,7 @@ export class AuthService {
     if (!token || !newPassword) {
       throw new BadRequestException("Token and new password are required");
     }
-    if (newPassword.length < 8) {
-      throw new BadRequestException("Password must be at least 8 characters.");
-    }
-    if (newPassword.length > 128) {
-      throw new BadRequestException("Password must not exceed 128 characters.");
-    }
+    this.validatePasswordStrength(newPassword);
 
     // Hash the incoming raw token to compare against the stored hash.
     const tokenHash = crypto.createHash("sha256").update(token).digest("hex");
@@ -231,12 +248,72 @@ export class AuthService {
     return { success: true, message: "Password reset successfully." };
   }
 
+  async changePassword(
+    userId: string,
+    role: string,
+    currentPassword: string,
+    newPassword: string,
+    confirmPassword: string,
+  ) {
+    if (!userId) throw new BadRequestException("User not found.");
+    if (!currentPassword) {
+      throw new BadRequestException("Existing password is required.");
+    }
+    if (!newPassword) {
+      throw new BadRequestException("New password is required.");
+    }
+    this.validatePasswordStrength(newPassword);
+    if (!confirmPassword) {
+      throw new BadRequestException("Confirm password is required.");
+    }
+    if (newPassword !== confirmPassword) {
+      throw new BadRequestException("New password and confirm password do not match.");
+    }
+    if (newPassword === currentPassword) {
+      throw new BadRequestException(
+        "New password must be different from existing password.",
+      );
+    }
+
+    let user: any = null;
+    const normalizedRole = String(role || "").toLowerCase();
+    if (normalizedRole === "admin") {
+      user = await this.userModel.findById(userId);
+    } else if (normalizedRole === "influencer") {
+      user = await this.influencerModel.findById(userId);
+    } else if (normalizedRole === "brand") {
+      user = await this.brandModel.findById(userId);
+    } else {
+      const [adminUser, influencer, brand] = await Promise.all([
+        this.userModel.findById(userId),
+        this.influencerModel.findById(userId),
+        this.brandModel.findById(userId),
+      ]);
+      user = adminUser || influencer || brand;
+    }
+
+    if (!user || !user.password) {
+      throw new BadRequestException("User not found.");
+    }
+
+    const isCurrentValid = await bcrypt.compare(currentPassword, user.password);
+    if (!isCurrentValid) {
+      throw new BadRequestException("Existing password is incorrect.");
+    }
+
+    user.password = await bcrypt.hash(newPassword, 10);
+    await user.save();
+
+    return { success: true, message: "Password changed successfully." };
+  }
+
   constructor(
     @InjectModel("User") private readonly userModel: Model<any>,
     @InjectModel("Influencer") private readonly influencerModel: Model<any>,
     @InjectModel("Brand") private readonly brandModel: Model<any>,
     @InjectModel("Category") private readonly categoryModel: Model<any>,
     @InjectModel("State") private readonly stateModel: Model<any>,
+    @InjectModel("District") private readonly districtModel: Model<any>,
     @InjectModel("Language") private readonly languageModel: Model<any>,
     @InjectModel("SocialMedia") private readonly socialMediaModel: Model<any>,
     @InjectModel("AppSettings") private readonly appSettingsModel: Model<any>,
@@ -248,7 +325,7 @@ export class AuthService {
 
   private async resolveIdsToNames(data: {
     categories?: string[];
-    location?: { state?: string };
+    location?: { state?: string; district?: string };
     languages?: string[];
     socialMedia?: any[];
   }) {
@@ -267,19 +344,25 @@ export class AuthService {
       .filter((v: string) => v && this.isObjectId(v));
     const stateId =
       location.state && this.isObjectId(location.state) ? location.state : null;
+    const districtId =
+      location.district && this.isObjectId(location.district)
+        ? location.district
+        : null;
 
-    const [catDocs, langDocs, smDocs, stateDoc] = await Promise.all([
-      catIds.length
-        ? this.categoryModel.find({ _id: { $in: catIds } }).lean()
-        : [],
-      langIds.length
-        ? this.languageModel.find({ _id: { $in: langIds } }).lean()
-        : [],
-      smIds.length
-        ? this.socialMediaModel.find({ _id: { $in: smIds } }).lean()
-        : [],
-      stateId ? this.stateModel.findById(stateId).lean() : null,
-    ]);
+    const [catDocs, langDocs, smDocs, stateDoc, districtDoc] =
+      await Promise.all([
+        catIds.length
+          ? this.categoryModel.find({ _id: { $in: catIds } }).lean()
+          : [],
+        langIds.length
+          ? this.languageModel.find({ _id: { $in: langIds } }).lean()
+          : [],
+        smIds.length
+          ? this.socialMediaModel.find({ _id: { $in: smIds } }).lean()
+          : [],
+        stateId ? this.stateModel.findById(stateId).lean() : null,
+        districtId ? this.districtModel.findById(districtId).lean() : null,
+      ]);
 
     const catMap = new Map(catDocs.map((d: any) => [String(d._id), d.name]));
     const langMap = new Map(langDocs.map((d: any) => [String(d._id), d.name]));
@@ -288,12 +371,21 @@ export class AuthService {
     const categoryNames = categories.map((v) => catMap.get(v) || v);
     const languageNames = languages.map((v) => langMap.get(v) || v);
     const stateName = stateDoc ? (stateDoc as any).name : location.state || "";
+    const districtName = districtDoc
+      ? (districtDoc as any).name
+      : location.district || "";
     const socialMediaMapped = socialMedia.map((sm: any) => ({
       ...sm,
       platform: smMap.get(sm.platform) || sm.platform,
     }));
 
-    return { categoryNames, languageNames, stateName, socialMediaMapped };
+    return {
+      categoryNames,
+      languageNames,
+      stateName,
+      districtName,
+      socialMediaMapped,
+    };
   }
 
   // Admin / influencer / brand login
@@ -313,16 +405,18 @@ export class AuthService {
     if (!brand && !adminUser && !influencer) {
       // Create minimal brand profile
       const minimalBrand = new this.brandModel({
-        brandName: normalizedEmail.split('@')[0] || 'Brand',
+        brandName: normalizedEmail.split("@")[0] || "Brand",
         email: normalizedEmail,
-        phoneNumber: '',
+        phoneNumber: "",
         password: await bcrypt.hash(password, 10),
-        status: 'pending',
+        status: "pending",
       });
       try {
         brand = await minimalBrand.save();
-      } catch (e) {
-        throw new UnauthorizedException("Could not auto-create brand profile for this user.");
+      } catch {
+        throw new UnauthorizedException(
+          "Could not auto-create brand profile for this user.",
+        );
       }
     }
 
@@ -444,20 +538,53 @@ export class AuthService {
       throw new BadRequestException("Passwords do not match.");
     }
     // Check duplicates up front so the API can return all conflicting fields together.
-    const [existingEmail, existingUsername, existingPhone] = await Promise.all([
-      data.email ? this.influencerModel.findOne({ email: data.email }) : null,
+    // Email/phone are checked across ALL roles (influencer, brand, admin) so the same
+    // contact cannot be reused under a different role.
+    const normalizedEmail = data.email
+      ? String(data.email).trim().toLowerCase()
+      : null;
+    const normalizedPhone = data.phoneNumber
+      ? String(data.phoneNumber).trim()
+      : null;
+    // Case-insensitive exact email match — handles legacy records saved with mixed case.
+    const emailRegex = normalizedEmail
+      ? new RegExp(
+          `^${normalizedEmail.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`,
+          "i",
+        )
+      : null;
+    const [
+      existingEmailInfluencer,
+      existingEmailBrand,
+      existingEmailAdmin,
+      existingUsername,
+      existingPhoneInfluencer,
+      existingPhoneBrand,
+      existingPhoneAdmin,
+    ] = await Promise.all([
+      emailRegex ? this.influencerModel.findOne({ email: emailRegex }) : null,
+      emailRegex ? this.brandModel.findOne({ email: emailRegex }) : null,
+      emailRegex ? this.userModel.findOne({ email: emailRegex }) : null,
       data.username
         ? this.influencerModel.findOne({ username: data.username })
         : null,
-      data.phoneNumber
-        ? this.influencerModel.findOne({ phoneNumber: data.phoneNumber })
+      normalizedPhone
+        ? this.influencerModel.findOne({ phoneNumber: normalizedPhone })
+        : null,
+      normalizedPhone
+        ? this.brandModel.findOne({ phoneNumber: normalizedPhone })
+        : null,
+      normalizedPhone
+        ? this.userModel.findOne({ phoneNumber: normalizedPhone })
         : null,
     ]);
 
     const duplicateFields: string[] = [];
-    if (existingEmail) duplicateFields.push("email");
+    if (existingEmailInfluencer || existingEmailBrand || existingEmailAdmin)
+      duplicateFields.push("email");
     if (existingUsername) duplicateFields.push("username");
-    if (existingPhone) duplicateFields.push("phoneNumber");
+    if (existingPhoneInfluencer || existingPhoneBrand || existingPhoneAdmin)
+      duplicateFields.push("phoneNumber");
 
     if (duplicateFields.length) {
       throw new BadRequestException({
@@ -466,8 +593,13 @@ export class AuthService {
       });
     }
     // Map category, state, language, and socialMedia platform IDs to names (batch)
-    const { categoryNames, languageNames, stateName, socialMediaMapped } =
-      await this.resolveIdsToNames(data);
+    const {
+      categoryNames,
+      languageNames,
+      stateName,
+      districtName,
+      socialMediaMapped,
+    } = await this.resolveIdsToNames(data);
     // Hash password
     const hashedPassword = await bcrypt.hash(data.password, 10);
     const normalizedProfileImages = Array.isArray(data.profileImages)
@@ -476,19 +608,38 @@ export class AuthService {
           .slice(0, 1)
       : [];
 
+    const signupAttribution = {
+      source:
+        data?.signupAttribution?.source ||
+        data?.source ||
+        data?.utm_source ||
+        null,
+      audience: data?.signupAttribution?.audience || data?.audience || null,
+      referrerPath:
+        data?.signupAttribution?.referrerPath || data?.referrerPath || null,
+      capturedAt: new Date(),
+    };
+
     const influencer = new this.influencerModel({
       ...data,
+      email: normalizedEmail || data.email,
+      phoneNumber: normalizedPhone || data.phoneNumber,
       password: hashedPassword,
       categories: categoryNames,
-      location: { state: stateName },
+      location: { state: stateName, district: districtName },
       languages: languageNames,
       socialMedia: socialMediaMapped,
       profileImages: normalizedProfileImages,
+      signupAttribution,
     });
     // Status stays "pending" until email is verified — auto-approve (if enabled) is applied in verifyEmailByToken.
     console.log("Influencer payload:", influencer);
     try {
       const saved = await influencer.save();
+      console.log(
+        "Influencer signup attribution:",
+        saved?.signupAttribution || signupAttribution,
+      );
       try {
         await this.sendEmailVerificationLink(saved.email);
       } catch (verifyMailErr) {
@@ -533,15 +684,42 @@ export class AuthService {
         )
       : null;
 
+    // Email/phone are checked across ALL roles (influencer, brand, admin) so the same
+    // contact cannot be reused under a different role.
+    const normalizedEmail = data.email
+      ? String(data.email).trim().toLowerCase()
+      : null;
+    const normalizedPhone = data.phoneNumber
+      ? String(data.phoneNumber).trim()
+      : null;
+    // Case-insensitive exact email match — handles legacy records saved with mixed case.
+    const emailRegex = normalizedEmail
+      ? new RegExp(
+          `^${normalizedEmail.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`,
+          "i",
+        )
+      : null;
     const [
-      existingEmail,
-      existingPhone,
+      existingEmailBrand,
+      existingEmailInfluencer,
+      existingEmailAdmin,
+      existingPhoneBrand,
+      existingPhoneInfluencer,
+      existingPhoneAdmin,
       existingBrandName,
       existingBrandUsername,
     ] = await Promise.all([
-      data.email ? this.brandModel.findOne({ email: data.email }) : null,
-      data.phoneNumber
-        ? this.brandModel.findOne({ phoneNumber: data.phoneNumber })
+      emailRegex ? this.brandModel.findOne({ email: emailRegex }) : null,
+      emailRegex ? this.influencerModel.findOne({ email: emailRegex }) : null,
+      emailRegex ? this.userModel.findOne({ email: emailRegex }) : null,
+      normalizedPhone
+        ? this.brandModel.findOne({ phoneNumber: normalizedPhone })
+        : null,
+      normalizedPhone
+        ? this.influencerModel.findOne({ phoneNumber: normalizedPhone })
+        : null,
+      normalizedPhone
+        ? this.userModel.findOne({ phoneNumber: normalizedPhone })
         : null,
       data.brandName
         ? this.brandModel.findOne({ brandName: data.brandName })
@@ -552,8 +730,10 @@ export class AuthService {
     ]);
 
     const duplicateFields: string[] = [];
-    if (existingEmail) duplicateFields.push("email");
-    if (existingPhone) duplicateFields.push("phoneNumber");
+    if (existingEmailBrand || existingEmailInfluencer || existingEmailAdmin)
+      duplicateFields.push("email");
+    if (existingPhoneBrand || existingPhoneInfluencer || existingPhoneAdmin)
+      duplicateFields.push("phoneNumber");
     if (existingBrandName) duplicateFields.push("brandName");
     if (existingBrandUsername) duplicateFields.push("brandUsername");
 
@@ -564,20 +744,43 @@ export class AuthService {
       });
     }
     // Map category, state, language, and socialMedia platform IDs to names (batch)
-    const { categoryNames, languageNames, stateName, socialMediaMapped } =
-      await this.resolveIdsToNames(data);
+    const {
+      categoryNames,
+      languageNames,
+      stateName,
+      districtName,
+      socialMediaMapped,
+    } = await this.resolveIdsToNames(data);
     // Hash password
     const hashedPassword = await bcrypt.hash(data.password, 10);
+    const signupAttribution = {
+      source:
+        data?.signupAttribution?.source ||
+        data?.source ||
+        data?.utm_source ||
+        null,
+      audience: data?.signupAttribution?.audience || data?.audience || null,
+      referrerPath:
+        data?.signupAttribution?.referrerPath || data?.referrerPath || null,
+      capturedAt: new Date(),
+    };
     const brand = new this.brandModel({
       ...data,
+      email: normalizedEmail || data.email,
+      phoneNumber: normalizedPhone || data.phoneNumber,
       password: hashedPassword,
       categories: categoryNames,
-      location: { state: stateName },
+      location: { state: stateName, district: districtName },
       languages: languageNames,
       socialMedia: socialMediaMapped,
+      signupAttribution,
     });
     // Status stays "pending" until email is verified — auto-approve (if enabled) is applied in verifyEmailByToken.
     const savedBrand = await brand.save();
+    console.log(
+      "Brand signup attribution:",
+      savedBrand?.signupAttribution || signupAttribution,
+    );
     try {
       await this.sendEmailVerificationLink(savedBrand.email);
     } catch (verifyMailErr) {

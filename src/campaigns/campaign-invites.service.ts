@@ -44,6 +44,35 @@ export class CampaignInvitesService {
     private readonly plansService: PlansService,
   ) {}
 
+  /** True if user has an active premium right now. */
+  private isCurrentlyPremium(user: any): boolean {
+    if (!user?.isPremium) return false;
+    if (!user.premiumEnd) return true;
+    return new Date(user.premiumEnd) >= new Date();
+  }
+
+  /**
+   * Per-user monthly cycle start. Anchor:
+   *  - Pro user with active premium → premiumStart
+   *  - Otherwise → createdAt (signup)
+   * Returns the latest anchor + N months that is <= now.
+   */
+  private computePlanCycleStart(user: any, now: Date = new Date()): Date {
+    const isPremium = this.isCurrentlyPremium(user);
+    const anchorRaw =
+      isPremium && user?.premiumStart ? user.premiumStart : user?.createdAt;
+    const anchor = anchorRaw ? new Date(anchorRaw) : new Date(0);
+    if (anchor > now) return anchor;
+    const cycle = new Date(anchor);
+    while (true) {
+      const next = new Date(cycle);
+      next.setMonth(next.getMonth() + 1);
+      if (next > now) break;
+      cycle.setTime(next.getTime());
+    }
+    return cycle;
+  }
+
   @Cron(CronExpression.EVERY_HOUR)
   async autoApproveStaleSubmissionsCron() {
     await this.autoApproveStaleSubmissions();
@@ -161,16 +190,45 @@ export class CampaignInvitesService {
       maxInvitesPerMonthEntry !== undefined &&
       maxInvitesPerMonthEntry.value !== -1
     ) {
-      const now = new Date();
-      const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+      const brandDoc = await this.brandModel
+        .findById(brandId)
+        .select("createdAt premiumStart premiumEnd isPremium")
+        .lean();
+      const cycleStart = this.computePlanCycleStart(brandDoc);
       const monthInviteCount = await this.inviteModel.countDocuments({
         brandId,
-        createdAt: { $gte: monthStart },
+        createdAt: { $gte: cycleStart },
       });
       if (monthInviteCount >= maxInvitesPerMonthEntry.value) {
         throw new BadRequestException(
           `Plan limit: Only ${maxInvitesPerMonthEntry.value} campaign(s) with invites per month allowed. Upgrade for more.`,
         );
+      }
+    }
+
+    // Enforce influencer recipient cap (anchored to influencer's plan-start)
+    const influencerDoc: any = await this.influencerModel
+      .findById(data.influencerId)
+      .select("createdAt premiumStart premiumEnd isPremium")
+      .lean();
+    if (influencerDoc) {
+      const recipientCaps =
+        await this.plansService.getUserPlanCapabilities(data.influencerId);
+      const recipientMonthlyCap =
+        recipientCaps.limits.find(
+          (l: any) => l.key === "maxInvitesPerCampaign",
+        )?.value ?? -1;
+      if (recipientMonthlyCap !== -1) {
+        const recipientCycleStart = this.computePlanCycleStart(influencerDoc);
+        const recipientMonthCount = await this.inviteModel.countDocuments({
+          influencerId: data.influencerId,
+          createdAt: { $gte: recipientCycleStart },
+        });
+        if (recipientMonthCount >= recipientMonthlyCap) {
+          throw new BadRequestException(
+            `This influencer has reached their monthly invite limit (${recipientMonthlyCap}). Try again after their next cycle.`,
+          );
+        }
       }
     }
     const invite = new this.inviteModel({ ...data, brandId });
@@ -227,9 +285,12 @@ export class CampaignInvitesService {
       .find({ influencerId })
       .populate(
         "campaignId",
-        "title description status budgetMin budgetMax campaignType pricePerInfluencer maxInfluencers startDate endDate timelineStart timelineEnd deliverables platforms",
+        "title description status budgetMin budgetMax campaignType pricePerInfluencer maxInfluencers startDate endDate timelineStart timelineEnd deliverables platforms socialMedia specialInstructions",
       )
-      .populate("brandId", "brandName brandLogo")
+      .populate(
+        "brandId",
+        "brandName brandUsername brandLogo location categories website",
+      )
       .lean();
   }
 
@@ -280,6 +341,11 @@ export class CampaignInvitesService {
     selectedPostDate?: string,
     selectedPlatform?: string,
     selectedContentType?: string,
+    payout?: {
+      upiId?: string;
+      mobile?: string;
+      accountHolderName?: string;
+    },
   ) {
     const invite = await this.inviteModel.findById(inviteId);
     if (!invite) throw new NotFoundException("Invite not found");
@@ -345,6 +411,23 @@ export class CampaignInvitesService {
         );
         if (ctEntry?.price) invite.agreedAmount = Number(ctEntry.price);
       }
+
+      // Persist confirmed payout details on the influencer profile so admin
+      // can prefill the payout popup later. Only update fields the influencer
+      // actually provided/edited.
+      if (payout && (payout.upiId || payout.mobile || payout.accountHolderName)) {
+        const set: any = { "payout.lastConfirmedAt": new Date() };
+        if (payout.upiId !== undefined) set["payout.upiId"] = String(payout.upiId).trim();
+        if (payout.mobile !== undefined) set["payout.mobile"] = String(payout.mobile).trim();
+        if (payout.accountHolderName !== undefined) {
+          set["payout.accountHolderName"] = String(payout.accountHolderName).trim();
+        }
+        try {
+          await this.influencerModel.findByIdAndUpdate(influencerId, { $set: set });
+        } catch (err) {
+          console.error("Failed to persist influencer payout details:", err);
+        }
+      }
     }
 
     invite.status = status;
@@ -405,12 +488,15 @@ export class CampaignInvitesService {
     const maxApplications =
       caps.limits.find((l: any) => l.key === "maxCampaignApplications")
         ?.value ?? 2;
-    // Count applications this month
-    const now = new Date();
-    const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+    // Count applications this monthly cycle (anchored on signup / premiumStart)
+    const influencerDoc: any = await this.influencerModel
+      .findById(influencerId)
+      .select("createdAt premiumStart premiumEnd isPremium")
+      .lean();
+    const cycleStart = this.computePlanCycleStart(influencerDoc);
     const appCount = await this.inviteModel.countDocuments({
       influencerId,
-      createdAt: { $gte: monthStart },
+      createdAt: { $gte: cycleStart },
       status: { $in: ["pending", "accepted"] },
     });
     if (appCount >= maxApplications) {
