@@ -11,12 +11,116 @@ import { PlansService } from "../plans/plans.service";
 
 const USE_LOCAL_IMAGES = process.env.USE_LOCAL_IMAGES === "true";
 const LOCAL_IMAGE_DIR = path.resolve(__dirname, "../../assets/local-images");
+type ContactVisibilityMode =
+  | "PROFILE"
+  | "AFTER_ACCEPT"
+  | "AFTER_PAYMENT"
+  | "NONE";
+type ExplicitContactVisibilityMode = Exclude<ContactVisibilityMode, never> | null;
+const CONTACT_VISIBILITY_POLICY_BY_TIER: Record<string, ContactVisibilityMode> = {
+  free: "AFTER_ACCEPT",
+  premium: "AFTER_ACCEPT",
+  premiumPro: "AFTER_PAYMENT",
+};
 if (USE_LOCAL_IMAGES && !fs.existsSync(LOCAL_IMAGE_DIR)) {
   fs.mkdirSync(LOCAL_IMAGE_DIR, { recursive: true });
 }
 
 @Injectable()
 export class UsersService {
+  private slugify(text: string): string {
+    return (text || "")
+      .toString()
+      .toLowerCase()
+      .replace(/\s+/g, "-")
+      .replace(/[^a-z0-9-]/g, "")
+      .replace(/-+/g, "-")
+      .replace(/^-+/, "")
+      .replace(/-+$/, "");
+  }
+
+  private async findBrandByNameOrSlug(brandName: string): Promise<any> {
+    const normalized = (brandName || "").trim();
+    if (!normalized) return null;
+
+    const brand = await this.brandModel
+      .findOne({
+        brandName: new RegExp(
+          `^${this.escapeRegex(normalized.replace(/-/g, " "))}$`,
+          "i",
+        ),
+      })
+      .lean();
+
+    if (brand) return brand;
+
+    const decoded = this.slugify(normalized);
+    const candidates = await this.brandModel
+      .find({})
+      .select("_id brandName")
+      .lean();
+    const match = candidates.find(
+      (b: any) => this.slugify(b.brandName || "") === decoded,
+    );
+    if (!match) return null;
+
+    return this.brandModel.findById(match._id).lean();
+  }
+
+  async trackInfluencerProfileImpression(username: string) {
+    if (!username) return { tracked: false };
+    const now = new Date();
+    const updated = await this.influencerModel.updateOne(
+      { username },
+      {
+        $inc: { "profileTraffic.impressions": 1 },
+        $set: { "profileTraffic.lastImpressionAt": now },
+      },
+    );
+    return { tracked: (updated.modifiedCount || 0) > 0 };
+  }
+
+  async trackInfluencerProfileClick(username: string) {
+    if (!username) return { tracked: false };
+    const now = new Date();
+    const updated = await this.influencerModel.updateOne(
+      { username },
+      {
+        $inc: { "profileTraffic.clicks": 1 },
+        $set: { "profileTraffic.lastClickAt": now },
+      },
+    );
+    return { tracked: (updated.modifiedCount || 0) > 0 };
+  }
+
+  async trackBrandProfileImpression(brandName: string) {
+    const brand = await this.findBrandByNameOrSlug(brandName);
+    if (!brand?._id) return { tracked: false };
+    const now = new Date();
+    const updated = await this.brandModel.updateOne(
+      { _id: brand._id },
+      {
+        $inc: { "profileTraffic.impressions": 1 },
+        $set: { "profileTraffic.lastImpressionAt": now },
+      },
+    );
+    return { tracked: (updated.modifiedCount || 0) > 0 };
+  }
+
+  async trackBrandProfileClick(brandName: string) {
+    const brand = await this.findBrandByNameOrSlug(brandName);
+    if (!brand?._id) return { tracked: false };
+    const now = new Date();
+    const updated = await this.brandModel.updateOne(
+      { _id: brand._id },
+      {
+        $inc: { "profileTraffic.clicks": 1 },
+        $set: { "profileTraffic.lastClickAt": now },
+      },
+    );
+    return { tracked: (updated.modifiedCount || 0) > 0 };
+  }
+
   private extractMediaPublicIds(user: any): string[] {
     const publicIds = new Set<string>();
 
@@ -271,8 +375,114 @@ export class UsersService {
     private readonly cloudinaryService: CloudinaryService,
     @InjectModel("Influencer") private readonly influencerModel: Model<any>,
     @InjectModel("Brand") private readonly brandModel: Model<any>,
+    @InjectModel("CampaignInvite")
+    private readonly campaignInviteModel: Model<any>,
     private readonly plansService: PlansService,
   ) {}
+
+  /** True if the user has an active premium subscription right now. */
+  private isCurrentlyPremium(user: any): boolean {
+    if (!user?.isPremium) return false;
+    if (!user.premiumEnd) return true;
+    return new Date(user.premiumEnd) >= new Date();
+  }
+
+  private normalizeContactVisibilityMode(
+    raw: unknown,
+  ): ExplicitContactVisibilityMode {
+    const mode = String(raw || "")
+      .toUpperCase()
+      .trim();
+    if (mode === "PROFILE") return "PROFILE";
+    if (mode === "AFTER_PAYMENT") return "AFTER_PAYMENT";
+    if (mode === "AFTER_ACCEPT") return "AFTER_ACCEPT";
+    if (mode === "NONE") return "NONE";
+    return null;
+  }
+
+  private async resolveContactVisibilityMode(
+    viewerId?: string | null,
+  ): Promise<ContactVisibilityMode> {
+    if (!viewerId) return "NONE";
+    try {
+      const caps = await this.plansService.getUserPlanCapabilities(viewerId);
+      const explicit = this.normalizeContactVisibilityMode(
+        caps?.policies?.contactVisibility,
+      );
+      if (explicit) return explicit;
+
+      const planName = String(caps?.planName || "")
+        .toLowerCase()
+        .trim();
+      if (planName.includes("premium pro")) {
+        return CONTACT_VISIBILITY_POLICY_BY_TIER.premiumPro;
+      }
+      if (planName.includes("pro") || caps?.hasPremium) {
+        return CONTACT_VISIBILITY_POLICY_BY_TIER.premium;
+      }
+      return CONTACT_VISIBILITY_POLICY_BY_TIER.free;
+    } catch {
+      return "NONE";
+    }
+  }
+
+  private statusesForContactMode(mode: ContactVisibilityMode): string[] {
+    if (mode === "NONE") return [];
+    if (mode === "AFTER_PAYMENT") {
+      return ["payment_confirmed", "working", "submitted", "completed"];
+    }
+    if (mode === "AFTER_ACCEPT") {
+      return [
+        "accepted",
+        "payment_confirmed",
+        "working",
+        "submitted",
+        "completed",
+      ];
+    }
+    return [];
+  }
+
+  /**
+   * Decide whether `viewerId` is allowed to see the brand's social media handles.
+   * Rules:
+   *  - Brand owner can always see their own.
+   *  - Influencer can see only after campaign relationship is accepted/mutually approved.
+   */
+  async canViewBrandSocialMedia(
+    brand: any,
+    viewerId?: string | null,
+    viewerMode?: ContactVisibilityMode,
+  ): Promise<boolean> {
+    if (!brand) return false;
+    if (!viewerId) return false;
+    if (String(brand._id) === String(viewerId)) return true;
+
+    const mode =
+      viewerMode || (await this.resolveContactVisibilityMode(viewerId));
+    if (mode === "NONE") return false;
+    const influencerViewer = await this.influencerModel
+      .findById(viewerId)
+      .select("_id")
+      .lean();
+    if (!influencerViewer) return false;
+    if (mode === "PROFILE") return true;
+
+    const allowedStatuses = this.statusesForContactMode(mode);
+    const invite = await this.campaignInviteModel
+      .findOne({
+        $or: [
+          { brandId: brand._id },
+          { brandId: String(brand._id) },
+          { brandId: brand.brandUsername },
+        ],
+        influencerId: viewerId,
+        status: { $in: allowedStatuses },
+      })
+      .select("_id")
+      .lean();
+    return !!invite;
+  }
 
   /** Throw if the user has already reached their maxImages plan limit */
   async checkImageUploadLimit(userId: string, currentCount: number) {
@@ -304,44 +514,10 @@ export class UsersService {
     return result;
   }
 
-  async getBrandByName(brandName: string) {
-    // Slugify helper
-    function slugify(text: string): string {
-      return text
-        .toString()
-        .toLowerCase()
-        .replace(/\s+/g, "-")
-        .replace(/[^a-z0-9-]/g, "")
-        .replace(/-+/g, "-")
-        .replace(/^-+/, "")
-        .replace(/-+$/, "");
-    }
-
-    // Use case-insensitive find instead of scanning all brands
-    const decoded = slugify(brandName);
-    // Try direct match (replacing hyphens with spaces for stored names)
-    let user: any = await this.brandModel
-      .findOne({
-        brandName: new RegExp(
-          `^${this.escapeRegex(brandName.replace(/-/g, " "))}$`,
-          "i",
-        ),
-      })
-      .lean();
-    // Fallback: slug-based match on brandName field only
-    if (!user) {
-      const candidates = await this.brandModel
-        .find({})
-        .select("brandName")
-        .lean();
-      const match = candidates.find(
-        (b: any) => slugify(b.brandName) === decoded,
-      );
-      if (match) {
-        user = await this.brandModel.findById(match._id).lean();
-      }
-    }
+  async getBrandByName(brandName: string, viewerId?: string | null) {
+    const user: any = await this.findBrandByNameOrSlug(brandName);
     if (!user) return null;
+    const allowAccess = await this.canViewBrandSocialMedia(user, viewerId);
     const {
       _id,
       brandName: name,
@@ -358,24 +534,74 @@ export class UsersService {
       promotionalPrice,
       languages,
       contact,
+      profileTraffic,
     } = user;
     return {
       _id,
       name,
-      email,
-      phoneNumber,
+      email: allowAccess ? email : undefined,
+      phoneNumber: allowAccess ? phoneNumber : undefined,
       categories,
       location: location || { state: "" },
-      socialMedia,
+      socialMedia: allowAccess ? socialMedia : [],
+      socialMediaRestricted: !allowAccess,
       isPremium,
       brandLogo,
       products,
-      website,
+      website: allowAccess ? website : undefined,
       googleMapAddress,
       promotionalPrice,
       languages,
-      contact,
+      contact: allowAccess ? contact : undefined,
+      contactRestricted: !allowAccess,
+      profileTraffic: profileTraffic || {
+        impressions: 0,
+        clicks: 0,
+        lastImpressionAt: null,
+        lastClickAt: null,
+      },
     };
+  }
+
+  /**
+   * Decide whether `viewerId` may view influencer contact details.
+   * Middleman rule: contact is visible only after campaign is accepted/mutually approved.
+   */
+  private async canViewInfluencerContact(
+    influencer: any,
+    viewerId?: string | null,
+    viewerMode?: ContactVisibilityMode,
+  ): Promise<boolean> {
+    if (!viewerId) return false;
+    if (String(influencer?._id) === String(viewerId)) return true;
+
+    const brand: any = await this.brandModel
+      .findById(viewerId)
+      .select("_id brandUsername")
+      .lean();
+    if (!brand) return false;
+
+    const mode =
+      viewerMode || (await this.resolveContactVisibilityMode(viewerId));
+    if (mode === "NONE") return false;
+    if (mode === "PROFILE") return true;
+
+    const allowedStatuses = this.statusesForContactMode(mode);
+
+    const invite = await this.campaignInviteModel
+      .findOne({
+        influencerId: influencer._id,
+        status: { $in: allowedStatuses },
+        $or: [
+          { brandId: brand._id },
+          { brandId: String(brand._id) },
+          { brandId: brand.brandUsername },
+        ],
+      })
+      .select("_id")
+      .lean();
+
+    return !!invite;
   }
 
   async updateUserImages(
@@ -620,17 +846,96 @@ export class UsersService {
     }
   }
 
-  async getInfluencers(page = 1, limit = 20) {
+  async getInfluencers(page = 1, limit = 20, viewerId?: string | null) {
     const skip = (page - 1) * limit;
-    const [data, total] = await Promise.all([
-      this.influencerModel
-        .find({ status: "accepted" })
-        .lean()
-        .skip(skip)
-        .limit(limit),
-      this.influencerModel.countDocuments({ status: "accepted" }),
-    ]);
+
+    // Plan caps for monthly invite reception (key reused: maxInvitesPerCampaign)
+    const capByCode: Record<string, number> = {
+      "influencer-free": 1,
+      "influencer-pro": 10,
+    };
+    try {
+      const { plans } = await this.plansService.listActive("INFLUENCER");
+      for (const p of plans || []) {
+        const lim = p?.limits?.find(
+          (l: any) => l.key === "maxInvitesPerCampaign",
+        )?.value;
+        if (typeof lim === "number" && p?.code) {
+          capByCode[p.code] = lim;
+        }
+      }
+    } catch {
+      // fall back to defaults above
+    }
+
+    const all = await this.influencerModel.find({ status: "accepted" }).lean();
+
+    // Per-influencer monthly cycle anchored on signup (free) or premiumStart (pro)
+    const now = new Date();
+    const inviteCounts = await Promise.all(
+      all.map(async (inf: any) => {
+        const cycleStart = this.computePlanCycleStart(inf, now);
+        const count = await this.campaignInviteModel.countDocuments({
+          influencerId: inf._id,
+          createdAt: { $gte: cycleStart },
+        });
+        return count;
+      }),
+    );
+
+    const eligible = all.filter((inf: any, idx: number) => {
+      const isPremium = this.isCurrentlyPremium(inf);
+      const cap = isPremium
+        ? capByCode["influencer-pro"]
+        : capByCode["influencer-free"];
+      if (cap === -1) return true;
+      return inviteCounts[idx] < cap;
+    });
+
+    const total = eligible.length;
+    const pageItems = eligible.slice(skip, skip + limit);
+    const viewerMode = await this.resolveContactVisibilityMode(viewerId);
+    const data = await Promise.all(
+      pageItems.map(async (inf: any) => {
+        const allowContact = await this.canViewInfluencerContact(
+          inf,
+          viewerId,
+          viewerMode,
+        );
+        return {
+          ...inf,
+          email: allowContact ? inf.email : undefined,
+          phoneNumber: allowContact ? inf.phoneNumber : undefined,
+          website: allowContact ? inf.website : undefined,
+          contactRestricted: !allowContact,
+        };
+      }),
+    );
     return { data, total, page, limit };
+  }
+
+  /**
+   * Per-user monthly cycle start.
+   * Anchor:
+   *  - Pro user with active premium → premiumStart
+   *  - Otherwise → createdAt (signup)
+   * The current cycle start is the latest anchor + N months that is <= now.
+   */
+  private computePlanCycleStart(user: any, now: Date = new Date()): Date {
+    const isPremium = this.isCurrentlyPremium(user);
+    const anchorRaw =
+      isPremium && user?.premiumStart ? user.premiumStart : user?.createdAt;
+    const anchor = anchorRaw ? new Date(anchorRaw) : new Date(0);
+    if (anchor > now) return anchor;
+
+    const cycle = new Date(anchor);
+    while (true) {
+      const next = new Date(cycle);
+      next.setMonth(next.getMonth() + 1);
+      if (next > now) break;
+      cycle.setTime(next.getTime());
+    }
+    return cycle;
   }
 
   async searchInfluencers(query: {
@@ -668,9 +973,10 @@ export class UsersService {
   }
 
   // Place this inside UsersService class
-  async getInfluencerByUsername(username: string) {
+  async getInfluencerByUsername(username: string, viewerId?: string | null) {
     const user: any = await this.influencerModel.findOne({ username }).lean();
     if (!user) return null;
+    const allowContact = await this.canViewInfluencerContact(user, viewerId);
     const {
       _id,
       name,
@@ -679,11 +985,13 @@ export class UsersService {
       profileImages,
       email,
       phoneNumber,
+      website,
       categories,
       location,
       socialMedia,
       isPremium,
       promotionalPrice,
+      profileTraffic,
     } = user;
     return {
       _id,
@@ -691,18 +999,27 @@ export class UsersService {
       username: userUsername,
       profileImage,
       profileImages: profileImages || [],
-      email,
-      phoneNumber,
+      email: allowContact ? email : undefined,
+      phoneNumber: allowContact ? phoneNumber : undefined,
+      website: allowContact ? website : undefined,
+      contactRestricted: !allowContact,
       categories,
       location: location || { state: "" },
       socialMedia,
       isPremium,
       promotionalPrice,
+      profileTraffic: profileTraffic || {
+        impressions: 0,
+        clicks: 0,
+        lastImpressionAt: null,
+        lastClickAt: null,
+      },
     };
   }
-  async getInfluencerById(id: string) {
+  async getInfluencerById(id: string, viewerId?: string | null) {
     const user: any = await this.influencerModel.findById(id).lean();
     if (!user) return null;
+    const allowContact = await this.canViewInfluencerContact(user, viewerId);
     const {
       _id,
       name,
@@ -711,11 +1028,13 @@ export class UsersService {
       profileImages,
       email,
       phoneNumber,
+      website,
       promotionalPrice,
       categories,
       location,
       socialMedia,
       isPremium,
+      profileTraffic,
     } = user;
     return {
       _id,
@@ -723,17 +1042,25 @@ export class UsersService {
       username,
       profileImage,
       profileImages: profileImages || [],
-      email,
-      phoneNumber,
+      email: allowContact ? email : undefined,
+      phoneNumber: allowContact ? phoneNumber : undefined,
+      website: allowContact ? website : undefined,
+      contactRestricted: !allowContact,
       categories,
       location: location || { state: "" },
       socialMedia,
       isPremium,
       promotionalPrice,
+      profileTraffic: profileTraffic || {
+        impressions: 0,
+        clicks: 0,
+        lastImpressionAt: null,
+        lastClickAt: null,
+      },
     };
   }
 
-  async getBrands(page = 1, limit = 20) {
+  async getBrands(page = 1, limit = 20, viewerId?: string | null) {
     const skip = (page - 1) * limit;
     const [data, total] = await Promise.all([
       this.brandModel
@@ -743,7 +1070,33 @@ export class UsersService {
         .limit(limit),
       this.brandModel.countDocuments({ status: "accepted" }),
     ]);
-    return { data, total, page, limit };
+    const viewerMode = await this.resolveContactVisibilityMode(viewerId);
+    const filtered = await Promise.all(
+      (data || []).map(async (brand: any) => {
+        const allow = await this.canViewBrandSocialMedia(
+          brand,
+          viewerId,
+          viewerMode,
+        );
+        if (!allow) {
+          return {
+            ...brand,
+            socialMedia: [],
+            socialMediaRestricted: true,
+            email: undefined,
+            phoneNumber: undefined,
+            website: undefined,
+            contactRestricted: true,
+          };
+        }
+        return {
+          ...brand,
+          socialMediaRestricted: false,
+          contactRestricted: false,
+        };
+      }),
+    );
+    return { data: filtered, total, page, limit };
   }
 
   async acceptUser(id: string) {
@@ -1071,6 +1424,7 @@ export class UsersService {
       "socialMedia",
       "contact",
       "promotionalPrice",
+      "payout",
     ];
     const updateData: any = {};
     for (const key of allowedFields) {
@@ -1208,6 +1562,7 @@ export class UsersService {
       "socialMedia",
       "contact",
       "promotionalPrice",
+      "payout",
     ];
     const updateData: any = {};
     for (const key of allowedFields) {

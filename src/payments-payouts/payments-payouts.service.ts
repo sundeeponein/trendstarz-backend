@@ -20,6 +20,7 @@ export class PaymentsPayoutsService {
     private readonly transactionModel: Model<any>,
     @InjectModel("AppSettings") private readonly appSettingsModel: Model<any>,
     @InjectModel("Brand") private readonly brandModel: Model<any>,
+    @InjectModel("Influencer") private readonly influencerModel: Model<any>,
   ) {}
 
   private roundPercent(amount: number, percent: number): number {
@@ -236,7 +237,103 @@ export class PaymentsPayoutsService {
       .find(filter)
       .sort({ createdAt: -1 })
       .lean();
-    return { success: true, data: rows };
+
+    // Enrich rows with recipient + payer profile info so the admin UI can
+    // prefill the "Mark Payout Paid" popup (name, UPI ID, mobile) without
+    // an extra round-trip per row.
+    const influencerIds = new Set<string>();
+    const brandIds = new Set<string>();
+    for (const r of rows as any[]) {
+      if (r.recipientRole === "influencer" && r.recipientId) {
+        influencerIds.add(String(r.recipientId));
+      }
+      if (r.recipientRole === "brand" && r.recipientId) {
+        brandIds.add(String(r.recipientId));
+      }
+      if (r.payerRole === "influencer" && r.payerId) {
+        influencerIds.add(String(r.payerId));
+      }
+      if (r.payerRole === "brand" && r.payerId) {
+        brandIds.add(String(r.payerId));
+      }
+    }
+
+    const [influencers, brands] = await Promise.all([
+      influencerIds.size
+        ? this.influencerModel
+            .find({ _id: { $in: Array.from(influencerIds) } })
+            .select("name email phoneNumber payout")
+            .lean()
+        : Promise.resolve([] as any[]),
+      brandIds.size
+        ? this.brandModel
+            .find({ _id: { $in: Array.from(brandIds) } })
+            .select("brandName email phoneNumber payout")
+            .lean()
+        : Promise.resolve([] as any[]),
+    ]);
+
+    const inflMap = new Map<string, any>();
+    for (const i of influencers as any[]) inflMap.set(String(i._id), i);
+    const brandMap = new Map<string, any>();
+    for (const b of brands as any[]) brandMap.set(String(b._id), b);
+
+    const buildContact = (
+      role: string | undefined,
+      id: any,
+    ): {
+      id: string;
+      role: string;
+      name: string;
+      email?: string;
+      mobile?: string;
+      payoutUpiId?: string;
+      payoutMobile?: string;
+      payoutName?: string;
+      lastConfirmedAt?: Date | null;
+    } | null => {
+      if (!id) return null;
+      const sid = String(id);
+      if (role === "influencer") {
+        const i = inflMap.get(sid);
+        if (!i) return { id: sid, role: "influencer", name: "" };
+        return {
+          id: sid,
+          role: "influencer",
+          name: i.name || "",
+          email: i.email || "",
+          mobile: i.phoneNumber || "",
+          payoutUpiId: i.payout?.upiId || "",
+          payoutMobile: i.payout?.mobile || "",
+          payoutName: i.payout?.accountHolderName || "",
+          lastConfirmedAt: i.payout?.lastConfirmedAt || null,
+        };
+      }
+      if (role === "brand") {
+        const b = brandMap.get(sid);
+        if (!b) return { id: sid, role: "brand", name: "" };
+        return {
+          id: sid,
+          role: "brand",
+          name: b.brandName || "",
+          email: b.email || "",
+          mobile: b.phoneNumber || "",
+          payoutUpiId: b.payout?.upiId || "",
+          payoutMobile: b.payout?.mobile || "",
+          payoutName: b.payout?.accountHolderName || "",
+          lastConfirmedAt: b.payout?.lastConfirmedAt || null,
+        };
+      }
+      return null;
+    };
+
+    const enriched = (rows as any[]).map((r: any) => ({
+      ...r,
+      recipient: buildContact(r.recipientRole, r.recipientId),
+      payer: buildContact(r.payerRole, r.payerId),
+    }));
+
+    return { success: true, data: enriched };
   }
 
   async getAdminSummary() {

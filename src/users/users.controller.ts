@@ -8,6 +8,7 @@ import {
   Get,
   Req,
   Query,
+  Delete,
   ForbiddenException,
 } from "@nestjs/common";
 import { JwtAuthGuard } from "../auth/jwt-auth.guard";
@@ -15,29 +16,61 @@ import { RolesGuard } from "../auth/roles.guard";
 import { InfluencerProfileDto, BrandProfileDto } from "./dto/profile.dto";
 import { UsersService } from "./users.service";
 import { Request } from "express";
+import * as jwt from "jsonwebtoken";
+import { getJwtSecret } from "../auth/jwt-secret";
+
+/** Decode JWT from request without throwing. Returns userId or null. */
+function extractOptionalViewerId(req: any): string | null {
+  try {
+    const auth = req?.headers?.authorization;
+    if (!auth) return null;
+    const token = auth.split(" ")[1];
+    if (!token) return null;
+    const decoded: any = jwt.verify(token, getJwtSecret());
+    return decoded?.userId || null;
+  } catch {
+    return null;
+  }
+}
 
 @Controller("users")
 export class UsersController {
   @Get("brands/name/:brandName")
-  async getBrandByName(@Param("brandName") brandName: string) {
-    return this.usersService.getBrandByName(brandName);
+  async getBrandByName(
+    @Param("brandName") brandName: string,
+    @Req() req: Request,
+  ) {
+    const viewerId = extractOptionalViewerId(req);
+    return this.usersService.getBrandByName(brandName, viewerId);
   }
   constructor(private readonly usersService: UsersService) {}
 
   @Get("influencers/:id")
-  async getInfluencerById(@Param("id") id: string) {
-    const profile = await this.usersService.getInfluencerById(id);
-    if (!profile) return null;
-    const caps = await this.usersService['plansService'].getUserPlanCapabilities(String((profile as any)._id));
-    return this.usersService.applyPlanFilter(profile, caps);
+  async getInfluencerById(@Param("id") id: string, @Req() req: Request) {
+    const viewerId = extractOptionalViewerId(req);
+    return this.usersService.getInfluencerById(id, viewerId);
   }
 
   @Get("influencers/username/:username")
-  async getInfluencerByUsername(@Param("username") username: string) {
-    const profile = await this.usersService.getInfluencerByUsername(username);
-    if (!profile) return null;
-    const caps = await this.usersService['plansService'].getUserPlanCapabilities(String((profile as any)._id));
-    return this.usersService.applyPlanFilter(profile, caps);
+  async getInfluencerByUsername(
+    @Param("username") username: string,
+    @Req() req: Request,
+  ) {
+    const viewerId = extractOptionalViewerId(req);
+    return this.usersService.getInfluencerByUsername(
+      username,
+      viewerId,
+    );
+  }
+
+  @Post("influencers/username/:username/track-impression")
+  async trackInfluencerProfileImpression(@Param("username") username: string) {
+    return this.usersService.trackInfluencerProfileImpression(username);
+  }
+
+  @Post("influencers/username/:username/track-click")
+  async trackInfluencerProfileClick(@Param("username") username: string) {
+    return this.usersService.trackInfluencerProfileClick(username);
   }
 
   @Get("check-username/:username")
@@ -92,14 +125,27 @@ export class UsersController {
     });
   }
 
+  @Post("brands/name/:brandName/track-impression")
+  async trackBrandProfileImpression(@Param("brandName") brandName: string) {
+    return this.usersService.trackBrandProfileImpression(brandName);
+  }
+
+  @Post("brands/name/:brandName/track-click")
+  async trackBrandProfileClick(@Param("brandName") brandName: string) {
+    return this.usersService.trackBrandProfileClick(brandName);
+  }
+
   @Get("influencers")
   async getInfluencers(
     @Query("page") page?: string,
     @Query("limit") limit?: string,
+    @Req() req?: Request,
   ) {
+    const viewerId = extractOptionalViewerId(req);
     return this.usersService.getInfluencers(
       page ? parseInt(page, 10) : undefined,
       limit ? parseInt(limit, 10) : undefined,
+      viewerId,
     );
   }
 
@@ -107,10 +153,13 @@ export class UsersController {
   async getBrands(
     @Query("page") page?: string,
     @Query("limit") limit?: string,
+    @Req() req?: Request,
   ) {
+    const viewerId = extractOptionalViewerId(req);
     return this.usersService.getBrands(
       page ? parseInt(page, 10) : undefined,
       limit ? parseInt(limit, 10) : undefined,
+      viewerId,
     );
   }
 
@@ -149,16 +198,13 @@ export class UsersController {
     return this.usersService.restoreUser(id);
   }
 
-  // Permanent delete is now only allowed for GDPR requests. Otherwise, use soft delete.
-  // To enable, uncomment and add GDPR check logic.
-  // @UseGuards(JwtAuthGuard, RolesGuard)
-  // @Delete(":id/permanent")
-  // async deletePermanently(@Param("id") id: string, @Req() req: any) {
-  //   if (!req.isGDPRRequest) {
-  //     throw new ForbiddenException("Permanent delete is only allowed for GDPR requests.");
-  //   }
-  //   return this.usersService.deletePermanently(id);
-  // }
+  // Permanent delete — admin-only. Used for GDPR requests and admin-driven hard deletion
+  // from the Deleted Users page (after the user has already been soft-deleted).
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Delete(":id/permanent")
+  async deletePermanently(@Param("id") id: string) {
+    return this.usersService.deletePermanently(id);
+  }
 
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Patch(":id/premium")

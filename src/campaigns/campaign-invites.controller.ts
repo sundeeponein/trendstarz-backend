@@ -121,6 +121,11 @@ export class CampaignInvitesController {
       selectedPostDate?: string;
       selectedPlatform?: string;
       selectedContentType?: string;
+      payout?: {
+        upiId?: string;
+        mobile?: string;
+        accountHolderName?: string;
+      };
     },
   ) {
     const influencerId = req.user?.userId;
@@ -131,6 +136,7 @@ export class CampaignInvitesController {
       body.selectedPostDate,
       body.selectedPlatform,
       body.selectedContentType,
+      body.payout,
     );
   }
 
