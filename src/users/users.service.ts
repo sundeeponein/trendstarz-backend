@@ -1,7 +1,7 @@
 import { Injectable, BadRequestException } from "@nestjs/common";
 import * as fs from "fs";
 import * as path from "path";
-import { v4 as uuidv4 } from "uuid";
+import { randomUUID } from "crypto";
 import { CloudinaryService } from "../cloudinary.service";
 import { InfluencerProfileDto, BrandProfileDto } from "./dto/profile.dto";
 import * as bcrypt from "bcryptjs";
@@ -753,7 +753,7 @@ export class UsersService {
           const buffer = imgStr.startsWith("data:")
             ? Buffer.from(imgStr.split(",")[1], "base64")
             : fs.readFileSync(imgStr);
-          const filename = uuidv4() + ".jpg";
+          const filename = randomUUID() + ".jpg";
           const filePath = path.join(LOCAL_IMAGE_DIR, filename);
           fs.writeFileSync(filePath, buffer);
           uploadedImages.push({
@@ -795,7 +795,7 @@ export class UsersService {
           const buffer = imgStr.startsWith("data:")
             ? Buffer.from(imgStr.split(",")[1], "base64")
             : fs.readFileSync(imgStr);
-          const filename = uuidv4() + ".jpg";
+          const filename = randomUUID() + ".jpg";
           const filePath = path.join(LOCAL_IMAGE_DIR, filename);
           fs.writeFileSync(filePath, buffer);
           uploadedImages.push({
@@ -812,7 +812,7 @@ export class UsersService {
           const buffer = imgStr.startsWith("data:")
             ? Buffer.from(imgStr.split(",")[1], "base64")
             : fs.readFileSync(imgStr);
-          const filename = uuidv4() + ".jpg";
+          const filename = randomUUID() + ".jpg";
           const filePath = path.join(LOCAL_IMAGE_DIR, filename);
           fs.writeFileSync(filePath, buffer);
           uploadedProducts.push({

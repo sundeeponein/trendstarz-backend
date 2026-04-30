@@ -18,7 +18,7 @@ import { FileInterceptor } from "@nestjs/platform-express";
 import { diskStorage } from "multer";
 import * as fs from "fs";
 import * as path from "path";
-import { v4 as uuidv4 } from "uuid";
+import { randomUUID } from "crypto";
 import { AuthService } from "./auth.service";
 import { CloudinaryService } from "../cloudinary.service";
 import { JwtAuthGuard } from "./jwt-auth.guard";
@@ -126,7 +126,7 @@ export class AuthController {
         },
         filename: (req: any, file: any, cb: any) => {
           const ext = path.extname(file.originalname || "") || ".jpg";
-          cb(null, `${uuidv4()}${ext}`);
+          cb(null, `${randomUUID()}${ext}`);
         },
       }),
     }),
