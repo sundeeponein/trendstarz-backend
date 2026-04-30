@@ -17,7 +17,7 @@ import { FileInterceptor } from '@nestjs/platform-express';
 import { diskStorage } from 'multer';
 import * as path from 'path';
 import * as fs from 'fs';
-import { v4 as uuidv4 } from 'uuid';
+import { randomUUID } from 'crypto';
 import { CloudinaryService } from '../cloudinary.service';
 
 @Controller("campaign-invites")
@@ -40,7 +40,7 @@ export class CampaignInvitesController {
       },
       filename: (req: any, file: any, cb: any) => {
         const ext = path.extname(file.originalname);
-        cb(null, uuidv4() + ext);
+        cb(null, randomUUID() + ext);
       },
     }),
   }))
