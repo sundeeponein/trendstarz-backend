@@ -30,8 +30,14 @@ export class CampaignsController {
 
   @UseGuards(JwtAuthGuard)
   @Get()
-  async findByBrand(@Query("brandId") brandId: string) {
-    return this.campaignsService.findByBrandId(brandId);
+  async findCampaigns(
+    @Query("brandId") brandId?: string,
+    @Query("status") status?: string,
+  ) {
+    if (brandId) {
+      return this.campaignsService.findByBrandId(brandId);
+    }
+    return this.campaignsService.findPublic(status || "active");
   }
 
   @Get("brand-name/:brandName")

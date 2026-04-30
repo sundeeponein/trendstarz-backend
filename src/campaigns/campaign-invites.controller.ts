@@ -84,6 +84,13 @@ export class CampaignInvitesController {
     return this.invitesService.findByInfluencer(influencerId);
   }
 
+  @UseGuards(JwtAuthGuard)
+  @Post("campaign/:campaignId/apply")
+  async applyToCampaign(@Param("campaignId") campaignId: string, @Req() req: any) {
+    const influencerId = req.user?.userId;
+    return this.invitesService.applyToCampaign(influencerId, campaignId);
+  }
+
   /** GET /campaign-invites/:id — get a single invite with campaign platform/deliverable info */
   @UseGuards(JwtAuthGuard)
   @Get(":id")

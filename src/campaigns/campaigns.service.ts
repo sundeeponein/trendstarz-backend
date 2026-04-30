@@ -151,6 +151,40 @@ export class CampaignsService {
     return results;
   }
 
+  async findPublic(status: string = "active") {
+    const allowedStatuses = new Set(["active", "pending", "draft", "completed"]);
+    const query: any = {};
+    if (status && allowedStatuses.has(status)) {
+      query.status = status;
+    } else {
+      query.status = "active";
+    }
+    const campaigns: any[] = await this.campaignModel.find(query).sort({ createdAt: -1 }).lean();
+
+    // Enrich campaigns with brand info (name, logo, username)
+    const brandIds = [...new Set(campaigns.map((c) => c.brandId).filter(Boolean))];
+    const brands: any[] = await this.brandModel
+      .find({ _id: { $in: brandIds } })
+      .select("brandName brandUsername brandLogo")
+      .lean();
+    const brandMap = new Map(brands.map((b) => [String(b._id), b]));
+
+    return campaigns.map((c) => {
+      const brand = brandMap.get(String(c.brandId));
+      return {
+        ...c,
+        brand: brand
+          ? {
+              _id: brand._id,
+              name: brand.brandName,
+              username: brand.brandUsername,
+              logo: brand.brandLogo?.[0]?.url || null,
+            }
+          : null,
+      };
+    });
+  }
+
   async findByBrandName(brandName: string) {
     const brand: any = await this.brandModel
       .findOne({
