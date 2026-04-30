@@ -1,8 +1,5 @@
 {
   "contactVisibilityPolicyMatrix": {
-    "none":{
-      "contactVisibility": "NONE"
-    },
     "free": {
       "contactVisibility": "AFTER_ACCEPT"
     },
@@ -34,7 +31,7 @@
         { "key": "maxInvitesPerCampaign", "label": "Invites received / month", "value": 1 },
         { "key": "maxInviteOptions", "label": "Invite options", "value": 5 }
       ],
-      "policies": { "imageRetentionDaysAfterExpiry": 45, "contactVisibility": "NONE" },
+      "policies": { "imageRetentionDaysAfterExpiry": 45, "contactVisibility": "AFTER_ACCEPT" },
       "highlight": false,
       "isActive": true,
       "sortOrder": 0
@@ -63,7 +60,7 @@
         { "key": "trialPeriodDays", "label": "Trial period (days)", "value": 7 },
         { "key": "discountOnInfluencerPro", "label": "Discount on Influencer Pro plan (%)", "value": 0 }
       ],
-      "policies": { "imageRetentionDaysAfterExpiry": 45, "contactVisibility": "NONE" },
+      "policies": { "imageRetentionDaysAfterExpiry": 45, "contactVisibility": "AFTER_ACCEPT" },
       "highlight": true,
       "isActive": true,
       "sortOrder": 1
@@ -89,7 +86,7 @@
         { "key": "maxTeamSeats", "label": "Team seat", "value": 1 },
         { "key": "analytics", "label": "Analytics", "value": 0 }
       ],
-      "policies": { "imageRetentionDaysAfterExpiry": 45, "contactVisibility": "NONE" },
+      "policies": { "imageRetentionDaysAfterExpiry": 45, "contactVisibility": "AFTER_ACCEPT" },
       "highlight": false,
       "isActive": true,
       "sortOrder": 0
@@ -119,7 +116,7 @@
         { "key": "trialPeriodDays", "label": "Trial period (days)", "value": 7 },
         { "key": "discountOnBrandPro", "label": "Discount on Brand Pro plan (%)", "value": 0 }
       ],
-      "policies": { "imageRetentionDaysAfterExpiry": 45, "contactVisibility": "NONE" },
+      "policies": { "imageRetentionDaysAfterExpiry": 45, "contactVisibility": "AFTER_ACCEPT" },
       "highlight": true,
       "isActive": true,
       "sortOrder": 1
