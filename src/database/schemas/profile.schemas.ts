@@ -338,6 +338,7 @@ export const CampaignSchema = new Schema(
       },
     ],
     minFollowerCount: { type: Number },
+    minInfluencerTier: { type: String },
     platformPreference: { type: String },
     specialInstructions: { type: String },
   },
