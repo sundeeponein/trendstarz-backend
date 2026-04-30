@@ -131,6 +131,17 @@ export class CampaignsService {
         `Plan limit: Only ${maxCampaigns} active campaign(s) allowed. Upgrade for more.`,
       );
     }
+    // Premium-only campaign types: Product & Invite (Free brands can only run Paid)
+    const premiumOnlyTypes = new Set(["product", "invite_location"]);
+    if (
+      data?.campaignType &&
+      premiumOnlyTypes.has(String(data.campaignType)) &&
+      !caps.hasPremium
+    ) {
+      throw new BadRequestException(
+        "Product & Invite campaigns require a Premium plan. Upgrade to unlock these collaboration types.",
+      );
+    }
     const normalized = this.normalizeCampaignPayload(data);
     const campaign = new this.campaignModel({ ...normalized, brandId });
     return await campaign.save();
@@ -238,6 +249,19 @@ export class CampaignsService {
         throw new BadRequestException(
           `Cannot transition from '${campaign.status}' to '${data.status}'`,
         );
+      }
+    }
+
+    // Premium-only campaign types: Product & Invite (Free brands can only run Paid)
+    if (data?.campaignType && data.campaignType !== campaign.campaignType) {
+      const premiumOnlyTypes = new Set(["product", "invite_location"]);
+      if (premiumOnlyTypes.has(String(data.campaignType))) {
+        const caps = await this.plansService.getUserPlanCapabilities(brandId);
+        if (!caps.hasPremium) {
+          throw new BadRequestException(
+            "Product & Invite campaigns require a Premium plan. Upgrade to unlock these collaboration types.",
+          );
+        }
       }
     }
 

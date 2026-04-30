@@ -69,17 +69,30 @@ export class CampaignsController {
       ? body.influencerIds
       : [];
     if (!influencerIds.length) {
-      return { success: true, invites: [], count: 0 };
+      return { success: true, invites: [], count: 0, failures: [] };
     }
-    const invites = [];
+    const invites: any[] = [];
+    const failures: { influencerId: string; reason: string }[] = [];
     for (const influencerId of influencerIds) {
-      const invite = await this.campaignInvitesService.create(brandId, {
-        campaignId: id,
-        influencerId,
-      });
-      invites.push(invite);
+      try {
+        const invite = await this.campaignInvitesService.create(brandId, {
+          campaignId: id,
+          influencerId,
+        });
+        invites.push(invite);
+      } catch (err: any) {
+        const reason =
+          err?.response?.message || err?.message || "Failed to send invite";
+        failures.push({ influencerId, reason });
+      }
     }
-    return { success: true, invites, count: invites.length };
+    return {
+      success: invites.length > 0,
+      invites,
+      count: invites.length,
+      failures,
+      requested: influencerIds.length,
+    };
   }
 
   @UseGuards(JwtAuthGuard)

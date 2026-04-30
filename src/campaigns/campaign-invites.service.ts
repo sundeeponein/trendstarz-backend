@@ -285,7 +285,7 @@ export class CampaignInvitesService {
       .find({ influencerId })
       .populate(
         "campaignId",
-        "title description status budgetMin budgetMax campaignType pricePerInfluencer maxInfluencers startDate endDate timelineStart timelineEnd deliverables platforms socialMedia specialInstructions",
+        "title description status budgetMin budgetMax campaignType pricePerInfluencer maxInfluencers startDate endDate timelineStart timelineEnd deliverables platforms socialMedia specialInstructions venueName venueAddress venueCity venueDistrict venueState venueGoogleMapUrl productValue productDescription productPaymentMode productPaymentAmount inviteBenefits payToJoinBenefits payToJoinInstructions",
       )
       .populate(
         "brandId",
@@ -332,6 +332,312 @@ export class CampaignInvitesService {
       .select("title platforms socialMedia deliverables specialInstructions")
       .lean();
     return { invite, campaign };
+  }
+
+  /**
+   * Brand-initiated contact unlock. Single rule: brand pays/premium → both sides see contact.
+   * Eligible paths:
+   *  - Brand has active premium → unlocked instantly.
+   *  - Campaign is `paid_collab` AND invite status is `payment_confirmed` (or beyond) → unlocked.
+   *  - Brand has not used their 1 free unlock yet → unlocked + freeUnlocksUsed += 1.
+   *  - Otherwise → 402-style BadRequest with upgrade message.
+   */
+  async unlockContact(inviteId: string, brandId: string) {
+    const invite: any = await this.inviteModel.findById(inviteId);
+    if (!invite) throw new NotFoundException("Invite not found");
+
+    // Authorize: caller must be the brand owner (ObjectId or brandUsername match)
+    if (String(invite.brandId) !== brandId) {
+      const brand = await this.brandModel
+        .findById(brandId)
+        .select("brandUsername")
+        .lean();
+      const brandUsername =
+        brand && typeof brand === "object" && "brandUsername" in brand
+          ? (brand as any).brandUsername
+          : undefined;
+      if (!brandUsername || String(invite.brandId) !== brandUsername) {
+        throw new BadRequestException("Not your invite");
+      }
+    }
+
+    // Already unlocked → idempotent return
+    if (invite.unlocked) {
+      return {
+        success: true,
+        alreadyUnlocked: true,
+        unlockType: invite.unlockType,
+        unlockedAt: invite.unlockedAt,
+      };
+    }
+
+    // Must have at least accepted before unlocking
+    const unlockableStatuses = new Set([
+      "accepted",
+      "payment_confirmed",
+      "working",
+      "submitted",
+      "completed",
+    ]);
+    if (!unlockableStatuses.has(invite.status)) {
+      throw new BadRequestException(
+        "Invite must be accepted by the influencer before contact can be unlocked.",
+      );
+    }
+
+    const caps = await this.plansService.getUserPlanCapabilities(brandId);
+    const hasPremium = !!caps.hasPremium;
+
+    let unlockType: "premium" | "paid_collab_payment" | "free_unlock" | null =
+      null;
+    let incrementFreeUnlock = false;
+
+    if (hasPremium) {
+      unlockType = "premium";
+    } else {
+      // Check paid_collab payment path
+      const campaign: any = await this.campaignModel
+        .findById(invite.campaignId)
+        .select("campaignType")
+        .lean();
+      const isPaidCollab =
+        campaign && String(campaign.campaignType) === "paid_collab";
+      const isPaymentConfirmed = [
+        "payment_confirmed",
+        "working",
+        "submitted",
+        "completed",
+      ].includes(String(invite.status));
+      if (isPaidCollab && isPaymentConfirmed) {
+        unlockType = "paid_collab_payment";
+      } else {
+        // Free-unlock path (1 per brand lifetime)
+        const brandDoc: any = await this.brandModel
+          .findById(brandId)
+          .select("freeUnlocksUsed")
+          .lean();
+        const usedUnlocks = Number(brandDoc?.freeUnlocksUsed || 0);
+        if (usedUnlocks < 1) {
+          unlockType = "free_unlock";
+          incrementFreeUnlock = true;
+        }
+      }
+    }
+
+    if (!unlockType) {
+      throw new BadRequestException(
+        "Upgrade to Premium to unlock contact, or complete payment for Paid campaigns. Your free unlock has already been used.",
+      );
+    }
+
+    invite.unlocked = true;
+    invite.unlockedAt = new Date();
+    invite.unlockType = unlockType;
+    await invite.save();
+
+    if (incrementFreeUnlock) {
+      await this.brandModel.findByIdAndUpdate(brandId, {
+        $inc: { freeUnlocksUsed: 1 },
+      });
+    }
+
+    return {
+      success: true,
+      unlocked: true,
+      unlockType,
+      unlockedAt: invite.unlockedAt,
+    };
+  }
+
+  // ── Fulfillment / brand-action helpers ─────────────────────────
+
+  /** Internal: load an invite and assert that the caller (brandId) owns it. */
+  private async assertBrandOwnsInvite(inviteId: string, brandId: string) {
+    const invite: any = await this.inviteModel.findById(inviteId);
+    if (!invite) throw new NotFoundException("Invite not found");
+    if (String(invite.brandId) !== brandId) {
+      const brand = await this.brandModel
+        .findById(brandId)
+        .select("brandUsername")
+        .lean();
+      const brandUsername =
+        brand && typeof brand === "object" && "brandUsername" in brand
+          ? (brand as any).brandUsername
+          : undefined;
+      if (!brandUsername || String(invite.brandId) !== brandUsername) {
+        throw new BadRequestException("Not your invite");
+      }
+    }
+    return invite;
+  }
+
+  /**
+   * Brand updates product-shipping fulfillment for a `product` campaign invite.
+   * Status auto-derives: trackingId set → shipped; deliveredAt set → delivered.
+   */
+  async updateProductFulfillment(
+    inviteId: string,
+    brandId: string,
+    body: {
+      courier?: string;
+      trackingId?: string;
+      trackingUrl?: string;
+      shippedAt?: string | Date;
+      deliveredAt?: string | Date;
+      status?: "pending" | "shipped" | "delivered" | "returned";
+      note?: string;
+    },
+  ) {
+    const invite = await this.assertBrandOwnsInvite(inviteId, brandId);
+    const campaign: any = await this.campaignModel.findById(invite.campaignId);
+    if (!campaign || campaign.campaignType !== "product") {
+      throw new BadRequestException(
+        "Product fulfillment is only valid for `product` campaigns.",
+      );
+    }
+    const pf = invite.productFulfillment || {};
+    if (body.courier !== undefined) pf.courier = body.courier;
+    if (body.trackingId !== undefined) pf.trackingId = body.trackingId;
+    if (body.trackingUrl !== undefined) pf.trackingUrl = body.trackingUrl;
+    if (body.shippedAt !== undefined) pf.shippedAt = new Date(body.shippedAt);
+    if (body.deliveredAt !== undefined)
+      pf.deliveredAt = new Date(body.deliveredAt);
+    if (body.note !== undefined) pf.note = body.note;
+    if (body.status) {
+      pf.status = body.status;
+    } else {
+      // Auto-derive
+      if (pf.deliveredAt) pf.status = "delivered";
+      else if (pf.trackingId || pf.shippedAt) {
+        pf.status = "shipped";
+        if (!pf.shippedAt) pf.shippedAt = new Date();
+      }
+    }
+    invite.productFulfillment = pf;
+    invite.updatedAt = new Date();
+    await invite.save();
+    return { success: true, productFulfillment: pf };
+  }
+
+  /**
+   * Brand marks an `invite_location` campaign visit as checked-in / no-show / cancelled,
+   * or schedules a future visit.
+   */
+  async updateLocationCheckIn(
+    inviteId: string,
+    brandId: string,
+    body: {
+      status?: "pending" | "checked_in" | "no_show" | "cancelled";
+      scheduledAt?: string | Date;
+      checkedInAt?: string | Date;
+      note?: string;
+    },
+  ) {
+    const invite = await this.assertBrandOwnsInvite(inviteId, brandId);
+    const campaign: any = await this.campaignModel.findById(invite.campaignId);
+    if (!campaign || campaign.campaignType !== "invite_location") {
+      throw new BadRequestException(
+        "Check-in is only valid for `invite_location` campaigns.",
+      );
+    }
+    const lv = invite.locationVisit || {};
+    if (body.scheduledAt !== undefined)
+      lv.scheduledAt = new Date(body.scheduledAt);
+    if (body.note !== undefined) lv.note = body.note;
+    if (body.status) {
+      lv.status = body.status;
+      if (body.status === "checked_in" && !lv.checkedInAt) {
+        lv.checkedInAt = body.checkedInAt
+          ? new Date(body.checkedInAt)
+          : new Date();
+      }
+    } else if (body.checkedInAt) {
+      lv.checkedInAt = new Date(body.checkedInAt);
+      lv.status = "checked_in";
+    }
+    invite.locationVisit = lv;
+    invite.updatedAt = new Date();
+    await invite.save();
+    return { success: true, locationVisit: lv };
+  }
+
+  /** Brand sets/updates the deliverable due-date for an invite. */
+  async setInviteDueDate(
+    inviteId: string,
+    brandId: string,
+    dueDate: string | Date | null,
+  ) {
+    const invite = await this.assertBrandOwnsInvite(inviteId, brandId);
+    invite.dueDate = dueDate ? new Date(dueDate) : null;
+    invite.updatedAt = new Date();
+    await invite.save();
+    return { success: true, dueDate: invite.dueDate };
+  }
+
+  /** Brand records that they've nudged the influencer. UI/email side-effects later. */
+  async remindInvite(inviteId: string, brandId: string) {
+    const invite = await this.assertBrandOwnsInvite(inviteId, brandId);
+    // Throttle: max 1 reminder per 24h.
+    if (invite.remindedAt) {
+      const diff = Date.now() - new Date(invite.remindedAt).getTime();
+      if (diff < 24 * 60 * 60 * 1000) {
+        throw new BadRequestException(
+          "You already sent a reminder in the last 24 hours.",
+        );
+      }
+    }
+    invite.remindedAt = new Date();
+    invite.remindersSent = (invite.remindersSent || 0) + 1;
+    invite.updatedAt = new Date();
+    await invite.save();
+    return {
+      success: true,
+      remindedAt: invite.remindedAt,
+      remindersSent: invite.remindersSent,
+    };
+  }
+
+  /** Brand withdraws a pending invite (only valid before influencer accepts). */
+  async withdrawInvite(inviteId: string, brandId: string, reason?: string) {
+    const invite = await this.assertBrandOwnsInvite(inviteId, brandId);
+    if (invite.status !== "pending") {
+      throw new BadRequestException(
+        "Only pending invites can be withdrawn. Use Report for accepted invites.",
+      );
+    }
+    invite.status = "withdrawn";
+    invite.withdrawnAt = new Date();
+    if (reason) invite.withdrawnReason = reason;
+    invite.updatedAt = new Date();
+    await invite.save();
+    return { success: true, status: invite.status };
+  }
+
+  /** Brand reports an issue (no-show / non-delivery / dispute). Flags invite for review. */
+  async reportInviteIssue(
+    inviteId: string,
+    brandId: string,
+    reason: string,
+  ) {
+    if (!reason || !reason.trim()) {
+      throw new BadRequestException("A reason is required when reporting.");
+    }
+    const invite = await this.assertBrandOwnsInvite(inviteId, brandId);
+    invite.reportedIssue = {
+      reason: reason.trim(),
+      reportedAt: new Date(),
+    };
+    // Move into disputed unless already completed
+    if (
+      invite.status !== "completed" &&
+      invite.status !== "disputed" &&
+      invite.status !== "withdrawn"
+    ) {
+      invite.status = "disputed";
+    }
+    invite.updatedAt = new Date();
+    await invite.save();
+    return { success: true, status: invite.status };
   }
 
   async respond(
@@ -515,7 +821,7 @@ export class CampaignInvitesService {
       })
       .populate(
         "campaignId",
-        "title description status budgetMin budgetMax campaignType pricePerInfluencer maxInfluencers startDate endDate timelineStart timelineEnd deliverables platforms socialMedia specialInstructions",
+        "title description status budgetMin budgetMax campaignType pricePerInfluencer maxInfluencers startDate endDate timelineStart timelineEnd deliverables platforms socialMedia specialInstructions venueName venueAddress venueCity venueDistrict venueState venueGoogleMapUrl productValue productDescription productPaymentMode productPaymentAmount inviteBenefits payToJoinBenefits payToJoinInstructions",
       )
       .populate(
         "brandId",
@@ -561,7 +867,7 @@ export class CampaignInvitesService {
       .findById(saved._id)
       .populate(
         "campaignId",
-        "title description status budgetMin budgetMax campaignType pricePerInfluencer maxInfluencers startDate endDate timelineStart timelineEnd deliverables platforms socialMedia specialInstructions",
+        "title description status budgetMin budgetMax campaignType pricePerInfluencer maxInfluencers startDate endDate timelineStart timelineEnd deliverables platforms socialMedia specialInstructions venueName venueAddress venueCity venueDistrict venueState venueGoogleMapUrl productValue productDescription productPaymentMode productPaymentAmount inviteBenefits payToJoinBenefits payToJoinInstructions",
       )
       .populate(
         "brandId",

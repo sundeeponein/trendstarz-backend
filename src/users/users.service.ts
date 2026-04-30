@@ -445,30 +445,25 @@ export class UsersService {
 
   /**
    * Decide whether `viewerId` is allowed to see the brand's social media handles.
-   * Rules:
-   *  - Brand owner can always see their own.
-   *  - Influencer can see only after campaign relationship is accepted/mutually approved.
+   * NEW SINGLE RULE: contact is visible only when an accepted CampaignInvite between
+   * brand & influencer has been UNLOCKED by the brand (premium / paid_collab payment / 1 free unlock).
+   * Plan-tier policy matrix is no longer consulted.
    */
   async canViewBrandSocialMedia(
     brand: any,
     viewerId?: string | null,
-    viewerMode?: ContactVisibilityMode,
+    _viewerMode?: ContactVisibilityMode,
   ): Promise<boolean> {
     if (!brand) return false;
     if (!viewerId) return false;
     if (String(brand._id) === String(viewerId)) return true;
 
-    const mode =
-      viewerMode || (await this.resolveContactVisibilityMode(viewerId));
-    if (mode === "NONE") return false;
     const influencerViewer = await this.influencerModel
       .findById(viewerId)
       .select("_id")
       .lean();
     if (!influencerViewer) return false;
-    if (mode === "PROFILE") return true;
 
-    const allowedStatuses = this.statusesForContactMode(mode);
     const invite = await this.campaignInviteModel
       .findOne({
         $or: [
@@ -477,7 +472,7 @@ export class UsersService {
           { brandId: brand.brandUsername },
         ],
         influencerId: viewerId,
-        status: { $in: allowedStatuses },
+        unlocked: true,
       })
       .select("_id")
       .lean();
@@ -565,12 +560,13 @@ export class UsersService {
 
   /**
    * Decide whether `viewerId` may view influencer contact details.
-   * Middleman rule: contact is visible only after campaign is accepted/mutually approved.
+   * NEW SINGLE RULE: contact is visible only when the brand has UNLOCKED the invite
+   * (premium / paid_collab payment / 1 free unlock). Plan-tier policy matrix is no longer consulted.
    */
   private async canViewInfluencerContact(
     influencer: any,
     viewerId?: string | null,
-    viewerMode?: ContactVisibilityMode,
+    _viewerMode?: ContactVisibilityMode,
   ): Promise<boolean> {
     if (!viewerId) return false;
     if (String(influencer?._id) === String(viewerId)) return true;
@@ -581,17 +577,10 @@ export class UsersService {
       .lean();
     if (!brand) return false;
 
-    const mode =
-      viewerMode || (await this.resolveContactVisibilityMode(viewerId));
-    if (mode === "NONE") return false;
-    if (mode === "PROFILE") return true;
-
-    const allowedStatuses = this.statusesForContactMode(mode);
-
     const invite = await this.campaignInviteModel
       .findOne({
         influencerId: influencer._id,
-        status: { $in: allowedStatuses },
+        unlocked: true,
         $or: [
           { brandId: brand._id },
           { brandId: String(brand._id) },
