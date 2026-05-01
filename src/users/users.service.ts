@@ -11,17 +11,6 @@ import { PlansService } from "../plans/plans.service";
 
 const USE_LOCAL_IMAGES = process.env.USE_LOCAL_IMAGES === "true";
 const LOCAL_IMAGE_DIR = path.resolve(__dirname, "../../assets/local-images");
-type ContactVisibilityMode =
-  | "PROFILE"
-  | "AFTER_ACCEPT"
-  | "AFTER_PAYMENT"
-  | "NONE";
-type ExplicitContactVisibilityMode = Exclude<ContactVisibilityMode, never> | null;
-const CONTACT_VISIBILITY_POLICY_BY_TIER: Record<string, ContactVisibilityMode> = {
-  free: "AFTER_ACCEPT",
-  premium: "AFTER_ACCEPT",
-  premiumPro: "AFTER_PAYMENT",
-};
 if (USE_LOCAL_IMAGES && !fs.existsSync(LOCAL_IMAGE_DIR)) {
   fs.mkdirSync(LOCAL_IMAGE_DIR, { recursive: true });
 }
@@ -387,72 +376,14 @@ export class UsersService {
     return new Date(user.premiumEnd) >= new Date();
   }
 
-  private normalizeContactVisibilityMode(
-    raw: unknown,
-  ): ExplicitContactVisibilityMode {
-    const mode = String(raw || "")
-      .toUpperCase()
-      .trim();
-    if (mode === "PROFILE") return "PROFILE";
-    if (mode === "AFTER_PAYMENT") return "AFTER_PAYMENT";
-    if (mode === "AFTER_ACCEPT") return "AFTER_ACCEPT";
-    if (mode === "NONE") return "NONE";
-    return null;
-  }
-
-  private async resolveContactVisibilityMode(
-    viewerId?: string | null,
-  ): Promise<ContactVisibilityMode> {
-    if (!viewerId) return "NONE";
-    try {
-      const caps = await this.plansService.getUserPlanCapabilities(viewerId);
-      const explicit = this.normalizeContactVisibilityMode(
-        caps?.policies?.contactVisibility,
-      );
-      if (explicit) return explicit;
-
-      const planName = String(caps?.planName || "")
-        .toLowerCase()
-        .trim();
-      if (planName.includes("premium pro")) {
-        return CONTACT_VISIBILITY_POLICY_BY_TIER.premiumPro;
-      }
-      if (planName.includes("pro") || caps?.hasPremium) {
-        return CONTACT_VISIBILITY_POLICY_BY_TIER.premium;
-      }
-      return CONTACT_VISIBILITY_POLICY_BY_TIER.free;
-    } catch {
-      return "NONE";
-    }
-  }
-
-  private statusesForContactMode(mode: ContactVisibilityMode): string[] {
-    if (mode === "NONE") return [];
-    if (mode === "AFTER_PAYMENT") {
-      return ["payment_confirmed", "working", "submitted", "completed"];
-    }
-    if (mode === "AFTER_ACCEPT") {
-      return [
-        "accepted",
-        "payment_confirmed",
-        "working",
-        "submitted",
-        "completed",
-      ];
-    }
-    return [];
-  }
-
   /**
    * Decide whether `viewerId` is allowed to see the brand's social media handles.
-   * NEW SINGLE RULE: contact is visible only when an accepted CampaignInvite between
+   * SINGLE RULE: contact is visible only when an accepted CampaignInvite between
    * brand & influencer has been UNLOCKED by the brand (premium / paid_collab payment / 1 free unlock).
-   * Plan-tier policy matrix is no longer consulted.
    */
   async canViewBrandSocialMedia(
     brand: any,
     viewerId?: string | null,
-    _viewerMode?: ContactVisibilityMode,
   ): Promise<boolean> {
     if (!brand) return false;
     if (!viewerId) return false;
@@ -560,13 +491,12 @@ export class UsersService {
 
   /**
    * Decide whether `viewerId` may view influencer contact details.
-   * NEW SINGLE RULE: contact is visible only when the brand has UNLOCKED the invite
-   * (premium / paid_collab payment / 1 free unlock). Plan-tier policy matrix is no longer consulted.
+   * SINGLE RULE: contact is visible only when the brand has UNLOCKED the invite
+   * (premium / paid_collab payment / 1 free unlock).
    */
   private async canViewInfluencerContact(
     influencer: any,
     viewerId?: string | null,
-    _viewerMode?: ContactVisibilityMode,
   ): Promise<boolean> {
     if (!viewerId) return false;
     if (String(influencer?._id) === String(viewerId)) return true;
@@ -883,13 +813,11 @@ export class UsersService {
 
     const total = eligible.length;
     const pageItems = eligible.slice(skip, skip + limit);
-    const viewerMode = await this.resolveContactVisibilityMode(viewerId);
     const data = await Promise.all(
       pageItems.map(async (inf: any) => {
         const allowContact = await this.canViewInfluencerContact(
           inf,
           viewerId,
-          viewerMode,
         );
         return {
           ...inf,
@@ -1059,13 +987,11 @@ export class UsersService {
         .limit(limit),
       this.brandModel.countDocuments({ status: "accepted" }),
     ]);
-    const viewerMode = await this.resolveContactVisibilityMode(viewerId);
     const filtered = await Promise.all(
       (data || []).map(async (brand: any) => {
         const allow = await this.canViewBrandSocialMedia(
           brand,
           viewerId,
-          viewerMode,
         );
         if (!allow) {
           return {

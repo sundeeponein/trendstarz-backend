@@ -2,12 +2,6 @@ import { Schema, Types, model } from "mongoose";
 
 export const USER_TYPES = ["INFLUENCER", "BRAND"] as const;
 export const BILLING_CYCLES = ["monthly", "quarterly", "yearly"] as const;
-export const CONTACT_VISIBILITY_MODES = [
-  "PROFILE",
-  "AFTER_ACCEPT",
-  "AFTER_PAYMENT",
-  "NONE",
-] as const;
 
 // ── Feature toggle (boolean) ────────────────────────────────────────────────
 const PlanFeatureSchema = new Schema(
@@ -60,11 +54,6 @@ export const PlanSchema = new Schema(
     offers: { type: [PlanOfferSchema], default: [] },
     policies: {
       imageRetentionDaysAfterExpiry: { type: Number, default: 45 },
-      contactVisibility: {
-        type: String,
-        enum: CONTACT_VISIBILITY_MODES,
-        default: "AFTER_ACCEPT",
-      },
     },
     highlight: { type: Boolean, default: false },
     isActive: { type: Boolean, default: true },
@@ -101,11 +90,6 @@ export const SubscriptionSchema = new Schema(
     limitsSnapshot: { type: [PlanLimitSchema], default: [] },
     policiesSnapshot: {
       imageRetentionDaysAfterExpiry: { type: Number, default: 45 },
-      contactVisibility: {
-        type: String,
-        enum: CONTACT_VISIBILITY_MODES,
-        default: "AFTER_ACCEPT",
-      },
     },
     startDate: { type: Date, required: true },
     endDate: { type: Date },
@@ -172,7 +156,6 @@ export const FREE_PLAN_DEFAULTS = {
     ],
     policies: {
       imageRetentionDaysAfterExpiry: 45,
-      contactVisibility: "AFTER_ACCEPT",
     },
   },
   BRAND: {
@@ -226,7 +209,6 @@ export const FREE_PLAN_DEFAULTS = {
     ],
     policies: {
       imageRetentionDaysAfterExpiry: 45,
-      contactVisibility: "AFTER_ACCEPT",
     },
   },
 };

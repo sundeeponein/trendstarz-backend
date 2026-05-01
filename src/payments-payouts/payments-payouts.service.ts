@@ -447,14 +447,63 @@ export class PaymentsPayoutsService {
   async listMine(userId: string, role: string) {
     const normalizedRole =
       role === "brand" || role === "BRAND" ? "brand" : "influencer";
-    const filter =
-      normalizedRole === "brand"
-        ? { $or: [{ payerId: userId }, { recipientId: userId }] }
-        : { $or: [{ payerId: userId }, { recipientId: userId }] };
     const rows = await this.transactionModel
-      .find(filter)
+      .find({ $or: [{ payerId: userId }, { recipientId: userId }] })
       .sort({ createdAt: -1 })
       .lean();
-    return { success: true, data: rows };
+
+    // Collect IDs to look up in bulk
+    const campaignIds = new Set<string>();
+    const influencerIds = new Set<string>();
+    const brandIds = new Set<string>();
+    for (const r of rows as any[]) {
+      if (r.campaignId) campaignIds.add(String(r.campaignId));
+      if (r.recipientRole === "influencer" && r.recipientId) influencerIds.add(String(r.recipientId));
+      if (r.payerRole === "influencer" && r.payerId) influencerIds.add(String(r.payerId));
+      if (r.recipientRole === "brand" && r.recipientId) brandIds.add(String(r.recipientId));
+      if (r.payerRole === "brand" && r.payerId) brandIds.add(String(r.payerId));
+    }
+
+    const [campaigns, influencers, brands] = await Promise.all([
+      campaignIds.size
+        ? this.campaignModel.find({ _id: { $in: Array.from(campaignIds) } }).select("title campaignType").lean()
+        : Promise.resolve([] as any[]),
+      influencerIds.size
+        ? this.influencerModel.find({ _id: { $in: Array.from(influencerIds) } }).select("name username").lean()
+        : Promise.resolve([] as any[]),
+      brandIds.size
+        ? this.brandModel.find({ _id: { $in: Array.from(brandIds) } }).select("brandName brandUsername").lean()
+        : Promise.resolve([] as any[]),
+    ]);
+
+    const campaignMap = new Map<string, any>();
+    for (const c of campaigns as any[]) campaignMap.set(String(c._id), c);
+    const inflMap = new Map<string, any>();
+    for (const i of influencers as any[]) inflMap.set(String(i._id), i);
+    const brandMap = new Map<string, any>();
+    for (const b of brands as any[]) brandMap.set(String(b._id), b);
+
+    const getPartyName = (role: string, id: any): string => {
+      const sid = String(id);
+      if (role === "influencer") return inflMap.get(sid)?.name || "";
+      if (role === "brand") return brandMap.get(sid)?.name || brandMap.get(sid)?.brandName || "";
+      return "";
+    };
+
+    const enriched = (rows as any[]).map((r: any) => {
+      const campaign = campaignMap.get(String(r.campaignId));
+      // "other party" from the current user's perspective
+      const otherRole = normalizedRole === "influencer" ? r.payerRole : r.recipientRole;
+      const otherId = normalizedRole === "influencer" ? r.payerId : r.recipientId;
+      return {
+        ...r,
+        campaignTitle: campaign?.title || "",
+        campaignType: r.transactionType || campaign?.campaignType || "",
+        otherPartyName: getPartyName(otherRole, otherId),
+        otherPartyRole: otherRole,
+      };
+    });
+
+    return { success: true, data: enriched };
   }
 }
