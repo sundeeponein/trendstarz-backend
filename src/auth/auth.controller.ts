@@ -22,6 +22,7 @@ import { randomUUID } from "crypto";
 import { AuthService } from "./auth.service";
 import { CloudinaryService } from "../cloudinary.service";
 import { JwtAuthGuard } from "./jwt-auth.guard";
+import { Throttle } from "@nestjs/throttler";
 import {
   LoginDto,
   ForgotPasswordDto,
@@ -64,6 +65,7 @@ export class AuthController {
   }
 
   @Post("login")
+  @Throttle({ default: { ttl: 60000, limit: 5 } })
   @HttpCode(200)
   @UsePipes(new ValidationPipe({ whitelist: true, transform: true }))
   async login(@Body() body: LoginDto, @Res() res: Response) {
@@ -84,6 +86,7 @@ export class AuthController {
   }
 
   @Post("register-influencer")
+  @Throttle({ default: { ttl: 60000, limit: 3 } })
   async registerInfluencer(@Body() body: any, @Res() res: Response) {
     try {
       const result = await this.authService.registerInfluencer(body);
@@ -99,6 +102,7 @@ export class AuthController {
   }
 
   @Post("register-brand")
+  @Throttle({ default: { ttl: 60000, limit: 3 } })
   async registerBrand(@Body() body: any, @Res() res: Response) {
     try {
       const result = await this.authService.registerBrand(body);
@@ -179,6 +183,7 @@ export class AuthController {
   }
 
   @Post("forgot-password")
+  @Throttle({ default: { ttl: 60000, limit: 3 } })
   @HttpCode(200)
   @UsePipes(new ValidationPipe({ whitelist: true, transform: true }))
   async forgotPassword(@Body() body: ForgotPasswordDto, @Res() res: Response) {
@@ -196,6 +201,7 @@ export class AuthController {
   }
 
   @Post("reset-password")
+  @Throttle({ default: { ttl: 60000, limit: 5 } })
   @UsePipes(new ValidationPipe({ whitelist: true, transform: true }))
   async resetPassword(@Body() body: ResetPasswordDto, @Res() res: Response) {
     try {

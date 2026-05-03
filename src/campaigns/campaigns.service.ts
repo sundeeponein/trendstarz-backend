@@ -152,13 +152,6 @@ export class CampaignsService {
       .find({ brandId })
       .sort({ createdAt: -1 })
       .lean();
-    console.log(
-      "[DEBUG] findByBrandId:",
-      brandId,
-      typeof brandId,
-      "| found:",
-      results.length,
-    );
     return results;
   }
 

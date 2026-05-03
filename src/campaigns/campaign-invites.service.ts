@@ -1013,9 +1013,6 @@ export class CampaignInvitesService {
     },
   ) {
     const invite = await this.inviteModel.findById(inviteId);
-    console.log("[submitPost] invite:", invite);
-    console.log("[submitPost] influencerId:", influencerId);
-    console.log("[submitPost] data:", data);
     if (!invite) throw new NotFoundException("Invite not found");
     if (String(invite.influencerId) !== influencerId) {
       throw new BadRequestException("Not your invite");
@@ -1204,9 +1201,20 @@ export class CampaignInvitesService {
       invite.status = "disputed";
       await invite.save();
 
+      // Freeze the payout — admin must resolve before money moves.
+      // workStatus: 'disputed' signals the issue; payoutStatus: 'frozen' holds funds.
       await this.campaignTransactionModel.updateMany(
         { inviteId },
-        { $set: { workStatus: "disputed", payoutStatus: "skipped" } },
+        {
+          $set: {
+            workStatus: "disputed",
+            payoutStatus: "frozen",
+            disputeStatus: "open",
+            disputeReason: disputeReason || feedback || "Brand raised a content dispute",
+            disputedByRole: "brand",
+            disputedAt: new Date(),
+          },
+        },
       );
     }
 

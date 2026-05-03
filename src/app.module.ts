@@ -1,4 +1,6 @@
 import { Module } from "@nestjs/common";
+import { APP_GUARD } from "@nestjs/core";
+import { ThrottlerModule, ThrottlerGuard } from "@nestjs/throttler";
 import { DashboardController } from "./dashboard.controller";
 import { DashboardService } from "./dashboard.service";
 import { OtpModule } from "./otp/otp.module";
@@ -52,6 +54,13 @@ import { PaymentsPayoutsModule } from "./payments-payouts/payments-payouts.modul
     ConfigModule.forRoot({
       isGlobal: true,
     }),
+    ThrottlerModule.forRoot([
+      {
+        name: "default",
+        ttl: 60000, // 1 minute window
+        limit: 60,  // 60 requests per minute (general)
+      },
+    ]),
     MongooseModule.forRoot(process.env.MONGODB_URI as string),
     MongooseModule.forFeature([
       { name: "Category", schema: CategorySchema, collection: "categories" },
@@ -123,6 +132,10 @@ import { PaymentsPayoutsModule } from "./payments-payouts/payments-payouts.modul
     MongoLogger,
     CloudinaryService,
     DashboardService,
+    {
+      provide: APP_GUARD,
+      useClass: ThrottlerGuard,
+    },
   ],
 })
 export class AppModule {}

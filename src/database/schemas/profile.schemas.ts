@@ -250,6 +250,8 @@ export const AppSettingsSchema = new Schema({
     default:
       "For now, please contact our team to complete campaign payments. Our admin will update the payment status once received.",
   },
+  // Campaign payment UPI address shown to brands on the payment screen
+  paymentUpiId: { type: String, default: "trendstarzin@kotak" },
 });
 export const AppSettingsModel = model("AppSettings", AppSettingsSchema);
 

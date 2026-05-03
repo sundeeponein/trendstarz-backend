@@ -5,6 +5,7 @@ import {
 } from "@nestjs/common";
 import { InjectModel } from "@nestjs/mongoose";
 import { Model } from "mongoose";
+import { sendAppEmail } from "../utils/app-email.service";
 
 type FeeSettings = {
   platformFeeEnabled: boolean;
@@ -218,6 +219,18 @@ export class PaymentsPayoutsService {
       }
     }
 
+    // Fire-and-forget admin alert
+    const adminEmail = process.env.ADMIN_EMAIL || "support@trendstarz.in";
+    const adminUrl = (process.env.FRONTEND_URL || "https://trendstarz.com") + "/admin/payments";
+    sendAppEmail({
+      to: adminEmail,
+      subject: `[TrendStarZ] New payment proof — ${campaign.title || campaignId}`,
+      text: `A brand has submitted a UTR reference for campaign "${campaign.title || campaignId}".\n\nUTR: ${utrNumber}\nInfluencers: ${saved.length}\n\nReview: ${adminUrl}`,
+      html: `<p>A brand has submitted a UTR reference for campaign <strong>${campaign.title || campaignId}</strong>.</p><p><strong>UTR:</strong> ${utrNumber}<br/><strong>Influencers:</strong> ${saved.length}</p><p><a href="${adminUrl}">Review in admin panel</a></p>`,
+    }).catch((err: unknown) => {
+      console.error("[PaymentsPayoutsService] Failed to send admin UTR alert:", err);
+    });
+
     return {
       success: true,
       message: "Payment proof submitted for admin verification",
@@ -408,6 +421,28 @@ export class PaymentsPayoutsService {
       await this.inviteModel.findByIdAndUpdate(tx.inviteId, { $set: update });
     }
 
+    // Fire-and-forget: notify brand their payment was verified
+    if (tx.payerId) {
+      this.brandModel
+        .findById(tx.payerId)
+        .select("email brandName")
+        .lean()
+        .then((brand: any) => {
+          if (!brand?.email) return;
+          const name = brand.brandName || "Brand";
+          const adminUrl = (process.env.FRONTEND_URL || "https://trendstarz.com") + "/campaigns";
+          sendAppEmail({
+            to: brand.email,
+            subject: "[TrendStarZ] Payment verified — influencers can now begin work",
+            text: `Hi ${name},\n\nYour campaign payment has been verified. Influencers have been notified and can now begin creating content.\n\nMonitor progress: ${adminUrl}`,
+            html: `<p>Hi <strong>${name}</strong>,</p><p>Your campaign payment has been verified! Influencers have been notified and can now begin creating content.</p><p><a href="${adminUrl}">Monitor campaign progress</a></p>`,
+          }).catch((err: unknown) => {
+            console.error("[PaymentsPayoutsService] Failed to send verification email to brand:", err);
+          });
+        })
+        .catch(() => {/* ignore */});
+    }
+
     return { success: true, transaction: tx };
   }
 
@@ -417,6 +452,29 @@ export class PaymentsPayoutsService {
     tx.collectionStatus = "failed";
     tx.adminNotes = reason || "Payment proof rejected";
     await tx.save();
+
+    // Fire-and-forget: notify brand their UTR was rejected
+    if (tx.payerId) {
+      this.brandModel
+        .findById(tx.payerId)
+        .select("email brandName")
+        .lean()
+        .then((brand: any) => {
+          if (!brand?.email) return;
+          const name = brand.brandName || "Brand";
+          const payUrl = (process.env.FRONTEND_URL || "https://trendstarz.com") + "/campaigns";
+          sendAppEmail({
+            to: brand.email,
+            subject: "[TrendStarZ] Action required — payment proof could not be verified",
+            text: `Hi ${name},\n\nUnfortunately, your payment proof could not be verified.\n\nReason: ${reason || "No reason provided."}\n\nPlease resubmit with a valid UTR reference: ${payUrl}`,
+            html: `<p>Hi <strong>${name}</strong>,</p><p>Unfortunately, your payment proof could not be verified.</p><p><strong>Reason:</strong> ${reason || "No reason provided."}</p><p>Please <a href="${payUrl}">log in and resubmit</a> with a valid UTR reference.</p>`,
+          }).catch((err: unknown) => {
+            console.error("[PaymentsPayoutsService] Failed to send rejection email to brand:", err);
+          });
+        })
+        .catch(() => {/* ignore */});
+    }
+
     return { success: true, transaction: tx };
   }
 
@@ -434,6 +492,9 @@ export class PaymentsPayoutsService {
     if (tx.collectionStatus !== "verified") {
       throw new BadRequestException("Collection must be verified before payout");
     }
+    if (tx.disputeStatus === "open") {
+      throw new BadRequestException("Cannot mark payout as paid while a dispute is open. Resolve the dispute first.");
+    }
     tx.payoutStatus = "paid";
     tx.paidOutAt = new Date();
     tx.payoutUtr = body.payoutUtr;
@@ -441,6 +502,29 @@ export class PaymentsPayoutsService {
     if (body.payoutUpiId) tx.payoutUpiId = body.payoutUpiId;
     if (body.notes) tx.adminNotes = body.notes;
     await tx.save();
+
+    // Fire-and-forget: notify influencer their payout has been sent
+    if (tx.recipientId && tx.recipientRole === "influencer") {
+      this.influencerModel
+        .findById(tx.recipientId)
+        .select("email name username")
+        .lean()
+        .then((inf: any) => {
+          if (!inf?.email) return;
+          const name = inf.name || inf.username || "Influencer";
+          const amount = tx.recipientPayout != null ? `₹${(tx.recipientPayout / 100).toFixed(2)}` : "your payout";
+          sendAppEmail({
+            to: inf.email,
+            subject: "[TrendStarZ] Your payout has been sent!",
+            text: `Hi ${name},\n\nGreat news! ${amount} has been sent to your UPI account (${tx.payoutUpiId || "on file"}).\n\nUTR Reference: ${tx.payoutUtr}\n\nThank you for collaborating with TrendStarZ!`,
+            html: `<p>Hi <strong>${name}</strong>,</p><p>Great news! <strong>${amount}</strong> has been sent to your UPI account (<strong>${tx.payoutUpiId || "on file"}</strong>).</p><p><strong>UTR Reference:</strong> ${tx.payoutUtr}</p><p>Thank you for collaborating with TrendStarZ!</p>`,
+          }).catch((err: unknown) => {
+            console.error("[PaymentsPayoutsService] Failed to send payout email:", err);
+          });
+        })
+        .catch(() => {/* ignore */});
+    }
+
     return { success: true, transaction: tx };
   }
 
@@ -505,5 +589,136 @@ export class PaymentsPayoutsService {
     });
 
     return { success: true, data: enriched };
+  }
+
+  // ── Campaign-level status (brand polls this after submitting UTR) ────────────
+
+  /** Brand (or influencer) — get all transactions for one campaign. */
+  async getForCampaign(campaignId: string, userId: string) {
+    const campaign: any = await this.campaignModel.findById(campaignId).lean();
+    if (!campaign) throw new NotFoundException("Campaign not found");
+    await this.assertCampaignOwner(campaign, userId);
+
+    const rows = await this.transactionModel
+      .find({ campaignId })
+      .sort({ createdAt: -1 })
+      .lean();
+
+    return { success: true, data: rows };
+  }
+
+  // ── Dispute — raise (brand or influencer), resolve (admin) ──────────────────
+
+  /**
+   * Raise a payment-level dispute.
+   * Sets payoutStatus → 'frozen' so money cannot move until admin resolves.
+   * Can be called by brand (if payment already made, wants refund for non-delivery)
+   * or influencer (if work approved but payout withheld).
+   */
+  async raiseDispute(
+    txId: string,
+    userId: string,
+    userRole: "brand" | "influencer",
+    reason: string,
+  ) {
+    if (!reason?.trim()) {
+      throw new BadRequestException("A reason is required to raise a dispute");
+    }
+    const tx = await this.transactionModel.findById(txId);
+    if (!tx) throw new NotFoundException("Transaction not found");
+
+    // Guard: only parties involved in the transaction can raise a dispute
+    const isBrand = userRole === "brand" && String(tx.payerId) === userId;
+    const isInfluencer =
+      userRole === "influencer" && String(tx.recipientId) === userId;
+    if (!isBrand && !isInfluencer) {
+      throw new BadRequestException("You are not a party to this transaction");
+    }
+    if (tx.disputeStatus === "open") {
+      throw new BadRequestException("A dispute is already open for this transaction");
+    }
+    if (tx.disputeStatus === "resolved") {
+      throw new BadRequestException("This transaction dispute is already resolved");
+    }
+
+    tx.disputeStatus = "open";
+    tx.disputeReason = reason.trim();
+    tx.disputedBy = userId;
+    tx.disputedByRole = userRole;
+    tx.disputedAt = new Date();
+    // Freeze payout — admin must explicitly release after review
+    if (tx.payoutStatus !== "paid") {
+      tx.payoutStatus = "frozen";
+    }
+    if (tx.workStatus !== "disputed") {
+      tx.workStatus = "disputed";
+    }
+    await tx.save();
+
+    return { success: true, message: "Dispute raised. Payout is frozen pending admin review.", transaction: tx };
+  }
+
+  /**
+   * Admin resolves a frozen dispute.
+   * outcome: 'release_to_influencer' → send payout to influencer (work was valid).
+   * outcome: 'refund_to_brand' → refund brand (non-delivery / invalid work).
+   */
+  async resolveDispute(
+    txId: string,
+    adminId: string,
+    outcome: "release_to_influencer" | "refund_to_brand",
+    notes?: string,
+  ) {
+    const tx = await this.transactionModel.findById(txId);
+    if (!tx) throw new NotFoundException("Transaction not found");
+    if (tx.disputeStatus !== "open") {
+      throw new BadRequestException("No open dispute on this transaction");
+    }
+    if (!["release_to_influencer", "refund_to_brand"].includes(outcome)) {
+      throw new BadRequestException("Invalid outcome. Use release_to_influencer or refund_to_brand");
+    }
+
+    tx.disputeStatus = "resolved";
+    tx.resolveOutcome = outcome;
+    tx.resolvedBy = adminId;
+    tx.resolvedAt = new Date();
+    if (notes) tx.adminNotes = notes;
+
+    if (outcome === "release_to_influencer") {
+      // Work was valid — release payout flow
+      tx.payoutStatus = "processing";
+      tx.workStatus = "approved";
+    } else {
+      // Non-delivery / invalid — mark as refunded
+      tx.payoutStatus = "skipped";
+      tx.workStatus = "disputed"; // keep for audit
+    }
+
+    await tx.save();
+
+    // If releasing to influencer — also mark the invite as completed
+    if (outcome === "release_to_influencer" && tx.inviteId) {
+      await this.inviteModel.findByIdAndUpdate(tx.inviteId, {
+        $set: { status: "completed" },
+      });
+    }
+
+    return {
+      success: true,
+      message:
+        outcome === "release_to_influencer"
+          ? "Dispute resolved. Payout released to influencer."
+          : "Dispute resolved. Payment will be refunded to brand.",
+      transaction: tx,
+    };
+  }
+
+  /** Admin — list all open disputes (frozen transactions). */
+  async listOpenDisputes() {
+    const rows = await this.transactionModel
+      .find({ disputeStatus: "open" })
+      .sort({ disputedAt: 1 })
+      .lean();
+    return { success: true, data: rows, total: rows.length };
   }
 }

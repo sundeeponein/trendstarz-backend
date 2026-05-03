@@ -228,9 +228,7 @@ export class UsersController {
   @UseGuards(JwtAuthGuard)
   @Get("influencer-profile")
   async getInfluencerProfile(@Req() req: any) {
-    console.log("[getInfluencerProfile] req.user:", req.user);
     const userId = req.user?.userId || req.user?.sub || req.user?.id;
-    console.log("[getInfluencerProfileById] userId:", userId);
     return this.usersService.getInfluencerProfileById(userId);
   }
 
