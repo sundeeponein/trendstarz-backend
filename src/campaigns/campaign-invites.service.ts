@@ -423,61 +423,38 @@ export class CampaignInvitesService {
       );
     }
 
+    // Fetch campaign to check type (used for gate + unlock label)
+    const campaign: any = await this.campaignModel
+      .findById(invite.campaignId)
+      .select("campaignType")
+      .lean();
+    const isPaidCollab =
+      campaign && String(campaign.campaignType) === "paid_collab";
+
+    // For paid_collab campaigns, contact unlock requires payment confirmation
+    if (isPaidCollab && invite.status === "accepted") {
+      throw new BadRequestException(
+        "Payment must be confirmed before unlocking contact for paid collaboration campaigns.",
+      );
+    }
+
+    // Determine unlock type for record-keeping
     const caps = await this.plansService.getUserPlanCapabilities(brandId);
     const hasPremium = !!caps.hasPremium;
 
-    let unlockType: "premium" | "paid_collab_payment" | "free_unlock" | null =
-      null;
-    let incrementFreeUnlock = false;
+    let unlockType: "premium" | "paid_collab_payment" | "free_unlock" =
+      "free_unlock";
 
     if (hasPremium) {
       unlockType = "premium";
-    } else {
-      // Check paid_collab payment path
-      const campaign: any = await this.campaignModel
-        .findById(invite.campaignId)
-        .select("campaignType")
-        .lean();
-      const isPaidCollab =
-        campaign && String(campaign.campaignType) === "paid_collab";
-      const isPaymentConfirmed = [
-        "payment_confirmed",
-        "working",
-        "submitted",
-        "completed",
-      ].includes(String(invite.status));
-      if (isPaidCollab && isPaymentConfirmed) {
-        unlockType = "paid_collab_payment";
-      } else {
-        // Free-unlock path (1 per brand lifetime)
-        const brandDoc: any = await this.brandModel
-          .findById(brandId)
-          .select("freeUnlocksUsed")
-          .lean();
-        const usedUnlocks = Number(brandDoc?.freeUnlocksUsed || 0);
-        if (usedUnlocks < 1) {
-          unlockType = "free_unlock";
-          incrementFreeUnlock = true;
-        }
-      }
-    }
-
-    if (!unlockType) {
-      throw new BadRequestException(
-        "Upgrade to Premium to unlock contact, or complete payment for Paid campaigns. Your free unlock has already been used.",
-      );
+    } else if (isPaidCollab) {
+      unlockType = "paid_collab_payment";
     }
 
     invite.unlocked = true;
     invite.unlockedAt = new Date();
     invite.unlockType = unlockType;
     await invite.save();
-
-    if (incrementFreeUnlock) {
-      await this.brandModel.findByIdAndUpdate(brandId, {
-        $inc: { freeUnlocksUsed: 1 },
-      });
-    }
 
     return {
       success: true,
