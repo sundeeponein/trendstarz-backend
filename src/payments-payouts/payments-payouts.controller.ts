@@ -86,4 +86,60 @@ export class PaymentsPayoutsController {
     const role = req.user?.role;
     return this.paymentsPayoutsService.listMine(userId, role);
   }
+
+  // ── Campaign-level status (brand polls after submitting payment) ──────────
+
+  @UseGuards(JwtAuthGuard)
+  @Get("campaign/:campaignId/status")
+  async campaignStatus(
+    @Param("campaignId") campaignId: string,
+    @Req() req: any,
+  ) {
+    return this.paymentsPayoutsService.getForCampaign(
+      campaignId,
+      req.user?.userId,
+    );
+  }
+
+  // ── Dispute endpoints ─────────────────────────────────────────────────────
+
+  /** Brand or influencer raises a payment dispute → payment is frozen. */
+  @UseGuards(JwtAuthGuard)
+  @Post(":id/raise-dispute")
+  async raiseDispute(
+    @Param("id") id: string,
+    @Body() body: { reason: string },
+    @Req() req: any,
+  ) {
+    const userId = req.user?.userId;
+    const role = req.user?.role === "brand" ? "brand" : "influencer";
+    return this.paymentsPayoutsService.raiseDispute(id, userId, role, body.reason);
+  }
+
+  /** Admin resolves a frozen dispute and decides payment direction. */
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Post(":id/resolve-dispute")
+  async resolveDispute(
+    @Param("id") id: string,
+    @Body()
+    body: {
+      outcome: "release_to_influencer" | "refund_to_brand";
+      notes?: string;
+    },
+    @Req() req: any,
+  ) {
+    return this.paymentsPayoutsService.resolveDispute(
+      id,
+      req.user?.userId,
+      body.outcome,
+      body.notes,
+    );
+  }
+
+  /** Admin — list all open (frozen) disputes. */
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Get("disputes/open")
+  async openDisputes() {
+    return this.paymentsPayoutsService.listOpenDisputes();
+  }
 }

@@ -44,12 +44,10 @@ export class AdminUserTableController {
     }
     if (q) filter.q = q;
     if (category) filter.category = category;
-    console.log("[ADMIN][DEBUG] Influencer filter:", JSON.stringify(filter));
     const influencers = await this.influencerModel
       .find(filter)
       .lean()
       .limit(100);
-    console.log("[ADMIN][DEBUG] Influencer result count:", influencers.length);
     await Promise.all(
       influencers.map(async (u) => {
         // Fetch latest approved payment
@@ -76,9 +74,7 @@ export class AdminUserTableController {
     }
     if (q) filter.q = q;
     if (category) filter.category = category;
-    console.log("[ADMIN][DEBUG] Brand filter:", JSON.stringify(filter));
     const brands = await this.brandModel.find(filter).lean().limit(100);
-    console.log("[ADMIN][DEBUG] Brand result count:", brands.length);
     await Promise.all(
       brands.map(async (b) => {
         if (!b.brandLogo) b.brandLogo = [];
@@ -105,29 +101,15 @@ export class AdminUserTableController {
     @Param("id") id: string,
     @Body() body: { brandLogo?: any[]; products?: any[] },
   ) {
-    console.log(
-      "[ADMIN PATCH] patchBrandImages called for id:",
-      id,
-      "body:",
-      JSON.stringify(body),
-    );
     const brand = await this.brandModel.findById(id);
     if (!brand) {
       return { message: "Brand not found", id };
     }
     if (body.brandLogo) {
       brand.brandLogo = body.brandLogo;
-      console.log(
-        "[ADMIN PATCH] Set brand.brandLogo to:",
-        JSON.stringify(brand.brandLogo),
-      );
     }
     if (body.products) {
       brand.products = body.products;
-      console.log(
-        "[ADMIN PATCH] Set brand.products to:",
-        JSON.stringify(brand.products),
-      );
     }
     await brand.save();
     return { message: "Brand images updated", brand };
