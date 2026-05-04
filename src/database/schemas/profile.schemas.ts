@@ -236,8 +236,8 @@ export const AppSettingsSchema = new Schema({
   brandRequireEmailVerified: { type: Boolean, default: true },
   brandRequireMobileVerified: { type: Boolean, default: false },
   platformFeeEnabled: { type: Boolean, default: false },
-  platformFeePercent: { type: Number, default: 10 },
-  gstPercent: { type: Number, default: 18 },
+  platformFeePercent: { type: Number, default: 5 },
+  gstPercent: { type: Number, default: 0 },
   feeActivationDate: { type: Date },
   // Support contact — admin-managed, surfaced as banner on campaign management page
   // and (post-Razorpay launch) kept as a "Need help?" channel for queries.
