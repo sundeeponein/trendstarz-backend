@@ -27,6 +27,7 @@
     "@nestjs/mongoose": "^11.0.3",
     "@nestjs/platform-express": "^11.0.0",
     "@nestjs/schedule": "^6.1.1",
+    "@nestjs/throttler": "^6.5.0",
     "@types/jsonwebtoken": "^9.0.10",
     "aws-sdk": "^1.18.0",
     "axios": "^1.13.5",

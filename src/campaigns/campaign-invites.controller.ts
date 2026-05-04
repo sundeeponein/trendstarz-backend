@@ -5,6 +5,7 @@ import {
   Patch,
   Body,
   Param,
+  Query,
   UseGuards,
   Req,
 } from "@nestjs/common";
@@ -115,6 +116,22 @@ export class CampaignInvitesController {
       influencerId,
     );
     return { invite };
+  }
+
+  /** GET /campaign-invites/brand/attention-counts — needs-attention widget */
+  @UseGuards(JwtAuthGuard)
+  @Get("brand/attention-counts")
+  async brandAttentionCounts(@Req() req: any) {
+    const brandId = req.user?.userId;
+    return this.invitesService.getBrandAttentionCounts(brandId);
+  }
+
+  /** GET /campaign-invites/influencer/attention-counts — influencer needs-attention widget */
+  @UseGuards(JwtAuthGuard)
+  @Get("influencer/attention-counts")
+  async influencerAttentionCounts(@Req() req: any) {
+    const influencerId = req.user?.userId;
+    return this.invitesService.getInfluencerAttentionCounts(influencerId);
   }
 
   @UseGuards(JwtAuthGuard)
@@ -269,7 +286,7 @@ export class CampaignInvitesController {
       postUrl: string;
       postType?: string;
       captionUsed?: string;
-      postScreenshotUrl: string;
+      postScreenshotUrl?: string;
       insightsScreenshotUrl?: string;
       viewsCount?: number;
       likesCount?: number;
@@ -345,5 +362,49 @@ export class CampaignInvitesController {
   @Post("admin/auto-approve-stale")
   async autoApproveStale() {
     return this.invitesService.autoApproveStaleSubmissions();
+  }
+
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Get("admin/disputes")
+  async adminListDisputes(
+    @Query("status") status?: string,
+    @Query("limit") limit?: string,
+  ) {
+    return this.invitesService.adminListDisputes({
+      status,
+      limit: limit ? Number(limit) : undefined,
+    });
+  }
+
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Get("admin/disputes/count")
+  async adminCountOpenDisputes() {
+    return this.invitesService.adminCountOpenDisputes();
+  }
+
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Post("admin/:id/resolve-dispute")
+  async adminResolveDispute(
+    @Param("id") id: string,
+    @Body()
+    body: { outcome?: "completed" | "withdrawn" | "disputed"; note?: string },
+  ) {
+    return this.invitesService.adminResolveDispute(id, body || {});
+  }
+
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Post("admin/disputes/bulk-resolve")
+  async adminBulkResolveDisputes(
+    @Body()
+    body: {
+      inviteIds: string[];
+      outcome?: "completed" | "withdrawn" | "disputed";
+      note?: string;
+    },
+  ) {
+    return this.invitesService.adminBulkResolveDisputes(
+      body?.inviteIds || [],
+      { outcome: body?.outcome, note: body?.note },
+    );
   }
 }

@@ -57,7 +57,7 @@ export class DashboardService {
           inviteStatus: st,
         });
       }
-      if (st === "completed" || st === "disputed") {
+      if (st === "completed" || st === "disputed" || st === "approved") {
         completedCampaigns.push({
           ...invite.campaignId,
           inviteId: invite._id,
@@ -114,10 +114,6 @@ export class DashboardService {
     });
     // Debug: log all campaign brandId values
     const allCampaigns = await this.campaignModel.find({}).lean();
-    console.log(
-      // "[Dashboard Debug] All campaign brandIds:",
-      allCampaigns.map((c) => c.brandId),
-    );
     let totalInvites = 0;
     let accepted = 0;
     let completed = 0;

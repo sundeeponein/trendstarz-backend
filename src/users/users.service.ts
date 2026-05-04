@@ -11,17 +11,6 @@ import { PlansService } from "../plans/plans.service";
 
 const USE_LOCAL_IMAGES = process.env.USE_LOCAL_IMAGES === "true";
 const LOCAL_IMAGE_DIR = path.resolve(__dirname, "../../assets/local-images");
-type ContactVisibilityMode =
-  | "PROFILE"
-  | "AFTER_ACCEPT"
-  | "AFTER_PAYMENT"
-  | "NONE";
-type ExplicitContactVisibilityMode = Exclude<ContactVisibilityMode, never> | null;
-const CONTACT_VISIBILITY_POLICY_BY_TIER: Record<string, ContactVisibilityMode> = {
-  free: "AFTER_ACCEPT",
-  premium: "AFTER_ACCEPT",
-  premiumPro: "AFTER_PAYMENT",
-};
 if (USE_LOCAL_IMAGES && !fs.existsSync(LOCAL_IMAGE_DIR)) {
   fs.mkdirSync(LOCAL_IMAGE_DIR, { recursive: true });
 }
@@ -253,9 +242,6 @@ export class UsersService {
           if (publicId) {
             try {
               await this.cloudinaryService.deleteImage(publicId);
-              console.log(
-                `[DELETE] Deleted influencer image from Cloudinary: ${publicId}`,
-              );
             } catch (err) {
               console.error(
                 "[DELETE] Error deleting influencer image from Cloudinary:",
@@ -273,7 +259,6 @@ export class UsersService {
           `[CLEANUP][ERROR] Influencer not found for deletion after Cloudinary cleanup: ${id}`,
         );
       } else {
-        console.log(`[CLEANUP] Influencer document deleted from DB: ${id}`);
       }
       // Double-check for any remaining influencer with this id
       const checkUser = await this.influencerModel.findById(id);
@@ -306,9 +291,6 @@ export class UsersService {
           if (publicId) {
             try {
               await this.cloudinaryService.deleteImage(publicId);
-              console.log(
-                `[DELETE] Deleted brand logo from Cloudinary: ${publicId}`,
-              );
             } catch (cloudErr) {
               console.error(
                 "[DELETE] Error deleting brand logo from Cloudinary:",
@@ -331,9 +313,6 @@ export class UsersService {
           if (publicId) {
             try {
               await this.cloudinaryService.deleteImage(publicId);
-              console.log(
-                `[DELETE] Deleted brand product image from Cloudinary: ${publicId}`,
-              );
             } catch (cloudErr) {
               console.error(
                 "[DELETE] Error deleting brand product image from Cloudinary:",
@@ -351,7 +330,6 @@ export class UsersService {
           `[CLEANUP][ERROR] Brand not found for deletion after Cloudinary cleanup: ${id}`,
         );
       } else {
-        console.log(`[CLEANUP] Brand document deleted from DB: ${id}`);
       }
       // Double-check for any remaining brand with this id
       const checkBrand = await this.brandModel.findById(id);
@@ -387,72 +365,14 @@ export class UsersService {
     return new Date(user.premiumEnd) >= new Date();
   }
 
-  private normalizeContactVisibilityMode(
-    raw: unknown,
-  ): ExplicitContactVisibilityMode {
-    const mode = String(raw || "")
-      .toUpperCase()
-      .trim();
-    if (mode === "PROFILE") return "PROFILE";
-    if (mode === "AFTER_PAYMENT") return "AFTER_PAYMENT";
-    if (mode === "AFTER_ACCEPT") return "AFTER_ACCEPT";
-    if (mode === "NONE") return "NONE";
-    return null;
-  }
-
-  private async resolveContactVisibilityMode(
-    viewerId?: string | null,
-  ): Promise<ContactVisibilityMode> {
-    if (!viewerId) return "NONE";
-    try {
-      const caps = await this.plansService.getUserPlanCapabilities(viewerId);
-      const explicit = this.normalizeContactVisibilityMode(
-        caps?.policies?.contactVisibility,
-      );
-      if (explicit) return explicit;
-
-      const planName = String(caps?.planName || "")
-        .toLowerCase()
-        .trim();
-      if (planName.includes("premium pro")) {
-        return CONTACT_VISIBILITY_POLICY_BY_TIER.premiumPro;
-      }
-      if (planName.includes("pro") || caps?.hasPremium) {
-        return CONTACT_VISIBILITY_POLICY_BY_TIER.premium;
-      }
-      return CONTACT_VISIBILITY_POLICY_BY_TIER.free;
-    } catch {
-      return "NONE";
-    }
-  }
-
-  private statusesForContactMode(mode: ContactVisibilityMode): string[] {
-    if (mode === "NONE") return [];
-    if (mode === "AFTER_PAYMENT") {
-      return ["payment_confirmed", "working", "submitted", "completed"];
-    }
-    if (mode === "AFTER_ACCEPT") {
-      return [
-        "accepted",
-        "payment_confirmed",
-        "working",
-        "submitted",
-        "completed",
-      ];
-    }
-    return [];
-  }
-
   /**
    * Decide whether `viewerId` is allowed to see the brand's social media handles.
-   * NEW SINGLE RULE: contact is visible only when an accepted CampaignInvite between
+   * SINGLE RULE: contact is visible only when an accepted CampaignInvite between
    * brand & influencer has been UNLOCKED by the brand (premium / paid_collab payment / 1 free unlock).
-   * Plan-tier policy matrix is no longer consulted.
    */
   async canViewBrandSocialMedia(
     brand: any,
     viewerId?: string | null,
-    _viewerMode?: ContactVisibilityMode,
   ): Promise<boolean> {
     if (!brand) return false;
     if (!viewerId) return false;
@@ -560,13 +480,12 @@ export class UsersService {
 
   /**
    * Decide whether `viewerId` may view influencer contact details.
-   * NEW SINGLE RULE: contact is visible only when the brand has UNLOCKED the invite
-   * (premium / paid_collab payment / 1 free unlock). Plan-tier policy matrix is no longer consulted.
+   * SINGLE RULE: contact is visible only when the brand has UNLOCKED the invite
+   * (premium / paid_collab payment / 1 free unlock).
    */
   private async canViewInfluencerContact(
     influencer: any,
     viewerId?: string | null,
-    _viewerMode?: ContactVisibilityMode,
   ): Promise<boolean> {
     if (!viewerId) return false;
     if (String(influencer?._id) === String(viewerId)) return true;
@@ -597,46 +516,19 @@ export class UsersService {
     id: string,
     images: { brandLogo?: any[]; products?: any[]; profileImages?: any[] },
   ) {
-    console.log(
-      "[PATCH] updateUserImages called for id:",
-      id,
-      "with images:",
-      JSON.stringify(images),
-    );
     // Influencer logic (unchanged)
     let user = await this.influencerModel.findById(id);
     if (user) {
-      console.log(
-        "[PATCH][DEBUG] Influencer profileImages before update:",
-        JSON.stringify(user.profileImages),
-      );
       if (images.profileImages) {
         // ...existing code for influencer...
         user.profileImages = images.profileImages;
         await user.save();
-        console.log("[PATCH] Influencer images updated:", user.profileImages);
         return { message: "Influencer images updated", user };
       }
     }
     // Brand logic
     user = await this.brandModel.findById(id);
     if (user) {
-      console.log(
-        "[PATCH][DEBUG] Brand brandLogo before update:",
-        JSON.stringify(user.brandLogo),
-      );
-      console.log(
-        "[PATCH][DEBUG] Brand products before update:",
-        JSON.stringify(user.products),
-      );
-      console.log(
-        "[PATCH][DEBUG] Incoming brandLogo:",
-        JSON.stringify(images.brandLogo),
-      );
-      console.log(
-        "[PATCH][DEBUG] Incoming products:",
-        JSON.stringify(images.products),
-      );
       // Remove all old brand logos from Cloudinary if brandLogo is being replaced
       if (user.brandLogo && Array.isArray(user.brandLogo) && images.brandLogo) {
         for (const oldImg of user.brandLogo) {
@@ -649,10 +541,6 @@ export class UsersService {
           ) {
             try {
               await this.cloudinaryService.deleteImage(oldImg.public_id);
-              console.log(
-                "[PATCH] Deleted old brand logo from Cloudinary:",
-                oldImg.public_id,
-              );
             } catch (err) {
               console.error("[PATCH] Error deleting old brand logo:", err);
             }
@@ -671,10 +559,6 @@ export class UsersService {
           ) {
             try {
               await this.cloudinaryService.deleteImage(oldImg.public_id);
-              console.log(
-                "[PATCH] Deleted old brand product image from Cloudinary:",
-                oldImg.public_id,
-              );
             } catch (err) {
               console.error(
                 "[PATCH] Error deleting old brand product image:",
@@ -687,26 +571,13 @@ export class UsersService {
       // Direct fix: always update brandLogo and products if present
       if (images.brandLogo) {
         user.brandLogo = images.brandLogo;
-        console.log(
-          "[PATCH][FIX] Set user.brandLogo to:",
-          JSON.stringify(user.brandLogo),
-        );
       }
       if (images.products) {
         user.products = images.products;
-        console.log(
-          "[PATCH][FIX] Set user.products to:",
-          JSON.stringify(user.products),
-        );
       }
       await user.save();
-      console.log("[PATCH] Brand images updated:", {
-        brandLogo: user.brandLogo,
-        products: user.products,
-      });
       return { message: "Brand images updated", user };
     }
-    console.log("[PATCH] User not found for id:", id);
     return { message: "User not found", id };
   }
 
@@ -883,13 +754,11 @@ export class UsersService {
 
     const total = eligible.length;
     const pageItems = eligible.slice(skip, skip + limit);
-    const viewerMode = await this.resolveContactVisibilityMode(viewerId);
     const data = await Promise.all(
       pageItems.map(async (inf: any) => {
         const allowContact = await this.canViewInfluencerContact(
           inf,
           viewerId,
-          viewerMode,
         );
         return {
           ...inf,
@@ -1059,13 +928,11 @@ export class UsersService {
         .limit(limit),
       this.brandModel.countDocuments({ status: "accepted" }),
     ]);
-    const viewerMode = await this.resolveContactVisibilityMode(viewerId);
     const filtered = await Promise.all(
       (data || []).map(async (brand: any) => {
         const allow = await this.canViewBrandSocialMedia(
           brand,
           viewerId,
-          viewerMode,
         );
         if (!allow) {
           return {
@@ -1349,17 +1216,6 @@ export class UsersService {
     // Cleanup old images if profileImages is being replaced
     if (update.profileImages) {
       const user = await this.influencerModel.findById(userId);
-      console.log("[PATCH][DEBUG] updateInfluencerProfile: userId:", userId);
-      console.log(
-        "[PATCH][DEBUG] Old profileImages:",
-        user && user.profileImages
-          ? JSON.stringify(user.profileImages)
-          : "none",
-      );
-      console.log(
-        "[PATCH][DEBUG] New profileImages:",
-        JSON.stringify(update.profileImages),
-      );
       if (user && user.profileImages && Array.isArray(user.profileImages)) {
         for (const oldImg of user.profileImages) {
           if (
@@ -1370,18 +1226,8 @@ export class UsersService {
             )
           ) {
             try {
-              console.log(
-                "[PATCH][DEBUG] Deleting old influencer image with public_id:",
-                oldImg.public_id,
-              );
               const result = await this.cloudinaryService.deleteImage(
                 oldImg.public_id,
-              );
-              console.log(
-                "[PATCH][DEBUG] Cloudinary delete result for",
-                oldImg.public_id,
-                ":",
-                result,
               );
             } catch (err) {
               console.error(
@@ -1391,10 +1237,6 @@ export class UsersService {
               );
             }
           } else {
-            console.log(
-              "[PATCH][DEBUG] Keeping image (still present):",
-              oldImg && oldImg.public_id,
-            );
           }
         }
       }
@@ -1434,15 +1276,6 @@ export class UsersService {
     // Cleanup old brandLogo images if replaced
     if (update.brandLogo) {
       const user = await this.brandModel.findById(userId);
-      console.log("[PATCH][DEBUG] updateBrandProfile: userId:", userId);
-      console.log(
-        "[PATCH][DEBUG] Old brandLogo:",
-        user && user.brandLogo ? JSON.stringify(user.brandLogo) : "none",
-      );
-      console.log(
-        "[PATCH][DEBUG] New brandLogo:",
-        JSON.stringify(update.brandLogo),
-      );
       if (user && user.brandLogo && Array.isArray(user.brandLogo)) {
         for (const oldImg of user.brandLogo) {
           if (
@@ -1453,18 +1286,8 @@ export class UsersService {
             )
           ) {
             try {
-              console.log(
-                "[PATCH][DEBUG] Deleting old brandLogo image with public_id:",
-                oldImg.public_id,
-              );
               const result = await this.cloudinaryService.deleteImage(
                 oldImg.public_id,
-              );
-              console.log(
-                "[PATCH][DEBUG] Cloudinary delete result for brandLogo",
-                oldImg.public_id,
-                ":",
-                result,
               );
             } catch (err) {
               console.error(
@@ -1474,10 +1297,6 @@ export class UsersService {
               );
             }
           } else {
-            console.log(
-              "[PATCH][DEBUG] Keeping brandLogo image (still present):",
-              oldImg && oldImg.public_id,
-            );
           }
         }
       }
@@ -1486,14 +1305,6 @@ export class UsersService {
     // Cleanup old product images if replaced
     if (update.products) {
       const user = await this.brandModel.findById(userId);
-      console.log(
-        "[PATCH][DEBUG] Old products:",
-        user && user.products ? JSON.stringify(user.products) : "none",
-      );
-      console.log(
-        "[PATCH][DEBUG] New products:",
-        JSON.stringify(update.products),
-      );
       if (user && user.products && Array.isArray(user.products)) {
         for (const oldImg of user.products) {
           if (
@@ -1504,18 +1315,8 @@ export class UsersService {
             )
           ) {
             try {
-              console.log(
-                "[PATCH][DEBUG] Deleting old product image with public_id:",
-                oldImg.public_id,
-              );
               const result = await this.cloudinaryService.deleteImage(
                 oldImg.public_id,
-              );
-              console.log(
-                "[PATCH][DEBUG] Cloudinary delete result for product",
-                oldImg.public_id,
-                ":",
-                result,
               );
             } catch (err) {
               console.error(
@@ -1525,10 +1326,6 @@ export class UsersService {
               );
             }
           } else {
-            console.log(
-              "[PATCH][DEBUG] Keeping product image (still present):",
-              oldImg && oldImg.public_id,
-            );
           }
         }
       }

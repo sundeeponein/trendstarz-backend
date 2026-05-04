@@ -2,6 +2,23 @@ import { Injectable } from "@nestjs/common";
 import Razorpay from "razorpay";
 import * as crypto from "crypto";
 
+/**
+ * @future-only RazorpayService
+ *
+ * This service is preserved for the automated payment phase.
+ * It is NOT wired into any active campaign payment flow.
+ *
+ * Current MVP flow: brand pays manually via UPI/QR, admin verifies UTR,
+ * admin pays influencer via UPI. All handled in PaymentsPayoutsService.
+ *
+ * When to activate:
+ *  1. Set CampaignTransaction.gateway = 'razorpay'
+ *  2. Call createOrder() from PaymentsPayoutsService.submitPaymentProof()
+ *  3. Verify webhook signature via verifySignature()
+ *  4. Auto-capture: trigger markPayoutPaid() on successful Razorpay webhook
+ *
+ * Do NOT remove this service. It is registered in PaymentModule.
+ */
 @Injectable()
 export class RazorpayService {
   private razorpay: Razorpay | null = null;
@@ -31,8 +48,10 @@ export class RazorpayService {
   }
 
   /**
-   * Create a Razorpay order.
+   * @future-only
+   * Create a Razorpay order for automated payment capture.
    * amount must be in paise (₹1 = 100 paise).
+   * NOT USED in MVP — manual UPI flow is active instead.
    */
   async createOrder(
     amountPaise: number,
@@ -56,8 +75,9 @@ export class RazorpayService {
   }
 
   /**
-   * Verify the Razorpay payment signature.
-   * Called after the frontend receives razorpay_payment_id / razorpay_order_id / razorpay_signature.
+   * @future-only
+   * Verify the Razorpay payment signature after automated capture.
+   * NOT USED in MVP — manual UTR verification by admin is active instead.
    */
   verifySignature(
     orderId: string,
@@ -74,7 +94,9 @@ export class RazorpayService {
   }
 
   /**
-   * Fetch the order details to double-check status on the server side.
+   * @future-only
+   * Fetch Razorpay order details for server-side status verification.
+   * NOT USED in MVP — admin manually confirms UTR instead.
    */
   async fetchOrder(orderId: string): Promise<any> {
     const razorpay = this.getClient();

@@ -68,18 +68,15 @@ export class AdminListsController {
     };
     const settings = await this.appSettingsModel.findOne({}).lean();
     const merged = { ...defaults, ...(settings || {}) };
-    console.log("[ADMIN][GET /admin/settings] Returning:", merged);
     return merged;
   }
 
   @Patch("settings")
   async updateSettings(@Body() body: Record<string, any>) {
-    console.log("[ADMIN][PATCH /admin/settings] Incoming body:", body);
     // Only update fields present in the request body
     const settings = await this.appSettingsModel
       .findOneAndUpdate({}, { $set: body }, { upsert: true, new: true })
       .lean();
-    console.log("[ADMIN][PATCH /admin/settings] Updated settings:", settings);
     return { success: true, settings };
   }
   // Debug endpoint to log influencer and brand data
@@ -343,11 +340,6 @@ export class AdminListsController {
   @Post("batch-update-visibility")
   async batchUpdateVisibility(@Body() body: BatchVisibilityBody) {
     try {
-      // Debug: print incoming payload
-      console.log(
-        "[BatchUpdate][INCOMING PAYLOAD]:",
-        JSON.stringify(body, null, 2),
-      );
       // Each key is an array of {_id, showInFrontend}
       if (body.tiers) {
         for (const t of body.tiers) {

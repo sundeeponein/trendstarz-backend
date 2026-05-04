@@ -530,7 +530,6 @@ export class AuthService {
   }
 
   async registerInfluencer(data: any) {
-    console.log("registerInfluencer called with data:", data);
     if (!data.password || data.password.length < 8) {
       throw new BadRequestException("Password must be at least 8 characters.");
     }
@@ -633,13 +632,8 @@ export class AuthService {
       signupAttribution,
     });
     // Status stays "pending" until email is verified — auto-approve (if enabled) is applied in verifyEmailByToken.
-    console.log("Influencer payload:", influencer);
     try {
       const saved = await influencer.save();
-      console.log(
-        "Influencer signup attribution:",
-        saved?.signupAttribution || signupAttribution,
-      );
       try {
         await this.sendEmailVerificationLink(saved.email);
       } catch (verifyMailErr) {
@@ -648,12 +642,6 @@ export class AuthService {
           verifyMailErr,
         );
       }
-      console.log(
-        "Influencer saved successfully:",
-        saved._id,
-        "Collection:",
-        saved.collection.name,
-      );
     } catch (err) {
       const error = err instanceof Error ? err : new Error(String(err));
       const mongoErr = err as { name?: string; errors?: unknown };
@@ -777,10 +765,6 @@ export class AuthService {
     });
     // Status stays "pending" until email is verified — auto-approve (if enabled) is applied in verifyEmailByToken.
     const savedBrand = await brand.save();
-    console.log(
-      "Brand signup attribution:",
-      savedBrand?.signupAttribution || signupAttribution,
-    );
     try {
       await this.sendEmailVerificationLink(savedBrand.email);
     } catch (verifyMailErr) {
@@ -800,6 +784,11 @@ export class AuthService {
       preApproveBrands: !!settings?.preApproveBrands,
       brandRequireEmailVerified: settings?.brandRequireEmailVerified !== false,
       brandRequireMobileVerified: !!settings?.brandRequireMobileVerified,
+      platformFeeEnabled: !!settings?.platformFeeEnabled,
+      platformFeePercent: settings?.platformFeePercent ?? 10,
+      gstPercent: settings?.gstPercent ?? 18,
+      // Campaign payment UPI shown to brands on the payment screen
+      paymentUpiId: settings?.paymentUpiId || "trendstarzin@kotak",
     };
   }
 
