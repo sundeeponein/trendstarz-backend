@@ -556,7 +556,7 @@ export class PaymentsPayoutsService {
         ? this.influencerModel.find({ _id: { $in: Array.from(influencerIds) } }).select("name username").lean()
         : Promise.resolve([] as any[]),
       brandIds.size
-        ? this.brandModel.find({ _id: { $in: Array.from(brandIds) } }).select("brandName brandUsername").lean()
+        ? this.brandModel.find({ _id: { $in: Array.from(brandIds) } }).select("brandName brandUsername brandLogo").lean()
         : Promise.resolve([] as any[]),
     ]);
 
@@ -574,6 +574,13 @@ export class PaymentsPayoutsService {
       return "";
     };
 
+    const getPartyLogo = (role: string, id: any): string => {
+      if (role !== "brand") return "";
+      const b = brandMap.get(String(id));
+      const logo = Array.isArray(b?.brandLogo) ? b.brandLogo[0] : b?.brandLogo;
+      return logo?.url || logo?.secure_url || (typeof logo === "string" ? logo : "");
+    };
+
     const enriched = (rows as any[]).map((r: any) => {
       const campaign = campaignMap.get(String(r.campaignId));
       // "other party" from the current user's perspective
@@ -585,6 +592,7 @@ export class PaymentsPayoutsService {
         campaignType: r.transactionType || campaign?.campaignType || "",
         otherPartyName: getPartyName(otherRole, otherId),
         otherPartyRole: otherRole,
+        otherPartyLogo: getPartyLogo(otherRole, otherId),
       };
     });
 
