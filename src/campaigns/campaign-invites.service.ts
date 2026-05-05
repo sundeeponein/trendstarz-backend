@@ -300,10 +300,18 @@ export class CampaignInvitesService {
         .find({ $or: queries })
         .populate(
           "influencerId",
-          "name email username profileImages socialMedia location isPremium premiumEnd",
+          "name email phoneNumber username profileImages socialMedia location isPremium premiumEnd",
         )
         .lean();
-      return Array.isArray(invites) ? invites : [];
+
+      // Keep contact details hidden until the invite is unlocked.
+      return (Array.isArray(invites) ? invites : []).map((inv: any) => {
+        if (!inv?.unlocked && inv?.influencerId && typeof inv.influencerId === "object") {
+          const { email: _e, phoneNumber: _p, ...safeInfluencer } = inv.influencerId;
+          return { ...inv, influencerId: safeInfluencer };
+        }
+        return inv;
+      });
     } catch {
       return [];
     }
@@ -885,90 +893,11 @@ export class CampaignInvitesService {
   }
 
   async applyToCampaign(influencerId: string, campaignId: string) {
-    const campaign: any = await this.campaignModel
-      .findById(campaignId)
-      .select("_id brandId status timelineEnd")
-      .lean();
-    if (!campaign) {
-      throw new NotFoundException("Campaign not found");
-    }
-    if (campaign.status !== "active") {
-      throw new BadRequestException("Only active campaigns can be joined");
-    }
-    if (campaign.timelineEnd && new Date(campaign.timelineEnd) < new Date()) {
-      throw new BadRequestException("This campaign has already ended");
-    }
-
-    const existing = await this.inviteModel
-      .findOne({
-        influencerId,
-        campaignId,
-        status: {
-          $in: [
-            "pending",
-            "accepted",
-            "payment_confirmed",
-            "working",
-            "submitted",
-            "completed",
-          ],
-        },
-      })
-      .populate(
-        "campaignId",
-        "title description status budgetMin budgetMax campaignType pricePerInfluencer maxInfluencers startDate endDate timelineStart timelineEnd deliverables platforms socialMedia specialInstructions venueName venueAddress venueCity venueDistrict venueState venueGoogleMapUrl productValue productDescription productPaymentMode productPaymentAmount inviteBenefits payToJoinBenefits payToJoinInstructions",
-      )
-      .populate(
-        "brandId",
-        "brandName brandUsername brandLogo location categories website",
-      )
-      .lean();
-    if (existing) {
-      return existing;
-    }
-
-    const caps = await this.plansService.getUserPlanCapabilities(influencerId);
-    const maxApplications =
-      caps.limits.find((l: any) => l.key === "maxCampaignApplications")
-        ?.value ?? 2;
-    // Count applications this monthly cycle (anchored on signup / premiumStart)
-    const influencerDoc: any = await this.influencerModel
-      .findById(influencerId)
-      .select("createdAt premiumStart premiumEnd isPremium")
-      .lean();
-    const cycleStart = this.computePlanCycleStart(influencerDoc);
-    const appCount = await this.inviteModel.countDocuments({
-      influencerId,
-      createdAt: { $gte: cycleStart },
-      status: { $in: ["pending", "accepted"] },
-    });
-    if (appCount >= maxApplications) {
-      throw new BadRequestException(
-        `Plan limit: Only ${maxApplications} campaign applications per month allowed. Upgrade for more.`,
-      );
-    }
-
-    // Create application (invite with status 'pending')
-    const invite = new this.inviteModel({
-      influencerId,
-      campaignId,
-      brandId: campaign.brandId,
-      status: "pending",
-    });
-
-    const saved = await invite.save();
-
-    return this.inviteModel
-      .findById(saved._id)
-      .populate(
-        "campaignId",
-        "title description status budgetMin budgetMax campaignType pricePerInfluencer maxInfluencers startDate endDate timelineStart timelineEnd deliverables platforms socialMedia specialInstructions venueName venueAddress venueCity venueDistrict venueState venueGoogleMapUrl productValue productDescription productPaymentMode productPaymentAmount inviteBenefits payToJoinBenefits payToJoinInstructions",
-      )
-      .populate(
-        "brandId",
-        "brandName brandUsername brandLogo location categories website",
-      )
-      .lean();
+    void influencerId;
+    void campaignId;
+    throw new BadRequestException(
+      "This campaign is invite-only. You can respond only when a brand sends you an invite.",
+    );
   }
 
   /* ── Submission Flow ──────────────────────────────────────────────────── */

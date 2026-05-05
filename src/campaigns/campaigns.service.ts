@@ -152,7 +152,22 @@ export class CampaignsService {
       .find({ brandId })
       .sort({ createdAt: -1 })
       .lean();
-    return results;
+
+    // Enrich with brand logo so the frontend campaign card shows it
+    const brand: any = await this.brandModel
+      .findById(brandId)
+      .select("brandName brandUsername brandLogo")
+      .lean();
+    const brandInfo = brand
+      ? {
+          _id: brand._id,
+          name: brand.brandName,
+          username: brand.brandUsername,
+          logo: brand.brandLogo?.[0]?.url || null,
+        }
+      : null;
+
+    return results.map((c: any) => ({ ...c, brand: brandInfo }));
   }
 
   async findPublic(status: string = "active") {

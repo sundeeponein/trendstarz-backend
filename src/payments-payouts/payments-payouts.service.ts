@@ -170,6 +170,7 @@ export class PaymentsPayoutsService {
       calc.recipientPayoutTotal,
       acceptedInvites.length,
     );
+    const paymentBatchId = `batch_${campaignId}_${Date.now()}`;
 
     const saved: any[] = [];
 
@@ -205,6 +206,7 @@ export class PaymentsPayoutsService {
         platformFee: feeSplit[i],
         payerTotal: payerSplit[i],
         recipientPayout: payoutSplit[i],
+        paymentBatchId,
         utrNumber,
         paymentProofUrl: body.paymentProofUrl || undefined,
         collectionStatus: "proof_submitted",
@@ -550,7 +552,7 @@ export class PaymentsPayoutsService {
 
     const [campaigns, influencers, brands] = await Promise.all([
       campaignIds.size
-        ? this.campaignModel.find({ _id: { $in: Array.from(campaignIds) } }).select("title campaignType").lean()
+        ? this.campaignModel.find({ _id: { $in: Array.from(campaignIds) } }).select("title campaignType image").lean()
         : Promise.resolve([] as any[]),
       influencerIds.size
         ? this.influencerModel.find({ _id: { $in: Array.from(influencerIds) } }).select("name username").lean()
@@ -581,6 +583,14 @@ export class PaymentsPayoutsService {
       return logo?.url || logo?.secure_url || (typeof logo === "string" ? logo : "");
     };
 
+    const getBrandLogoForRow = (r: any): string => {
+      // Always show the brand logo in the avatar, regardless of viewer role.
+      // For paid_collab the brand is the payer; for pay_to_join the brand is the recipient.
+      const brandRole = r.payerRole === "brand" ? "payer" : "recipient";
+      const brandId = brandRole === "payer" ? r.payerId : r.recipientId;
+      return getPartyLogo("brand", brandId);
+    };
+
     const enriched = (rows as any[]).map((r: any) => {
       const campaign = campaignMap.get(String(r.campaignId));
       // "other party" from the current user's perspective
@@ -592,7 +602,8 @@ export class PaymentsPayoutsService {
         campaignType: r.transactionType || campaign?.campaignType || "",
         otherPartyName: getPartyName(otherRole, otherId),
         otherPartyRole: otherRole,
-        otherPartyLogo: getPartyLogo(otherRole, otherId),
+        // Always show brand logo; falls back to campaign cover image then TrendstarZ in frontend
+        otherPartyLogo: getBrandLogoForRow(r) || campaign?.image?.url || "",
       };
     });
 
