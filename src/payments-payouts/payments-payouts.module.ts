@@ -10,6 +10,7 @@ import { CampaignInviteSchema } from "../database/schemas/campaign-invite.schema
 import { CampaignTransactionSchema } from "../database/schemas/campaign-transaction.schema";
 import { PaymentsPayoutsController } from "./payments-payouts.controller";
 import { PaymentsPayoutsService } from "./payments-payouts.service";
+import { PushModule } from "../push/push.module";
 
 @Module({
   imports: [
@@ -33,6 +34,7 @@ import { PaymentsPayoutsService } from "./payments-payouts.service";
         collection: "appsettings",
       },
     ]),
+    PushModule,
   ],
   controllers: [PaymentsPayoutsController],
   providers: [PaymentsPayoutsService],

@@ -48,6 +48,7 @@ import { HealthController } from "./health.controller";
 import { PlansModule } from "./plans/plans.module";
 import { ReviewsModule } from "./reviews/reviews.module";
 import { PaymentsPayoutsModule } from "./payments-payouts/payments-payouts.module";
+import { PushModule } from "./push/push.module";
 
 @Module({
   imports: [
@@ -109,6 +110,7 @@ import { PaymentsPayoutsModule } from "./payments-payouts/payments-payouts.modul
     PlansModule,
     ReviewsModule,
     PaymentsPayoutsModule,
+    PushModule,
   ],
   controllers: [
     AppController,

@@ -6,6 +6,7 @@ import {
 import { InjectModel } from "@nestjs/mongoose";
 import { Model } from "mongoose";
 import { sendAppEmail } from "../utils/app-email.service";
+import { PushService } from "../push/push.service";
 
 type FeeSettings = {
   platformFeeEnabled: boolean;
@@ -22,6 +23,7 @@ export class PaymentsPayoutsService {
     @InjectModel("AppSettings") private readonly appSettingsModel: Model<any>,
     @InjectModel("Brand") private readonly brandModel: Model<any>,
     @InjectModel("Influencer") private readonly influencerModel: Model<any>,
+    private readonly pushService: PushService,
   ) {}
 
   private roundPercent(amount: number, percent: number): number {
@@ -32,7 +34,10 @@ export class PaymentsPayoutsService {
     if (parts <= 0) return [];
     const base = Math.floor(total / parts);
     const remainder = total % parts;
-    return Array.from({ length: parts }, (_, i) => base + (i < remainder ? 1 : 0));
+    return Array.from(
+      { length: parts },
+      (_, i) => base + (i < remainder ? 1 : 0),
+    );
   }
 
   private async getFeeSettings(): Promise<FeeSettings> {
@@ -103,7 +108,8 @@ export class PaymentsPayoutsService {
     }
 
     const agreedAmount = pricePerInfluencer * acceptedCount;
-    const { platformFeeEnabled, platformFeePercent } = await this.getFeeSettings();
+    const { platformFeeEnabled, platformFeePercent } =
+      await this.getFeeSettings();
     const fee = platformFeeEnabled
       ? this.roundPercent(agreedAmount, platformFeePercent)
       : 0;
@@ -156,16 +162,24 @@ export class PaymentsPayoutsService {
 
     const calc = await this.calculatePayment(campaignId, payerId);
     if (!calc.acceptedCount) {
-      throw new BadRequestException("No accepted influencers found for payment");
+      throw new BadRequestException(
+        "No accepted influencers found for payment",
+      );
     }
 
     const acceptedInvites = await this.inviteModel
       .find({ _id: { $in: calc.acceptedInviteIds } })
       .lean();
 
-    const agreedSplit = this.splitEvenly(calc.agreedAmount, acceptedInvites.length);
+    const agreedSplit = this.splitEvenly(
+      calc.agreedAmount,
+      acceptedInvites.length,
+    );
     const feeSplit = this.splitEvenly(calc.platformFee, acceptedInvites.length);
-    const payerSplit = this.splitEvenly(calc.payerTotal, acceptedInvites.length);
+    const payerSplit = this.splitEvenly(
+      calc.payerTotal,
+      acceptedInvites.length,
+    );
     const payoutSplit = this.splitEvenly(
       calc.recipientPayoutTotal,
       acceptedInvites.length,
@@ -223,14 +237,19 @@ export class PaymentsPayoutsService {
 
     // Fire-and-forget admin alert
     const adminEmail = process.env.ADMIN_EMAIL || "support@trendstarz.in";
-    const adminUrl = (process.env.FRONTEND_URL || "https://trendstarz.com") + "/admin/payments";
+    const adminUrl =
+      (process.env.FRONTEND_URL || "https://trendstarz.com") +
+      "/admin/payments";
     sendAppEmail({
       to: adminEmail,
       subject: `[TrendStarZ] New payment proof — ${campaign.title || campaignId}`,
       text: `A brand has submitted a UTR reference for campaign "${campaign.title || campaignId}".\n\nUTR: ${utrNumber}\nInfluencers: ${saved.length}\n\nReview: ${adminUrl}`,
       html: `<p>A brand has submitted a UTR reference for campaign <strong>${campaign.title || campaignId}</strong>.</p><p><strong>UTR:</strong> ${utrNumber}<br/><strong>Influencers:</strong> ${saved.length}</p><p><a href="${adminUrl}">Review in admin panel</a></p>`,
     }).catch((err: unknown) => {
-      console.error("[PaymentsPayoutsService] Failed to send admin UTR alert:", err);
+      console.error(
+        "[PaymentsPayoutsService] Failed to send admin UTR alert:",
+        err,
+      );
     });
 
     return {
@@ -289,9 +308,9 @@ export class PaymentsPayoutsService {
     ]);
 
     const inflMap = new Map<string, any>();
-    for (const i of influencers as any[]) inflMap.set(String(i._id), i);
+    for (const i of influencers) inflMap.set(String(i._id), i);
     const brandMap = new Map<string, any>();
-    for (const b of brands as any[]) brandMap.set(String(b._id), b);
+    for (const b of brands) brandMap.set(String(b._id), b);
 
     const buildContact = (
       role: string | undefined,
@@ -406,6 +425,8 @@ export class PaymentsPayoutsService {
 
     // Brand pays → unlock contact for the linked invite (paid_collab payment path).
     // Also advance invite status to payment_confirmed if still in accepted.
+    let paymentConfirmedInfluencerId: string | null = null;
+    let paymentConfirmedCampaignId: string | null = null;
     if (tx.inviteId && tx.transactionType === "paid_collab") {
       const update: any = {
         unlocked: true,
@@ -415,12 +436,57 @@ export class PaymentsPayoutsService {
       };
       const invite: any = await this.inviteModel
         .findById(tx.inviteId)
-        .select("status")
+        .select("status influencerId campaignId")
         .lean();
       if (invite && invite.status === "accepted") {
         update.status = "payment_confirmed";
+        paymentConfirmedInfluencerId = String(invite.influencerId || "");
+        paymentConfirmedCampaignId = String(invite.campaignId || "");
       }
       await this.inviteModel.findByIdAndUpdate(tx.inviteId, { $set: update });
+    }
+
+    // Notify influencer as soon as payment is confirmed so they can start posting.
+    if (paymentConfirmedInfluencerId) {
+      Promise.all([
+        this.influencerModel
+          .findById(paymentConfirmedInfluencerId)
+          .select("email name username")
+          .lean(),
+        paymentConfirmedCampaignId
+          ? this.campaignModel
+              .findById(paymentConfirmedCampaignId)
+              .select("title")
+              .lean()
+          : Promise.resolve(null),
+      ])
+        .then(([inf, campaign]: any[]) => {
+          if (!inf?.email) return;
+          const name = inf.name || inf.username || "Influencer";
+          const campaignTitle = campaign?.title || "your campaign";
+          const dashboardUrl =
+            (process.env.FRONTEND_URL || "https://trendstarz.com") +
+            "/influencer-dashboard";
+          return sendAppEmail({
+            to: inf.email,
+            subject: "[TrendStarZ] Verified - you can start posting",
+            text: `Hi ${name},\n\nGood news! Brand payment has been verified for "${campaignTitle}".\nYou can now start creating and posting your content.\n\nOpen dashboard: ${dashboardUrl}`,
+            html: `<p>Hi <strong>${name}</strong>,</p><p>Good news! Brand payment has been verified for <strong>"${campaignTitle}"</strong>.</p><p>You can now start creating and posting your content.</p><p><a href="${dashboardUrl}">Open your dashboard</a></p>`,
+          });
+        })
+        .catch((err: unknown) => {
+          console.error(
+            "[PaymentsPayoutsService] Failed to send payment-confirmed email to influencer:",
+            err,
+          );
+        });
+
+      // Web push
+      this.pushService.sendToUser(paymentConfirmedInfluencerId, {
+        title: "Payment verified ✅",
+        body: `You can now start posting for your campaign.`,
+        url: "/influencer-dashboard",
+      }).catch(() => { /* non-critical */ });
     }
 
     // Fire-and-forget: notify brand their payment was verified
@@ -432,17 +498,25 @@ export class PaymentsPayoutsService {
         .then((brand: any) => {
           if (!brand?.email) return;
           const name = brand.brandName || "Brand";
-          const adminUrl = (process.env.FRONTEND_URL || "https://trendstarz.com") + "/campaigns";
+          const adminUrl =
+            (process.env.FRONTEND_URL || "https://trendstarz.com") +
+            "/campaigns";
           sendAppEmail({
             to: brand.email,
-            subject: "[TrendStarZ] Payment verified — influencers can now begin work",
+            subject:
+              "[TrendStarZ] Payment verified — influencers can now begin work",
             text: `Hi ${name},\n\nYour campaign payment has been verified. Influencers have been notified and can now begin creating content.\n\nMonitor progress: ${adminUrl}`,
             html: `<p>Hi <strong>${name}</strong>,</p><p>Your campaign payment has been verified! Influencers have been notified and can now begin creating content.</p><p><a href="${adminUrl}">Monitor campaign progress</a></p>`,
           }).catch((err: unknown) => {
-            console.error("[PaymentsPayoutsService] Failed to send verification email to brand:", err);
+            console.error(
+              "[PaymentsPayoutsService] Failed to send verification email to brand:",
+              err,
+            );
           });
         })
-        .catch(() => {/* ignore */});
+        .catch(() => {
+          /* ignore */
+        });
     }
 
     return { success: true, transaction: tx };
@@ -464,17 +538,25 @@ export class PaymentsPayoutsService {
         .then((brand: any) => {
           if (!brand?.email) return;
           const name = brand.brandName || "Brand";
-          const payUrl = (process.env.FRONTEND_URL || "https://trendstarz.com") + "/campaigns";
+          const payUrl =
+            (process.env.FRONTEND_URL || "https://trendstarz.com") +
+            "/campaigns";
           sendAppEmail({
             to: brand.email,
-            subject: "[TrendStarZ] Action required — payment proof could not be verified",
+            subject:
+              "[TrendStarZ] Action required — payment proof could not be verified",
             text: `Hi ${name},\n\nUnfortunately, your payment proof could not be verified.\n\nReason: ${reason || "No reason provided."}\n\nPlease resubmit with a valid UTR reference: ${payUrl}`,
             html: `<p>Hi <strong>${name}</strong>,</p><p>Unfortunately, your payment proof could not be verified.</p><p><strong>Reason:</strong> ${reason || "No reason provided."}</p><p>Please <a href="${payUrl}">log in and resubmit</a> with a valid UTR reference.</p>`,
           }).catch((err: unknown) => {
-            console.error("[PaymentsPayoutsService] Failed to send rejection email to brand:", err);
+            console.error(
+              "[PaymentsPayoutsService] Failed to send rejection email to brand:",
+              err,
+            );
           });
         })
-        .catch(() => {/* ignore */});
+        .catch(() => {
+          /* ignore */
+        });
     }
 
     return { success: true, transaction: tx };
@@ -492,10 +574,14 @@ export class PaymentsPayoutsService {
     const tx = await this.transactionModel.findById(transactionId);
     if (!tx) throw new NotFoundException("Transaction not found");
     if (tx.collectionStatus !== "verified") {
-      throw new BadRequestException("Collection must be verified before payout");
+      throw new BadRequestException(
+        "Collection must be verified before payout",
+      );
     }
     if (tx.disputeStatus === "open") {
-      throw new BadRequestException("Cannot mark payout as paid while a dispute is open. Resolve the dispute first.");
+      throw new BadRequestException(
+        "Cannot mark payout as paid while a dispute is open. Resolve the dispute first.",
+      );
     }
     tx.payoutStatus = "paid";
     tx.paidOutAt = new Date();
@@ -514,17 +600,25 @@ export class PaymentsPayoutsService {
         .then((inf: any) => {
           if (!inf?.email) return;
           const name = inf.name || inf.username || "Influencer";
-          const amount = tx.recipientPayout != null ? `₹${(tx.recipientPayout / 100).toFixed(2)}` : "your payout";
+          const amount =
+            tx.recipientPayout != null
+              ? `₹${(tx.recipientPayout / 100).toFixed(2)}`
+              : "your payout";
           sendAppEmail({
             to: inf.email,
             subject: "[TrendStarZ] Your payout has been sent!",
             text: `Hi ${name},\n\nGreat news! ${amount} has been sent to your UPI account (${tx.payoutUpiId || "on file"}).\n\nUTR Reference: ${tx.payoutUtr}\n\nThank you for collaborating with TrendStarZ!`,
             html: `<p>Hi <strong>${name}</strong>,</p><p>Great news! <strong>${amount}</strong> has been sent to your UPI account (<strong>${tx.payoutUpiId || "on file"}</strong>).</p><p><strong>UTR Reference:</strong> ${tx.payoutUtr}</p><p>Thank you for collaborating with TrendStarZ!</p>`,
           }).catch((err: unknown) => {
-            console.error("[PaymentsPayoutsService] Failed to send payout email:", err);
+            console.error(
+              "[PaymentsPayoutsService] Failed to send payout email:",
+              err,
+            );
           });
         })
-        .catch(() => {/* ignore */});
+        .catch(() => {
+          /* ignore */
+        });
     }
 
     return { success: true, transaction: tx };
@@ -544,35 +638,48 @@ export class PaymentsPayoutsService {
     const brandIds = new Set<string>();
     for (const r of rows as any[]) {
       if (r.campaignId) campaignIds.add(String(r.campaignId));
-      if (r.recipientRole === "influencer" && r.recipientId) influencerIds.add(String(r.recipientId));
-      if (r.payerRole === "influencer" && r.payerId) influencerIds.add(String(r.payerId));
-      if (r.recipientRole === "brand" && r.recipientId) brandIds.add(String(r.recipientId));
+      if (r.recipientRole === "influencer" && r.recipientId)
+        influencerIds.add(String(r.recipientId));
+      if (r.payerRole === "influencer" && r.payerId)
+        influencerIds.add(String(r.payerId));
+      if (r.recipientRole === "brand" && r.recipientId)
+        brandIds.add(String(r.recipientId));
       if (r.payerRole === "brand" && r.payerId) brandIds.add(String(r.payerId));
     }
 
     const [campaigns, influencers, brands] = await Promise.all([
       campaignIds.size
-        ? this.campaignModel.find({ _id: { $in: Array.from(campaignIds) } }).select("title campaignType image").lean()
+        ? this.campaignModel
+            .find({ _id: { $in: Array.from(campaignIds) } })
+            .select("title campaignType image")
+            .lean()
         : Promise.resolve([] as any[]),
       influencerIds.size
-        ? this.influencerModel.find({ _id: { $in: Array.from(influencerIds) } }).select("name username").lean()
+        ? this.influencerModel
+            .find({ _id: { $in: Array.from(influencerIds) } })
+            .select("name username")
+            .lean()
         : Promise.resolve([] as any[]),
       brandIds.size
-        ? this.brandModel.find({ _id: { $in: Array.from(brandIds) } }).select("brandName brandUsername brandLogo").lean()
+        ? this.brandModel
+            .find({ _id: { $in: Array.from(brandIds) } })
+            .select("brandName brandUsername brandLogo")
+            .lean()
         : Promise.resolve([] as any[]),
     ]);
 
     const campaignMap = new Map<string, any>();
-    for (const c of campaigns as any[]) campaignMap.set(String(c._id), c);
+    for (const c of campaigns) campaignMap.set(String(c._id), c);
     const inflMap = new Map<string, any>();
-    for (const i of influencers as any[]) inflMap.set(String(i._id), i);
+    for (const i of influencers) inflMap.set(String(i._id), i);
     const brandMap = new Map<string, any>();
-    for (const b of brands as any[]) brandMap.set(String(b._id), b);
+    for (const b of brands) brandMap.set(String(b._id), b);
 
     const getPartyName = (role: string, id: any): string => {
       const sid = String(id);
       if (role === "influencer") return inflMap.get(sid)?.name || "";
-      if (role === "brand") return brandMap.get(sid)?.name || brandMap.get(sid)?.brandName || "";
+      if (role === "brand")
+        return brandMap.get(sid)?.name || brandMap.get(sid)?.brandName || "";
       return "";
     };
 
@@ -580,7 +687,9 @@ export class PaymentsPayoutsService {
       if (role !== "brand") return "";
       const b = brandMap.get(String(id));
       const logo = Array.isArray(b?.brandLogo) ? b.brandLogo[0] : b?.brandLogo;
-      return logo?.url || logo?.secure_url || (typeof logo === "string" ? logo : "");
+      return (
+        logo?.url || logo?.secure_url || (typeof logo === "string" ? logo : "")
+      );
     };
 
     const getBrandLogoForRow = (r: any): string => {
@@ -594,8 +703,10 @@ export class PaymentsPayoutsService {
     const enriched = (rows as any[]).map((r: any) => {
       const campaign = campaignMap.get(String(r.campaignId));
       // "other party" from the current user's perspective
-      const otherRole = normalizedRole === "influencer" ? r.payerRole : r.recipientRole;
-      const otherId = normalizedRole === "influencer" ? r.payerId : r.recipientId;
+      const otherRole =
+        normalizedRole === "influencer" ? r.payerRole : r.recipientRole;
+      const otherId =
+        normalizedRole === "influencer" ? r.payerId : r.recipientId;
       return {
         ...r,
         campaignTitle: campaign?.title || "",
@@ -654,10 +765,14 @@ export class PaymentsPayoutsService {
       throw new BadRequestException("You are not a party to this transaction");
     }
     if (tx.disputeStatus === "open") {
-      throw new BadRequestException("A dispute is already open for this transaction");
+      throw new BadRequestException(
+        "A dispute is already open for this transaction",
+      );
     }
     if (tx.disputeStatus === "resolved") {
-      throw new BadRequestException("This transaction dispute is already resolved");
+      throw new BadRequestException(
+        "This transaction dispute is already resolved",
+      );
     }
 
     tx.disputeStatus = "open";
@@ -674,7 +789,11 @@ export class PaymentsPayoutsService {
     }
     await tx.save();
 
-    return { success: true, message: "Dispute raised. Payout is frozen pending admin review.", transaction: tx };
+    return {
+      success: true,
+      message: "Dispute raised. Payout is frozen pending admin review.",
+      transaction: tx,
+    };
   }
 
   /**
@@ -694,7 +813,9 @@ export class PaymentsPayoutsService {
       throw new BadRequestException("No open dispute on this transaction");
     }
     if (!["release_to_influencer", "refund_to_brand"].includes(outcome)) {
-      throw new BadRequestException("Invalid outcome. Use release_to_influencer or refund_to_brand");
+      throw new BadRequestException(
+        "Invalid outcome. Use release_to_influencer or refund_to_brand",
+      );
     }
 
     tx.disputeStatus = "resolved";
