@@ -217,3 +217,457 @@ describe("CampaignInvitesService (admin disputes + remind)", () => {
     });
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Suite 2: create() – invite gating (deadline, threshold, maxInfluencers)
+// ─────────────────────────────────────────────────────────────────────────────
+jest.mock("../utils/app-email.service", () => ({
+  sendAppEmail: jest.fn().mockResolvedValue(undefined),
+}));
+
+describe("CampaignInvitesService – create() gating", () => {
+  let service: CampaignInvitesService;
+  let inviteModel: any;
+  let brandModel: any;
+  let influencerModel: any;
+  let campaignModel: any;
+  let plansService: any;
+
+  beforeEach(async () => {
+    inviteModel = jest.fn().mockImplementation((data: any) => ({
+      ...data,
+      save: jest.fn().mockResolvedValue({ ...data, _id: "inv-new" }),
+    }));
+    inviteModel.findById = jest.fn();
+    inviteModel.countDocuments = jest.fn().mockResolvedValue(0);
+    inviteModel.find = jest.fn();
+
+    brandModel = jest.fn();
+    brandModel.findById = jest.fn().mockReturnValue({
+      select: jest.fn().mockReturnValue({
+        lean: jest.fn().mockResolvedValue({ brandUsername: "brand1" }),
+      }),
+    });
+
+    influencerModel = jest.fn();
+    influencerModel.findById = jest.fn().mockReturnValue({
+      select: jest.fn().mockReturnValue({
+        lean: jest.fn().mockResolvedValue({ email: "inf@test.com", name: "Inf" }),
+      }),
+    });
+
+    campaignModel = jest.fn();
+    campaignModel.findById = jest.fn();
+
+    plansService = {
+      getUserPlanCapabilities: jest.fn().mockResolvedValue({
+        hasPremium: false,
+        limits: [{ key: "maxInvitesPerCampaign", value: -1 }],
+      }),
+    };
+
+    const module: TestingModule = await Test.createTestingModule({
+      providers: [
+        CampaignInvitesService,
+        { provide: getModelToken("CampaignInvite"), useValue: inviteModel },
+        { provide: getModelToken("CampaignSubmission"), useValue: {} },
+        { provide: getModelToken("Campaign"), useValue: campaignModel },
+        { provide: getModelToken("Brand"), useValue: brandModel },
+        { provide: getModelToken("Influencer"), useValue: influencerModel },
+        { provide: getModelToken("CampaignTransaction"), useValue: {} },
+        { provide: PlansService, useValue: plansService },
+      ],
+    }).compile();
+
+    service = module.get<CampaignInvitesService>(CampaignInvitesService);
+  });
+
+  function mockCampaignLean(overrides: any = {}) {
+    const data = {
+      _id: "camp1",
+      brandId: "brand1",
+      title: "Test Campaign",
+      ...overrides,
+    };
+    // create() calls campaignModel.findById(id).lean()
+    campaignModel.findById.mockReturnValue({
+      lean: jest.fn().mockResolvedValue(data),
+    });
+  }
+
+  it("throws BadRequest when acceptanceDeadline has passed", async () => {
+    mockCampaignLean({ acceptanceDeadline: new Date(Date.now() - 60_000) });
+    await expect(
+      service.create("brand1", { campaignId: "camp1", influencerId: "inf1" }),
+    ).rejects.toThrow(BadRequestException);
+  });
+
+  it("allows invite when acceptanceDeadline is in the future", async () => {
+    mockCampaignLean({ acceptanceDeadline: new Date(Date.now() + 60 * 60 * 1000) });
+    inviteModel.countDocuments.mockResolvedValue(0);
+    await expect(
+      service.create("brand1", { campaignId: "camp1", influencerId: "inf1" }),
+    ).resolves.toBeDefined();
+  });
+
+  it("throws when acceptedCount >= minInfluencers (threshold reached)", async () => {
+    mockCampaignLean({ minInfluencers: 3 });
+    inviteModel.countDocuments
+      .mockResolvedValueOnce(0) // inviteCount for maxInfluencers check
+      .mockResolvedValueOnce(3); // acceptedCount for threshold
+    await expect(
+      service.create("brand1", { campaignId: "camp1", influencerId: "inf1" }),
+    ).rejects.toThrow(BadRequestException);
+  });
+
+  it("does NOT close when disputed invites inflate count (slot re-opens)", async () => {
+    // minInfluencers = 2, only 1 non-disputed accepted — must NOT close
+    mockCampaignLean({ minInfluencers: 2 });
+    inviteModel.countDocuments
+      .mockResolvedValueOnce(0) // inviteCount for maxInfluencers check
+      .mockResolvedValueOnce(1); // acceptedCount (disputed excluded by query)
+    await expect(
+      service.create("brand1", { campaignId: "camp1", influencerId: "inf1" }),
+    ).resolves.toBeDefined();
+  });
+
+  it("throws when total invited >= maxInfluencers cap", async () => {
+    mockCampaignLean({ maxInfluencers: 2 });
+    inviteModel.countDocuments.mockResolvedValue(2); // 2 already invited
+    await expect(
+      service.create("brand1", { campaignId: "camp1", influencerId: "inf1" }),
+    ).rejects.toThrow(BadRequestException);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Suite 3: respond() – acceptanceDeadline, threshold, insightsUnlocksAt
+// ─────────────────────────────────────────────────────────────────────────────
+describe("CampaignInvitesService – respond()", () => {
+  let service: CampaignInvitesService;
+  let inviteModel: any;
+  let brandModel: any;
+  let influencerModel: any;
+  let campaignModel: any;
+  let plansService: any;
+
+  const CAMPAIGN_START = new Date("2026-06-01");
+  const CAMPAIGN_END = new Date("2026-08-31");
+
+  function mockCampaignSelect(overrides: any = {}) {
+    const data = {
+      startDate: CAMPAIGN_START,
+      endDate: CAMPAIGN_END,
+      timelineStart: CAMPAIGN_START,
+      timelineEnd: CAMPAIGN_END,
+      socialMedia: [],
+      minInfluencers: 0,
+      maxInfluencers: 0,
+      ...overrides,
+    };
+    return {
+      select: jest.fn().mockReturnValue({ lean: jest.fn().mockResolvedValue(data) }),
+    };
+  }
+
+  beforeEach(async () => {
+    inviteModel = jest.fn();
+    inviteModel.findById = jest.fn();
+    inviteModel.countDocuments = jest.fn().mockResolvedValue(0);
+    inviteModel.find = jest.fn();
+
+    brandModel = jest.fn();
+    brandModel.findById = jest.fn().mockReturnValue({
+      select: jest.fn().mockReturnValue({
+        lean: jest.fn().mockResolvedValue({ email: "brand@test.com", brandName: "Brand" }),
+      }),
+    });
+
+    influencerModel = jest.fn();
+    influencerModel.findById = jest.fn().mockReturnValue({
+      select: jest.fn().mockReturnValue({
+        lean: jest.fn().mockResolvedValue({ name: "Inf" }),
+      }),
+    });
+    influencerModel.findByIdAndUpdate = jest.fn().mockResolvedValue(undefined);
+
+    campaignModel = jest.fn();
+    campaignModel.findById = jest.fn();
+
+    plansService = { getUserPlanCapabilities: jest.fn().mockResolvedValue({ limits: [] }) };
+
+    const module: TestingModule = await Test.createTestingModule({
+      providers: [
+        CampaignInvitesService,
+        { provide: getModelToken("CampaignInvite"), useValue: inviteModel },
+        { provide: getModelToken("CampaignSubmission"), useValue: {} },
+        { provide: getModelToken("Campaign"), useValue: campaignModel },
+        { provide: getModelToken("Brand"), useValue: brandModel },
+        { provide: getModelToken("Influencer"), useValue: influencerModel },
+        { provide: getModelToken("CampaignTransaction"), useValue: {} },
+        { provide: PlansService, useValue: plansService },
+      ],
+    }).compile();
+
+    service = module.get<CampaignInvitesService>(CampaignInvitesService);
+  });
+
+  function pendingInvite(overrides: any = {}) {
+    const save = jest.fn().mockImplementation(function (this: any) {
+      return Promise.resolve(this);
+    });
+    return {
+      _id: "inv1",
+      influencerId: "inf1",
+      brandId: "brand1",
+      campaignId: "camp1",
+      status: "pending",
+      save,
+      ...overrides,
+    };
+  }
+
+  it("throws when invite not found", async () => {
+    inviteModel.findById.mockResolvedValue(null);
+    await expect(service.respond("x", "inf1", "accepted", "2026-07-01")).rejects.toThrow(
+      NotFoundException,
+    );
+  });
+
+  it("throws when influencer does not own the invite", async () => {
+    inviteModel.findById.mockResolvedValue(pendingInvite({ influencerId: "other" }));
+    await expect(service.respond("inv1", "inf1", "accepted", "2026-07-01")).rejects.toThrow(
+      BadRequestException,
+    );
+  });
+
+  it("throws when invite is not pending", async () => {
+    inviteModel.findById.mockResolvedValue(pendingInvite({ status: "accepted" }));
+    await expect(service.respond("inv1", "inf1", "accepted", "2026-07-01")).rejects.toThrow(
+      BadRequestException,
+    );
+  });
+
+  it("throws when acceptanceDeadline has passed", async () => {
+    inviteModel.findById.mockResolvedValue(pendingInvite());
+    campaignModel.findById.mockReturnValue(
+      mockCampaignSelect({ acceptanceDeadline: new Date(Date.now() - 1000) }),
+    );
+    await expect(service.respond("inv1", "inf1", "accepted", "2026-07-01")).rejects.toThrow(
+      BadRequestException,
+    );
+  });
+
+  it("throws when acceptance threshold already reached", async () => {
+    inviteModel.findById.mockResolvedValue(pendingInvite());
+    campaignModel.findById.mockReturnValue(mockCampaignSelect({ minInfluencers: 2 }));
+    inviteModel.countDocuments.mockResolvedValue(2); // already 2 accepted
+    await expect(service.respond("inv1", "inf1", "accepted", "2026-07-01")).rejects.toThrow(
+      BadRequestException,
+    );
+  });
+
+  it("sets insightsUnlocksAt = selectedPostDate + 24h on acceptance", async () => {
+    const invite = pendingInvite();
+    inviteModel.findById.mockResolvedValue(invite);
+    campaignModel.findById.mockReturnValue(mockCampaignSelect());
+    inviteModel.countDocuments.mockResolvedValue(0);
+
+    const postDate = "2026-07-15";
+    await service.respond("inv1", "inf1", "accepted", postDate);
+
+    const selectedMs = new Date(postDate).getTime();
+    const unlockMs = new Date(invite.insightsUnlocksAt).getTime();
+    expect(unlockMs - selectedMs).toBe(24 * 60 * 60 * 1000);
+  });
+
+  it("sets acceptedAt on acceptance", async () => {
+    const invite = pendingInvite();
+    inviteModel.findById.mockResolvedValue(invite);
+    campaignModel.findById.mockReturnValue(mockCampaignSelect());
+    inviteModel.countDocuments.mockResolvedValue(0);
+
+    await service.respond("inv1", "inf1", "accepted", "2026-07-15");
+    expect(invite.acceptedAt).toBeInstanceOf(Date);
+  });
+
+  it("throws when selectedPostDate is outside campaign timeline", async () => {
+    inviteModel.findById.mockResolvedValue(pendingInvite());
+    campaignModel.findById.mockReturnValue(mockCampaignSelect());
+    await expect(
+      service.respond("inv1", "inf1", "accepted", "2025-01-01"), // before start
+    ).rejects.toThrow(BadRequestException);
+  });
+
+  it("allows decline without selectedPostDate", async () => {
+    const invite = pendingInvite();
+    inviteModel.findById.mockResolvedValue(invite);
+    await service.respond("inv1", "inf1", "declined");
+    expect(invite.status).toBe("declined");
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Suite 4: submitPost() – insights 24h lock enforcement
+// ─────────────────────────────────────────────────────────────────────────────
+describe("CampaignInvitesService – submitPost() insights lock", () => {
+  let service: CampaignInvitesService;
+  let inviteModel: any;
+  let submissionModel: any;
+  let brandModel: any;
+  let influencerModel: any;
+  let campaignModel: any;
+  let campaignTransactionModel: any;
+
+  beforeEach(async () => {
+    inviteModel = jest.fn();
+    inviteModel.findById = jest.fn();
+
+    submissionModel = { findOne: jest.fn(), create: jest.fn() };
+
+    brandModel = jest.fn();
+    brandModel.findById = jest.fn().mockReturnValue({
+      select: jest.fn().mockReturnValue({ lean: jest.fn().mockResolvedValue(null) }),
+    });
+
+    influencerModel = jest.fn();
+    influencerModel.findById = jest.fn().mockReturnValue({
+      select: jest.fn().mockReturnValue({ lean: jest.fn().mockResolvedValue(null) }),
+    });
+
+    campaignModel = jest.fn();
+    campaignModel.findById = jest.fn().mockReturnValue({
+      select: jest.fn().mockReturnValue({ lean: jest.fn().mockResolvedValue(null) }),
+    });
+
+    campaignTransactionModel = { updateMany: jest.fn().mockResolvedValue(undefined) };
+
+    const module: TestingModule = await Test.createTestingModule({
+      providers: [
+        CampaignInvitesService,
+        { provide: getModelToken("CampaignInvite"), useValue: inviteModel },
+        { provide: getModelToken("CampaignSubmission"), useValue: submissionModel },
+        { provide: getModelToken("Campaign"), useValue: campaignModel },
+        { provide: getModelToken("Brand"), useValue: brandModel },
+        { provide: getModelToken("Influencer"), useValue: influencerModel },
+        { provide: getModelToken("CampaignTransaction"), useValue: campaignTransactionModel },
+        { provide: PlansService, useValue: {} },
+      ],
+    }).compile();
+
+    service = module.get<CampaignInvitesService>(CampaignInvitesService);
+  });
+
+  function acceptedInvite(overrides: any = {}) {
+    const save = jest.fn().mockResolvedValue(undefined);
+    return {
+      _id: "inv1",
+      influencerId: "inf1",
+      brandId: "brand1",
+      campaignId: "camp1",
+      status: "accepted",
+      insightsUnlocksAt: null,
+      save,
+      ...overrides,
+    };
+  }
+
+  it("throws BadRequest when insights submitted before insightsUnlocksAt", async () => {
+    const future = new Date(Date.now() + 24 * 60 * 60 * 1000); // still locked
+    inviteModel.findById.mockResolvedValue(
+      acceptedInvite({ insightsUnlocksAt: future }),
+    );
+    await expect(
+      service.submitPost("inv1", "inf1", {
+        postUrl: "https://instagram.com/p/abc",
+        likesCount: 100,
+      }),
+    ).rejects.toThrow(BadRequestException);
+  });
+
+  it("allows insights submission after insightsUnlocksAt has passed", async () => {
+    const past = new Date(Date.now() - 1000); // already unlocked
+    const invite = acceptedInvite({ insightsUnlocksAt: past });
+    inviteModel.findById.mockResolvedValue(invite);
+    submissionModel.findOne.mockResolvedValue(null);
+    submissionModel.create.mockResolvedValue({ _id: "sub1" });
+
+    const result = await service.submitPost("inv1", "inf1", {
+      postUrl: "https://instagram.com/p/abc",
+      likesCount: 100,
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it("allows postUrl submission without insights when still locked", async () => {
+    const future = new Date(Date.now() + 24 * 60 * 60 * 1000);
+    const invite = acceptedInvite({ insightsUnlocksAt: future });
+    inviteModel.findById.mockResolvedValue(invite);
+    submissionModel.findOne.mockResolvedValue(null);
+    submissionModel.create.mockResolvedValue({ _id: "sub1" });
+
+    // No insights fields — should succeed
+    const result = await service.submitPost("inv1", "inf1", {
+      postUrl: "https://instagram.com/p/abc",
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it("throws NotFoundException when invite does not exist", async () => {
+    inviteModel.findById.mockResolvedValue(null);
+    await expect(
+      service.submitPost("bad-id", "inf1", { postUrl: "https://instagram.com/p/abc" }),
+    ).rejects.toThrow(NotFoundException);
+  });
+
+  it("throws BadRequest when invite belongs to another influencer", async () => {
+    inviteModel.findById.mockResolvedValue(
+      acceptedInvite({ influencerId: "other-inf" }),
+    );
+    await expect(
+      service.submitPost("inv1", "inf1", { postUrl: "https://instagram.com/p/abc" }),
+    ).rejects.toThrow(BadRequestException);
+  });
+
+  it("throws when postUrl is missing", async () => {
+    inviteModel.findById.mockResolvedValue(acceptedInvite());
+    await expect(
+      service.submitPost("inv1", "inf1", { postUrl: "" }),
+    ).rejects.toThrow(BadRequestException);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Suite 5: applyToCampaign() – invite-only enforcement
+// ─────────────────────────────────────────────────────────────────────────────
+describe("CampaignInvitesService – applyToCampaign()", () => {
+  let service: CampaignInvitesService;
+
+  beforeEach(async () => {
+    const inviteModel: any = jest.fn();
+    inviteModel.findById = jest.fn();
+    inviteModel.countDocuments = jest.fn();
+    inviteModel.find = jest.fn();
+
+    const module: TestingModule = await Test.createTestingModule({
+      providers: [
+        CampaignInvitesService,
+        { provide: getModelToken("CampaignInvite"), useValue: inviteModel },
+        { provide: getModelToken("CampaignSubmission"), useValue: {} },
+        { provide: getModelToken("Campaign"), useValue: jest.fn() },
+        { provide: getModelToken("Brand"), useValue: jest.fn() },
+        { provide: getModelToken("Influencer"), useValue: jest.fn() },
+        { provide: getModelToken("CampaignTransaction"), useValue: {} },
+        { provide: PlansService, useValue: {} },
+      ],
+    }).compile();
+
+    service = module.get<CampaignInvitesService>(CampaignInvitesService);
+  });
+
+  it("always throws BadRequest (invite-only mode is active)", async () => {
+    await expect(service.applyToCampaign("inf1", "camp1")).rejects.toThrow(
+      BadRequestException,
+    );
+  });
+});

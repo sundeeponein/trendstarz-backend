@@ -29,6 +29,8 @@ export const CampaignInviteSchema = new Schema({
     clicks: Number,
   },
   selectedPostDate: { type: Date },
+  // 24h after selectedPostDate — insights screenshot + metrics unlock after this
+  insightsUnlocksAt: { type: Date },
   // Influencer's chosen content type when accepting
   selectedPlatform: { type: String },
   selectedContentType: { type: String },

@@ -14,16 +14,29 @@ const VALID_TRANSITIONS: Record<string, string[]> = {
   completed: [],
 };
 
+const TIER_FILTERED_OPEN_ROLLOUT_AT = new Date("2026-05-05T00:00:00.000Z"); // Rolled out May 2026
+
 @Injectable()
 export class CampaignsService {
   constructor(
     @InjectModel("Campaign") private readonly campaignModel: Model<any>,
     @InjectModel("Brand") private readonly brandModel: Model<any>,
+    @InjectModel("Influencer") private readonly influencerModel: Model<any>,
     private readonly plansService: PlansService,
   ) {}
 
   private normalizeCampaignPayload(data: any) {
     const normalized: any = { ...data };
+
+    if (data.campaignMode !== undefined && data.campaignMode !== null) {
+      const mode = String(data.campaignMode);
+      if (!["invite_only", "tier_filtered_open"].includes(mode)) {
+        throw new BadRequestException(
+          "campaignMode must be invite_only or tier_filtered_open",
+        );
+      }
+      normalized.campaignMode = mode;
+    }
 
     const startDate = data.startDate || data.timelineStart;
     const endDate = data.endDate || data.timelineEnd;
@@ -40,6 +53,38 @@ export class CampaignsService {
       if (new Date(normalized.endDate) < new Date(normalized.startDate)) {
         throw new BadRequestException(
           "End date must be on or after start date",
+        );
+      }
+    }
+
+    if (data.acceptanceDeadline !== undefined) {
+      if (data.acceptanceDeadline === null || data.acceptanceDeadline === "") {
+        normalized.acceptanceDeadline = null;
+      } else {
+        const deadline = new Date(data.acceptanceDeadline);
+        if (Number.isNaN(deadline.getTime())) {
+          throw new BadRequestException("acceptanceDeadline is invalid");
+        }
+        normalized.acceptanceDeadline = deadline;
+      }
+    }
+
+    const acceptanceDeadline = normalized.acceptanceDeadline;
+    if (acceptanceDeadline) {
+      if (
+        normalized.startDate &&
+        acceptanceDeadline < new Date(normalized.startDate)
+      ) {
+        throw new BadRequestException(
+          "acceptanceDeadline cannot be before campaign start date",
+        );
+      }
+      if (
+        normalized.endDate &&
+        acceptanceDeadline > new Date(normalized.endDate)
+      ) {
+        throw new BadRequestException(
+          "acceptanceDeadline cannot be after campaign end date",
         );
       }
     }
@@ -69,6 +114,43 @@ export class CampaignsService {
       normalized.maxInfluencers = Math.round(m);
     }
 
+    if (data.minInfluencers !== undefined && data.minInfluencers !== null) {
+      const min = Number(data.minInfluencers);
+      if (!Number.isFinite(min) || min <= 0) {
+        throw new BadRequestException("minInfluencers must be greater than 0");
+      }
+      normalized.minInfluencers = Math.round(min);
+    }
+
+    const maxVal = Number(
+      normalized.maxInfluencers ?? data.maxInfluencers ?? 0,
+    );
+    const minVal = Number(
+      normalized.minInfluencers ?? data.minInfluencers ?? 0,
+    );
+    if (minVal > 0 && maxVal > 0 && minVal > maxVal) {
+      throw new BadRequestException(
+        "minInfluencers cannot be greater than maxInfluencers",
+      );
+    }
+
+    if (Array.isArray(data.targetTiers)) {
+      normalized.targetTiers = data.targetTiers
+        .map((t: any) => String(t))
+        .filter(Boolean);
+    }
+    if (data.targetState !== undefined) {
+      normalized.targetState = data.targetState ? String(data.targetState) : undefined;
+    }
+    if (data.targetDistrict !== undefined) {
+      normalized.targetDistrict = data.targetDistrict ? String(data.targetDistrict) : undefined;
+    }
+    if (Array.isArray(data.targetCities)) {
+      normalized.targetCities = data.targetCities
+        .map((c: any) => String(c))
+        .filter(Boolean);
+    }
+
     if (normalized.pricePerInfluencer && normalized.maxInfluencers) {
       normalized.estimatedBudget =
         normalized.pricePerInfluencer * normalized.maxInfluencers;
@@ -87,7 +169,15 @@ export class CampaignsService {
     return normalized;
   }
 
+  private assertCampaignModeAvailability(data: any) {
+    const mode = String(data?.campaignMode || "invite_only");
+    if (!["invite_only", "tier_filtered_open"].includes(mode)) {
+      throw new BadRequestException("Invalid campaign access mode.");
+    }
+  }
+
   async create(brandId: string, data: any) {
+    this.assertCampaignModeAvailability(data);
     // Enforce campaign creation limit for brands (admin-manageable)
     let brand = await this.brandModel.findById(brandId).lean();
     // If brand profile is missing, auto-create a minimal profile with valid dummy values
@@ -152,28 +242,116 @@ export class CampaignsService {
       .find({ brandId })
       .sort({ createdAt: -1 })
       .lean();
-    return results;
+
+    // Enrich with brand logo so the frontend campaign card shows it
+    const brand: any = await this.brandModel
+      .findById(brandId)
+      .select("brandName brandUsername brandLogo")
+      .lean();
+    const brandInfo = brand
+      ? {
+          _id: brand._id,
+          name: brand.brandName,
+          username: brand.brandUsername,
+          logo: brand.brandLogo?.[0]?.url || null,
+        }
+      : null;
+
+    return results.map((c: any) => ({ ...c, brand: brandInfo }));
   }
 
-  async findPublic(status: string = "active") {
-    const allowedStatuses = new Set(["active", "pending", "draft", "completed"]);
+  async findPublic(status: string = "active", influencerId?: string) {
+    const TIER_ORDER = ["Starter", "Nano", "Micro", "Mid-Tier", "Macro", "Mega / Celebrity"];
+    const allowedStatuses = new Set([
+      "active",
+      "pending",
+      "draft",
+      "completed",
+    ]);
     const query: any = {};
     if (status && allowedStatuses.has(status)) {
       query.status = status;
     } else {
       query.status = "active";
     }
-    const campaigns: any[] = await this.campaignModel.find(query).sort({ createdAt: -1 }).lean();
+    const campaigns: any[] = await this.campaignModel
+      .find(query)
+      .sort({ createdAt: -1 })
+      .lean();
+
+    // Load influencer once for eligibility filtering
+    let influencer: any = null;
+    if (influencerId) {
+      influencer = await this.influencerModel
+        .findById(influencerId)
+        .select("socialMedia location")
+        .lean();
+    }
+
+    // Helper: get the best (highest) tier the influencer has for any of the campaign's target platforms.
+    // Returns the tier string, or "" if no matching platform found.
+    const getInfluencerTierForCampaign = (inf: any, campaignPlatforms: string[]): string => {
+      const sm: any[] = inf?.socialMedia || [];
+      if (!campaignPlatforms || campaignPlatforms.length === 0) {
+        // No platform restriction — pick the influencer's highest tier across all platforms
+        const best = sm.reduce((best: number, entry: any) => {
+          const idx = TIER_ORDER.indexOf(entry.tier ?? "");
+          return idx > best ? idx : best;
+        }, -1);
+        return best >= 0 ? TIER_ORDER[best] : "";
+      }
+      const normalized = (s: string) => (s || "").toLowerCase().trim();
+      const matching = sm.filter((entry: any) =>
+        campaignPlatforms.some(p => normalized(p) === normalized(entry.platform))
+      );
+      if (matching.length === 0) return ""; // influencer not on required platform
+      const bestIdx = matching.reduce((best: number, entry: any) => {
+        const idx = TIER_ORDER.indexOf(entry.tier ?? "");
+        return idx > best ? idx : best;
+      }, -1);
+      return bestIdx >= 0 ? TIER_ORDER[bestIdx] : "";
+    };
+
+    // Filter: for tier_filtered_open campaigns, only show campaigns the influencer qualifies for
+    const visible = campaigns.filter((c) => {
+      if (c.campaignMode !== "tier_filtered_open") return true; // invite_only always shown (brand side)
+      if (!influencer) return true; // no influencer context — show all (brand/admin)
+
+      // Tier check — compare against the influencer's tier on the campaign's target platform(s)
+      if (c.minInfluencerTier) {
+        const minIdx = TIER_ORDER.indexOf(c.minInfluencerTier);
+        const infTier = getInfluencerTierForCampaign(influencer, c.platforms || []);
+        const infIdx = TIER_ORDER.indexOf(infTier);
+        // Hide if: campaign requires a tier AND (no matching platform or tier too low)
+        if (minIdx !== -1 && (infIdx === -1 || infIdx < minIdx)) return false;
+      }
+
+      // State check
+      if (c.targetState) {
+        const infState = influencer.location?.state ?? "";
+        if (infState && infState !== c.targetState) return false;
+      }
+
+      // District check
+      if (c.targetDistrict) {
+        const infDistrict = influencer.location?.district ?? "";
+        if (infDistrict && infDistrict !== c.targetDistrict) return false;
+      }
+
+      return true;
+    });
 
     // Enrich campaigns with brand info (name, logo, username)
-    const brandIds = [...new Set(campaigns.map((c) => c.brandId).filter(Boolean))];
+    const brandIds = [
+      ...new Set(visible.map((c) => c.brandId).filter(Boolean)),
+    ];
     const brands: any[] = await this.brandModel
       .find({ _id: { $in: brandIds } })
       .select("brandName brandUsername brandLogo")
       .lean();
     const brandMap = new Map(brands.map((b) => [String(b._id), b]));
 
-    return campaigns.map((c) => {
+    return visible.map((c) => {
       const brand = brandMap.get(String(c.brandId));
       return {
         ...c,
@@ -218,6 +396,7 @@ export class CampaignsService {
   }
 
   async update(id: string, brandId: string, data: any) {
+    this.assertCampaignModeAvailability(data);
     const campaign = await this.campaignModel.findById(id);
     if (!campaign) throw new NotFoundException("Campaign not found");
     // Allow update if brandId matches ObjectId or brandUsername

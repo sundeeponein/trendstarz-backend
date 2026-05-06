@@ -15,10 +15,12 @@ import { CampaignInvitesController } from "./campaign-invites.controller";
 import { CampaignInvitesService } from "./campaign-invites.service";
 import { PlansModule } from "../plans/plans.module";
 import { CloudinaryService } from "../cloudinary.service";
+import { PushModule } from "../push/push.module";
 
 @Module({
   imports: [
     PlansModule,
+    PushModule,
     MongooseModule.forFeature([
       { name: "Campaign", schema: CampaignSchema, collection: "campaigns" },
       {

@@ -48,6 +48,7 @@ export const CampaignTransactionSchema = new Schema(
     },
 
     // ── Brand collection (Phase 2: brand pays via UPI / QR) ──────────────────
+    paymentBatchId: { type: String, index: true },
     utrNumber: { type: String },
     paymentProofUrl: { type: String },
     collectionStatus: {
@@ -118,6 +119,7 @@ export interface CampaignTransaction extends Document {
   payerTotal: number;
   recipientPayout: number;
   gateway: "manual_upi" | "razorpay" | "stripe";
+  paymentBatchId?: string;
   collectionStatus: "awaiting_payment" | "proof_submitted" | "verified" | "failed";
   payoutStatus: "pending" | "processing" | "paid" | "skipped" | "frozen";
   workStatus: "pending" | "submitted" | "approved" | "disputed";

@@ -31,13 +31,15 @@ export class CampaignsController {
   @UseGuards(JwtAuthGuard)
   @Get()
   async findCampaigns(
+    @Req() req: any,
     @Query("brandId") brandId?: string,
     @Query("status") status?: string,
   ) {
     if (brandId) {
       return this.campaignsService.findByBrandId(brandId);
     }
-    return this.campaignsService.findPublic(status || "active");
+    const influencerId = req.user?.role === "influencer" ? req.user?.userId : undefined;
+    return this.campaignsService.findPublic(status || "active", influencerId);
   }
 
   @Get("brand-name/:brandName")
