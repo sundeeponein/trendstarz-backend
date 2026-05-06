@@ -8,6 +8,7 @@ import { InjectModel } from "@nestjs/mongoose";
 import { Model } from "mongoose";
 import { sendAppEmail } from "../utils/app-email.service";
 import { PlansService } from "../plans/plans.service";
+import { PushService } from "../push/push.service";
 
 function detectPlatform(url: string): string {
   if (!url) return "other";
@@ -71,6 +72,7 @@ export class CampaignInvitesService {
     @InjectModel("CampaignTransaction")
     private readonly campaignTransactionModel: Model<any>,
     private readonly plansService: PlansService,
+    private readonly pushService: PushService,
   ) {}
 
   /** True if user has an active premium right now. */
@@ -209,6 +211,39 @@ export class CampaignInvitesService {
         `Campaign limit reached: max ${maxInfluencers} influencers can be invited.`,
       );
     }
+
+    const acceptanceCloseAt = Number(
+      campaign?.minInfluencers || campaign?.maxInfluencers || 0,
+    );
+    if (
+      campaign?.acceptanceDeadline &&
+      Date.now() > new Date(campaign.acceptanceDeadline).getTime()
+    ) {
+      throw new BadRequestException(
+        "Campaign acceptance is closed by deadline.",
+      );
+    }
+    if (acceptanceCloseAt > 0) {
+      // 'disputed' excluded so no-show slots can be re-filled
+      const acceptedCount = await this.inviteModel.countDocuments({
+        campaignId: data.campaignId,
+        status: {
+          $in: [
+            "accepted",
+            "payment_confirmed",
+            "working",
+            "submitted",
+            "completed",
+            "approved",
+          ],
+        },
+      });
+      if (acceptedCount >= acceptanceCloseAt) {
+        throw new BadRequestException(
+          `Campaign acceptance is closed (${acceptedCount}/${acceptanceCloseAt} reached).`,
+        );
+      }
+    }
     if (maxInvitesPerCampaign !== -1 && inviteCount >= maxInvitesPerCampaign) {
       throw new BadRequestException(
         `Plan limit: Only ${maxInvitesPerCampaign} invites per campaign allowed. Upgrade for more.`,
@@ -281,6 +316,12 @@ export class CampaignInvitesService {
           text,
         });
       }
+      // Push notification to influencer
+      this.pushService.sendToUser(String(data.influencerId), {
+        title: "New Campaign Invite 🎉",
+        body: `${brand?.brandName || "A brand"} invited you to "${campaign.title}"`,
+        url: "/influencer-dashboard",
+      }).catch(() => { /* non-critical */ });
     } catch (err) {
       console.error("Failed to send invite email:", err);
     }
@@ -300,10 +341,18 @@ export class CampaignInvitesService {
         .find({ $or: queries })
         .populate(
           "influencerId",
-          "name email username profileImages socialMedia location isPremium premiumEnd",
+          "name email phoneNumber username profileImages socialMedia location isPremium premiumEnd",
         )
         .lean();
-      return Array.isArray(invites) ? invites : [];
+
+      // Keep contact details hidden until the invite is unlocked.
+      return (Array.isArray(invites) ? invites : []).map((inv: any) => {
+        if (!inv?.unlocked && inv?.influencerId && typeof inv.influencerId === "object") {
+          const { email: _e, phoneNumber: _p, ...safeInfluencer } = inv.influencerId;
+          return { ...inv, influencerId: safeInfluencer };
+        }
+        return inv;
+      });
     } catch {
       return [];
     }
@@ -763,9 +812,45 @@ export class CampaignInvitesService {
       }
       const campaign: any = await this.campaignModel
         .findById(invite.campaignId)
-        .select("startDate endDate timelineStart timelineEnd socialMedia")
+        .select(
+          "startDate endDate timelineStart timelineEnd socialMedia minInfluencers maxInfluencers acceptanceDeadline",
+        )
         .lean();
       if (!campaign) throw new NotFoundException("Campaign not found");
+
+      if (
+        campaign?.acceptanceDeadline &&
+        Date.now() > new Date(campaign.acceptanceDeadline).getTime()
+      ) {
+        throw new BadRequestException(
+          "Campaign acceptance is closed by deadline.",
+        );
+      }
+
+      const acceptanceCloseAt = Number(
+        campaign?.minInfluencers || campaign?.maxInfluencers || 0,
+      );
+      if (acceptanceCloseAt > 0) {
+        // 'disputed' (no-show) is excluded so the slot re-opens for a replacement
+        const acceptedCount = await this.inviteModel.countDocuments({
+          campaignId: invite.campaignId,
+          status: {
+            $in: [
+              "accepted",
+              "payment_confirmed",
+              "working",
+              "submitted",
+              "completed",
+              "approved",
+            ],
+          },
+        });
+        if (acceptedCount >= acceptanceCloseAt) {
+          throw new BadRequestException(
+            `Campaign is closed: required influencer count reached (${acceptanceCloseAt}).`,
+          );
+        }
+      }
 
       const campaignStart = campaign.startDate || campaign.timelineStart;
       const campaignEnd = campaign.endDate || campaign.timelineEnd;
@@ -790,6 +875,8 @@ export class CampaignInvitesService {
       }
 
       invite.selectedPostDate = selected;
+      // Insights (screenshot + metrics) unlock 24h after the posting date
+      invite.insightsUnlocksAt = new Date(selected.getTime() + 24 * 60 * 60 * 1000);
       invite.acceptedAt = new Date();
 
       // Store chosen platform/content type and resolve agreed amount
@@ -857,6 +944,12 @@ export class CampaignInvitesService {
             text,
           });
         }
+        // Push notification to brand
+        this.pushService.sendToUser(String(invite.brandId), {
+          title: "Invite Accepted ✅",
+          body: `${influencer?.name || "An influencer"} accepted your invite for "${campaign?.title || "your campaign"}"`,
+          url: "/campaign-management",
+        }).catch(() => { /* non-critical */ });
       } catch (e) {
         console.error("Failed to send acceptance email:", e);
       }
@@ -884,91 +977,129 @@ export class CampaignInvitesService {
     return invite.save();
   }
 
-  async applyToCampaign(influencerId: string, campaignId: string) {
-    const campaign: any = await this.campaignModel
-      .findById(campaignId)
-      .select("_id brandId status timelineEnd")
-      .lean();
-    if (!campaign) {
-      throw new NotFoundException("Campaign not found");
-    }
-    if (campaign.status !== "active") {
-      throw new BadRequestException("Only active campaigns can be joined");
-    }
-    if (campaign.timelineEnd && new Date(campaign.timelineEnd) < new Date()) {
-      throw new BadRequestException("This campaign has already ended");
-    }
+  async applyToCampaign(influencerId: string, campaignId: string, selectedPlatform?: string) {
+    const TIER_ORDER = [
+      "Starter", "Nano", "Micro", "Mid-Tier", "Macro", "Mega / Celebrity",
+    ];
 
-    const existing = await this.inviteModel
-      .findOne({
-        influencerId,
-        campaignId,
-        status: {
-          $in: [
-            "pending",
-            "accepted",
-            "payment_confirmed",
-            "working",
-            "submitted",
-            "completed",
-          ],
-        },
-      })
-      .populate(
-        "campaignId",
-        "title description status budgetMin budgetMax campaignType pricePerInfluencer maxInfluencers startDate endDate timelineStart timelineEnd deliverables platforms socialMedia specialInstructions venueName venueAddress venueCity venueDistrict venueState venueGoogleMapUrl productValue productDescription productPaymentMode productPaymentAmount inviteBenefits payToJoinBenefits payToJoinInstructions",
-      )
-      .populate(
-        "brandId",
-        "brandName brandUsername brandLogo location categories website",
-      )
-      .lean();
-    if (existing) {
-      return existing;
-    }
+    const campaign = await this.campaignModel.findById(campaignId).lean() as any;
+    if (!campaign) throw new NotFoundException("Campaign not found");
 
-    const caps = await this.plansService.getUserPlanCapabilities(influencerId);
-    const maxApplications =
-      caps.limits.find((l: any) => l.key === "maxCampaignApplications")
-        ?.value ?? 2;
-    // Count applications this monthly cycle (anchored on signup / premiumStart)
-    const influencerDoc: any = await this.influencerModel
-      .findById(influencerId)
-      .select("createdAt premiumStart premiumEnd isPremium")
-      .lean();
-    const cycleStart = this.computePlanCycleStart(influencerDoc);
-    const appCount = await this.inviteModel.countDocuments({
-      influencerId,
-      createdAt: { $gte: cycleStart },
-      status: { $in: ["pending", "accepted"] },
-    });
-    if (appCount >= maxApplications) {
+    if (campaign.campaignMode !== "tier_filtered_open") {
       throw new BadRequestException(
-        `Plan limit: Only ${maxApplications} campaign applications per month allowed. Upgrade for more.`,
+        "This campaign is invite-only. You can respond only when a brand sends you an invite.",
       );
     }
 
-    // Create application (invite with status 'pending')
-    const invite = new this.inviteModel({
-      influencerId,
+    if (campaign.status !== "active") {
+      throw new BadRequestException("This campaign is not currently accepting applications.");
+    }
+
+    // Check influencer meets minimum tier requirement
+    const influencer = await this.influencerModel.findById(influencerId).lean();
+    if (!influencer) throw new NotFoundException("Influencer not found");
+
+    const sm: any[] = (influencer as any).socialMedia || [];
+    const campaignPlatforms: string[] = campaign.platforms || [];
+    const normalized = (s: string) => (s || "").toLowerCase().trim();
+
+    // Validate selectedPlatform — must be one the campaign targets AND influencer has registered
+    let chosenPlatform: string | null = null;
+    if (campaignPlatforms.length > 0) {
+      if (selectedPlatform) {
+        // Verify the chosen platform is in the campaign's platform list
+        const isValid = campaignPlatforms.some(p => normalized(p) === normalized(selectedPlatform));
+        if (!isValid) {
+          throw new BadRequestException(
+            `Invalid platform. This campaign accepts: ${campaignPlatforms.join(", ")}.`,
+          );
+        }
+        // Verify influencer is registered on that platform
+        const hasPlatform = sm.some(entry => normalized(entry.platform) === normalized(selectedPlatform));
+        if (!hasPlatform) {
+          throw new BadRequestException(
+            `You don't have ${selectedPlatform} in your profile. Please add it first.`,
+          );
+        }
+        chosenPlatform = selectedPlatform;
+      } else {
+        // Auto-select: pick the highest-tier platform the influencer has that is in the campaign's list
+        const qualifying = sm
+          .filter((entry: any) => campaignPlatforms.some(p => normalized(p) === normalized(entry.platform)))
+          .sort((a: any, b: any) => TIER_ORDER.indexOf(b.tier ?? "") - TIER_ORDER.indexOf(a.tier ?? ""));
+        chosenPlatform = qualifying.length > 0 ? qualifying[0].platform : null;
+      }
+    }
+
+    if (campaign.minInfluencerTier) {
+      const minIdx = TIER_ORDER.indexOf(campaign.minInfluencerTier);
+      // Check tier on the chosen platform (or best tier if no specific platform)
+      const scope = chosenPlatform
+        ? sm.filter((entry: any) => normalized(entry.platform) === normalized(chosenPlatform!))
+        : sm;
+      const bestIdx = scope.reduce((best: number, entry: any) => {
+        const idx = TIER_ORDER.indexOf(entry.tier ?? "");
+        return idx > best ? idx : best;
+      }, -1);
+      if (minIdx !== -1 && (bestIdx === -1 || bestIdx < minIdx)) {
+        const platformLabel = chosenPlatform ? ` on ${chosenPlatform}` : "";
+        throw new BadRequestException(
+          `This campaign requires at least ${campaign.minInfluencerTier} tier influencers${platformLabel}.`,
+        );
+      }
+    }
+
+    // Check state/district targeting eligibility
+    if (campaign.targetState) {
+      const infState = (influencer as any).location?.state ?? "";
+      if (infState && infState !== campaign.targetState) {
+        throw new BadRequestException(
+          `This campaign is limited to influencers from ${campaign.targetState}.`,
+        );
+      }
+    }
+    if (campaign.targetDistrict) {
+      const infDistrict = (influencer as any).location?.district ?? "";
+      if (infDistrict && infDistrict !== campaign.targetDistrict) {
+        throw new BadRequestException(
+          `This campaign is limited to influencers from ${campaign.targetDistrict}, ${campaign.targetState}.`,
+        );
+      }
+    }
+
+    // Check max slots not exceeded
+    const acceptedCount = await this.inviteModel.countDocuments({
       campaignId,
+      status: { $in: ["accepted", "completed"] },
+    });
+    if (campaign.maxInfluencers && acceptedCount >= campaign.maxInfluencers) {
+      throw new BadRequestException("This campaign has reached its maximum number of influencers.");
+    }
+
+    // Prevent duplicate application
+    const existing = await this.inviteModel.findOne({ campaignId, influencerId }).lean();
+    if (existing) {
+      throw new BadRequestException("You have already applied to this campaign.");
+    }
+
+    // Create pending invite (brand still reviews)
+    const invite = await this.inviteModel.create({
+      campaignId,
+      influencerId,
       brandId: campaign.brandId,
       status: "pending",
+      selectedPlatform: chosenPlatform ?? null,
+      agreedAmount: campaign.pricePerInfluencer ?? 0,
     });
 
-    const saved = await invite.save();
+    // Notify brand
+    await this.pushService.sendToUser(String(campaign.brandId), {
+      title: "New Campaign Application 📩",
+      body: `${(influencer as any).fullName || "An influencer"} applied to your campaign "${campaign.title}".`,
+      url: "/brand/campaigns",
+    });
 
-    return this.inviteModel
-      .findById(saved._id)
-      .populate(
-        "campaignId",
-        "title description status budgetMin budgetMax campaignType pricePerInfluencer maxInfluencers startDate endDate timelineStart timelineEnd deliverables platforms socialMedia specialInstructions venueName venueAddress venueCity venueDistrict venueState venueGoogleMapUrl productValue productDescription productPaymentMode productPaymentAmount inviteBenefits payToJoinBenefits payToJoinInstructions",
-      )
-      .populate(
-        "brandId",
-        "brandName brandUsername brandLogo location categories website",
-      )
-      .lean();
+    return { message: "Application submitted. Awaiting brand approval.", inviteId: invite._id };
   }
 
   /* ── Submission Flow ──────────────────────────────────────────────────── */
@@ -1005,6 +1136,23 @@ export class CampaignInvitesService {
     }
     if (!data.postUrl) throw new BadRequestException("Post URL is required");
     // Screenshot is recommended but optional — influencers can submit without one
+
+    // Insights (screenshot + metrics) are locked until 24h after the committed post date
+    const hasInsights =
+      data.insightsScreenshotUrl ||
+      data.likesCount != null ||
+      data.commentsCount != null ||
+      data.sharesCount != null ||
+      data.viewsCount != null ||
+      data.reachCount != null;
+    if (hasInsights && invite.insightsUnlocksAt) {
+      if (Date.now() < new Date(invite.insightsUnlocksAt).getTime()) {
+        const unlockDate = new Date(invite.insightsUnlocksAt).toUTCString();
+        throw new BadRequestException(
+          `Insights can only be submitted 24 hours after your posting date. Unlocks at: ${unlockDate}`,
+        );
+      }
+    }
 
     const postPlatform = detectPlatform(data.postUrl);
     const engagementRate = computeEngagementRate(data);
@@ -1165,6 +1313,12 @@ export class CampaignInvitesService {
             text: `Hi ${influencer.name || ""},\n\nThe brand has approved your post for campaign "${campaign.title || ""}". Your payout is being processed.\n`,
           });
         }
+        // Push notification — payout now processing
+        this.pushService.sendToUser(String(invite.influencerId), {
+          title: "Post Approved! 🎉",
+          body: `Your post for "${campaign.title || "the campaign"}" was approved. Payout is being processed.`,
+          url: "/influencer-dashboard",
+        }).catch(() => { /* non-critical */ });
       } catch (e) {
         console.error("Failed to send approval email:", e);
       }

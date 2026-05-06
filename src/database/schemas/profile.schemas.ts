@@ -308,6 +308,12 @@ export const CampaignSchema = new Schema(
       default: "paid_collab",
       index: true,
     },
+    campaignMode: {
+      type: String,
+      enum: ["invite_only", "tier_filtered_open"],
+      default: "invite_only",
+      index: true,
+    },
     image: {
       url: { type: String },
       public_id: { type: String },
@@ -321,6 +327,8 @@ export const CampaignSchema = new Schema(
     budgetMax: { type: Number },
     pricePerInfluencer: { type: Number }, // paise
     maxInfluencers: { type: Number },
+    minInfluencers: { type: Number },
+    acceptanceDeadline: { type: Date },
     estimatedBudget: { type: Number }, // paise
     timelineStart: { type: Date },
     timelineEnd: { type: Date },
@@ -343,6 +351,10 @@ export const CampaignSchema = new Schema(
     ],
     minFollowerCount: { type: Number },
     minInfluencerTier: { type: String },
+    targetTiers: [{ type: String }],
+    targetState: { type: String },
+    targetDistrict: { type: String },
+    targetCities: [{ type: String }],
     platformPreference: { type: String },
     specialInstructions: { type: String },
     // invite_location specific fields
@@ -392,6 +404,7 @@ export const CampaignInviteSchema = new Schema(
       enum: ["pending", "accepted", "declined", "submitted", "completed"],
       default: "pending",
     },
+    selectedPlatform: { type: String, default: null }, // platform the influencer will post on
     analytics: {
       reach: { type: Number },
       engagement: { type: Number },
