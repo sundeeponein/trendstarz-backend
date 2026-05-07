@@ -288,28 +288,24 @@ export class CampaignsService {
         .lean();
     }
 
-    // Helper: get the best (highest) tier the influencer has for any of the campaign's target platforms.
-    // Returns the tier string, or "" if no matching platform found.
-    const getInfluencerTierForCampaign = (inf: any, campaignPlatforms: string[]): string => {
+    // Helper: whether influencer has at least one exact-tier match on campaign target platform(s).
+    const hasExactTierForCampaign = (
+      inf: any,
+      campaignPlatforms: string[],
+      requiredTier: string,
+    ): boolean => {
       const sm: any[] = inf?.socialMedia || [];
-      if (!campaignPlatforms || campaignPlatforms.length === 0) {
-        // No platform restriction — pick the influencer's highest tier across all platforms
-        const best = sm.reduce((best: number, entry: any) => {
-          const idx = TIER_ORDER.indexOf(entry.tier ?? "");
-          return idx > best ? idx : best;
-        }, -1);
-        return best >= 0 ? TIER_ORDER[best] : "";
-      }
+      const requiredIdx = TIER_ORDER.indexOf(requiredTier || "");
+      if (requiredIdx === -1) return true;
       const normalized = (s: string) => (s || "").toLowerCase().trim();
+      if (!campaignPlatforms || campaignPlatforms.length === 0) {
+        return sm.some((entry: any) => TIER_ORDER.indexOf(entry.tier ?? "") === requiredIdx);
+      }
       const matching = sm.filter((entry: any) =>
-        campaignPlatforms.some(p => normalized(p) === normalized(entry.platform))
+        campaignPlatforms.some((p) => normalized(p) === normalized(entry.platform)),
       );
-      if (matching.length === 0) return ""; // influencer not on required platform
-      const bestIdx = matching.reduce((best: number, entry: any) => {
-        const idx = TIER_ORDER.indexOf(entry.tier ?? "");
-        return idx > best ? idx : best;
-      }, -1);
-      return bestIdx >= 0 ? TIER_ORDER[bestIdx] : "";
+      if (matching.length === 0) return false;
+      return matching.some((entry: any) => TIER_ORDER.indexOf(entry.tier ?? "") === requiredIdx);
     };
 
     // Filter: for tier_filtered_open campaigns, only show campaigns the influencer qualifies for
@@ -319,11 +315,12 @@ export class CampaignsService {
 
       // Tier check — compare against the influencer's tier on the campaign's target platform(s)
       if (c.minInfluencerTier) {
-        const minIdx = TIER_ORDER.indexOf(c.minInfluencerTier);
-        const infTier = getInfluencerTierForCampaign(influencer, c.platforms || []);
-        const infIdx = TIER_ORDER.indexOf(infTier);
-        // Hide if: campaign requires a tier AND (no matching platform or tier too low)
-        if (minIdx !== -1 && (infIdx === -1 || infIdx < minIdx)) return false;
+        const hasExactTier = hasExactTierForCampaign(
+          influencer,
+          c.platforms || [],
+          c.minInfluencerTier,
+        );
+        if (!hasExactTier) return false;
       }
 
       // State check

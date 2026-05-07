@@ -1147,6 +1147,7 @@ export class UsersService {
     const user = await this.influencerModel.findById(userId).lean();
     if (!user || Array.isArray(user)) return null;
     return {
+      _id: user._id?.toString() || user.id?.toString() || "",
       username: user.username,
       phoneNumber: user.phoneNumber,
       name: user.name,
@@ -1165,6 +1166,11 @@ export class UsersService {
       premiumStart: user.premiumStart || null,
       premiumEnd: user.premiumEnd || null,
       promotionalPrice: user.promotionalPrice,
+      payout: user.payout || {
+        upiId: "",
+        mobile: "",
+        accountHolderName: "",
+      },
       isEmailVerified: user.isEmailVerified || false,
       isMobileVerified: user.isMobileVerified || false,
     };
@@ -1255,19 +1261,25 @@ export class UsersService {
       "socialMedia",
       "contact",
       "promotionalPrice",
-      "payout",
     ];
     const updateData: any = {};
     for (const key of allowedFields) {
       if (update[key] !== undefined) updateData[key] = update[key];
     }
+    if (update.payout !== undefined) {
+      updateData["payout.upiId"] = String(update?.payout?.upiId || "").trim();
+      updateData["payout.mobile"] = String(update?.payout?.mobile || "").trim();
+      updateData["payout.accountHolderName"] = String(update?.payout?.accountHolderName || "").trim();
+    }
     // NOTE: isPremium is intentionally excluded — it is only set via upgradeSelfPremium or admin setPremium
-    const updated = await this.influencerModel.findByIdAndUpdate(
-      userId,
-      updateData,
-      { new: true },
-    );
-    if (!updated) return { message: "Influencer not found", userId };
+    const userDoc: any = await this.influencerModel.findById(userId);
+    if (!userDoc) return { message: "Influencer not found", userId };
+
+    for (const [key, value] of Object.entries(updateData)) {
+      userDoc.set(key, value);
+    }
+
+    const updated = await userDoc.save();
     return { message: "Profile updated", user: updated };
   }
   async updateBrandProfile(userId: string, update: any) {
