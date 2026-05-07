@@ -2,6 +2,7 @@ import {
   Injectable,
   BadRequestException,
   NotFoundException,
+  Logger,
 } from "@nestjs/common";
 import { Cron, CronExpression } from "@nestjs/schedule";
 import { InjectModel } from "@nestjs/mongoose";
@@ -32,6 +33,7 @@ function computeEngagementRate(data: any): number {
 
 @Injectable()
 export class CampaignInvitesService {
+  private readonly logger = new Logger(CampaignInvitesService.name);
   /** TTL cache for attention-count endpoints. Key → {value, expiresAt}. */
   private readonly attentionCache = new Map<
     string,
@@ -363,7 +365,7 @@ export class CampaignInvitesService {
       .find({ influencerId })
       .populate(
         "campaignId",
-        "title description status budgetMin budgetMax campaignType pricePerInfluencer maxInfluencers startDate endDate timelineStart timelineEnd deliverables platforms socialMedia specialInstructions venueName venueAddress venueCity venueDistrict venueState venueGoogleMapUrl productValue productDescription productPaymentMode productPaymentAmount inviteBenefits payToJoinBenefits payToJoinInstructions",
+        "title description status campaignMode budgetMin budgetMax campaignType pricePerInfluencer maxInfluencers startDate endDate timelineStart timelineEnd deliverables platforms socialMedia specialInstructions venueName venueAddress venueCity venueDistrict venueState venueGoogleMapUrl productValue productDescription productPaymentMode productPaymentAmount inviteBenefits payToJoinBenefits payToJoinInstructions",
       )
       .populate(
         "brandId",
@@ -741,12 +743,12 @@ export class CampaignInvitesService {
     };
   }
 
-  /** Brand withdraws a pending invite (only valid before influencer accepts). */
+  /** Brand withdraws a pending/accepted invite before execution starts. */
   async withdrawInvite(inviteId: string, brandId: string, reason?: string) {
     const invite = await this.assertBrandOwnsInvite(inviteId, brandId);
-    if (invite.status !== "pending") {
+    if (invite.status !== "pending" && invite.status !== "accepted") {
       throw new BadRequestException(
-        "Only pending invites can be withdrawn. Use Report for accepted invites.",
+        "Only pending or accepted invites can be withdrawn. Use Report for progressed invites.",
       );
     }
     invite.status = "withdrawn";
@@ -797,6 +799,7 @@ export class CampaignInvitesService {
       accountHolderName?: string;
     },
   ) {
+    const normalized = (v: string) => (v || "").toLowerCase().trim();
     const invite = await this.inviteModel.findById(inviteId);
     if (!invite) throw new NotFoundException("Invite not found");
     if (String(invite.influencerId) !== influencerId) {
@@ -813,10 +816,16 @@ export class CampaignInvitesService {
       const campaign: any = await this.campaignModel
         .findById(invite.campaignId)
         .select(
-          "startDate endDate timelineStart timelineEnd socialMedia minInfluencers maxInfluencers acceptanceDeadline",
+          "startDate endDate timelineStart timelineEnd socialMedia platforms campaignMode minInfluencerTier minInfluencers maxInfluencers acceptanceDeadline",
         )
         .lean();
       if (!campaign) throw new NotFoundException("Campaign not found");
+
+      const influencer = await this.influencerModel
+        .findById(influencerId)
+        .select("socialMedia")
+        .lean();
+      if (!influencer) throw new NotFoundException("Influencer not found");
 
       if (
         campaign?.acceptanceDeadline &&
@@ -879,18 +888,74 @@ export class CampaignInvitesService {
       invite.insightsUnlocksAt = new Date(selected.getTime() + 24 * 60 * 60 * 1000);
       invite.acceptedAt = new Date();
 
+      const isTierFilteredOpen = String(campaign?.campaignMode || "") === "tier_filtered_open";
+      const lockedPlatform = isTierFilteredOpen ? "" : String(invite.selectedPlatform || "").trim();
+      if (
+        lockedPlatform &&
+        selectedPlatform &&
+        normalized(lockedPlatform) !== normalized(selectedPlatform)
+      ) {
+        throw new BadRequestException(
+          `This invite is locked to ${lockedPlatform}. Please select content from that platform only.`,
+        );
+      }
+      const effectivePlatform = selectedPlatform || lockedPlatform || undefined;
+
+      if (isTierFilteredOpen && effectivePlatform) {
+        const TIER_ORDER = [
+          "Starter", "Nano", "Micro", "Mid-Tier", "Macro", "Mega / Celebrity",
+        ];
+        const campaignPlatforms: string[] = Array.isArray(campaign?.platforms)
+          ? campaign.platforms
+          : [];
+        const influencerSocials: any[] = Array.isArray((influencer as any)?.socialMedia)
+          ? (influencer as any).socialMedia
+          : [];
+
+        if (
+          campaignPlatforms.length > 0 &&
+          !campaignPlatforms.some((platform) => normalized(platform) === normalized(effectivePlatform))
+        ) {
+          throw new BadRequestException(
+            `Invalid platform. This campaign accepts: ${campaignPlatforms.join(", ")}.`,
+          );
+        }
+
+        const matchingProfile = influencerSocials.find(
+          (entry: any) => normalized(entry?.platform || "") === normalized(effectivePlatform),
+        );
+        if (!matchingProfile) {
+          throw new BadRequestException(
+            `You don't have ${effectivePlatform} in your profile. Please add it first.`,
+          );
+        }
+
+        const requiredTier = String(campaign?.minInfluencerTier || "").trim();
+        const requiredTierIndex = TIER_ORDER.indexOf(requiredTier);
+        if (requiredTier && requiredTierIndex !== -1) {
+          const influencerTierIndex = TIER_ORDER.indexOf(
+            String(matchingProfile?.tier || "").trim(),
+          );
+          if (influencerTierIndex !== requiredTierIndex) {
+            throw new BadRequestException(
+              `This campaign requires exactly ${requiredTier} tier influencers on ${effectivePlatform}.`,
+            );
+          }
+        }
+      }
+
       // Store chosen platform/content type and resolve agreed amount
-      if (selectedPlatform) invite.selectedPlatform = selectedPlatform;
+      if (effectivePlatform) invite.selectedPlatform = effectivePlatform;
       if (selectedContentType) invite.selectedContentType = selectedContentType;
       if (
-        selectedPlatform &&
+        effectivePlatform &&
         selectedContentType &&
         campaign.socialMedia?.length
       ) {
         const smEntry = campaign.socialMedia.find(
           (sm: any) =>
             (sm.platform || "").toLowerCase() ===
-            selectedPlatform.toLowerCase(),
+            effectivePlatform.toLowerCase(),
         );
         const ctEntry = smEntry?.contentTypes?.find(
           (ct: any) =>
@@ -905,13 +970,16 @@ export class CampaignInvitesService {
       // actually provided/edited.
       if (payout && (payout.upiId || payout.mobile || payout.accountHolderName)) {
         const set: any = { "payout.lastConfirmedAt": new Date() };
-        if (payout.upiId !== undefined) set["payout.upiId"] = String(payout.upiId).trim();
-        if (payout.mobile !== undefined) set["payout.mobile"] = String(payout.mobile).trim();
-        if (payout.accountHolderName !== undefined) {
-          set["payout.accountHolderName"] = String(payout.accountHolderName).trim();
-        }
+        const upiId = String(payout.upiId || "").trim();
+        const mobile = String(payout.mobile || "").trim();
+        const accountHolderName = String(payout.accountHolderName || "").trim();
+        if (upiId) set["payout.upiId"] = upiId;
+        if (mobile) set["payout.mobile"] = mobile;
+        if (accountHolderName) set["payout.accountHolderName"] = accountHolderName;
         try {
-          await this.influencerModel.findByIdAndUpdate(influencerId, { $set: set });
+          if (Object.keys(set).length > 1) {
+            await this.influencerModel.findByIdAndUpdate(influencerId, { $set: set });
+          }
         } catch (err) {
           console.error("Failed to persist influencer payout details:", err);
         }
@@ -920,6 +988,25 @@ export class CampaignInvitesService {
 
     invite.status = status;
     const updated = await invite.save();
+
+    // Log acceptance details for observability (platform/content/tier)
+    if (status === 'accepted') {
+      try {
+        const logObj: any = {
+          inviteId: invite._id,
+          campaignId: invite.campaignId,
+          influencerId: invite.influencerId,
+          selectedPlatform: invite.selectedPlatform || null,
+          selectedContentType: invite.selectedContentType || null,
+          agreedAmount: invite.agreedAmount || null,
+          timestamp: new Date().toISOString(),
+        };
+        this.logger.log(`Invite accepted: ${JSON.stringify(logObj)}`);
+      } catch (e) {
+        // Non-fatal — don't block the acceptance flow on logging errors
+        console.error('Logging failure for invite accept:', e);
+      }
+    }
 
     // Send notification email to brand on acceptance
     if (status === "accepted") {
@@ -1003,19 +1090,18 @@ export class CampaignInvitesService {
     const campaignPlatforms: string[] = campaign.platforms || [];
     const normalized = (s: string) => (s || "").toLowerCase().trim();
 
-    // Validate selectedPlatform — must be one the campaign targets AND influencer has registered
+    // Validate selectedPlatform — if provided, it must be campaign-targeted and present on influencer profile.
+    // If not provided, do not auto-select; influencer will choose platform/content in pending step.
     let chosenPlatform: string | null = null;
     if (campaignPlatforms.length > 0) {
       if (selectedPlatform) {
-        // Verify the chosen platform is in the campaign's platform list
-        const isValid = campaignPlatforms.some(p => normalized(p) === normalized(selectedPlatform));
+        const isValid = campaignPlatforms.some((p) => normalized(p) === normalized(selectedPlatform));
         if (!isValid) {
           throw new BadRequestException(
             `Invalid platform. This campaign accepts: ${campaignPlatforms.join(", ")}.`,
           );
         }
-        // Verify influencer is registered on that platform
-        const hasPlatform = sm.some(entry => normalized(entry.platform) === normalized(selectedPlatform));
+        const hasPlatform = sm.some((entry) => normalized(entry.platform) === normalized(selectedPlatform));
         if (!hasPlatform) {
           throw new BadRequestException(
             `You don't have ${selectedPlatform} in your profile. Please add it first.`,
@@ -1023,28 +1109,33 @@ export class CampaignInvitesService {
         }
         chosenPlatform = selectedPlatform;
       } else {
-        // Auto-select: pick the highest-tier platform the influencer has that is in the campaign's list
-        const qualifying = sm
-          .filter((entry: any) => campaignPlatforms.some(p => normalized(p) === normalized(entry.platform)))
-          .sort((a: any, b: any) => TIER_ORDER.indexOf(b.tier ?? "") - TIER_ORDER.indexOf(a.tier ?? ""));
-        chosenPlatform = qualifying.length > 0 ? qualifying[0].platform : null;
+        const hasAnyCampaignPlatform = sm.some((entry) =>
+          campaignPlatforms.some((p) => normalized(p) === normalized(entry.platform)),
+        );
+        if (!hasAnyCampaignPlatform) {
+          throw new BadRequestException(
+            `You don't have a qualifying platform for this campaign. Required: ${campaignPlatforms.join(", ")}.`,
+          );
+        }
       }
     }
 
     if (campaign.minInfluencerTier) {
       const minIdx = TIER_ORDER.indexOf(campaign.minInfluencerTier);
-      // Check tier on the chosen platform (or best tier if no specific platform)
+      // For explicit platform selection, validate tier on that platform.
+      // Otherwise validate tier across campaign-targeted platforms (or all socials if no platform restriction).
       const scope = chosenPlatform
-        ? sm.filter((entry: any) => normalized(entry.platform) === normalized(chosenPlatform!))
-        : sm;
-      const bestIdx = scope.reduce((best: number, entry: any) => {
-        const idx = TIER_ORDER.indexOf(entry.tier ?? "");
-        return idx > best ? idx : best;
-      }, -1);
-      if (minIdx !== -1 && (bestIdx === -1 || bestIdx < minIdx)) {
+        ? sm.filter((entry: any) => normalized(entry.platform) === normalized(chosenPlatform))
+        : campaignPlatforms.length > 0
+          ? sm.filter((entry: any) => campaignPlatforms.some((p) => normalized(p) === normalized(entry.platform)))
+          : sm;
+      const hasExactTier =
+        minIdx !== -1 &&
+        scope.some((entry: any) => TIER_ORDER.indexOf(entry.tier ?? "") === minIdx);
+      if (minIdx !== -1 && !hasExactTier) {
         const platformLabel = chosenPlatform ? ` on ${chosenPlatform}` : "";
         throw new BadRequestException(
-          `This campaign requires at least ${campaign.minInfluencerTier} tier influencers${platformLabel}.`,
+          `This campaign requires exactly ${campaign.minInfluencerTier} tier influencers${platformLabel}.`,
         );
       }
     }
@@ -1155,6 +1246,35 @@ export class CampaignInvitesService {
     }
 
     const postPlatform = detectPlatform(data.postUrl);
+    const normalizePlatform = (v: string) => {
+      const p = String(v || "").toLowerCase().trim();
+      if (p === "x") return "twitter";
+      return p;
+    };
+    const normalizeContentType = (v: string) => {
+      const t = String(v || "").toLowerCase().trim();
+      if (t === "reels") return "reel";
+      if (t === "shorts") return "short";
+      if (t === "stories") return "story";
+      if (t === "post" || t === "image") return "photo";
+      return t;
+    };
+
+    const acceptedPlatform = normalizePlatform(String(invite.selectedPlatform || ""));
+    if (acceptedPlatform && normalizePlatform(postPlatform) !== acceptedPlatform) {
+      throw new BadRequestException(
+        `This invite is accepted for ${invite.selectedPlatform}. Please submit only ${invite.selectedPlatform} post URL.`,
+      );
+    }
+
+    const acceptedContentType = normalizeContentType(String(invite.selectedContentType || ""));
+    const submittedContentType = normalizeContentType(String(data.postType || ""));
+    if (acceptedContentType && submittedContentType && acceptedContentType !== submittedContentType) {
+      throw new BadRequestException(
+        `This invite requires ${invite.selectedContentType}. Please submit the agreed content type.`,
+      );
+    }
+
     const engagementRate = computeEngagementRate(data);
 
     // Upsert: one submission per invite

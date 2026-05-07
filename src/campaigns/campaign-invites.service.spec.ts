@@ -7,6 +7,7 @@ import { getModelToken } from "@nestjs/mongoose";
 import { BadRequestException, NotFoundException } from "@nestjs/common";
 import { CampaignInvitesService } from "./campaign-invites.service";
 import { PlansService } from "../plans/plans.service";
+import { PushService } from "../push/push.service";
 import { sendAppEmail } from "../utils/app-email.service";
 
 describe("CampaignInvitesService (admin disputes + remind)", () => {
@@ -53,6 +54,7 @@ describe("CampaignInvitesService (admin disputes + remind)", () => {
           useValue: txnModel,
         },
         { provide: PlansService, useValue: {} },
+        { provide: PushService, useValue: { sendToUser: jest.fn().mockResolvedValue(undefined) } },
       ],
     }).compile();
 
@@ -276,6 +278,7 @@ describe("CampaignInvitesService – create() gating", () => {
         { provide: getModelToken("Influencer"), useValue: influencerModel },
         { provide: getModelToken("CampaignTransaction"), useValue: {} },
         { provide: PlansService, useValue: plansService },
+        { provide: PushService, useValue: { sendToUser: jest.fn().mockResolvedValue(undefined) } },
       ],
     }).compile();
 
@@ -406,6 +409,7 @@ describe("CampaignInvitesService – respond()", () => {
         { provide: getModelToken("Influencer"), useValue: influencerModel },
         { provide: getModelToken("CampaignTransaction"), useValue: {} },
         { provide: PlansService, useValue: plansService },
+        { provide: PushService, useValue: { sendToUser: jest.fn().mockResolvedValue(undefined) } },
       ],
     }).compile();
 
@@ -491,6 +495,70 @@ describe("CampaignInvitesService – respond()", () => {
     expect(invite.acceptedAt).toBeInstanceOf(Date);
   });
 
+  it("rejects acceptance when selectedPlatform does not match locked invite platform", async () => {
+    const invite = pendingInvite({ selectedPlatform: "Instagram" });
+    inviteModel.findById.mockResolvedValue(invite);
+    campaignModel.findById.mockReturnValue(
+      mockCampaignSelect({
+        socialMedia: [
+          {
+            platform: "Instagram",
+            contentTypes: [{ name: "Reel", enabled: true, price: 5000 }],
+          },
+          {
+            platform: "YouTube",
+            contentTypes: [{ name: "Video", enabled: true, price: 10000 }],
+          },
+        ],
+      }),
+    );
+    inviteModel.countDocuments.mockResolvedValue(0);
+
+    await expect(
+      service.respond(
+        "inv1",
+        "inf1",
+        "accepted",
+        "2026-07-15",
+        "YouTube",
+        "Video",
+      ),
+    ).rejects.toThrow(BadRequestException);
+  });
+
+  it("accepts using locked invite platform and stores agreedAmount from matching content type", async () => {
+    const invite = pendingInvite({ selectedPlatform: "Instagram" });
+    inviteModel.findById.mockResolvedValue(invite);
+    campaignModel.findById.mockReturnValue(
+      mockCampaignSelect({
+        socialMedia: [
+          {
+            platform: "Instagram",
+            contentTypes: [{ name: "Reel", enabled: true, price: 5000 }],
+          },
+          {
+            platform: "YouTube",
+            contentTypes: [{ name: "Video", enabled: true, price: 10000 }],
+          },
+        ],
+      }),
+    );
+    inviteModel.countDocuments.mockResolvedValue(0);
+
+    await service.respond(
+      "inv1",
+      "inf1",
+      "accepted",
+      "2026-07-15",
+      "Instagram",
+      "Reel",
+    );
+
+    expect(invite.selectedPlatform).toBe("Instagram");
+    expect(invite.selectedContentType).toBe("Reel");
+    expect(invite.agreedAmount).toBe(5000);
+  });
+
   it("throws when selectedPostDate is outside campaign timeline", async () => {
     inviteModel.findById.mockResolvedValue(pendingInvite());
     campaignModel.findById.mockReturnValue(mockCampaignSelect());
@@ -552,6 +620,7 @@ describe("CampaignInvitesService – submitPost() insights lock", () => {
         { provide: getModelToken("Influencer"), useValue: influencerModel },
         { provide: getModelToken("CampaignTransaction"), useValue: campaignTransactionModel },
         { provide: PlansService, useValue: {} },
+        { provide: PushService, useValue: { sendToUser: jest.fn().mockResolvedValue(undefined) } },
       ],
     }).compile();
 
@@ -642,6 +711,7 @@ describe("CampaignInvitesService – submitPost() insights lock", () => {
 // ─────────────────────────────────────────────────────────────────────────────
 describe("CampaignInvitesService – applyToCampaign()", () => {
   let service: CampaignInvitesService;
+  let campaignModel: any;
 
   beforeEach(async () => {
     const inviteModel: any = jest.fn();
@@ -649,16 +719,25 @@ describe("CampaignInvitesService – applyToCampaign()", () => {
     inviteModel.countDocuments = jest.fn();
     inviteModel.find = jest.fn();
 
+    campaignModel = jest.fn();
+    campaignModel.findById = jest.fn().mockReturnValue({
+      lean: jest.fn().mockResolvedValue({
+        _id: "camp1",
+        campaignMode: "invite_only",
+      }),
+    });
+
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         CampaignInvitesService,
         { provide: getModelToken("CampaignInvite"), useValue: inviteModel },
         { provide: getModelToken("CampaignSubmission"), useValue: {} },
-        { provide: getModelToken("Campaign"), useValue: jest.fn() },
+        { provide: getModelToken("Campaign"), useValue: campaignModel },
         { provide: getModelToken("Brand"), useValue: jest.fn() },
         { provide: getModelToken("Influencer"), useValue: jest.fn() },
         { provide: getModelToken("CampaignTransaction"), useValue: {} },
         { provide: PlansService, useValue: {} },
+        { provide: PushService, useValue: { sendToUser: jest.fn().mockResolvedValue(undefined) } },
       ],
     }).compile();
 
