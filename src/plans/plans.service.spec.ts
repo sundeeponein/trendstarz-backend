@@ -18,7 +18,7 @@ describe("PlansService", () => {
     userType: "INFLUENCER",
     isActive: true,
     sortOrder: 1,
-    price: { monthly: 499, quarterly: 1347, yearly: 4990 },
+    price: { monthly: 399, quarterly: 1079, yearly: 3789 },
     features: [{ key: "contactVisibility", value: true }],
     limits: [{ key: "maxProfileImages", value: 5 }],
     policies: [{ key: "imageRetentionDays", value: 45 }],

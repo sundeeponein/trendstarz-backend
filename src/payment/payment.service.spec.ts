@@ -8,13 +8,12 @@ describe("PaymentService", () => {
   let paymentModel: any;
   let influencerModel: any;
   let brandModel: any;
-  let plansService: any;
 
   const mockPayment = {
     _id: "pay1",
     userId: "user1",
     transactionId: "txn-123",
-    amount: 499,
+    amount: 399,
     premiumDuration: "1m",
     status: "pending",
     save: jest.fn(),
@@ -83,7 +82,6 @@ describe("PaymentService", () => {
     paymentModel = module.get(getModelToken("Payment"));
     influencerModel = module.get(getModelToken("Influencer"));
     brandModel = module.get(getModelToken("Brand"));
-    plansService = module.get(PlansService);
   });
 
   describe("getPaymentsByUser", () => {
@@ -150,7 +148,7 @@ describe("PaymentService", () => {
       const result = await service.createPendingPayment(
         "user1",
         "txn-new",
-        499,
+        399,
         "1m",
       );
       expect(result.success).toBe(true);
@@ -162,7 +160,7 @@ describe("PaymentService", () => {
       const result = await service.createPendingPayment(
         "user1",
         "txn-123",
-        499,
+        399,
         "1m",
       );
       expect(result.success).toBe(false);

@@ -52,6 +52,8 @@ export class PlansService {
       ...dto,
       code,
       userType,
+      discountLabel:
+        dto?.discountLabel ?? existing?.discountLabel ?? "",
       price: {
         monthly: dto?.price?.monthly ?? existing?.price?.monthly ?? 0,
         quarterly: dto?.price?.quarterly ?? existing?.price?.quarterly ?? 0,
@@ -147,6 +149,7 @@ export class PlansService {
             features: normalized.features ?? existing.features,
             limits: normalized.limits ?? existing.limits,
             offers: normalized.offers ?? existing.offers ?? [],
+            discountLabel: normalized.discountLabel ?? existing.discountLabel ?? "",
             policies: normalized.policies ?? existing.policies,
             highlight: normalized.highlight ?? existing.highlight,
             isActive: normalized.isActive ?? existing.isActive,
@@ -248,6 +251,35 @@ export class PlansService {
     const sub = await this.getActiveSubscription(userId);
     if (!sub) {
       const userType = await this.resolveUserTypeById(userId);
+      const userModel =
+        userType === "BRAND" ? this.brandModel : this.influencerModel;
+      let legacyUser: any = null;
+      if (typeof (userModel as any)?.findById === "function") {
+        legacyUser = (await userModel
+          .findById(userId)
+          .select("isPremium premiumEnd")
+          .lean()) as any;
+      }
+
+      // Backward-compat: if premium was granted but subscription row is missing,
+      // use active Pro plan snapshots so capabilities stay in sync with UI state.
+      const hasLegacyPremium =
+        !!legacyUser?.isPremium &&
+        (!legacyUser?.premiumEnd || new Date(legacyUser.premiumEnd) >= new Date());
+      if (hasLegacyPremium) {
+        const proPlan = await this.findProPlanForUserType(
+          userType === "BRAND" ? "Brand" : "Influencer",
+        );
+        return {
+          hasPremium: true,
+          planName: proPlan.name,
+          features: proPlan.features ?? [],
+          limits: proPlan.limits ?? [],
+          policies: proPlan.policies ?? { imageRetentionDaysAfterExpiry: 45 },
+          endDate: legacyUser?.premiumEnd ?? null,
+        };
+      }
+
       const defaults = FREE_PLAN_DEFAULTS[userType] as any;
       return {
         hasPremium: false,
@@ -325,6 +357,14 @@ export class PlansService {
       .sort({ createdAt: -1 })
       .lean();
     return { success: true, subscriptions: subs };
+  }
+
+  /** Cancel any currently active subscription rows for a user (used by admin Set Free). */
+  async cancelActiveSubscriptionsForUser(userId: string) {
+    return this.subscriptionModel.updateMany(
+      { userId: new Types.ObjectId(userId), status: "active" },
+      { status: "cancelled" },
+    );
   }
 
   /** Get the first active Pro plan for the matching userType (used by payment approval) */

@@ -52,6 +52,7 @@ export const PlanSchema = new Schema(
     features: { type: [PlanFeatureSchema], default: [] },
     limits: { type: [PlanLimitSchema], default: [] },
     offers: { type: [PlanOfferSchema], default: [] },
+    discountLabel: { type: String, default: "" },
     policies: {
       imageRetentionDaysAfterExpiry: { type: Number, default: 45 },
     },
