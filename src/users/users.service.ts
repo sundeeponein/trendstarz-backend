@@ -224,6 +224,107 @@ export class UsersService {
     return !!brand;
   }
 
+  async checkRegistrationConflicts(query: {
+    userType?: string;
+    username?: string;
+    brandUsername?: string;
+    brandName?: string;
+    email?: string;
+    phoneNumber?: string;
+  }): Promise<{
+    username: boolean;
+    brandUsername: boolean;
+    brandName: boolean;
+    email: boolean;
+    phoneNumber: boolean;
+    duplicateFields: string[];
+  }> {
+    const normalizedUserType = (query?.userType || "").trim().toUpperCase();
+    const username = (query?.username || "").trim();
+    const brandUsername = (query?.brandUsername || "").trim();
+    const brandName = (query?.brandName || "").trim();
+    const email = (query?.email || "").trim();
+    const phoneNumber = (query?.phoneNumber || "").trim();
+
+    const result = {
+      username: false,
+      brandUsername: false,
+      brandName: false,
+      email: false,
+      phoneNumber: false,
+      duplicateFields: [] as string[],
+    };
+
+    if (username && normalizedUserType !== "BRAND") {
+      const usernameRegex = new RegExp(`^${this.escapeRegex(username)}$`, "i");
+      const influencer = await this.influencerModel
+        .findOne({ username: usernameRegex })
+        .select("_id")
+        .lean();
+      result.username = !!influencer;
+      if (result.username) result.duplicateFields.push("username");
+    }
+
+    if (brandUsername && normalizedUserType !== "INFLUENCER") {
+      const brandUsernameRegex = new RegExp(
+        `^${this.escapeRegex(brandUsername)}$`,
+        "i",
+      );
+      const brand = await this.brandModel
+        .findOne({
+          $or: [
+            { brandUsername: brandUsernameRegex },
+            { brandName: brandUsernameRegex },
+          ],
+        })
+        .select("_id")
+        .lean();
+      result.brandUsername = !!brand;
+      if (result.brandUsername) result.duplicateFields.push("brandUsername");
+    }
+
+    if (brandName && normalizedUserType !== "INFLUENCER") {
+      const brandNameRegex = new RegExp(`^${this.escapeRegex(brandName)}$`, "i");
+      const brandByName = await this.brandModel
+        .findOne({ brandName: brandNameRegex })
+        .select("_id")
+        .lean();
+      result.brandName = !!brandByName;
+      if (result.brandName) result.duplicateFields.push("brandName");
+    }
+
+    if (email) {
+      const emailRegex = new RegExp(`^${this.escapeRegex(email)}$`, "i");
+      const [influencerByEmail, brandByEmail] = await Promise.all([
+        this.influencerModel
+          .findOne({ email: emailRegex })
+          .select("_id")
+          .lean(),
+        this.brandModel.findOne({ email: emailRegex }).select("_id").lean(),
+      ]);
+      result.email = !!influencerByEmail || !!brandByEmail;
+      if (result.email) result.duplicateFields.push("email");
+    }
+
+    if (phoneNumber) {
+      const phoneRegex = new RegExp(`^${this.escapeRegex(phoneNumber)}$`, "i");
+      const [influencerByPhone, brandByPhone] = await Promise.all([
+        this.influencerModel
+          .findOne({ phoneNumber: phoneRegex })
+          .select("_id")
+          .lean(),
+        this.brandModel
+          .findOne({ phoneNumber: phoneRegex })
+          .select("_id")
+          .lean(),
+      ]);
+      result.phoneNumber = !!influencerByPhone || !!brandByPhone;
+      if (result.phoneNumber) result.duplicateFields.push("phoneNumber");
+    }
+
+    return result;
+  }
+
   // Only use this for GDPR requests. Otherwise, always use soft delete.
   async deletePermanently(id: string) {
     // Try influencer first
@@ -433,6 +534,7 @@ export class UsersService {
     const user: any = await this.findBrandByNameOrSlug(brandName);
     if (!user) return null;
     const allowAccess = await this.canViewBrandSocialMedia(user, viewerId);
+    const isPremium = this.isCurrentlyPremium(user);
     const {
       _id,
       brandName: name,
@@ -441,7 +543,6 @@ export class UsersService {
       categories,
       location,
       socialMedia,
-      isPremium,
       brandLogo,
       products,
       website,
@@ -756,12 +857,14 @@ export class UsersService {
     const pageItems = eligible.slice(skip, skip + limit);
     const data = await Promise.all(
       pageItems.map(async (inf: any) => {
+        const isPremium = this.isCurrentlyPremium(inf);
         const allowContact = await this.canViewInfluencerContact(
           inf,
           viewerId,
         );
         return {
           ...inf,
+          isPremium,
           email: allowContact ? inf.email : undefined,
           phoneNumber: allowContact ? inf.phoneNumber : undefined,
           website: allowContact ? inf.website : undefined,
@@ -827,7 +930,11 @@ export class UsersService {
       this.influencerModel.find(filter).lean().skip(skip).limit(limit),
       this.influencerModel.countDocuments(filter),
     ]);
-    return { data, total, page, limit };
+    const normalized = (data || []).map((inf: any) => ({
+      ...inf,
+      isPremium: this.isCurrentlyPremium(inf),
+    }));
+    return { data: normalized, total, page, limit };
   }
 
   // Place this inside UsersService class
@@ -835,6 +942,7 @@ export class UsersService {
     const user: any = await this.influencerModel.findOne({ username }).lean();
     if (!user) return null;
     const allowContact = await this.canViewInfluencerContact(user, viewerId);
+    const isPremium = this.isCurrentlyPremium(user);
     const {
       _id,
       name,
@@ -847,7 +955,6 @@ export class UsersService {
       categories,
       location,
       socialMedia,
-      isPremium,
       promotionalPrice,
       profileTraffic,
     } = user;
@@ -878,6 +985,7 @@ export class UsersService {
     const user: any = await this.influencerModel.findById(id).lean();
     if (!user) return null;
     const allowContact = await this.canViewInfluencerContact(user, viewerId);
+    const isPremium = this.isCurrentlyPremium(user);
     const {
       _id,
       name,
@@ -891,7 +999,6 @@ export class UsersService {
       categories,
       location,
       socialMedia,
-      isPremium,
       profileTraffic,
     } = user;
     return {
@@ -930,6 +1037,7 @@ export class UsersService {
     ]);
     const filtered = await Promise.all(
       (data || []).map(async (brand: any) => {
+        const isPremium = this.isCurrentlyPremium(brand);
         const allow = await this.canViewBrandSocialMedia(
           brand,
           viewerId,
@@ -937,6 +1045,7 @@ export class UsersService {
         if (!allow) {
           return {
             ...brand,
+            isPremium,
             socialMedia: [],
             socialMediaRestricted: true,
             email: undefined,
@@ -947,6 +1056,7 @@ export class UsersService {
         }
         return {
           ...brand,
+          isPremium,
           socialMediaRestricted: false,
           contactRestricted: false,
         };
@@ -1058,6 +1168,12 @@ export class UsersService {
     premiumDuration?: string,
     type?: "influencer" | "brand",
   ) {
+    if (isPremium && !premiumDuration) {
+      throw new BadRequestException(
+        "premiumDuration is required when setting Premium",
+      );
+    }
+
     const update: any = { isPremium };
     if (isPremium && premiumDuration) {
       update.premiumDuration = premiumDuration;
@@ -1073,6 +1189,14 @@ export class UsersService {
       update.premiumDuration = null;
       update.premiumStart = null;
       update.premiumEnd = null;
+      try {
+        await this.plansService.cancelActiveSubscriptionsForUser(id);
+      } catch (e) {
+        console.error(
+          "[ADMIN][setPremium] Failed to cancel active subscriptions:",
+          e,
+        );
+      }
     }
     let user = null;
     let userType: "Influencer" | "Brand" = "Influencer";
@@ -1098,10 +1222,24 @@ export class UsersService {
           "admin",
         );
       } catch (e) {
-        // Log but do not block admin action
+        // Roll back legacy flags to keep user status and capabilities consistent.
+        const rollback = {
+          isPremium: false,
+          premiumDuration: null,
+          premiumStart: null,
+          premiumEnd: null,
+        };
+        if (userType === "Brand") {
+          await this.brandModel.findByIdAndUpdate(id, rollback);
+        } else {
+          await this.influencerModel.findByIdAndUpdate(id, rollback);
+        }
         console.error(
           "[ADMIN][setPremium] Failed to activate subscription:",
           e,
+        );
+        throw new BadRequestException(
+          "Could not grant premium. Please ensure an active Pro plan exists.",
         );
       }
       // Optionally: log somewhere that this was admin-given
@@ -1146,13 +1284,14 @@ export class UsersService {
   async getInfluencerProfileById(userId: string) {
     const user = await this.influencerModel.findById(userId).lean();
     if (!user || Array.isArray(user)) return null;
+    const isPremium = this.isCurrentlyPremium(user);
     return {
       _id: user._id?.toString() || user.id?.toString() || "",
       username: user.username,
       phoneNumber: user.phoneNumber,
       name: user.name,
       email: user.email,
-      paymentOption: user.isPremium ? "premium" : "free",
+      paymentOption: isPremium ? "premium" : "free",
       location: user.location || { state: "" },
       languages: user.languages || [],
       categories: user.categories || [],
@@ -1161,7 +1300,7 @@ export class UsersService {
       profileImages: user.profileImages || [],
       socialMedia: user.socialMedia || [],
       contact: user.contact || { whatsapp: false, email: false, call: false },
-      isPremium: user.isPremium || false,
+      isPremium,
       premiumDuration: user.premiumDuration || null,
       premiumStart: user.premiumStart || null,
       premiumEnd: user.premiumEnd || null,
@@ -1179,6 +1318,7 @@ export class UsersService {
   async getBrandProfileById(userId: string) {
     const user = await this.brandModel.findById(userId).lean();
     if (!user || Array.isArray(user)) return null;
+    const isPremium = this.isCurrentlyPremium(user);
     // Attach planCapabilities from PlansService
     let planCapabilities = null;
     try {
@@ -1194,8 +1334,8 @@ export class UsersService {
         (user as any).brandUsername || (user as any).username || "",
       phoneNumber: user.phoneNumber,
       email: user.email,
-      isPremium: user.isPremium || false,
-      paymentOption: user.isPremium ? "premium" : "free",
+      isPremium,
+      paymentOption: isPremium ? "premium" : "free",
       location: user.location || { state: "" },
       languages: user.languages || [],
       categories: user.categories || [],

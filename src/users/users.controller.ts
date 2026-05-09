@@ -78,6 +78,25 @@ export class UsersController {
     return this.usersService.checkUsername(username);
   }
 
+  @Get("check-registration-conflicts")
+  async checkRegistrationConflicts(
+    @Query("userType") userType?: string,
+    @Query("username") username?: string,
+    @Query("brandUsername") brandUsername?: string,
+    @Query("brandName") brandName?: string,
+    @Query("email") email?: string,
+    @Query("phoneNumber") phoneNumber?: string,
+  ) {
+    return this.usersService.checkRegistrationConflicts({
+      userType,
+      username,
+      brandUsername,
+      brandName,
+      email,
+      phoneNumber,
+    });
+  }
+
   @UseGuards(JwtAuthGuard)
   @Patch(":id/images")
   async updateUserImages(
