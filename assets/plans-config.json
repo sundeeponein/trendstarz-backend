@@ -47,8 +47,9 @@
       ],
       "offers": [
         { "key": "trialPeriodDays", "label": "Trial period (days)", "value": 7 },
-        { "key": "discountOnInfluencerPro", "label": "Discount on Influencer Pro plan (%)", "value": 0 }
+        { "key": "discountOnInfluencerPro", "label": "Discount on Influencer Pro plan (%)", "value": 25 }
       ],
+      "discountLabel": "Limited Time Offer",
       "policies": { "imageRetentionDaysAfterExpiry": 45 },
       "highlight": true,
       "isActive": true,
@@ -103,8 +104,9 @@
       ],
       "offers": [
         { "key": "trialPeriodDays", "label": "Trial period (days)", "value": 7 },
-        { "key": "discountOnBrandPro", "label": "Discount on Brand Pro plan (%)", "value": 0 }
+        { "key": "discountOnBrandPro", "label": "Discount on Brand Pro plan (%)", "value": 25 }
       ],
+      "discountLabel": "Limited Time Offer",
       "policies": { "imageRetentionDaysAfterExpiry": 45 },
       "highlight": true,
       "isActive": true,

@@ -12,9 +12,18 @@ export class InfluencersController {
   @Get('search')
   @UseGuards(JwtAuthGuard)
   async searchInfluencers(@Query() query: any) {
-    const filter: any = {};
+    const filter: any = { status: 'accepted' };
     if (query.category) filter.categories = query.category;
     if (query.state) filter['location.state'] = query.state;
-    return this.influencerModel.find(filter).select('name categories location profileImages').lean();
+    const docs = await this.influencerModel.find(filter)
+      .select('name categories location profileImages isPremium premiumEnd')
+      .lean();
+    const now = new Date();
+    return (docs || []).map((doc: any) => ({
+      ...doc,
+      isPremium:
+        !!doc?.isPremium &&
+        (!doc?.premiumEnd || new Date(doc.premiumEnd) >= now),
+    }));
   }
 }

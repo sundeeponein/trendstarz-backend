@@ -40,7 +40,7 @@
       { "platform": "twitter", "handle": "@bob", "tier": "Micro", "followersCount": 8000, "contentTypes": [{ "name": "Tweet / post", "enabled": true, "price": 200 }] }
     ],
     "contact": { "whatsapp": false, "email": true, "call": true },
-    "promotionalPrice": 499,
+    "promotionalPrice": 399,
     "status": "pending"
   },
   {

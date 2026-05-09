@@ -141,7 +141,14 @@ export class AdminListsController {
       filter.isDeleted = { $ne: true };
     }
     const docs = await this.influencerModel.find(filter).lean().limit(200);
-    return { success: true, data: docs };
+    const now = new Date();
+    const normalized = (docs || []).map((doc: any) => {
+      const hasActivePremium =
+        !!doc?.isPremium &&
+        (!doc?.premiumEnd || new Date(doc.premiumEnd) >= now);
+      return { ...doc, isPremium: hasActivePremium };
+    });
+    return { success: true, data: normalized };
   }
 
   @Get("brands")
@@ -156,7 +163,14 @@ export class AdminListsController {
       filter.isDeleted = { $ne: true };
     }
     const docs = await this.brandModel.find(filter).lean().limit(200);
-    return { success: true, data: docs };
+    const now = new Date();
+    const normalized = (docs || []).map((doc: any) => {
+      const hasActivePremium =
+        !!doc?.isPremium &&
+        (!doc?.premiumEnd || new Date(doc.premiumEnd) >= now);
+      return { ...doc, isPremium: hasActivePremium };
+    });
+    return { success: true, data: normalized };
   }
   @Patch("states/:id")
   async patchState(
