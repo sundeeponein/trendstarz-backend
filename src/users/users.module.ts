@@ -6,6 +6,7 @@ import { UsersService } from "./users.service";
 import { CloudinaryService } from "../cloudinary.service";
 import { MongooseModule } from "@nestjs/mongoose";
 import {
+  UserSchema,
   InfluencerSchema,
   BrandSchema,
 } from "../database/schemas/profile.schemas";
@@ -15,6 +16,7 @@ import { PlansModule } from "../plans/plans.module";
 @Module({
   imports: [
     MongooseModule.forFeature([
+      { name: "User", schema: UserSchema, collection: "users" },
       {
         name: "Influencer",
         schema: InfluencerSchema,

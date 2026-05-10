@@ -67,6 +67,8 @@ export const InfluencerSchema = new Schema(
     categories: [{ type: String }],
     languages: [{ type: String }],
     adminTags: [{ type: String }],
+    dateOfBirth: { type: Date, default: null },
+    gender: { type: String, default: "" },
     location: {
       state: { type: String },
       district: { type: String },
@@ -142,6 +144,9 @@ export const BrandSchema = new Schema(
     googleMapAddress: { type: String },
     password: { type: String, required: true },
     brandName: { type: String, required: true },
+    contactPersonName: { type: String, default: "" },
+    foundedYear: { type: Number, default: null },
+    companySize: { type: String, default: "" },
     brandUsername: { type: String },
     email: { type: String, required: true, unique: true },
     phoneNumber: { type: String, required: true },
