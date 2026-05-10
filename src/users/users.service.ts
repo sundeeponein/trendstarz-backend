@@ -452,6 +452,7 @@ export class UsersService {
   }
   constructor(
     private readonly cloudinaryService: CloudinaryService,
+    @InjectModel("User") private readonly userModel: Model<any>,
     @InjectModel("Influencer") private readonly influencerModel: Model<any>,
     @InjectModel("Brand") private readonly brandModel: Model<any>,
     @InjectModel("CampaignInvite")
@@ -538,6 +539,8 @@ export class UsersService {
     const {
       _id,
       brandName: name,
+      foundedYear,
+      companySize,
       email,
       phoneNumber,
       categories,
@@ -564,6 +567,8 @@ export class UsersService {
       isPremium,
       brandLogo,
       products,
+      foundedYear,
+      companySize,
       website: allowAccess ? website : undefined,
       googleMapAddress,
       promotionalPrice,
@@ -611,6 +616,34 @@ export class UsersService {
       .lean();
 
     return !!invite;
+  }
+
+  private async canViewInfluencerGender(
+    influencer: any,
+    viewerId?: string | null,
+  ): Promise<boolean> {
+    if (!viewerId) return false;
+    if (String(influencer?._id) === String(viewerId)) return true;
+
+    const admin: any = await this.userModel
+      .findById(viewerId)
+      .select("_id role")
+      .lean();
+    if (admin?.role === "admin" || admin?.role === "ADMIN") return true;
+
+    const inf: any = await this.influencerModel
+      .findById(viewerId)
+      .select("_id isEmailVerified isMobileVerified")
+      .lean();
+    if (inf && (inf.isEmailVerified || inf.isMobileVerified)) return true;
+
+    const brand: any = await this.brandModel
+      .findById(viewerId)
+      .select("_id isEmailVerified isMobileVerified")
+      .lean();
+    if (brand && (brand.isEmailVerified || brand.isMobileVerified)) return true;
+
+    return false;
   }
 
   async updateUserImages(
@@ -862,17 +895,43 @@ export class UsersService {
           inf,
           viewerId,
         );
+        const ageRange = this.computeAgeRangeFromDob(inf?.dateOfBirth);
         return {
           ...inf,
           isPremium,
+          ageRange,
+          gender: undefined,
           email: allowContact ? inf.email : undefined,
           phoneNumber: allowContact ? inf.phoneNumber : undefined,
           website: allowContact ? inf.website : undefined,
+          dateOfBirth: undefined,
           contactRestricted: !allowContact,
         };
       }),
     );
     return { data, total, page, limit };
+  }
+
+  private computeAgeRangeFromDob(dob: unknown): string | null {
+    if (!dob) return null;
+    const birth = new Date(String(dob));
+    if (Number.isNaN(birth.getTime())) return null;
+
+    const now = new Date();
+    let age = now.getFullYear() - birth.getFullYear();
+    const monthDiff = now.getMonth() - birth.getMonth();
+    if (
+      monthDiff < 0 ||
+      (monthDiff === 0 && now.getDate() < birth.getDate())
+    ) {
+      age--;
+    }
+
+    if (age < 0) return null;
+    if (age <= 24) return "18-24";
+    if (age <= 34) return "25-34";
+    if (age <= 44) return "35-44";
+    return "45+";
   }
 
   /**
@@ -933,6 +992,8 @@ export class UsersService {
     const normalized = (data || []).map((inf: any) => ({
       ...inf,
       isPremium: this.isCurrentlyPremium(inf),
+      gender: undefined,
+      dateOfBirth: undefined,
     }));
     return { data: normalized, total, page, limit };
   }
@@ -942,6 +1003,7 @@ export class UsersService {
     const user: any = await this.influencerModel.findOne({ username }).lean();
     if (!user) return null;
     const allowContact = await this.canViewInfluencerContact(user, viewerId);
+    const allowGender = await this.canViewInfluencerGender(user, viewerId);
     const isPremium = this.isCurrentlyPremium(user);
     const {
       _id,
@@ -972,6 +1034,7 @@ export class UsersService {
       location: location || { state: "" },
       socialMedia,
       isPremium,
+      gender: allowGender ? user.gender || undefined : undefined,
       promotionalPrice,
       profileTraffic: profileTraffic || {
         impressions: 0,
@@ -985,6 +1048,7 @@ export class UsersService {
     const user: any = await this.influencerModel.findById(id).lean();
     if (!user) return null;
     const allowContact = await this.canViewInfluencerContact(user, viewerId);
+    const allowGender = await this.canViewInfluencerGender(user, viewerId);
     const isPremium = this.isCurrentlyPremium(user);
     const {
       _id,
@@ -1015,6 +1079,7 @@ export class UsersService {
       location: location || { state: "" },
       socialMedia,
       isPremium,
+      gender: allowGender ? user.gender || undefined : undefined,
       promotionalPrice,
       profileTraffic: profileTraffic || {
         impressions: 0,
@@ -1037,6 +1102,7 @@ export class UsersService {
     ]);
     const filtered = await Promise.all(
       (data || []).map(async (brand: any) => {
+        const { foundedYear, companySize, ...brandForList } = brand;
         const isPremium = this.isCurrentlyPremium(brand);
         const allow = await this.canViewBrandSocialMedia(
           brand,
@@ -1044,7 +1110,7 @@ export class UsersService {
         );
         if (!allow) {
           return {
-            ...brand,
+            ...brandForList,
             isPremium,
             socialMedia: [],
             socialMediaRestricted: true,
@@ -1055,7 +1121,7 @@ export class UsersService {
           };
         }
         return {
-          ...brand,
+          ...brandForList,
           isPremium,
           socialMediaRestricted: false,
           contactRestricted: false,
@@ -1295,6 +1361,9 @@ export class UsersService {
       location: user.location || { state: "" },
       languages: user.languages || [],
       categories: user.categories || [],
+      adminTags: user.adminTags || [],
+      dateOfBirth: user.dateOfBirth || null,
+      gender: user.gender || "",
       website: user.website || "",
       googleMapAddress: user.googleMapAddress || "",
       profileImages: user.profileImages || [],
@@ -1330,6 +1399,9 @@ export class UsersService {
     return {
       _id: user._id?.toString() || user.id?.toString() || "",
       brandName: user.brandName,
+      contactPersonName: user.contactPersonName || "",
+      foundedYear: user.foundedYear || null,
+      companySize: user.companySize || "",
       brandUsername:
         (user as any).brandUsername || (user as any).username || "",
       phoneNumber: user.phoneNumber,
@@ -1339,6 +1411,7 @@ export class UsersService {
       location: user.location || { state: "" },
       languages: user.languages || [],
       categories: user.categories || [],
+      adminTags: user.adminTags || [],
       website: user.website || "",
       googleMapAddress: user.googleMapAddress || "",
       brandLogo: user.brandLogo || [],
@@ -1393,6 +1466,8 @@ export class UsersService {
       "username",
       "phoneNumber",
       "email",
+      "dateOfBirth",
+      "gender",
       "paymentOption",
       "location",
       "languages",
@@ -1485,6 +1560,9 @@ export class UsersService {
 
     const allowedFields = [
       "brandName",
+      "contactPersonName",
+      "foundedYear",
+      "companySize",
       "brandUsername",
       "phoneNumber",
       "email",

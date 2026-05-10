@@ -1,5 +1,6 @@
 import {
   IsString,
+  IsDateString,
   IsEmail,
   IsBoolean,
   IsArray,
@@ -8,9 +9,14 @@ import {
   IsUrl,
   ValidateNested,
   IsNumber,
+  IsInt,
+  Min,
+  Max,
   ArrayMaxSize,
 } from "class-validator";
 import { Type } from "class-transformer";
+
+const CURRENT_YEAR = new Date().getFullYear();
 
 export class ImageDto {
   @IsString()
@@ -110,6 +116,19 @@ export class InfluencerProfileDto {
   categories!: string[];
 
   @IsArray()
+  @IsString({ each: true })
+  @IsOptional()
+  adminTags?: string[];
+
+  @IsDateString()
+  @IsOptional()
+  dateOfBirth?: string;
+
+  @IsString()
+  @IsOptional()
+  gender?: string;
+
+  @IsArray()
   @IsMongoId({ each: true })
   languages!: string[];
 
@@ -147,6 +166,21 @@ export class BrandProfileDto {
   @IsString()
   brandName!: string;
 
+  @IsString()
+  @IsOptional()
+  contactPersonName?: string;
+
+  @Type(() => Number)
+  @IsInt()
+  @Min(1900)
+  @Max(CURRENT_YEAR)
+  @IsOptional()
+  foundedYear?: number;
+
+  @IsString()
+  @IsOptional()
+  companySize?: string;
+
   @IsEmail()
   email!: string;
 
@@ -165,6 +199,11 @@ export class BrandProfileDto {
   @IsArray()
   @IsMongoId({ each: true })
   categories!: string[];
+
+  @IsArray()
+  @IsString({ each: true })
+  @IsOptional()
+  adminTags?: string[];
 
   @IsArray()
   @IsMongoId({ each: true })
