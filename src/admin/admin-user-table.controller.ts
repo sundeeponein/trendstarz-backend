@@ -30,6 +30,15 @@ export class AdminUserTableController {
     @InjectModel("Payment") private readonly paymentModel: Model<Payment>,
   ) {}
 
+  private normalizeAdminTags(tags: unknown): string[] {
+    if (!Array.isArray(tags)) return [];
+    return Array.from(
+      new Set(
+        tags.map((tag) => String(tag || "").trim()).filter((tag) => !!tag),
+      ),
+    );
+  }
+
   @Get("influencers")
   async getInfluencers(
     @Query("status") status?: string,
@@ -93,6 +102,35 @@ export class AdminUserTableController {
       }),
     );
     return brands;
+  }
+
+  @Patch("users/:type/:id/tags")
+  async patchUserTags(
+    @Param("type") type: string,
+    @Param("id") id: string,
+    @Body() body: { adminTags?: string[] },
+  ) {
+    const normalizedType = String(type || "").toLowerCase();
+    const adminTags = this.normalizeAdminTags(body?.adminTags);
+    if (normalizedType !== "influencer" && normalizedType !== "brand") {
+      return { message: "Unsupported user type", type, id };
+    }
+
+    const update = { $set: { adminTags } };
+    const user =
+      normalizedType === "influencer"
+        ? await this.influencerModel
+            .findByIdAndUpdate(id, update, { new: true })
+            .exec()
+        : await this.brandModel
+            .findByIdAndUpdate(id, update, { new: true })
+            .exec();
+
+    if (!user) {
+      return { message: "User not found", type, id };
+    }
+
+    return { message: "User tags updated", user };
   }
 
   // PATCH endpoint to directly update brandLogo and products for a brand

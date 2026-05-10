@@ -110,6 +110,11 @@ export class InfluencerProfileDto {
   categories!: string[];
 
   @IsArray()
+  @IsString({ each: true })
+  @IsOptional()
+  adminTags?: string[];
+
+  @IsArray()
   @IsMongoId({ each: true })
   languages!: string[];
 
@@ -165,6 +170,11 @@ export class BrandProfileDto {
   @IsArray()
   @IsMongoId({ each: true })
   categories!: string[];
+
+  @IsArray()
+  @IsString({ each: true })
+  @IsOptional()
+  adminTags?: string[];
 
   @IsArray()
   @IsMongoId({ each: true })

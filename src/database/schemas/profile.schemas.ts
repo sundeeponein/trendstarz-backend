@@ -66,6 +66,7 @@ export const InfluencerSchema = new Schema(
     premiumEnd: { type: Date, default: null },
     categories: [{ type: String }],
     languages: [{ type: String }],
+    adminTags: [{ type: String }],
     location: {
       state: { type: String },
       district: { type: String },
@@ -173,6 +174,7 @@ export const BrandSchema = new Schema(
     premiumEnd: { type: Date, default: null },
     categories: [{ type: String }],
     languages: [{ type: String }],
+    adminTags: [{ type: String }],
     website: { type: String },
     location: {
       state: { type: String },
