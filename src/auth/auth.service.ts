@@ -202,7 +202,12 @@ export class AuthService {
     user.resetTokenExpires = Date.now() + 1000 * 60 * 60; // 1 hour expiry
     await user.save();
     // Send email (use your email util)
-    const resetUrl = `${process.env.FRONTEND_URL || "http://localhost:4200"}/reset-password?token=${resetToken}`;
+    const frontendBase =
+      process.env.FRONTEND_URL ||
+      (process.env.NODE_ENV === "production"
+        ? "https://trendstarz.in"
+        : "http://localhost:4200");
+    const resetUrl = `${frontendBase}/reset-password?token=${resetToken}`;
     const text = `Reset your Trendstarz password: ${resetUrl}`;
     await sendAppEmail({
       to: user.email,
@@ -267,7 +272,9 @@ export class AuthService {
       throw new BadRequestException("Confirm password is required.");
     }
     if (newPassword !== confirmPassword) {
-      throw new BadRequestException("New password and confirm password do not match.");
+      throw new BadRequestException(
+        "New password and confirm password do not match.",
+      );
     }
     if (newPassword === currentPassword) {
       throw new BadRequestException(
