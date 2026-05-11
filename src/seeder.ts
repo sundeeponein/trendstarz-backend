@@ -33,6 +33,16 @@ export async function seedDatabase(section?: string) {
   const BrandModel = app.get<Model<any>>(getModelToken("Brand"));
   // ...existing code...
 
+  let sampleUsers: any[] = [];
+  let samplePath = path.join(__dirname, "../assets/sample-users.json");
+  if (!fs.existsSync(samplePath)) {
+    samplePath = path.join(process.cwd(), "assets/sample-users.json");
+  }
+  if (fs.existsSync(samplePath)) {
+    const raw = fs.readFileSync(samplePath, "utf-8");
+    sampleUsers = JSON.parse(raw);
+  }
+
   // Only seed the requested section if provided
   if (!section || section === "categories") {
     // Seed all categories
@@ -204,51 +214,55 @@ export async function seedDatabase(section?: string) {
     }
   }
 
-  // Seed Admin User (upsert to avoid duplicate key error)
-  const adminPassword = await bcrypt.hash("admin123", 10);
-  await UserModel.updateOne(
-    { email: "admin@trendstarz.com" },
-    {
-      $set: {
-        name: "Admin",
-        password: adminPassword,
-        role: "admin",
+  if (!section || section === "users") {
+    // Seed Admin User (upsert to avoid duplicate key error)
+    const adminSeed = sampleUsers.find((user: any) => user.role === "admin");
+    const adminEmail = adminSeed?.email || "admin@trendstarz.com";
+    const adminName = adminSeed?.name || "Admin";
+    const adminPlainPassword = adminSeed?.password || "admin123";
+    const adminPassword = await bcrypt.hash(adminPlainPassword, 10);
+    await UserModel.updateOne(
+      { email: adminEmail },
+      {
+        $set: {
+          name: adminName,
+          password: adminPassword,
+          role: "admin",
+        },
       },
-    },
-    { upsert: true },
-  );
-
-  // Seed Influencers and Brands from sample-users.json in assets folder
-  const samplePath = path.join(__dirname, "../assets/sample-users.json");
-  if (fs.existsSync(samplePath)) {
-    const raw = fs.readFileSync(samplePath, "utf-8");
-    const users = JSON.parse(raw);
-    const influencers = users.filter((u: any) => u.username);
-    const brands = users.filter((u: any) => u.brandName);
-    // Avoid duplicate influencer names and hash passwords
-    for (const inf of influencers) {
-      const exists = await InfluencerModel.findOne({ email: inf.email });
-      if (!exists) {
-        const hashed = await bcrypt.hash(inf.password, 10);
-        await InfluencerModel.create({ ...inf, password: hashed });
-        console.log(`Seeded influencer: ${inf.name}`);
-      }
-    }
-    // Avoid duplicate brand names and hash passwords
-    for (const brand of brands) {
-      const exists = await BrandModel.findOne({ email: brand.email });
-      if (!exists) {
-        const hashed = await bcrypt.hash(brand.password, 10);
-        await BrandModel.create({ ...brand, password: hashed });
-        console.log(`Seeded brand: ${brand.name}`);
-      }
-    }
-  } else {
-    console.log(
-      "sample-users.json not found in assets, skipping influencer/brand seeding.",
+      { upsert: true },
     );
+    console.log(`Seeded admin: ${adminEmail} / ${adminPlainPassword}`);
+
+    // Seed Influencers and Brands from sample-users.json in assets folder
+    if (sampleUsers.length > 0) {
+      const influencers = sampleUsers.filter((u: any) => u.username);
+      const brands = sampleUsers.filter((u: any) => u.brandName);
+      // Avoid duplicate influencer names and hash passwords
+      for (const inf of influencers) {
+        const exists = await InfluencerModel.findOne({ email: inf.email });
+        if (!exists) {
+          const hashed = await bcrypt.hash(inf.password, 10);
+          await InfluencerModel.create({ ...inf, password: hashed });
+          console.log(`Seeded influencer: ${inf.name}`);
+        }
+      }
+      // Avoid duplicate brand names and hash passwords
+      for (const brand of brands) {
+        const exists = await BrandModel.findOne({ email: brand.email });
+        if (!exists) {
+          const hashed = await bcrypt.hash(brand.password, 10);
+          await BrandModel.create({ ...brand, password: hashed });
+          console.log(`Seeded brand: ${brand.brandName}`);
+        }
+      }
+    } else {
+      console.log(
+        "sample-users.json not found in assets, skipping influencer/brand seeding.",
+      );
+    }
   }
 
-  console.log("Seeding complete. Admin login: admin@trendstarz.com / admin123");
+  console.log("Seeding complete.");
   await app.close();
 }
