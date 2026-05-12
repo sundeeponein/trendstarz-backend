@@ -11,6 +11,7 @@ import { CampaignTransactionSchema } from "../database/schemas/campaign-transact
 import { PaymentsPayoutsController } from "./payments-payouts.controller";
 import { PaymentsPayoutsService } from "./payments-payouts.service";
 import { PushModule } from "../push/push.module";
+import { NotificationsModule } from "../notifications/notifications.module";
 
 @Module({
   imports: [
@@ -35,6 +36,7 @@ import { PushModule } from "../push/push.module";
       },
     ]),
     PushModule,
+    NotificationsModule,
   ],
   controllers: [PaymentsPayoutsController],
   providers: [PaymentsPayoutsService],

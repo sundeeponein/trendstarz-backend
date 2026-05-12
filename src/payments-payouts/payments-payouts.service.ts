@@ -7,6 +7,7 @@ import { InjectModel } from "@nestjs/mongoose";
 import { Model } from "mongoose";
 import { sendAppEmail } from "../utils/app-email.service";
 import { PushService } from "../push/push.service";
+import { NotificationsService } from "../notifications/notifications.service";
 
 type FeeSettings = {
   platformFeeEnabled: boolean;
@@ -24,6 +25,7 @@ export class PaymentsPayoutsService {
     @InjectModel("Brand") private readonly brandModel: Model<any>,
     @InjectModel("Influencer") private readonly influencerModel: Model<any>,
     private readonly pushService: PushService,
+    private readonly notificationsService: NotificationsService,
   ) {}
 
   private roundPercent(amount: number, percent: number): number {
@@ -487,6 +489,17 @@ export class PaymentsPayoutsService {
         body: `You can now start posting for your campaign.`,
         url: "/influencer-dashboard",
       }).catch(() => { /* non-critical */ });
+      this.notificationsService
+        .createForUser({
+          userId: paymentConfirmedInfluencerId,
+          userRole: "influencer",
+          title: "Payment Verified",
+          body: "Brand payment was verified. You can start working on the campaign.",
+          url: "/influencer-dashboard",
+        })
+        .catch(() => {
+          /* non-critical */
+        });
     }
 
     // Fire-and-forget: notify brand their payment was verified
@@ -516,6 +529,18 @@ export class PaymentsPayoutsService {
         })
         .catch(() => {
           /* ignore */
+        });
+
+      this.notificationsService
+        .createForUser({
+          userId: String(tx.payerId),
+          userRole: "brand",
+          title: "Payment Verified",
+          body: "Your campaign payment is verified and influencers can now start work.",
+          url: "/campaign-management",
+        })
+        .catch(() => {
+          /* non-critical */
         });
     }
 
@@ -789,6 +814,21 @@ export class PaymentsPayoutsService {
     }
     await tx.save();
 
+    const counterpartId =
+      userRole === "brand" ? String(tx.recipientId) : String(tx.payerId);
+    const counterpartRole = userRole === "brand" ? "influencer" : "brand";
+    this.notificationsService
+      .createForUser({
+        userId: counterpartId,
+        userRole: counterpartRole,
+        title: "Dispute Raised",
+        body: "A dispute was raised on a campaign transaction involving you.",
+        url: counterpartRole === "brand" ? "/transactions" : "/influencer-dashboard",
+      })
+      .catch(() => {
+        /* non-critical */
+      });
+
     return {
       success: true,
       message: "Dispute raised. Payout is frozen pending admin review.",
@@ -842,6 +882,33 @@ export class PaymentsPayoutsService {
         $set: { status: "completed" },
       });
     }
+
+    const resolutionMessage =
+      outcome === "release_to_influencer"
+        ? "Dispute resolved. Payout released to influencer."
+        : "Dispute resolved. Payment will be refunded to brand.";
+    this.notificationsService
+      .createForUser({
+        userId: String(tx.payerId),
+        userRole: "brand",
+        title: "Dispute Resolved",
+        body: resolutionMessage,
+        url: "/transactions",
+      })
+      .catch(() => {
+        /* non-critical */
+      });
+    this.notificationsService
+      .createForUser({
+        userId: String(tx.recipientId),
+        userRole: "influencer",
+        title: "Dispute Resolved",
+        body: resolutionMessage,
+        url: "/influencer-dashboard",
+      })
+      .catch(() => {
+        /* non-critical */
+      });
 
     return {
       success: true,

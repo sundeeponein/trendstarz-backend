@@ -10,6 +10,7 @@ import { Model } from "mongoose";
 import { sendAppEmail } from "../utils/app-email.service";
 import { PlansService } from "../plans/plans.service";
 import { PushService } from "../push/push.service";
+import { NotificationsService } from "../notifications/notifications.service";
 
 function detectPlatform(url: string): string {
   if (!url) return "other";
@@ -75,6 +76,7 @@ export class CampaignInvitesService {
     private readonly campaignTransactionModel: Model<any>,
     private readonly plansService: PlansService,
     private readonly pushService: PushService,
+    private readonly notificationsService: NotificationsService,
   ) {}
 
   /** True if user has an active premium right now. */
@@ -324,6 +326,17 @@ export class CampaignInvitesService {
         body: `${brand?.brandName || "A brand"} invited you to "${campaign.title}"`,
         url: "/influencer-dashboard",
       }).catch(() => { /* non-critical */ });
+      this.notificationsService
+        .createForUser({
+          userId: String(data.influencerId),
+          userRole: "influencer",
+          title: "New Campaign Invite",
+          body: `${brand?.brandName || "A brand"} invited you to "${campaign.title}"`,
+          url: "/influencer-dashboard",
+        })
+        .catch(() => {
+          /* non-critical */
+        });
     } catch (err) {
       console.error("Failed to send invite email:", err);
     }
@@ -783,6 +796,28 @@ export class CampaignInvitesService {
     }
     invite.updatedAt = new Date();
     await invite.save();
+
+    this.pushService
+      .sendToUser(String(invite.influencerId), {
+        title: "Campaign Marked Disputed",
+        body: "A brand reported an issue on your campaign collaboration.",
+        url: "/influencer-dashboard",
+      })
+      .catch(() => {
+        /* non-critical */
+      });
+    this.notificationsService
+      .createForUser({
+        userId: String(invite.influencerId),
+        userRole: "influencer",
+        title: "Campaign Marked Disputed",
+        body: "A brand reported an issue on your campaign collaboration.",
+        url: "/influencer-dashboard",
+      })
+      .catch(() => {
+        /* non-critical */
+      });
+
     return { success: true, status: invite.status };
   }
 
@@ -1037,6 +1072,17 @@ export class CampaignInvitesService {
           body: `${influencer?.name || "An influencer"} accepted your invite for "${campaign?.title || "your campaign"}"`,
           url: "/campaign-management",
         }).catch(() => { /* non-critical */ });
+        this.notificationsService
+          .createForUser({
+            userId: String(invite.brandId),
+            userRole: "brand",
+            title: "Invite Accepted",
+            body: `${influencer?.name || "An influencer"} accepted your invite for "${campaign?.title || "your campaign"}"`,
+            url: "/campaign-management",
+          })
+          .catch(() => {
+            /* non-critical */
+          });
       } catch (e) {
         console.error("Failed to send acceptance email:", e);
       }
@@ -1189,6 +1235,17 @@ export class CampaignInvitesService {
       body: `${(influencer as any).fullName || "An influencer"} applied to your campaign "${campaign.title}".`,
       url: "/brand/campaigns",
     });
+    this.notificationsService
+      .createForUser({
+        userId: String(campaign.brandId),
+        userRole: "brand",
+        title: "New Campaign Application",
+        body: `${(influencer as any).fullName || "An influencer"} applied to your campaign "${campaign.title}".`,
+        url: "/campaign-management",
+      })
+      .catch(() => {
+        /* non-critical */
+      });
 
     return { message: "Application submitted. Awaiting brand approval.", inviteId: invite._id };
   }
@@ -1336,6 +1393,18 @@ export class CampaignInvitesService {
       console.error("Failed to send submission email:", e);
     }
 
+    this.notificationsService
+      .createForUser({
+        userId: String(invite.brandId),
+        userRole: "brand",
+        title: "Post Submitted",
+        body: "An influencer submitted content for your review.",
+        url: "/campaign-management",
+      })
+      .catch(() => {
+        /* non-critical */
+      });
+
     return { success: true, submission };
   }
 
@@ -1439,6 +1508,17 @@ export class CampaignInvitesService {
           body: `Your post for "${campaign.title || "the campaign"}" was approved. Payout is being processed.`,
           url: "/influencer-dashboard",
         }).catch(() => { /* non-critical */ });
+        this.notificationsService
+          .createForUser({
+            userId: String(invite.influencerId),
+            userRole: "influencer",
+            title: "Post Approved",
+            body: `Your post for "${campaign.title || "the campaign"}" was approved.`,
+            url: "/influencer-dashboard",
+          })
+          .catch(() => {
+            /* non-critical */
+          });
       } catch (e) {
         console.error("Failed to send approval email:", e);
       }
@@ -1467,6 +1547,27 @@ export class CampaignInvitesService {
           },
         },
       );
+
+      this.pushService
+        .sendToUser(String(invite.influencerId), {
+          title: "Submission Disputed",
+          body: `Your submission for "${campaign.title || "the campaign"}" was marked disputed by brand.`,
+          url: "/influencer-dashboard",
+        })
+        .catch(() => {
+          /* non-critical */
+        });
+      this.notificationsService
+        .createForUser({
+          userId: String(invite.influencerId),
+          userRole: "influencer",
+          title: "Submission Disputed",
+          body: `Your submission for "${campaign.title || "the campaign"}" was marked disputed by brand.`,
+          url: "/influencer-dashboard",
+        })
+        .catch(() => {
+          /* non-critical */
+        });
     }
 
     return { success: true, submission };
