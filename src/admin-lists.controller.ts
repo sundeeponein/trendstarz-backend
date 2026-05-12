@@ -63,6 +63,7 @@ export class AdminListsController {
       supportContactEmail: "support@trendstarz.in",
       supportContactPhone: "",
       supportContactWhatsapp: "",
+      verificationCallNumber: "",
       supportContactMessage:
         "For now, please contact our team to complete campaign payments. Our admin will update the payment status once received.",
     };
