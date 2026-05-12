@@ -6,6 +6,7 @@ import {
   Param,
   UseGuards,
   Query,
+  Req,
 } from "@nestjs/common";
 import { JwtAuthGuard } from "../auth/jwt-auth.guard";
 import { RolesGuard } from "../auth/roles.guard";
@@ -131,6 +132,62 @@ export class AdminUserTableController {
     }
 
     return { message: "User tags updated", user };
+  }
+
+  @Patch("users/influencer/:id/verification")
+  async updateInfluencerVerification(
+    @Param("id") id: string,
+    @Body()
+    body: {
+      action?: "pending" | "approve" | "reject" | "remove";
+      notes?: string;
+    },
+    @Req() req: any,
+  ) {
+    const influencer = await this.influencerModel.findById(id);
+    if (!influencer) {
+      return { message: "Influencer not found", id };
+    }
+
+    const action = String(body?.action || "").toLowerCase();
+    const notes = String(body?.notes || "").trim();
+    const actorId = String(req?.user?.userId || req?.user?.id || "admin");
+    const actorRole = String(req?.user?.role || "admin");
+
+    let status = influencer.verificationStatus || "not_submitted";
+    if (action === "approve") status = "approved";
+    else if (action === "reject") status = "rejected";
+    else if (action === "remove") status = "removed";
+    else if (action === "pending") status = "pending";
+
+    influencer.verificationStatus = status;
+    influencer.verifiedByTrendStarz = status === "approved";
+    influencer.verificationAdminNotes = notes;
+
+    const log = Array.isArray(influencer.verificationAuditLog)
+      ? influencer.verificationAuditLog
+      : [];
+    log.push({
+      action:
+        action === "approve"
+          ? "approved"
+          : action === "reject"
+            ? "rejected"
+            : action === "remove"
+              ? "removed"
+              : notes
+                ? "notes_updated"
+                : "status_changed",
+      status,
+      note: notes,
+      actorId,
+      actorRole,
+      actedAt: new Date(),
+    });
+    influencer.verificationAuditLog = log.slice(-100);
+
+    const saved = await influencer.save();
+    return { message: "Verification updated", user: saved };
   }
 
   // PATCH endpoint to directly update brandLogo and products for a brand

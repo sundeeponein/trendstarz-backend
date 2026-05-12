@@ -2,6 +2,7 @@ import { BadRequestException, NotFoundException } from "@nestjs/common";
 import { getModelToken } from "@nestjs/mongoose";
 import { Test, TestingModule } from "@nestjs/testing";
 import { PaymentsPayoutsService } from "./payments-payouts.service";
+import { PushService } from "../push/push.service";
 
 describe("PaymentsPayoutsService", () => {
   let service: PaymentsPayoutsService;
@@ -34,6 +35,14 @@ describe("PaymentsPayoutsService", () => {
       findById: jest.fn(),
     };
 
+    const mockInfluencerModel = {
+      findById: jest.fn(),
+    };
+
+    const mockPushService = {
+      sendToUser: jest.fn().mockResolvedValue(undefined),
+    };
+
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         PaymentsPayoutsService,
@@ -45,6 +54,8 @@ describe("PaymentsPayoutsService", () => {
         },
         { provide: getModelToken("AppSettings"), useValue: mockAppSettingsModel },
         { provide: getModelToken("Brand"), useValue: mockBrandModel },
+        { provide: getModelToken("Influencer"), useValue: mockInfluencerModel },
+        { provide: PushService, useValue: mockPushService },
       ],
     }).compile();
 

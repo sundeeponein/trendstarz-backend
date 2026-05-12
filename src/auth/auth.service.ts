@@ -626,6 +626,37 @@ export class AuthService {
       capturedAt: new Date(),
     };
 
+    const verificationDocs = Array.isArray(data?.verificationDocuments)
+      ? data.verificationDocuments
+          .filter((doc: any) => doc?.url && doc?.public_id)
+          .map((doc: any) => ({
+            url: String(doc.url),
+            public_id: String(doc.public_id),
+            originalName: String(doc.originalName || ""),
+            mimeType: String(doc.mimeType || ""),
+            uploadedAt: new Date(),
+          }))
+      : [];
+    const verificationDisclaimerAccepted =
+      data?.verificationDisclaimerAccepted === true;
+    const verificationStatus = verificationDocs.length
+      ? verificationDisclaimerAccepted
+        ? "pending"
+        : "not_submitted"
+      : "not_submitted";
+    const verificationAuditLog = verificationDocs.length
+      ? [
+          {
+            action: "submitted",
+            status: verificationStatus,
+            note: "Verification documents submitted during registration",
+            actorId: "self",
+            actorRole: "influencer",
+            actedAt: new Date(),
+          },
+        ]
+      : [];
+
     const influencer = new this.influencerModel({
       ...data,
       email: normalizedEmail || data.email,
@@ -637,6 +668,12 @@ export class AuthService {
       socialMedia: socialMediaMapped,
       profileImages: normalizedProfileImages,
       signupAttribution,
+      verificationDocuments: verificationDocs,
+      verificationDisclaimerAccepted,
+      verificationStatus,
+      verifiedByTrendStarz: false,
+      verificationAdminNotes: "",
+      verificationAuditLog,
     });
     // Status stays "pending" until email is verified — auto-approve (if enabled) is applied in verifyEmailByToken.
     try {

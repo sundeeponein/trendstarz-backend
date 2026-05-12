@@ -65,6 +65,63 @@ export const InfluencerSchema = new Schema(
     premiumStart: { type: Date, default: null },
     premiumEnd: { type: Date, default: null },
     categories: [{ type: String }],
+    influencerCategory: { type: String, default: "" },
+    professionalStatus: { type: Boolean, default: false },
+    expertiseArea: { type: String, default: "" },
+    verificationDocuments: [
+      {
+        url: { type: String, required: true },
+        public_id: { type: String, required: true },
+        originalName: { type: String, default: "" },
+        mimeType: { type: String, default: "" },
+        uploadedAt: { type: Date, default: Date.now },
+      },
+    ],
+    verificationStatus: {
+      type: String,
+      enum: [
+        "not_submitted",
+        "pending",
+        "approved",
+        "rejected",
+        "removed",
+      ],
+      default: "not_submitted",
+    },
+    verificationDisclaimerAccepted: { type: Boolean, default: false },
+    verificationAdminNotes: { type: String, default: "" },
+    verifiedByTrendStarz: { type: Boolean, default: false },
+    verificationAuditLog: [
+      {
+        action: {
+          type: String,
+          enum: [
+            "submitted",
+            "approved",
+            "rejected",
+            "removed",
+            "status_changed",
+            "notes_updated",
+          ],
+          required: true,
+        },
+        status: {
+          type: String,
+          enum: [
+            "not_submitted",
+            "pending",
+            "approved",
+            "rejected",
+            "removed",
+          ],
+          default: "not_submitted",
+        },
+        note: { type: String, default: "" },
+        actorId: { type: String, default: "" },
+        actorRole: { type: String, default: "" },
+        actedAt: { type: Date, default: Date.now },
+      },
+    ],
     languages: [{ type: String }],
     adminTags: [{ type: String }],
     dateOfBirth: { type: Date, default: null },
@@ -125,6 +182,7 @@ export const InfluencerSchema = new Schema(
   { timestamps: true },
 );
 InfluencerSchema.index({ categories: 1 });
+InfluencerSchema.index({ verificationStatus: 1 });
 InfluencerSchema.index({ "location.state": 1 });
 InfluencerSchema.index({ "location.district": 1 });
 InfluencerSchema.index({ resetToken: 1 }, { sparse: true });

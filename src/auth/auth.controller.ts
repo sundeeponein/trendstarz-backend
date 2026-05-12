@@ -12,6 +12,7 @@ import {
   UploadedFile,
   UseGuards,
   Req,
+  BadRequestException,
 } from "@nestjs/common";
 import type { Response } from "express";
 import { FileInterceptor } from "@nestjs/platform-express";
@@ -156,6 +157,54 @@ export class AuthController {
     return {
       url: uploaded.secure_url || uploaded.url,
       public_id: uploaded.public_id,
+    };
+  }
+
+  @Post("upload-verification")
+  @UseInterceptors(
+    FileInterceptor("file", {
+      storage: diskStorage({
+        destination: (req: any, file: any, cb: any) => {
+          const dest = path.resolve(process.cwd(), "assets/local-images");
+          if (!fs.existsSync(dest)) {
+            fs.mkdirSync(dest, { recursive: true });
+          }
+          cb(null, dest);
+        },
+        filename: (req: any, file: any, cb: any) => {
+          const ext = path.extname(file.originalname || "") || ".pdf";
+          cb(null, `${randomUUID()}${ext}`);
+        },
+      }),
+      fileFilter: (req, file, cb) => {
+        const allowed = ["application/pdf", "image/jpeg", "image/png"];
+        if (!allowed.includes(file.mimetype)) {
+          return cb(
+            new BadRequestException("Only PDF, JPG, PNG files are allowed"),
+            false,
+          );
+        }
+        cb(null, true);
+      },
+      limits: { fileSize: 10 * 1024 * 1024 },
+    }),
+  )
+  async uploadVerification(@UploadedFile() file: Express.Multer.File) {
+    const uploaded = await this.cloudinaryService.uploadFile(
+      file.path,
+      "influencer-verifications",
+      "auto",
+    );
+
+    if (file?.path && fs.existsSync(file.path)) {
+      fs.unlinkSync(file.path);
+    }
+
+    return {
+      url: uploaded.secure_url || uploaded.url,
+      public_id: uploaded.public_id,
+      mimeType: file?.mimetype || "",
+      originalName: file?.originalname || "",
     };
   }
 
