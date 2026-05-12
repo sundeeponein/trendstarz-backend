@@ -901,6 +901,10 @@ export class UsersService {
           isPremium,
           ageRange,
           gender: undefined,
+          verificationDocuments: undefined,
+          verificationAdminNotes: undefined,
+          verificationAuditLog: undefined,
+          verificationDisclaimerAccepted: undefined,
           email: allowContact ? inf.email : undefined,
           phoneNumber: allowContact ? inf.phoneNumber : undefined,
           website: allowContact ? inf.website : undefined,
@@ -1015,6 +1019,11 @@ export class UsersService {
       phoneNumber,
       website,
       categories,
+      influencerCategory,
+      professionalStatus,
+      expertiseArea,
+      verificationStatus,
+      verifiedByTrendStarz,
       location,
       socialMedia,
       promotionalPrice,
@@ -1031,6 +1040,11 @@ export class UsersService {
       website: allowContact ? website : undefined,
       contactRestricted: !allowContact,
       categories,
+      influencerCategory: influencerCategory || "",
+      professionalStatus: !!professionalStatus,
+      expertiseArea: expertiseArea || "",
+      verificationStatus: verificationStatus || "not_submitted",
+      verifiedByTrendStarz: !!verifiedByTrendStarz,
       location: location || { state: "" },
       socialMedia,
       isPremium,
@@ -1061,6 +1075,11 @@ export class UsersService {
       website,
       promotionalPrice,
       categories,
+      influencerCategory,
+      professionalStatus,
+      expertiseArea,
+      verificationStatus,
+      verifiedByTrendStarz,
       location,
       socialMedia,
       profileTraffic,
@@ -1076,6 +1095,11 @@ export class UsersService {
       website: allowContact ? website : undefined,
       contactRestricted: !allowContact,
       categories,
+      influencerCategory: influencerCategory || "",
+      professionalStatus: !!professionalStatus,
+      expertiseArea: expertiseArea || "",
+      verificationStatus: verificationStatus || "not_submitted",
+      verifiedByTrendStarz: !!verifiedByTrendStarz,
       location: location || { state: "" },
       socialMedia,
       isPremium,
@@ -1361,6 +1385,15 @@ export class UsersService {
       location: user.location || { state: "" },
       languages: user.languages || [],
       categories: user.categories || [],
+      influencerCategory: user.influencerCategory || "",
+      professionalStatus: !!user.professionalStatus,
+      expertiseArea: user.expertiseArea || "",
+      verificationDocuments: user.verificationDocuments || [],
+      verificationStatus: user.verificationStatus || "not_submitted",
+      verificationDisclaimerAccepted: !!user.verificationDisclaimerAccepted,
+      verificationAdminNotes: user.verificationAdminNotes || "",
+      verifiedByTrendStarz: !!user.verifiedByTrendStarz,
+      verificationAuditLog: user.verificationAuditLog || [],
       adminTags: user.adminTags || [],
       dateOfBirth: user.dateOfBirth || null,
       gender: user.gender || "",
@@ -1472,6 +1505,11 @@ export class UsersService {
       "location",
       "languages",
       "categories",
+      "influencerCategory",
+      "professionalStatus",
+      "expertiseArea",
+      "verificationDocuments",
+      "verificationDisclaimerAccepted",
       "profileImages",
       "socialMedia",
       "contact",
@@ -1492,6 +1530,49 @@ export class UsersService {
 
     for (const [key, value] of Object.entries(updateData)) {
       userDoc.set(key, value);
+    }
+
+    if (updateData.verificationDocuments !== undefined) {
+      const sanitizedDocs = Array.isArray(updateData.verificationDocuments)
+        ? updateData.verificationDocuments
+            .filter((doc: any) => doc?.url && doc?.public_id)
+            .map((doc: any) => ({
+              url: String(doc.url),
+              public_id: String(doc.public_id),
+              originalName: String(doc.originalName || ""),
+              mimeType: String(doc.mimeType || ""),
+              uploadedAt: doc.uploadedAt ? new Date(doc.uploadedAt) : new Date(),
+            }))
+        : [];
+
+      userDoc.set("verificationDocuments", sanitizedDocs);
+
+      const disclaimerAccepted =
+        updateData.verificationDisclaimerAccepted === true ||
+        userDoc.get("verificationDisclaimerAccepted") === true;
+
+      const status =
+        sanitizedDocs.length > 0 && disclaimerAccepted
+          ? "pending"
+          : "not_submitted";
+      userDoc.set("verificationStatus", status);
+      userDoc.set("verifiedByTrendStarz", false);
+
+      const existingLog = Array.isArray(userDoc.get("verificationAuditLog"))
+        ? userDoc.get("verificationAuditLog")
+        : [];
+      existingLog.push({
+        action: sanitizedDocs.length > 0 ? "submitted" : "status_changed",
+        status,
+        note:
+          sanitizedDocs.length > 0
+            ? "Influencer submitted/updated verification documents"
+            : "Influencer removed verification documents",
+        actorId: String(userId || "self"),
+        actorRole: "influencer",
+        actedAt: new Date(),
+      });
+      userDoc.set("verificationAuditLog", existingLog.slice(-100));
     }
 
     const updated = await userDoc.save();

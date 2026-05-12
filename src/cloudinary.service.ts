@@ -38,13 +38,17 @@ function setCloudinaryConfig() {
 
 @Injectable()
 export class CloudinaryService {
-  async uploadImage(file: string, folder = "profile_images") {
+  async uploadFile(
+    file: string,
+    folder = "profile_images",
+    resourceType: "image" | "raw" | "video" | "auto" = "image",
+  ) {
     // Use Cloudinary only when explicitly enabled (or production default).
     if (isCloudinaryEnabled()) {
       setCloudinaryConfig();
       return await cloudinary.uploader.upload(file, {
         folder,
-        resource_type: "image",
+        resource_type: resourceType,
         overwrite: true,
       });
     }
@@ -82,6 +86,10 @@ export class CloudinaryService {
       public_id: filename,
       local: true,
     };
+  }
+
+  async uploadImage(file: string, folder = "profile_images") {
+    return this.uploadFile(file, folder, "image");
   }
 
   async deleteImage(publicId: string) {

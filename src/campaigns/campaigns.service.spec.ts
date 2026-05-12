@@ -55,6 +55,9 @@ describe("CampaignsService", () => {
         .mockReturnValue({ lean: jest.fn().mockResolvedValue(mockBrand) }),
     });
 
+    const mockInfluencerModel: any = jest.fn();
+    mockInfluencerModel.findById = jest.fn();
+
     const mockPlansService = {
       getUserPlanCapabilities: jest.fn().mockResolvedValue({
         hasPremium: false,
@@ -67,6 +70,7 @@ describe("CampaignsService", () => {
         CampaignsService,
         { provide: getModelToken("Campaign"), useValue: mockCampaignModel },
         { provide: getModelToken("Brand"), useValue: mockBrandModel },
+        { provide: getModelToken("Influencer"), useValue: mockInfluencerModel },
         { provide: PlansService, useValue: mockPlansService },
       ],
     }).compile();
@@ -110,7 +114,15 @@ describe("CampaignsService", () => {
       expect(campaignModel.find).toHaveBeenCalledWith({
         brandId: mockBrand._id,
       });
-      expect(result).toEqual([mockCampaign]);
+      expect(result).toEqual([
+        expect.objectContaining({
+          ...mockCampaign,
+          brand: expect.objectContaining({
+            name: mockBrand.brandName,
+            username: mockBrand.brandUsername,
+          }),
+        }),
+      ]);
     });
   });
 

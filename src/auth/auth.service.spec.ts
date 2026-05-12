@@ -94,6 +94,7 @@ describe("AuthService", () => {
         },
         { provide: getModelToken("Category"), useValue: createMockModel() },
         { provide: getModelToken("State"), useValue: createMockModel() },
+        { provide: getModelToken("District"), useValue: createMockModel() },
         { provide: getModelToken("Language"), useValue: createMockModel() },
         { provide: getModelToken("SocialMedia"), useValue: createMockModel() },
         {
@@ -206,7 +207,7 @@ describe("AuthService", () => {
 
     it("should throw if token not found in any collection", async () => {
       await expect(
-        service.resetPassword("validtoken", "newpassword123"),
+        service.resetPassword("validtoken", "Newpassword@123"),
       ).rejects.toThrow("Invalid or expired reset token");
     });
 
@@ -220,7 +221,7 @@ describe("AuthService", () => {
       userModel.findOne.mockResolvedValue(mockUser);
       const result = await service.resetPassword(
         "validtoken",
-        "newpassword123",
+        "Newpassword@123",
       );
       expect(result.success).toBe(true);
       expect(mockUser.save).toHaveBeenCalled();
