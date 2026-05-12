@@ -33,3 +33,6 @@ yarn-error.log*
 
 # Optional: ignore test output
 /test-results/
+test-results.json
+auth_test_results.json
+auth_test.log

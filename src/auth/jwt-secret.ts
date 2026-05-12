@@ -1,3 +1,7 @@
+import { randomBytes } from "node:crypto";
+
+const developmentJwtSecret = randomBytes(32).toString("hex");
+
 /**
  * Centralised JWT secret accessor.
  * Throws in production if JWT_SECRET is not configured,
@@ -13,10 +17,10 @@ export function getJwtSecret(): string {
       );
     }
     console.warn(
-      "[AUTH] JWT_SECRET is not set. Using insecure fallback for local development only. " +
+      "[AUTH] JWT_SECRET is not set. Using a temporary development-only fallback secret. " +
         "Never run without JWT_SECRET in production.",
     );
-    return "TRENDSTARZ_DEV_ONLY_SECRET_DO_NOT_USE_IN_PROD";
+    return developmentJwtSecret;
   }
   if (secret.length < 32) {
     console.warn(

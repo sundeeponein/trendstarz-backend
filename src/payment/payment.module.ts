@@ -9,6 +9,7 @@ import {
   BrandSchema,
 } from "../database/schemas/profile.schemas";
 import { PlansModule } from "../plans/plans.module";
+import { NotificationsModule } from "../notifications/notifications.module";
 
 @Module({
   imports: [
@@ -18,6 +19,7 @@ import { PlansModule } from "../plans/plans.module";
       { name: "Brand", schema: BrandSchema, collection: "brands" },
     ]),
     PlansModule,
+    NotificationsModule,
   ],
   controllers: [PaymentController],
   providers: [PaymentService, RazorpayService],

@@ -49,6 +49,7 @@ import { PlansModule } from "./plans/plans.module";
 import { ReviewsModule } from "./reviews/reviews.module";
 import { PaymentsPayoutsModule } from "./payments-payouts/payments-payouts.module";
 import { PushModule } from "./push/push.module";
+import { NotificationsModule } from "./notifications/notifications.module";
 
 @Module({
   imports: [
@@ -111,6 +112,7 @@ import { PushModule } from "./push/push.module";
     ReviewsModule,
     PaymentsPayoutsModule,
     PushModule,
+    NotificationsModule,
   ],
   controllers: [
     AppController,

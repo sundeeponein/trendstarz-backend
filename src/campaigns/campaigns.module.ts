@@ -16,11 +16,13 @@ import { CampaignInvitesService } from "./campaign-invites.service";
 import { PlansModule } from "../plans/plans.module";
 import { CloudinaryService } from "../cloudinary.service";
 import { PushModule } from "../push/push.module";
+import { NotificationsModule } from "../notifications/notifications.module";
 
 @Module({
   imports: [
     PlansModule,
     PushModule,
+    NotificationsModule,
     MongooseModule.forFeature([
       { name: "Campaign", schema: CampaignSchema, collection: "campaigns" },
       {

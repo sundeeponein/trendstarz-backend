@@ -3,6 +3,7 @@ import { InjectModel } from "@nestjs/mongoose";
 import { Model } from "mongoose";
 import { Payment } from "../database/schemas/payment.schema";
 import { PlansService } from "../plans/plans.service";
+import { NotificationsService } from "../notifications/notifications.service";
 
 @Injectable()
 export class PaymentService {
@@ -11,6 +12,7 @@ export class PaymentService {
     @InjectModel("Influencer") private readonly influencerModel: Model<any>,
     @InjectModel("Brand") private readonly brandModel: Model<any>,
     public readonly plansService: PlansService,
+    private readonly notificationsService: NotificationsService,
   ) {}
 
   /**
@@ -137,6 +139,21 @@ export class PaymentService {
         e,
       );
     }
+
+    const userRole = String(payment.userType).toLowerCase() === "brand"
+      ? "brand"
+      : "influencer";
+    this.notificationsService
+      .createForUser({
+        userId: String(payment.userId),
+        userRole,
+        title: "Payment Approved",
+        body: "Your payment was approved and premium plan is now active.",
+        url: "/payment-history",
+      })
+      .catch(() => {
+        /* non-critical */
+      });
 
     return { success: true, message: "Payment approved and premium activated." };
   }
