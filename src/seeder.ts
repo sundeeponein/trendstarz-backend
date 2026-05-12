@@ -232,7 +232,7 @@ export async function seedDatabase(section?: string) {
       },
       { upsert: true },
     );
-    console.log(`Seeded admin: ${adminEmail} / ${adminPlainPassword}`);
+    console.log(`Seeded admin: ${adminEmail}`);
 
     // Seed Influencers and Brands from sample-users.json in assets folder
     if (sampleUsers.length > 0) {
