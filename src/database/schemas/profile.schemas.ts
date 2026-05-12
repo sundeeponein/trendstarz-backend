@@ -310,6 +310,7 @@ export const AppSettingsSchema = new Schema({
   supportContactEmail: { type: String, default: "support@trendstarz.in" },
   supportContactPhone: { type: String, default: "" },
   supportContactWhatsapp: { type: String, default: "" },
+  verificationCallNumber: { type: String, default: "" },
   supportContactMessage: {
     type: String,
     default:

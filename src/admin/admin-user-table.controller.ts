@@ -190,6 +190,47 @@ export class AdminUserTableController {
     return { message: "Verification updated", user: saved };
   }
 
+  @Patch("users/:type/:id/contact-verification")
+  async updateContactVerification(
+    @Param("type") type: string,
+    @Param("id") id: string,
+    @Body()
+    body: {
+      isEmailVerified?: boolean;
+      isMobileVerified?: boolean;
+    },
+  ) {
+    const normalizedType = String(type || "").toLowerCase();
+    if (normalizedType !== "influencer" && normalizedType !== "brand") {
+      return { message: "Unsupported user type", type, id };
+    }
+
+    const user =
+      normalizedType === "influencer"
+        ? await this.influencerModel.findById(id)
+        : await this.brandModel.findById(id);
+
+    if (!user) {
+      return { message: "User not found", type, id };
+    }
+
+    const hasEmail = typeof body?.isEmailVerified === "boolean";
+    const hasMobile = typeof body?.isMobileVerified === "boolean";
+    if (!hasEmail && !hasMobile) {
+      return { message: "No verification fields provided", type, id };
+    }
+
+    if (hasEmail) {
+      user.isEmailVerified = !!body.isEmailVerified;
+    }
+    if (hasMobile) {
+      user.isMobileVerified = !!body.isMobileVerified;
+    }
+
+    const saved = await user.save();
+    return { message: "Contact verification updated", user: saved };
+  }
+
   // PATCH endpoint to directly update brandLogo and products for a brand
   @Patch("brands/:id/images")
   async patchBrandImages(
