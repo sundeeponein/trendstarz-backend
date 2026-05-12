@@ -105,6 +105,7 @@ export class PublicSupportContactController {
       message:
         settings.supportContactMessage ||
         "For now, please contact our team to complete campaign payments. Our admin will update the payment status once received.",
+      verificationCallNumber: settings.verificationCallNumber || "",
     };
   }
 }
