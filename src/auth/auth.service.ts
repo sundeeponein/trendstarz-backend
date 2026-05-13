@@ -81,7 +81,9 @@ export class AuthService {
       { expiresIn: "1h" },
     );
 
-    const backendUrl = process.env.BACKEND_URL || "http://localhost:3000";
+    const backendUrl = (
+      process.env.BACKEND_URL || "https://api.trendstarz.in"
+    ).replace(/\/$/, "");
     const verifyUrl = `${backendUrl}/api/auth/verify-email?token=${encodeURIComponent(token)}`;
     const html = `
       <p>Hi,</p>
@@ -202,11 +204,9 @@ export class AuthService {
     user.resetTokenExpires = Date.now() + 1000 * 60 * 60; // 1 hour expiry
     await user.save();
     // Send email (use your email util)
-    const frontendBase =
-      process.env.FRONTEND_URL ||
-      (process.env.NODE_ENV === "production"
-        ? "https://trendstarz.in"
-        : "http://localhost:4200");
+    const frontendBase = (
+      process.env.FRONTEND_URL || "https://www.trendstarz.in"
+    ).replace(/\/$/, "");
     const resetUrl = `${frontendBase}/reset-password?token=${resetToken}`;
     const text = `Reset your Trendstarz password: ${resetUrl}`;
     await sendAppEmail({
