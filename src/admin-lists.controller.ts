@@ -214,7 +214,7 @@ export class AdminListsController {
   // Categories
   @Get("categories")
   async getCategories() {
-    return this.categoryModel.find().lean().limit(100);
+    return this.categoryModel.find().sort({ sortIndex: 1 }).lean().limit(100);
   }
   @Post("categories")
   async addCategory(@Body() body: { name: string }) {
