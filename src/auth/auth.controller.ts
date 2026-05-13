@@ -39,34 +39,8 @@ export class AuthController {
     private readonly cloudinaryService: CloudinaryService,
   ) {}
 
-  private resolveFrontendBase(host?: string, req?: any) {
-    const configured = (process.env.FRONTEND_URL || "").trim();
-    if (configured) return configured.replace(/\/$/, "");
-
-    const forwardedHost = String(req?.headers?.["x-forwarded-host"] || "")
-      .split(",")[0]
-      .trim();
-    const effectiveHost = String(forwardedHost || host || "").toLowerCase();
-    const effectiveHostNoPort = effectiveHost.split(":")[0].trim();
-    const isProduction =
-      String(process.env.NODE_ENV || "").toLowerCase() === "production";
-    const allowedProdHosts = new Set(["trendstarz.in", "www.trendstarz.in"]);
-
-    // In production, never fallback to localhost even if upstream host is internal.
-    if (isProduction) {
-      if (allowedProdHosts.has(effectiveHostNoPort)) {
-        return `https://${effectiveHostNoPort}`;
-      }
-      return "https://trendstarz.in";
-    }
-
-    const isLocal =
-      effectiveHost.includes("localhost") ||
-      effectiveHost.includes("127.0.0.1");
-
-    return (
-      isLocal ? "http://localhost:4200" : "https://trendstarz.in"
-    ).replace(/\/$/, "");
+  private resolveFrontendBase(_host?: string, _req?: any) {
+    return (process.env.FRONTEND_URL || "https://www.trendstarz.in").replace(/\/$/, "");
   }
 
   private formatRegistrationError(err: any, fallbackMessage: string) {
