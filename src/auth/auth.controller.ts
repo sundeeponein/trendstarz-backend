@@ -39,6 +39,20 @@ export class AuthController {
     private readonly cloudinaryService: CloudinaryService,
   ) {}
 
+  private resolveFrontendBase(host?: string) {
+    const configured = (process.env.FRONTEND_URL || "").trim();
+    if (configured) return configured.replace(/\/$/, "");
+
+    const hostLc = String(host || "").toLowerCase();
+    const isLocal =
+      hostLc.includes("localhost") || hostLc.includes("127.0.0.1");
+
+    return (isLocal ? "http://localhost:4200" : "https://trendstarz.in").replace(
+      /\/$/,
+      "",
+    );
+  }
+
   private formatRegistrationError(err: any, fallbackMessage: string) {
     const status = err?.status || 400;
     const response =
@@ -215,13 +229,12 @@ export class AuthController {
   }
 
   @Get("verify-email")
-  async verifyEmail(@Query("token") token: string, @Res() res: Response) {
-    const frontendBase = (
-      process.env.FRONTEND_URL ||
-      (process.env.NODE_ENV === "production"
-        ? "https://trendstarz.in"
-        : "http://localhost:4200")
-    ).replace(/\/$/, "");
+  async verifyEmail(
+    @Query("token") token: string,
+    @Req() req: any,
+    @Res() res: Response,
+  ) {
+    const frontendBase = this.resolveFrontendBase(req?.get?.("host"));
 
     try {
       const result = await this.authService.verifyEmailByToken(token);
