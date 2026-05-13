@@ -54,12 +54,27 @@ export class StatesController {
 export class DistrictsController {
   constructor(
     @InjectModel("District") private readonly districtModel: Model<any>,
+    @InjectModel("State") private readonly stateModel: Model<any>,
   ) {}
 
   @Get()
-  async getAll(@Query("state") state?: string) {
+  async getAll(
+    @Query("state") state?: string,
+    @Query("stateId") stateId?: string,
+  ) {
+    let resolvedState = (state || "").trim();
+
+    if (!resolvedState && stateId) {
+      const stateDoc: any = await this.stateModel.findById(stateId).lean();
+      resolvedState = String(stateDoc?.name || "").trim();
+    }
+
     const filter: any = {};
-    if (state) filter.state = state;
+    if (resolvedState) {
+      const escaped = resolvedState.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      filter.state = new RegExp(`^${escaped}$`, "i");
+    }
+
     const districts = await this.districtModel.find(filter).lean().limit(1000);
     return districts.length ? districts : [];
   }
