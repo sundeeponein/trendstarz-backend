@@ -47,17 +47,19 @@ export async function seedDatabase(section?: string) {
   if (!section || section === "categories") {
     // Seed all categories
     if (adminConfig?.categories) {
-      for (const cat of adminConfig.categories) {
+      for (let i = 0; i < adminConfig.categories.length; i++) {
+        const cat = adminConfig.categories[i];
         const exists = await CategoryModel.findOne({ name: cat.name });
         if (!exists) {
           await CategoryModel.create({
             name: cat.name,
             showInFrontend: cat.visible,
+            sortIndex: i,
           });
         } else {
           await CategoryModel.updateOne(
             { name: cat.name },
-            { $set: { showInFrontend: cat.visible } },
+            { $set: { showInFrontend: cat.visible, sortIndex: i } },
           );
         }
       }
