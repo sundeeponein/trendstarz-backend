@@ -45,6 +45,7 @@ import { UsersModule } from "./users/users.module";
 import { CampaignsModule } from "./campaigns/campaigns.module";
 import { CloudinaryService } from "./cloudinary.service";
 import { HealthController } from "./health.controller";
+import { SitemapController } from "./sitemap.controller";
 import { PlansModule } from "./plans/plans.module";
 import { ReviewsModule } from "./reviews/reviews.module";
 import { PaymentsPayoutsModule } from "./payments-payouts/payments-payouts.module";
@@ -126,6 +127,7 @@ import { PushModule } from "./push/push.module";
     HealthController,
     AdminUserTableController,
     DashboardController,
+    SitemapController,
     // SeedController,
   ],
   providers: [
