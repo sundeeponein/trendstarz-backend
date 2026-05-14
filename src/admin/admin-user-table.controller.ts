@@ -21,6 +21,11 @@ import { EarlyAccessAssignmentService } from "./early-access-assignment.service"
 export class AdminUserTableController {
   private readonly earlyAccessTag = "Early Access";
   private readonly earlyAccessDurationDays = 30;
+  private readonly commissionTags = [
+    "Early Access",
+    "Partner",
+    "Internal/Test",
+  ];
 
   constructor(
     @InjectModel("Influencer") private readonly influencerModel: Model<any>,
@@ -36,6 +41,24 @@ export class AdminUserTableController {
         tags.map((tag) => String(tag || "").trim()).filter((tag) => !!tag),
       ),
     );
+  }
+
+  private keepSingleCommissionTag(tags: string[]): string[] {
+    const normalized = this.normalizeAdminTags(tags);
+    const present = this.commissionTags.filter((tag) =>
+      normalized.includes(tag),
+    );
+    if (present.length <= 1) {
+      return normalized;
+    }
+
+    const keepTag = present.includes(this.earlyAccessTag)
+      ? this.earlyAccessTag
+      : present[0];
+    return [
+      ...normalized.filter((tag) => !this.commissionTags.includes(tag)),
+      keepTag,
+    ];
   }
 
   private getEarlyAccessConfig(userType: "influencer" | "brand") {
@@ -101,6 +124,11 @@ export class AdminUserTableController {
   @Get("early-access/auto-assign/preview")
   autoAssignEarlyAccessPreview() {
     return this.earlyAccessAssignmentService.getAutoAssignPreview();
+  }
+
+  @Post("early-access/normalize-existing-tags")
+  normalizeExistingCommissionTags() {
+    return this.earlyAccessAssignmentService.normalizeExistingCommissionTags();
   }
 
   private async getActiveEarlyAccessCount(
@@ -211,7 +239,9 @@ export class AdminUserTableController {
     @Req() req: any,
   ) {
     const normalizedType = String(type || "").toLowerCase();
-    let adminTags = this.normalizeAdminTags(body?.adminTags);
+    let adminTags = this.keepSingleCommissionTag(
+      this.normalizeAdminTags(body?.adminTags),
+    );
     if (normalizedType !== "influencer" && normalizedType !== "brand") {
       return { message: "Unsupported user type", type, id };
     }
@@ -222,6 +252,24 @@ export class AdminUserTableController {
     const currentUser: any = await model.findById(id).lean();
     if (!currentUser) {
       return { message: "User not found", type, id };
+    }
+
+    const isPendingStatus =
+      String(currentUser?.status || "").toLowerCase() === "pending";
+    const isEmailVerified = !!currentUser?.isEmailVerified;
+    const isMobileVerified = !!currentUser?.isMobileVerified;
+    const isBlockedForPendingUnverified =
+      isPendingStatus && !isEmailVerified && !isMobileVerified;
+    if (isBlockedForPendingUnverified && adminTags.length > 0) {
+      return {
+        message:
+          "Cannot assign badges/tags while user is pending and both email/mobile are unverified.",
+        blocked: true,
+        warnings: [
+          "User is pending with email/mobile unverified. Verify at least one contact method or approve user before assigning badges/tags.",
+        ],
+        user: currentUser,
+      };
     }
 
     const actorId = String(req?.user?.userId || req?.user?.id || "admin");
