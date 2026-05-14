@@ -206,6 +206,7 @@ export class EarlyAccessAssignmentService {
       status: "accepted",
       isDeleted: { $ne: true },
       isEmailVerified: true,
+      "commissionOverride.enabled": { $ne: true },
       $or: [
         { commissionBadge: null },
         { commissionBadge: "" },
