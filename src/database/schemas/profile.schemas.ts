@@ -268,6 +268,7 @@ export const BrandSchema = new Schema(
       lastClickAt: { type: Date, default: null },
     },
     promotionalPrice: { type: Number },
+    verifiedByTrendStarz: { type: Boolean, default: false },
     // Payout details (used for pay_to_join campaigns where brand receives money)
     payout: {
       upiId: { type: String, default: "" },
@@ -300,6 +301,11 @@ export const AppSettingsSchema = new Schema({
   preApproveBrands: { type: Boolean, default: false },
   brandRequireEmailVerified: { type: Boolean, default: true },
   brandRequireMobileVerified: { type: Boolean, default: false },
+  campaignApprovalMode: {
+    type: String,
+    enum: ["manual", "auto_live"],
+    default: "manual",
+  },
   platformFeeEnabled: { type: Boolean, default: false },
   platformFeePercent: { type: Number, default: 5 },
   gstPercent: { type: Number, default: 0 },
@@ -386,9 +392,20 @@ export const CampaignSchema = new Schema(
     },
     status: {
       type: String,
-      enum: ["draft", "pending", "active", "completed"],
+      enum: [
+        "draft",
+        "pending",
+        "pending_review",
+        "needs_changes",
+        "active",
+        "rejected",
+        "completed",
+      ],
       default: "draft",
     },
+    moderationNote: { type: String, default: "" },
+    moderatedBy: { type: String, default: "" },
+    moderatedAt: { type: Date, default: null },
     budgetMin: { type: Number },
     budgetMax: { type: Number },
     pricePerInfluencer: { type: Number }, // paise
@@ -416,6 +433,7 @@ export const CampaignSchema = new Schema(
       },
     ],
     minFollowerCount: { type: Number },
+    maxFollowerCount: { type: Number },
     minInfluencerTier: { type: String },
     targetTiers: [{ type: String }],
     targetState: { type: String },
@@ -434,6 +452,7 @@ export const CampaignSchema = new Schema(
     productDescription: { type: String },
     productPaymentMode: { type: String },
     productPaymentAmount: { type: Number },
+    productShippingRequired: { type: Boolean, default: false },
     inviteBenefits: { type: String },
     // pay_to_join specific fields
     payToJoinBenefits: { type: String },

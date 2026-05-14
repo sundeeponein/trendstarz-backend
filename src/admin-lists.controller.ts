@@ -8,6 +8,7 @@ import {
   Param,
   Patch,
   Query,
+  Req,
   UseGuards,
   BadRequestException,
 } from "@nestjs/common";
@@ -43,6 +44,7 @@ export class AdminListsController {
     @InjectModel("Language") private readonly languageModel: Model<any>,
     @InjectModel("Influencer") private readonly influencerModel: Model<any>,
     @InjectModel("Brand") private readonly brandModel: Model<any>,
+    @InjectModel("Campaign") private readonly campaignModel: Model<any>,
     @InjectModel("AppSettings") private readonly appSettingsModel: Model<any>,
   ) {}
 
@@ -56,6 +58,7 @@ export class AdminListsController {
       preApproveBrands: false,
       brandRequireEmailVerified: true,
       brandRequireMobileVerified: false,
+      campaignApprovalMode: "manual",
       platformFeeEnabled: false,
       platformFeePercent: 10,
       gstPercent: 18,
@@ -74,11 +77,111 @@ export class AdminListsController {
 
   @Patch("settings")
   async updateSettings(@Body() body: Record<string, any>) {
+    const next: Record<string, any> = { ...body };
+    if (next.campaignApprovalMode !== undefined) {
+      const mode = String(next.campaignApprovalMode || "").trim();
+      if (!["manual", "auto_live"].includes(mode)) {
+        throw new BadRequestException(
+          "campaignApprovalMode must be manual or auto_live",
+        );
+      }
+      next.campaignApprovalMode = mode;
+    }
     // Only update fields present in the request body
     const settings = await this.appSettingsModel
-      .findOneAndUpdate({}, { $set: body }, { upsert: true, new: true })
+      .findOneAndUpdate({}, { $set: next }, { upsert: true, new: true })
       .lean();
     return { success: true, settings };
+  }
+
+  @Get("campaigns")
+  async getCampaignsForApproval(@Query("status") status?: string) {
+    const normalized = String(status || "pending_review").trim().toLowerCase();
+    const allowed = new Set([
+      "pending_review",
+      "needs_changes",
+      "rejected",
+      "active",
+      "completed",
+      "draft",
+      "pending",
+      "all",
+    ]);
+
+    const filter: any = {};
+    if (allowed.has(normalized) && normalized !== "all") {
+      filter.status = normalized;
+    }
+
+    const campaigns = await this.campaignModel
+      .find(filter)
+      .sort({ updatedAt: -1, createdAt: -1 })
+      .limit(300)
+      .lean();
+
+    const brandIds = Array.from(
+      new Set(campaigns.map((c: any) => String(c.brandId || "")).filter(Boolean)),
+    );
+    const brands = await this.brandModel
+      .find({ _id: { $in: brandIds } })
+      .select("brandName brandUsername email verifiedByTrendStarz")
+      .lean();
+    const brandMap = new Map(brands.map((b: any) => [String(b._id), b]));
+
+    const rows = campaigns.map((campaign: any) => {
+      const brand = brandMap.get(String(campaign.brandId));
+      return {
+        ...campaign,
+        brand: brand
+          ? {
+              _id: brand._id,
+              brandName: brand.brandName,
+              brandUsername: brand.brandUsername,
+              email: brand.email,
+              verifiedByTrendStarz: !!brand.verifiedByTrendStarz,
+            }
+          : null,
+      };
+    });
+
+    return { success: true, data: rows };
+  }
+
+  @Patch("campaigns/:id/moderation")
+  async moderateCampaign(
+    @Param("id") id: string,
+    @Body()
+    body: {
+      action?: "approve" | "reject" | "needs_changes";
+      moderationNote?: string;
+    },
+    @Req() req: any,
+  ) {
+    const campaign = await this.campaignModel.findById(id);
+    if (!campaign) {
+      throw new BadRequestException("Campaign not found");
+    }
+
+    const action = String(body?.action || "").trim().toLowerCase();
+    const map: Record<string, string> = {
+      approve: "active",
+      reject: "rejected",
+      needs_changes: "needs_changes",
+    };
+    const nextStatus = map[action];
+    if (!nextStatus) {
+      throw new BadRequestException(
+        "action must be approve, reject, or needs_changes",
+      );
+    }
+
+    campaign.status = nextStatus;
+    campaign.moderationNote = String(body?.moderationNote || "").trim();
+    campaign.moderatedBy = String(req?.user?.userId || req?.user?.id || "admin");
+    campaign.moderatedAt = new Date();
+
+    const saved = await campaign.save();
+    return { success: true, campaign: saved };
   }
   // Debug endpoint to log influencer and brand data
   @Get("debug-users")

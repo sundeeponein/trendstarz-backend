@@ -190,6 +190,32 @@ export class AdminUserTableController {
     return { message: "Verification updated", user: saved };
   }
 
+  @Patch("users/brand/:id/verification")
+  async updateBrandVerification(
+    @Param("id") id: string,
+    @Body()
+    body: {
+      verifiedByTrendStarz?: boolean;
+      adminTags?: string[];
+    },
+  ) {
+    const brand = await this.brandModel.findById(id);
+    if (!brand) {
+      return { message: "Brand not found", id };
+    }
+
+    if (typeof body?.verifiedByTrendStarz === "boolean") {
+      (brand as any).verifiedByTrendStarz = !!body.verifiedByTrendStarz;
+    }
+
+    if (Array.isArray(body?.adminTags)) {
+      (brand as any).adminTags = this.normalizeAdminTags(body.adminTags);
+    }
+
+    const saved = await (brand as any).save();
+    return { message: "Brand verification updated", user: saved };
+  }
+
   @Patch("users/:type/:id/contact-verification")
   async updateContactVerification(
     @Param("type") type: string,
