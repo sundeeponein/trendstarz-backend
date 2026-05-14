@@ -40,6 +40,7 @@ import { CampaignSubmissionSchema } from "./database/schemas/campaign-submission
 import { AuthService } from "./auth/auth.service";
 import { AuthController } from "./auth/auth.controller";
 import { AdminUserTableController } from "./admin/admin-user-table.controller";
+import { EarlyAccessAssignmentService } from "./admin/early-access-assignment.service";
 import { PaymentModule } from "./payment/payment.module";
 import { UsersModule } from "./users/users.module";
 import { CampaignsModule } from "./campaigns/campaigns.module";
@@ -133,6 +134,7 @@ import { PushModule } from "./push/push.module";
   providers: [
     AppService,
     AuthService,
+    EarlyAccessAssignmentService,
     MongoLogger,
     CloudinaryService,
     DashboardService,

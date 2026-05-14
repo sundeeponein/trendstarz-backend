@@ -17,6 +17,8 @@ import { RolesGuard } from "./auth/roles.guard";
 // Removed direct model imports; use @InjectModel for all models
 import { InjectModel } from "@nestjs/mongoose";
 import { Model } from "mongoose";
+import * as fs from "fs";
+import * as path from "path";
 
 interface VisibilityItem {
   _id: string;
@@ -35,6 +37,8 @@ interface BatchVisibilityBody {
 @Controller("admin")
 @UseGuards(JwtAuthGuard, RolesGuard)
 export class AdminListsController {
+  private plansConfig: any = null;
+
   constructor(
     @InjectModel("Tier") private readonly tierModel: Model<any>,
     @InjectModel("State") private readonly stateModel: Model<any>,
@@ -45,13 +49,53 @@ export class AdminListsController {
     @InjectModel("Influencer") private readonly influencerModel: Model<any>,
     @InjectModel("Brand") private readonly brandModel: Model<any>,
     @InjectModel("Campaign") private readonly campaignModel: Model<any>,
-    @InjectModel("CampaignInvite") private readonly campaignInviteModel: Model<any>,
+    @InjectModel("CampaignInvite")
+    private readonly campaignInviteModel: Model<any>,
     @InjectModel("AppSettings") private readonly appSettingsModel: Model<any>,
-  ) {}
+  ) {
+    // Load plans-config.json on initialization
+    this.loadPlansConfig();
+  }
+
+  private loadPlansConfig() {
+    try {
+      let configPath = path.join(__dirname, "../assets/plans-config.json");
+      if (!fs.existsSync(configPath)) {
+        configPath = path.join(process.cwd(), "assets/plans-config.json");
+      }
+      if (fs.existsSync(configPath)) {
+        const raw = fs.readFileSync(configPath, "utf-8");
+        this.plansConfig = JSON.parse(raw);
+        console.log("Loaded plans-config.json");
+      } else {
+        console.warn("plans-config.json not found");
+      }
+    } catch (err) {
+      console.error("Error loading plans-config.json:", err);
+    }
+  }
+
+  private getCommissionDefaults() {
+    if (this.plansConfig?.commission) {
+      return this.plansConfig.commission;
+    }
+    // Fallback defaults if config not loaded
+    return {
+      platformFeeEnabled: false,
+      platformFeePercent: 10,
+      gstPercent: 18,
+      earlyAccessCommissionPercent: 0,
+      partnerCommissionPercent: 2,
+      internalTestCommissionPercent: 0,
+    };
+  }
 
   @Get("settings")
   async getSettings() {
-    // These are the defaults from the schema
+    // Get commission defaults from plans-config
+    const commissionDefaults = this.getCommissionDefaults();
+
+    // These are the base defaults from the schema
     const defaults = {
       preApproveInfluencers: false,
       influencerRequireEmailVerified: true,
@@ -61,8 +105,18 @@ export class AdminListsController {
       brandRequireMobileVerified: false,
       campaignApprovalMode: "manual",
       platformFeeEnabled: false,
-      platformFeePercent: 10,
-      gstPercent: 18,
+      platformFeePercent: commissionDefaults.platformFeePercent,
+      gstPercent: commissionDefaults.gstPercent,
+      earlyAccessAssignmentMode: "manual",
+      earlyAccessLastRunAt: null,
+      earlyAccessLastRunStatus: "",
+      earlyAccessLastRunDetails: "",
+      earlyAccessLastRunMode: "",
+      earlyAccessCommissionPercent:
+        commissionDefaults.earlyAccessCommissionPercent,
+      partnerCommissionPercent: commissionDefaults.partnerCommissionPercent,
+      internalTestCommissionPercent:
+        commissionDefaults.internalTestCommissionPercent,
       supportContactEnabled: true,
       supportContactEmail: "support@trendstarz.in",
       supportContactPhone: "",
@@ -88,6 +142,15 @@ export class AdminListsController {
       }
       next.campaignApprovalMode = mode;
     }
+    if (next.earlyAccessAssignmentMode !== undefined) {
+      const mode = String(next.earlyAccessAssignmentMode || "").trim();
+      if (!["manual", "auto"].includes(mode)) {
+        throw new BadRequestException(
+          "earlyAccessAssignmentMode must be manual or auto",
+        );
+      }
+      next.earlyAccessAssignmentMode = mode;
+    }
     // Only update fields present in the request body
     const settings = await this.appSettingsModel
       .findOneAndUpdate({}, { $set: next }, { upsert: true, new: true })
@@ -97,7 +160,9 @@ export class AdminListsController {
 
   @Get("campaigns")
   async getCampaignsForApproval(@Query("status") status?: string) {
-    const normalized = String(status || "pending_review").trim().toLowerCase();
+    const normalized = String(status || "pending_review")
+      .trim()
+      .toLowerCase();
     const allowed = new Set([
       "pending_review",
       "needs_changes",
@@ -126,10 +191,7 @@ export class AdminListsController {
       ? await this.campaignInviteModel
           .find({
             campaignId: {
-              $in: [
-                ...campaignIds,
-                ...campaignIdKeys,
-              ],
+              $in: [...campaignIds, ...campaignIdKeys],
             },
           })
           .select("campaignId status")
@@ -144,11 +206,17 @@ export class AdminListsController {
       "completed",
       "disputed",
     ]);
-    const inviteStatsByCampaign = new Map<string, { inviteCount: number; hasInfluencerProgress: boolean }>();
+    const inviteStatsByCampaign = new Map<
+      string,
+      { inviteCount: number; hasInfluencerProgress: boolean }
+    >();
     for (const invite of inviteRows) {
       const key = String(invite?.campaignId || "");
       if (!key) continue;
-      const prev = inviteStatsByCampaign.get(key) || { inviteCount: 0, hasInfluencerProgress: false };
+      const prev = inviteStatsByCampaign.get(key) || {
+        inviteCount: 0,
+        hasInfluencerProgress: false,
+      };
       prev.inviteCount += 1;
       if (progressStatuses.has(String(invite?.status || "").toLowerCase())) {
         prev.hasInfluencerProgress = true;
@@ -157,7 +225,9 @@ export class AdminListsController {
     }
 
     const brandIds = Array.from(
-      new Set(campaigns.map((c: any) => String(c.brandId || "")).filter(Boolean)),
+      new Set(
+        campaigns.map((c: any) => String(c.brandId || "")).filter(Boolean),
+      ),
     );
     const brands = await this.brandModel
       .find({ _id: { $in: brandIds } })
@@ -205,7 +275,9 @@ export class AdminListsController {
       throw new BadRequestException("Campaign not found");
     }
 
-    const action = String(body?.action || "").trim().toLowerCase();
+    const action = String(body?.action || "")
+      .trim()
+      .toLowerCase();
     const map: Record<string, string> = {
       approve: "active",
       reject: "rejected",
@@ -243,7 +315,9 @@ export class AdminListsController {
 
     campaign.status = nextStatus;
     campaign.moderationNote = String(body?.moderationNote || "").trim();
-    campaign.moderatedBy = String(req?.user?.userId || req?.user?.id || "admin");
+    campaign.moderatedBy = String(
+      req?.user?.userId || req?.user?.id || "admin",
+    );
     campaign.moderatedAt = new Date();
 
     const saved = await campaign.save();
@@ -593,5 +667,280 @@ export class AdminListsController {
         err instanceof Error ? err.message : "Error updating visibility";
       throw new BadRequestException(message);
     }
+  }
+
+  // ============ Commission Override Management ============
+
+  /**
+   * Get commission override for a user (influencer or brand)
+   */
+  @Get("commission-override/:userType/:userId")
+  async getCommissionOverride(
+    @Param("userType") userType: string,
+    @Param("userId") userId: string,
+  ) {
+    const normalizedType = String(userType || "")
+      .trim()
+      .toLowerCase();
+    if (!["influencer", "brand"].includes(normalizedType)) {
+      throw new BadRequestException("userType must be 'influencer' or 'brand'");
+    }
+
+    const model =
+      normalizedType === "influencer" ? this.influencerModel : this.brandModel;
+
+    const user: any = await model
+      .findById(userId)
+      .select("commissionOverride commissionBadge")
+      .lean();
+
+    if (!user) {
+      throw new BadRequestException(`User not found: ${userId}`);
+    }
+
+    return {
+      userId,
+      userType: normalizedType,
+      override: user.commissionOverride || {
+        enabled: false,
+        overrideType: "discount",
+        value: 0,
+        validFrom: null,
+        validUntil: null,
+        notes: "",
+      },
+      badge: user.commissionBadge || null,
+    };
+  }
+
+  /**
+   * Set commission override for a user
+   * Body:
+   * {
+   *   enabled: boolean,
+   *   overrideType: "waiver" | "discount" | "fixed",
+   *   value: number (percentage for discount/fixed, or discount % off for discount),
+   *   validFrom: date (optional),
+   *   validUntil: date (optional),
+   *   notes: string (optional),
+   *   badge: string (optional - influencer or brand badge)
+   * }
+   */
+  @Put("commission-override/:userType/:userId")
+  async setCommissionOverride(
+    @Param("userType") userType: string,
+    @Param("userId") userId: string,
+    @Body()
+    body: {
+      enabled?: boolean;
+      overrideType?: "waiver" | "discount" | "fixed";
+      value?: number;
+      validFrom?: string;
+      validUntil?: string;
+      notes?: string;
+      badge?: string;
+    },
+  ) {
+    const normalizedType = String(userType || "")
+      .trim()
+      .toLowerCase();
+    if (!["influencer", "brand"].includes(normalizedType)) {
+      throw new BadRequestException("userType must be 'influencer' or 'brand'");
+    }
+
+    const model =
+      normalizedType === "influencer" ? this.influencerModel : this.brandModel;
+
+    // Validate override type
+    if (
+      body.overrideType &&
+      !["waiver", "discount", "fixed"].includes(body.overrideType)
+    ) {
+      throw new BadRequestException(
+        "overrideType must be 'waiver', 'discount', or 'fixed'",
+      );
+    }
+
+    // Validate value
+    if (body.value !== undefined && (body.value < 0 || body.value > 100)) {
+      throw new BadRequestException("value must be between 0 and 100");
+    }
+
+    // Validate dates
+    if (body.validFrom) {
+      const validFrom = new Date(body.validFrom);
+      if (isNaN(validFrom.getTime())) {
+        throw new BadRequestException("validFrom must be a valid date");
+      }
+    }
+    if (body.validUntil) {
+      const validUntil = new Date(body.validUntil);
+      if (isNaN(validUntil.getTime())) {
+        throw new BadRequestException("validUntil must be a valid date");
+      }
+    }
+
+    const updateData: Record<string, any> = {};
+
+    if (body.enabled !== undefined) {
+      updateData["commissionOverride.enabled"] = body.enabled;
+    }
+    if (body.overrideType) {
+      updateData["commissionOverride.overrideType"] = body.overrideType;
+    }
+    if (body.value !== undefined) {
+      updateData["commissionOverride.value"] = body.value;
+    }
+    if (body.validFrom !== undefined) {
+      updateData["commissionOverride.validFrom"] = body.validFrom
+        ? new Date(body.validFrom)
+        : null;
+    }
+    if (body.validUntil !== undefined) {
+      updateData["commissionOverride.validUntil"] = body.validUntil
+        ? new Date(body.validUntil)
+        : null;
+    }
+    if (body.notes !== undefined) {
+      updateData["commissionOverride.notes"] = body.notes;
+    }
+    if (body.badge !== undefined) {
+      updateData["commissionBadge"] = body.badge || null;
+    }
+
+    const badgeLabelMap: Record<string, string> = {
+      early_access_creator: "Early Access",
+      partner_creator: "Partner",
+      internal_test_creator: "Internal/Test",
+      early_access_brand: "Early Access",
+      partner_brand: "Partner",
+      internal_test_brand: "Internal/Test",
+      launch_partner: "Partner",
+      zero_commission_creator: "Early Access",
+      zero_commission_brand: "Early Access",
+    };
+
+    const currentUser = await model.findById(userId).select("adminTags").lean();
+    if (!currentUser) {
+      throw new BadRequestException(`User not found: ${userId}`);
+    }
+
+    const currentTags = Array.isArray((currentUser as any).adminTags)
+      ? (currentUser as any).adminTags
+      : [];
+
+    if (body.badge !== undefined) {
+      const commissionTagLabels = ["Early Access", "Partner", "Internal/Test"];
+      const cleanedTags = currentTags.filter(
+        (tag: string) =>
+          !commissionTagLabels.includes(String(tag || "").trim()),
+      );
+      const mapped = body.badge ? badgeLabelMap[body.badge] : null;
+      updateData["adminTags"] = mapped
+        ? [...new Set([...cleanedTags, mapped])]
+        : cleanedTags;
+    }
+
+    const user = await model.findByIdAndUpdate(userId, updateData, {
+      new: true,
+    });
+
+    if (!user) {
+      throw new BadRequestException(`User not found: ${userId}`);
+    }
+
+    return {
+      success: true,
+      userId,
+      userType: normalizedType,
+      override: user.commissionOverride,
+      badge: user.commissionBadge,
+    };
+  }
+
+  /**
+   * Disable commission override for a user
+   */
+  @Delete("commission-override/:userType/:userId")
+  async removeCommissionOverride(
+    @Param("userType") userType: string,
+    @Param("userId") userId: string,
+  ) {
+    const normalizedType = String(userType || "")
+      .trim()
+      .toLowerCase();
+    if (!["influencer", "brand"].includes(normalizedType)) {
+      throw new BadRequestException("userType must be 'influencer' or 'brand'");
+    }
+
+    const model =
+      normalizedType === "influencer" ? this.influencerModel : this.brandModel;
+
+    const currentUser = await model.findById(userId).select("adminTags").lean();
+    if (!currentUser) {
+      throw new BadRequestException(`User not found: ${userId}`);
+    }
+
+    const currentTags = Array.isArray((currentUser as any).adminTags)
+      ? (currentUser as any).adminTags
+      : [];
+    const commissionTagLabels = ["Early Access", "Partner", "Internal/Test"];
+    const cleanedTags = currentTags.filter(
+      (tag: string) => !commissionTagLabels.includes(String(tag || "").trim()),
+    );
+
+    await model.findByIdAndUpdate(
+      userId,
+      {
+        commissionOverride: {
+          enabled: false,
+          overrideType: "discount",
+          value: 0,
+          validFrom: null,
+          validUntil: null,
+          notes: "",
+        },
+        commissionBadge: null,
+        adminTags: cleanedTags,
+      },
+      { new: true },
+    );
+
+    return { success: true, message: "Commission override removed" };
+  }
+
+  /**
+   * Get users by commission badge
+   */
+  @Get("users-by-commission-badge/:userType/:badge")
+  async getUsersByCommissionBadge(
+    @Param("userType") userType: string,
+    @Param("badge") badge: string,
+  ) {
+    const normalizedType = String(userType || "")
+      .trim()
+      .toLowerCase();
+    if (!["influencer", "brand"].includes(normalizedType)) {
+      throw new BadRequestException("userType must be 'influencer' or 'brand'");
+    }
+
+    const model =
+      normalizedType === "influencer" ? this.influencerModel : this.brandModel;
+
+    const users = await model
+      .find({ commissionBadge: badge })
+      .select(
+        normalizedType === "influencer"
+          ? "name email commissionBadge commissionOverride"
+          : "brandName email commissionBadge commissionOverride",
+      )
+      .lean();
+
+    return {
+      userType: normalizedType,
+      badge,
+      count: users.length,
+      users,
+    };
   }
 }

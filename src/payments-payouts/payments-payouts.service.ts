@@ -51,6 +51,54 @@ export class PaymentsPayoutsService {
     };
   }
 
+  /**
+   * Calculate effective commission percentage for a user (brand or influencer)
+   * Checks for commission override and applies discount/waiver/fixed rate
+   */
+  private async getEffectiveCommissionPercent(
+    userId: string,
+    userType: "brand" | "influencer",
+    globalPercent: number,
+  ): Promise<number> {
+    try {
+      const model =
+        userType === "brand" ? this.brandModel : this.influencerModel;
+      const user: any = await model.findById(userId).lean();
+
+      if (!user || !user.commissionOverride?.enabled) {
+        return globalPercent;
+      }
+
+      const override = user.commissionOverride;
+      const now = new Date();
+
+      // Check if override is within validity period
+      if (
+        (override.validFrom && new Date(override.validFrom) > now) ||
+        (override.validUntil && new Date(override.validUntil) < now)
+      ) {
+        return globalPercent;
+      }
+
+      // Apply override based on type
+      switch (override.overrideType) {
+        case "waiver":
+          return 0; // No commission
+        case "discount":
+          // discount is a percentage (e.g., 40% off means 40% reduction)
+          return Math.max(0, globalPercent - (globalPercent * override.value) / 100);
+        case "fixed":
+          // fixed is the actual commission percentage to apply
+          return Math.max(0, override.value);
+        default:
+          return globalPercent;
+      }
+    } catch (error) {
+      console.error("Error calculating effective commission:", error);
+      return globalPercent;
+    }
+  }
+
   private async assertCampaignOwner(campaign: any, brandId: string) {
     if (String(campaign.brandId) === brandId) return;
     const brand = await this.brandModel
@@ -110,8 +158,16 @@ export class PaymentsPayoutsService {
     const agreedAmount = pricePerInfluencer * acceptedCount;
     const { platformFeeEnabled, platformFeePercent } =
       await this.getFeeSettings();
+
+    // Get effective commission percent after any overrides for the brand (payer)
+    const effectiveCommissionPercent = await this.getEffectiveCommissionPercent(
+      String(campaign.brandId),
+      "brand",
+      platformFeePercent,
+    );
+
     const fee = platformFeeEnabled
-      ? this.roundPercent(agreedAmount, platformFeePercent)
+      ? this.roundPercent(agreedAmount, effectiveCommissionPercent)
       : 0;
 
     const campaignType = campaign.campaignType || "paid_collab";
@@ -137,7 +193,7 @@ export class PaymentsPayoutsService {
       payerTotal,
       recipientPayoutTotal,
       platformFeeEnabled,
-      platformFeePercent,
+      platformFeePercent: effectiveCommissionPercent, // Use effective percent instead of global
       trustLabels: [
         "You pay only for accepted influencers",
         "Payment secured by TrendStarz",
