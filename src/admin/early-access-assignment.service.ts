@@ -9,6 +9,7 @@ type UserType = "influencer" | "brand";
 export class EarlyAccessAssignmentService {
   private readonly earlyAccessTag = "Early Access";
   private readonly earlyAccessDurationDays = 30;
+  private readonly commissionTags = ["Early Access", "Partner", "Internal/Test"];
 
   constructor(
     @InjectModel("Influencer") private readonly influencerModel: Model<any>,
@@ -23,6 +24,124 @@ export class EarlyAccessAssignmentService {
         tags.map((tag) => String(tag || "").trim()).filter((tag) => !!tag),
       ),
     );
+  }
+
+  private keepSingleCommissionTag(tags: string[]): string[] {
+    const normalized = this.normalizeAdminTags(tags);
+    const present = this.commissionTags.filter((tag) =>
+      normalized.includes(tag),
+    );
+    if (present.length <= 1) {
+      return normalized;
+    }
+
+    const keepTag = present.includes(this.earlyAccessTag)
+      ? this.earlyAccessTag
+      : present[0];
+    return [
+      ...normalized.filter((tag) => !this.commissionTags.includes(tag)),
+      keepTag,
+    ];
+  }
+
+  private getCommissionTagFromBadge(badge: string): string {
+    const map: Record<string, string> = {
+      early_access_creator: "Early Access",
+      early_access_brand: "Early Access",
+      zero_commission_creator: "Early Access",
+      zero_commission_brand: "Early Access",
+      partner_creator: "Partner",
+      partner_brand: "Partner",
+      launch_partner: "Partner",
+      internal_test_creator: "Internal/Test",
+      internal_test_brand: "Internal/Test",
+    };
+    return map[String(badge || "")] || "";
+  }
+
+  private async normalizeCommissionTagsForType(userType: UserType) {
+    const model =
+      userType === "influencer" ? this.influencerModel : this.brandModel;
+    const users = await model
+      .find({
+        $or: [
+          { adminTags: { $in: this.commissionTags } },
+          {
+            commissionBadge: {
+              $in: [
+                "early_access_creator",
+                "early_access_brand",
+                "zero_commission_creator",
+                "zero_commission_brand",
+                "partner_creator",
+                "partner_brand",
+                "launch_partner",
+                "internal_test_creator",
+                "internal_test_brand",
+              ],
+            },
+          },
+        ],
+      })
+      .select("_id adminTags commissionBadge")
+      .lean();
+
+    if (!users.length) {
+      return { scannedCount: 0, updatedCount: 0 };
+    }
+
+    const bulkOps: Array<any> = [];
+    for (const user of users) {
+      const currentTags = this.normalizeAdminTags(user?.adminTags);
+      const regularTags = currentTags.filter(
+        (tag) => !this.commissionTags.includes(tag),
+      );
+      const badgeDerivedTag = this.getCommissionTagFromBadge(
+        String(user?.commissionBadge || ""),
+      );
+      const fallbackTag = this.keepSingleCommissionTag(currentTags).find((tag) =>
+        this.commissionTags.includes(tag),
+      );
+      const finalCommissionTag = badgeDerivedTag || fallbackTag || "";
+      const nextTags = this.normalizeAdminTags([
+        ...regularTags,
+        ...(finalCommissionTag ? [finalCommissionTag] : []),
+      ]);
+
+      if (JSON.stringify(nextTags) !== JSON.stringify(currentTags)) {
+        bulkOps.push({
+          updateOne: {
+            filter: { _id: user._id },
+            update: { $set: { adminTags: nextTags } },
+          },
+        });
+      }
+    }
+
+    if (bulkOps.length > 0) {
+      await model.bulkWrite(bulkOps);
+    }
+
+    return {
+      scannedCount: users.length,
+      updatedCount: bulkOps.length,
+    };
+  }
+
+  async normalizeExistingCommissionTags() {
+    const [influencers, brands] = await Promise.all([
+      this.normalizeCommissionTagsForType("influencer"),
+      this.normalizeCommissionTagsForType("brand"),
+    ]);
+
+    return {
+      success: true,
+      influencers,
+      brands,
+      message:
+        `Normalized ${Number(influencers.updatedCount || 0)} influencer and ` +
+        `${Number(brands.updatedCount || 0)} brand records.`,
+    };
   }
 
   private getEarlyAccessConfig(userType: UserType) {
@@ -206,12 +325,21 @@ export class EarlyAccessAssignmentService {
       status: "accepted",
       isDeleted: { $ne: true },
       isEmailVerified: true,
-      $or: [
-        { commissionBadge: null },
-        { commissionBadge: "" },
-        { commissionBadge: { $exists: false } },
-      ],
-      adminTags: { $nin: [this.earlyAccessTag] },
+      "commissionOverride.enabled": { $ne: true },
+      commissionBadge: {
+        $nin: [
+          "early_access_creator",
+          "early_access_brand",
+          "zero_commission_creator",
+          "zero_commission_brand",
+          "partner_creator",
+          "partner_brand",
+          "launch_partner",
+          "internal_test_creator",
+          "internal_test_brand",
+        ],
+      },
+      adminTags: { $nin: [this.earlyAccessTag, "Partner", "Internal/Test"] },
     };
   }
 
@@ -285,7 +413,10 @@ export class EarlyAccessAssignmentService {
     const model = userType === "influencer" ? this.influencerModel : this.brandModel;
     const bulkOps = eligibleUsers.map((user: any) => {
       const currentTags = Array.isArray(user?.adminTags) ? user.adminTags : [];
-      const nextTags = this.normalizeAdminTags([...currentTags, this.earlyAccessTag]);
+      const nextTags = this.keepSingleCommissionTag([
+        ...currentTags,
+        this.earlyAccessTag,
+      ]);
 
       return {
         updateOne: {
