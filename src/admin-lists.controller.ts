@@ -45,6 +45,7 @@ export class AdminListsController {
     @InjectModel("Influencer") private readonly influencerModel: Model<any>,
     @InjectModel("Brand") private readonly brandModel: Model<any>,
     @InjectModel("Campaign") private readonly campaignModel: Model<any>,
+    @InjectModel("CampaignInvite") private readonly campaignInviteModel: Model<any>,
     @InjectModel("AppSettings") private readonly appSettingsModel: Model<any>,
   ) {}
 
@@ -119,6 +120,42 @@ export class AdminListsController {
       .limit(300)
       .lean();
 
+    const campaignIds = campaigns.map((c: any) => c?._id).filter(Boolean);
+    const campaignIdKeys = campaignIds.map((id: any) => String(id));
+    const inviteRows = campaignIds.length
+      ? await this.campaignInviteModel
+          .find({
+            campaignId: {
+              $in: [
+                ...campaignIds,
+                ...campaignIdKeys,
+              ],
+            },
+          })
+          .select("campaignId status")
+          .lean()
+      : [];
+
+    const progressStatuses = new Set([
+      "accepted",
+      "payment_confirmed",
+      "working",
+      "submitted",
+      "completed",
+      "disputed",
+    ]);
+    const inviteStatsByCampaign = new Map<string, { inviteCount: number; hasInfluencerProgress: boolean }>();
+    for (const invite of inviteRows) {
+      const key = String(invite?.campaignId || "");
+      if (!key) continue;
+      const prev = inviteStatsByCampaign.get(key) || { inviteCount: 0, hasInfluencerProgress: false };
+      prev.inviteCount += 1;
+      if (progressStatuses.has(String(invite?.status || "").toLowerCase())) {
+        prev.hasInfluencerProgress = true;
+      }
+      inviteStatsByCampaign.set(key, prev);
+    }
+
     const brandIds = Array.from(
       new Set(campaigns.map((c: any) => String(c.brandId || "")).filter(Boolean)),
     );
@@ -130,8 +167,14 @@ export class AdminListsController {
 
     const rows = campaigns.map((campaign: any) => {
       const brand = brandMap.get(String(campaign.brandId));
+      const stats = inviteStatsByCampaign.get(String(campaign._id)) || {
+        inviteCount: 0,
+        hasInfluencerProgress: false,
+      };
       return {
         ...campaign,
+        inviteCount: stats.inviteCount,
+        hasInfluencerProgress: stats.hasInfluencerProgress,
         brand: brand
           ? {
               _id: brand._id,
@@ -173,6 +216,29 @@ export class AdminListsController {
       throw new BadRequestException(
         "action must be approve, reject, or needs_changes",
       );
+    }
+
+    if (action === "reject" || action === "needs_changes") {
+      const lockStatuses = [
+        "accepted",
+        "payment_confirmed",
+        "working",
+        "submitted",
+        "completed",
+        "disputed",
+      ];
+      const progressedInvite = await this.campaignInviteModel
+        .findOne({
+          campaignId: { $in: [campaign._id, String(campaign._id)] },
+          status: { $in: lockStatuses },
+        })
+        .select("_id")
+        .lean();
+      if (progressedInvite) {
+        throw new BadRequestException(
+          "Cannot reject or request changes after influencer work has started on this campaign.",
+        );
+      }
     }
 
     campaign.status = nextStatus;
