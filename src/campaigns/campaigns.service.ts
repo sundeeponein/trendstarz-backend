@@ -8,9 +8,12 @@ import { Model } from "mongoose";
 import { PlansService } from "../plans/plans.service";
 
 const VALID_TRANSITIONS: Record<string, string[]> = {
-  draft: ["pending", "active"],
-  pending: ["active", "draft"],
-  active: ["pending", "completed"],
+  draft: ["pending", "pending_review", "active", "needs_changes"],
+  pending: ["active", "draft", "needs_changes", "rejected"],
+  pending_review: ["active", "needs_changes", "rejected", "draft"],
+  needs_changes: ["pending_review", "active", "rejected", "draft"],
+  rejected: ["pending_review", "draft"],
+  active: ["pending", "pending_review", "completed"],
   completed: [],
 };
 
@@ -22,8 +25,29 @@ export class CampaignsService {
     @InjectModel("Campaign") private readonly campaignModel: Model<any>,
     @InjectModel("Brand") private readonly brandModel: Model<any>,
     @InjectModel("Influencer") private readonly influencerModel: Model<any>,
+    @InjectModel("AppSettings") private readonly appSettingsModel: Model<any>,
     private readonly plansService: PlansService,
   ) {}
+
+  private async resolveInitialCampaignStatus(status: unknown): Promise<string> {
+    const requested = String(status || "").trim().toLowerCase();
+    const settings = await this.appSettingsModel.findOne({}).lean().exec();
+    const settingsDoc = Array.isArray(settings) ? settings[0] : settings;
+    const mode = String(settingsDoc?.campaignApprovalMode || "manual").toLowerCase();
+
+    if (requested === "draft") return "draft";
+
+    // In manual mode, any publish intent goes to moderation first.
+    if (mode === "manual") {
+      return "pending_review";
+    }
+
+    // Auto-live mode keeps drafts as drafts and publishes directly.
+    if (["active", "pending_review", "pending", "needs_changes"].includes(requested)) {
+      return "active";
+    }
+    return "active";
+  }
 
   private normalizeCampaignPayload(data: any) {
     const normalized: any = { ...data };
@@ -233,6 +257,7 @@ export class CampaignsService {
       );
     }
     const normalized = this.normalizeCampaignPayload(data);
+    normalized.status = await this.resolveInitialCampaignStatus(data?.status);
     const campaign = new this.campaignModel({ ...normalized, brandId });
     return await campaign.save();
   }
@@ -264,8 +289,6 @@ export class CampaignsService {
     const TIER_ORDER = ["Starter", "Nano", "Micro", "Mid-Tier", "Macro", "Mega / Celebrity"];
     const allowedStatuses = new Set([
       "active",
-      "pending",
-      "draft",
       "completed",
     ]);
     const query: any = {};
@@ -413,6 +436,13 @@ export class CampaignsService {
 
     // Enforce status transitions
     if (data.status && data.status !== campaign.status) {
+      if (
+        ["active", "pending", "pending_review", "needs_changes", "rejected"].includes(
+          String(data.status),
+        )
+      ) {
+        data.status = await this.resolveInitialCampaignStatus(data.status);
+      }
       const allowed = VALID_TRANSITIONS[campaign.status] || [];
       if (!allowed.includes(data.status)) {
         throw new BadRequestException(
