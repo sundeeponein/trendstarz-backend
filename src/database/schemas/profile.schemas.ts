@@ -403,7 +403,13 @@ export const AppSettingsModel = model("AppSettings", AppSettingsSchema);
 
 export const CategorySchema = new Schema({
   name: { type: String, required: true },
+  role: {
+    type: String,
+    enum: ["influencer", "brand", "both"],
+    default: "both",
+  },
   showInFrontend: { type: Boolean, default: true },
+  sortIndex: { type: Number, default: 0 },
 });
 export const CategoryModel = model("Category", CategorySchema);
 
