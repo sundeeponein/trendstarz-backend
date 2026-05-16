@@ -158,13 +158,16 @@ export class UsersController {
   async getInfluencers(
     @Query("page") page?: string,
     @Query("limit") limit?: string,
+    @Query("lite") lite?: string,
     @Req() req?: Request,
   ) {
     const viewerId = extractOptionalViewerId(req);
+    const liteMode = String(lite || "").toLowerCase() === "1" || String(lite || "").toLowerCase() === "true";
     return this.usersService.getInfluencers(
       page ? parseInt(page, 10) : undefined,
       limit ? parseInt(limit, 10) : undefined,
       viewerId,
+      liteMode,
     );
   }
 
@@ -172,13 +175,16 @@ export class UsersController {
   async getBrands(
     @Query("page") page?: string,
     @Query("limit") limit?: string,
+    @Query("lite") lite?: string,
     @Req() req?: Request,
   ) {
     const viewerId = extractOptionalViewerId(req);
+    const liteMode = String(lite || "").toLowerCase() === "1" || String(lite || "").toLowerCase() === "true";
     return this.usersService.getBrands(
       page ? parseInt(page, 10) : undefined,
       limit ? parseInt(limit, 10) : undefined,
       viewerId,
+      liteMode,
     );
   }
 

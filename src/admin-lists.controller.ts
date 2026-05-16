@@ -456,11 +456,32 @@ export class AdminListsController {
   }
   // Categories
   @Get("categories")
-  async getCategories() {
-    return this.categoryModel.find().sort({ sortIndex: 1 }).lean().limit(100);
+  async getCategories(@Query("role") role?: string) {
+    const normalizedRole = ["influencer", "brand", "both"].includes(
+      String(role || "").toLowerCase(),
+    )
+      ? String(role).toLowerCase()
+      : "";
+
+    const filter: any = {};
+    if (normalizedRole && normalizedRole !== "both") {
+      filter.$or = [
+        { role: normalizedRole },
+        { role: "both" },
+        { role: { $exists: false } },
+      ];
+    }
+
+    return this.categoryModel
+      .find(filter)
+      .sort({ sortIndex: 1, name: 1 })
+      .lean()
+      .limit(200);
   }
   @Post("categories")
-  async addCategory(@Body() body: { name: string }) {
+  async addCategory(
+    @Body() body: { name: string; role?: "influencer" | "brand" | "both" },
+  ) {
     return this.categoryModel.create(body);
   }
   @Put("categories/:id")

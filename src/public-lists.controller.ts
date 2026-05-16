@@ -33,8 +33,27 @@ export class CategoriesController {
   ) {}
 
   @Get()
-  async getAll() {
-    const categories = await this.categoryModel.find({}).lean().limit(100);
+  async getAll(@Query("role") role?: string) {
+    const normalizedRole = ["influencer", "brand", "both"].includes(
+      String(role || "").toLowerCase(),
+    )
+      ? String(role).toLowerCase()
+      : "";
+
+    const filter: any = {};
+    if (normalizedRole && normalizedRole !== "both") {
+      filter.$or = [
+        { role: normalizedRole },
+        { role: "both" },
+        { role: { $exists: false } },
+      ];
+    }
+
+    const categories = await this.categoryModel
+      .find(filter)
+      .sort({ sortIndex: 1, name: 1 })
+      .lean()
+      .limit(200);
     return categories.length ? categories : [];
   }
 }
