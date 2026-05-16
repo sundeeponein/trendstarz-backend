@@ -840,8 +840,43 @@ export class UsersService {
     }
   }
 
-  async getInfluencers(page = 1, limit = 20, viewerId?: string | null) {
+  async getInfluencers(
+    page = 1,
+    limit = 20,
+    viewerId?: string | null,
+    lite = false,
+  ) {
     const skip = (page - 1) * limit;
+
+    if (lite) {
+      const filter = { status: "accepted" };
+      const [rows, total] = await Promise.all([
+        this.influencerModel
+          .find(filter)
+          .select(
+            "name username profileImage profileImages categories influencerCategory verificationStatus verifiedByTrendStarz location socialMedia adminTags isPremium premiumEnd promotionalPrice dateOfBirth",
+          )
+          .sort({ updatedAt: -1 })
+          .skip(skip)
+          .limit(limit)
+          .lean(),
+        this.influencerModel.countDocuments(filter),
+      ]);
+
+      const data = (rows || []).map((inf: any) => ({
+        ...inf,
+        isPremium: this.isCurrentlyPremium(inf),
+        ageRange: this.computeAgeRangeFromDob(inf?.dateOfBirth),
+        dateOfBirth: undefined,
+        gender: undefined,
+        email: undefined,
+        phoneNumber: undefined,
+        website: undefined,
+        contactRestricted: true,
+      }));
+
+      return { data, total, page, limit };
+    }
 
     // Plan caps for monthly invite reception (key reused: maxInvitesPerCampaign)
     const capByCode: Record<string, number> = {
@@ -1114,8 +1149,44 @@ export class UsersService {
     };
   }
 
-  async getBrands(page = 1, limit = 20, viewerId?: string | null) {
+  async getBrands(
+    page = 1,
+    limit = 20,
+    viewerId?: string | null,
+    lite = false,
+  ) {
     const skip = (page - 1) * limit;
+
+    if (lite) {
+      const filter = { status: "accepted" };
+      const [rows, total] = await Promise.all([
+        this.brandModel
+          .find(filter)
+          .select(
+            "brandName brandLogo categories location isPremium premiumEnd promotionalPrice adminTags socialMedia",
+          )
+          .sort({ updatedAt: -1 })
+          .skip(skip)
+          .limit(limit)
+          .lean(),
+        this.brandModel.countDocuments(filter),
+      ]);
+
+      const data = (rows || []).map((brand: any) => ({
+        ...brand,
+        isPremium: this.isCurrentlyPremium(brand),
+        socialMedia: Array.isArray(brand?.socialMedia)
+          ? brand.socialMedia.map((sm: any) => ({ platform: sm?.platform || "" }))
+          : [],
+        socialMediaRestricted: true,
+        email: undefined,
+        phoneNumber: undefined,
+        website: undefined,
+        contactRestricted: true,
+      }));
+
+      return { data, total, page, limit };
+    }
     const [data, total] = await Promise.all([
       this.brandModel
         .find({ status: "accepted" })

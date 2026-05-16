@@ -49,17 +49,45 @@ export async function seedDatabase(section?: string) {
     if (adminConfig?.categories) {
       for (let i = 0; i < adminConfig.categories.length; i++) {
         const cat = adminConfig.categories[i];
-        const exists = await CategoryModel.findOne({ name: cat.name });
+        const role =
+          cat.role === "influencer" || cat.role === "brand" || cat.role === "both"
+            ? cat.role
+            : "both";
+
+        let exists = await CategoryModel.findOne({ name: cat.name, role });
+
+        // Migrate a legacy no-role category to role-aware category when possible.
+        if (!exists) {
+          const legacy = await CategoryModel.findOne({
+            name: cat.name,
+            role: { $exists: false },
+          });
+          if (legacy) {
+            await CategoryModel.updateOne(
+              { _id: legacy._id },
+              {
+                $set: {
+                  role,
+                  showInFrontend: cat.visible,
+                  sortIndex: i,
+                },
+              },
+            );
+            continue;
+          }
+        }
+
         if (!exists) {
           await CategoryModel.create({
             name: cat.name,
+            role,
             showInFrontend: cat.visible,
             sortIndex: i,
           });
         } else {
           await CategoryModel.updateOne(
-            { name: cat.name },
-            { $set: { showInFrontend: cat.visible, sortIndex: i } },
+            { name: cat.name, role },
+            { $set: { showInFrontend: cat.visible, sortIndex: i, role } },
           );
         }
       }
