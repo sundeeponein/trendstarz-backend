@@ -40,17 +40,29 @@ export class CategoriesController {
       ? String(role).toLowerCase()
       : "";
 
-    const filter: any = {};
+    // Prefer explicit role-tagged rows in production.
+    // Fallback to legacy role-missing rows only when role data is unavailable.
     if (normalizedRole && normalizedRole !== "both") {
-      filter.$or = [
-        { role: normalizedRole },
-        { role: "both" },
-        { role: { $exists: false } },
-      ];
+      const roleScoped = await this.categoryModel
+        .find({ $or: [{ role: normalizedRole }, { role: "both" }] })
+        .sort({ sortIndex: 1, name: 1 })
+        .lean()
+        .limit(200);
+
+      if (roleScoped.length) {
+        return roleScoped;
+      }
+
+      const legacyScoped = await this.categoryModel
+        .find({ role: { $exists: false } })
+        .sort({ sortIndex: 1, name: 1 })
+        .lean()
+        .limit(200);
+      return legacyScoped.length ? legacyScoped : [];
     }
 
     const categories = await this.categoryModel
-      .find(filter)
+      .find({})
       .sort({ sortIndex: 1, name: 1 })
       .lean()
       .limit(200);

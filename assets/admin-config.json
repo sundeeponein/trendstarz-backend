@@ -111,8 +111,7 @@
     { "name": "Salon/Spa", "role": "brand", "visible": true },
     { "name": "Photography Studio", "role": "brand", "visible": true },
     { "name": "E-commerce", "role": "brand", "visible": true },
-    { "name": "Startup", "role": "brand", "visible": true },
-    { "name": "Agency", "role": "brand", "visible": true }
+    { "name": "Startup", "role": "brand", "visible": true }
   ],
   "languages": [
     { "name": "English", "visible": true },
