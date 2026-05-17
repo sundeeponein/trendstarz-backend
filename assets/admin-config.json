@@ -73,6 +73,31 @@
       ]
     }
   ],
+  "userTags": {
+    "influencer": [
+      { "name": "Founder", "visible": true },
+      { "name": "Internal Creator", "visible": true },
+      { "name": "Verified Creator", "visible": true },
+      { "name": "Featured Creator", "visible": true }
+    ],
+    "brand": [
+      { "name": "Founder-owned", "visible": true },
+      { "name": "Partner Brand", "visible": true },
+      { "name": "Early Access Brand", "visible": true },
+      { "name": "Verified Brand", "visible": true }
+    ],
+    "photographer": [
+      { "name": "Founder", "visible": true },
+      { "name": "Internal Creator", "visible": true },
+      { "name": "Verified Creator", "visible": true },
+      { "name": "Featured Creator", "visible": true }
+    ],
+    "commission": [
+      { "name": "Early Access", "visible": true },
+      { "name": "Partner", "visible": true },
+      { "name": "Internal/Test", "visible": true }
+    ]
+  },
   "categories": [
     { "name": "Fashion", "role": "influencer", "visible": true },
     { "name": "Tech", "role": "influencer", "visible": true },
@@ -111,7 +136,17 @@
     { "name": "Salon/Spa", "role": "brand", "visible": true },
     { "name": "Photography Studio", "role": "brand", "visible": true },
     { "name": "E-commerce", "role": "brand", "visible": true },
-    { "name": "Startup", "role": "brand", "visible": true }
+    { "name": "Startup", "role": "brand", "visible": true },
+
+    { "name": "Fashion Photography", "role": "photographer", "visible": true },
+    { "name": "Product Photography", "role": "photographer", "visible": true },
+    { "name": "Wedding", "role": "photographer", "visible": true },
+    { "name": "Reels", "role": "photographer", "visible": true },
+    { "name": "Drone", "role": "photographer", "visible": true },
+    { "name": "YouTube", "role": "photographer", "visible": true },
+    { "name": "Food Photography", "role": "photographer", "visible": true },
+    { "name": "Editing", "role": "photographer", "visible": true },
+    { "name": "Cinematic Videos", "role": "photographer", "visible": true }
   ],
   "languages": [
     { "name": "English", "visible": true },
@@ -412,5 +447,18 @@
         { "name": "Nadia", "visible": true }
       ]
     }
+  ],
+  "equipmentOptions": [
+    { "name": "Sony", "visible": true },
+    { "name": "Canon", "visible": true },
+    { "name": "DJI", "visible": true },
+    { "name": "iPhone Creator", "visible": true }
+  ],
+  "pricingOptions": [
+    { "key": "Starting Price", "label": "Starting Price", "visible": true },
+    { "key": "Per Reel", "label": "Per Reel", "visible": true },
+    { "key": "Per Shoot", "label": "Per Shoot", "visible": true },
+    { "key": "Hourly", "label": "Hourly", "visible": true },
+    { "key": "Equipment", "label": "Equipment Rental", "visible": true }
   ]
 }

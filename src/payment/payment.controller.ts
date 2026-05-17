@@ -42,7 +42,7 @@ export class PaymentController {
     body: {
       transactionId: string;
       premiumDuration: "1m" | "3m" | "1y";
-      userType: "Influencer" | "Brand";
+      userType: "Influencer" | "Brand" | "Photographer";
       paymentMethod?: "upi" | "qr";
       finalAmount?: number;
     },

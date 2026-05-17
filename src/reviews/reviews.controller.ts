@@ -26,8 +26,13 @@ export class ReviewsController {
   ) {
     const { userId, role } = req.user;
     if (!userId) throw new BadRequestException("Not authenticated");
+    const normalizedRole = String(role || "").toLowerCase();
     const reviewerType =
-      role === "BRAND" || role === "brand" ? "brand" : "influencer";
+      normalizedRole === "brand"
+        ? "brand"
+        : normalizedRole === "photographer"
+          ? "photographer"
+          : "influencer";
     return this.reviewsService.writeReview(userId, reviewerType, body);
   }
 

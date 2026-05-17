@@ -13,12 +13,13 @@ export class ReviewsService {
   constructor(
     @InjectModel("Review") private readonly reviewModel: Model<any>,
     @InjectModel("CampaignInvite") private readonly inviteModel: Model<any>,
+    @InjectModel("Brand") private readonly brandModel: Model<any>,
     private readonly plansService: PlansService,
   ) {}
 
   async writeReview(
     reviewerId: string,
-    reviewerType: "brand" | "influencer",
+    reviewerType: "brand" | "influencer" | "photographer",
     data: { inviteId: string; rating: number; comment?: string },
   ) {
     // Gate: premium canWriteReview feature
@@ -42,7 +43,7 @@ export class ReviewsService {
       .lean()) as any;
     if (!invite) throw new NotFoundException("Invite not found");
 
-    if (reviewerType === "brand") {
+    if (reviewerType === "brand" || reviewerType === "photographer") {
       if (String(invite.brandId) !== reviewerId) {
         throw new BadRequestException("This invite does not belong to you");
       }
@@ -73,10 +74,20 @@ export class ReviewsService {
     }
 
     const targetId =
-      reviewerType === "brand"
+      reviewerType === "brand" || reviewerType === "photographer"
         ? String(invite.influencerId)
         : String(invite.brandId);
-    const targetType = reviewerType === "brand" ? "influencer" : "brand";
+
+    let targetType: "brand" | "influencer" | "photographer" = "influencer";
+    if (reviewerType === "influencer") {
+      const ownerId = String(invite.brandId || "");
+      if (ownerId) {
+        const brandExists = await this.brandModel.exists({ _id: ownerId });
+        targetType = brandExists ? "brand" : "photographer";
+      } else {
+        targetType = "brand";
+      }
+    }
 
     const review = await this.reviewModel.create({
       reviewerId,

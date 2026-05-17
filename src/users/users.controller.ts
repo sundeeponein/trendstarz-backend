@@ -239,7 +239,7 @@ export class UsersController {
     body: {
       isPremium: boolean;
       premiumDuration?: string;
-      type?: "influencer" | "brand";
+      type?: "influencer" | "brand" | "photographer";
     },
   ) {
     return this.usersService.setPremium(

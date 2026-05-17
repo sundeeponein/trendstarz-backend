@@ -12,6 +12,7 @@ import {
 import {
   InfluencerSchema,
   BrandSchema,
+  PhotographerSchema,
 } from "../database/schemas/profile.schemas";
 import { CloudinaryService } from "../cloudinary.service";
 
@@ -31,6 +32,11 @@ import { CloudinaryService } from "../cloudinary.service";
         collection: "influencers",
       },
       { name: "Brand", schema: BrandSchema, collection: "brands" },
+      {
+        name: "Photographer",
+        schema: PhotographerSchema,
+        collection: "photographers",
+      },
     ]),
   ],
   controllers: [PlansController, PlansConfigController],

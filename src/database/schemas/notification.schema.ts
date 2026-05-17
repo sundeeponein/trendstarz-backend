@@ -3,7 +3,7 @@ import { Schema } from "mongoose";
 export const NotificationSchema = new Schema(
   {
     userId: { type: String, required: true, index: true },
-    userRole: { type: String, enum: ["brand", "influencer", "admin"], required: true },
+    userRole: { type: String, enum: ["brand", "influencer", "photographer", "admin"], required: true },
     title: { type: String, required: true },
     body: { type: String, required: true },
     url: { type: String, default: "" },

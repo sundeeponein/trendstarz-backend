@@ -161,15 +161,22 @@ export class UsersService {
 
   async cleanupUserMediaById(id: string): Promise<{
     removedCount: number;
-    userType: "Influencer" | "Brand" | null;
+    userType: "Influencer" | "Brand" | "Photographer" | null;
     user: any;
   }> {
     let user: any = await this.influencerModel.findById(id);
-    let userType: "Influencer" | "Brand" | null = user ? "Influencer" : null;
+    let userType: "Influencer" | "Brand" | "Photographer" | null = user
+      ? "Influencer"
+      : null;
 
     if (!user) {
       user = await this.brandModel.findById(id);
       userType = user ? "Brand" : null;
+    }
+
+    if (!user) {
+      user = await this.photographerModel.findById(id);
+      userType = user ? "Photographer" : null;
     }
 
     if (!user) {
@@ -448,6 +455,58 @@ export class UsersService {
       }
       return { message: "Brand permanently deleted", user };
     }
+
+    // Try photographer
+    user = await this.photographerModel.findById(id);
+    if (user) {
+      const errors: any[] = [];
+      if (user.profileImages && Array.isArray(user.profileImages)) {
+        for (const img of user.profileImages) {
+          const publicId =
+            typeof img === "object"
+              ? img.public_id
+              : typeof img === "string"
+                ? img
+                : null;
+          if (publicId) {
+            try {
+              await this.cloudinaryService.deleteImage(publicId);
+            } catch (cloudErr) {
+              console.error(
+                "[DELETE] Error deleting photographer image from Cloudinary:",
+                cloudErr,
+                img,
+              );
+              errors.push({ type: "photographer", publicId, error: cloudErr });
+            }
+          }
+        }
+      }
+
+      const deleteResult = await this.photographerModel.findByIdAndDelete(id);
+      if (!deleteResult) {
+        console.error(
+          `[CLEANUP][ERROR] Photographer not found for deletion after Cloudinary cleanup: ${id}`,
+        );
+      }
+
+      const checkPhotographer = await this.photographerModel.findById(id);
+      if (checkPhotographer) {
+        console.error(
+          `[CLEANUP][ERROR] Photographer still exists after deletion: ${id}`,
+        );
+      }
+
+      if (errors.length > 0) {
+        return {
+          message: "Photographer deleted with some image deletion errors",
+          user,
+          errors,
+        };
+      }
+      return { message: "Photographer permanently deleted", user };
+    }
+
     return { message: "User not found", id };
   }
   constructor(
@@ -455,6 +514,7 @@ export class UsersService {
     @InjectModel("User") private readonly userModel: Model<any>,
     @InjectModel("Influencer") private readonly influencerModel: Model<any>,
     @InjectModel("Brand") private readonly brandModel: Model<any>,
+    @InjectModel("Photographer") private readonly photographerModel: Model<any>,
     @InjectModel("CampaignInvite")
     private readonly campaignInviteModel: Model<any>,
     private readonly plansService: PlansService,
@@ -1239,6 +1299,13 @@ export class UsersService {
       { new: true },
     );
     if (brand) return { message: "User accepted", user: brand };
+    const photographer = await this.photographerModel.findByIdAndUpdate(
+      id,
+      { status: "accepted" },
+      { new: true },
+    );
+    if (photographer)
+      return { message: "User accepted", user: photographer };
     return { message: "User not found", id };
   }
 
@@ -1255,6 +1322,13 @@ export class UsersService {
       { new: true },
     );
     if (brand) return { message: "User declined", user: brand };
+    const photographer = await this.photographerModel.findByIdAndUpdate(
+      id,
+      { status: "declined" },
+      { new: true },
+    );
+    if (photographer)
+      return { message: "User declined", user: photographer };
     return { message: "User not found", id };
   }
 
@@ -1271,6 +1345,13 @@ export class UsersService {
       { new: true },
     );
     if (brand) return { message: "User restored", user: brand };
+    const photographer = await this.photographerModel.findByIdAndUpdate(
+      id,
+      { status: "pending", isDeleted: false, deletedAt: null },
+      { new: true },
+    );
+    if (photographer)
+      return { message: "User restored", user: photographer };
     return { message: "User not found", id };
   }
 
@@ -1279,6 +1360,9 @@ export class UsersService {
     let user: any = await this.influencerModel.findById(id);
     if (!user) {
       user = await this.brandModel.findById(id);
+    }
+    if (!user) {
+      user = await this.photographerModel.findById(id);
     }
     if (!user) return { message: "User not found", id };
 
@@ -1327,7 +1411,7 @@ export class UsersService {
     id: string,
     isPremium: boolean,
     premiumDuration?: string,
-    type?: "influencer" | "brand",
+    type?: "influencer" | "brand" | "photographer",
   ) {
     if (isPremium && !premiumDuration) {
       throw new BadRequestException(
@@ -1360,10 +1444,15 @@ export class UsersService {
       }
     }
     let user = null;
-    let userType: "Influencer" | "Brand" = "Influencer";
+    let userType: "Influencer" | "Brand" | "Photographer" = "Influencer";
     if (type === "brand") {
       user = await this.brandModel.findByIdAndUpdate(id, update, { new: true });
       userType = "Brand";
+    } else if (type === "photographer") {
+      user = await this.photographerModel.findByIdAndUpdate(id, update, {
+        new: true,
+      });
+      userType = "Photographer";
     } else {
       user = await this.influencerModel.findByIdAndUpdate(id, update, {
         new: true,
@@ -1392,6 +1481,8 @@ export class UsersService {
         };
         if (userType === "Brand") {
           await this.brandModel.findByIdAndUpdate(id, rollback);
+        } else if (userType === "Photographer") {
+          await this.photographerModel.findByIdAndUpdate(id, rollback);
         } else {
           await this.influencerModel.findByIdAndUpdate(id, rollback);
         }

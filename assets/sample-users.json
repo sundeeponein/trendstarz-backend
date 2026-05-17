@@ -19,7 +19,7 @@
     "languages": ["English", "Hindi"],
     "location": { "state": "Goa", "district": "North Goa" },
     "socialMedia": [
-      { "platform": "instagram", "handle": "@alice", "tier": "Nano", "followersCount": 12000, "contentTypes": [{ "name": "Reel", "enabled": true, "price": 500 }] }
+      { "platform": "instagram", "handle": "@alice", "tier": "Nano", "contentTypes": [{ "name": "Reel", "enabled": true, "price": 500 }] }
     ],
     "contact": { "whatsapp": true, "email": true, "call": false },
     "promotionalPrice": 999,
@@ -37,7 +37,7 @@
     "languages": ["English"],
     "location": { "state": "Maharashtra", "district": "Mumbai" },
     "socialMedia": [
-      { "platform": "twitter", "handle": "@bob", "tier": "Micro", "followersCount": 8000, "contentTypes": [{ "name": "Tweet / post", "enabled": true, "price": 200 }] }
+      { "platform": "twitter", "handle": "@bob", "tier": "Micro", "contentTypes": [{ "name": "Tweet / post", "enabled": true, "price": 200 }] }
     ],
     "contact": { "whatsapp": false, "email": true, "call": true },
     "promotionalPrice": 399,
@@ -78,6 +78,84 @@
     ],
     "contact": { "whatsapp": true, "email": true, "call": false },
     "promotionalPrice": 999,
+    "status": "pending"
+  },
+  {
+    "name": "BobLee PhotoVideo Grapher",
+    "email": "BobLee@trendstarz.com",
+    "password": "tesT@123",
+    "phoneNumber": "9876541132",
+    "username": "boblee_creator",
+    "profileImages": [{ "url": "https://example.com/bob.jpg", "public_id": "sample/bob" }],
+    "isPremium": false,
+    "categories": ["Tech", "Gaming"],
+    "languages": ["English"],
+    "location": { "state": "Maharashtra", "district": "Mumbai" },
+    "socialMedia": [
+      { "platform": "twitter", "handle": "@bob", "tier": "Micro", "contentTypes": [{ "name": "Tweet / post", "enabled": true, "price": 200 }] }
+    ],
+    "contact": { "whatsapp": false, "email": true, "call": true },
+    "promotionalPrice": 399,
+    "status": "pending"
+  },
+  {
+    "name": "Riya Lenscraft",
+    "email": "riya.photographer@trendstarz.com",
+    "password": "tesT@123",
+    "phoneNumber": "9876541140",
+    "profileImages": [
+      { "url": "https://example.com/riya-profile.jpg", "public_id": "sample/riya-profile" },
+      { "url": "https://example.com/riya-shoot-1.jpg", "public_id": "sample/riya-shoot-1" }
+    ],
+    "isPremium": false,
+    "skills": ["Fashion", "Product", "Reels"],
+    "equipment": ["Sony", "DJI"],
+    "pricing": [
+      { "name": "Starting Price", "enabled": true, "price": 2500 },
+      { "name": "Per Reel", "enabled": true, "price": 3500 },
+      { "name": "Per Shoot", "enabled": true, "price": 6000 }
+    ],
+    "socialMedia": [
+      {
+        "platform": "instagram",
+        "handle": "@riya.lenscraft",
+        "tier": "Micro",
+        "contentTypes": [{ "name": "Reel", "enabled": true, "price": 1800 }]
+      }
+    ],
+    "portfolio": "https://example.com/riya-portfolio",
+    "location": { "state": "Karnataka", "district": "Bengaluru" },
+    "contact": { "whatsapp": true, "email": true, "call": false },
+    "status": "accepted"
+  },
+  {
+    "name": "Arjun Frame Works",
+    "email": "arjun.videographer@trendstarz.com",
+    "password": "tesT@123",
+    "phoneNumber": "9876541141",
+    "profileImages": [
+      { "url": "https://example.com/arjun-profile.jpg", "public_id": "sample/arjun-profile" },
+      { "url": "https://example.com/arjun-shoot-1.jpg", "public_id": "sample/arjun-shoot-1" }
+    ],
+    "isPremium": true,
+    "skills": ["Events", "Food", "YouTube Video"],
+    "equipment": ["Canon", "iPhone Creator"],
+    "pricing": [
+      { "name": "Starting Price", "enabled": true, "price": 3000 },
+      { "name": "Hourly", "enabled": true, "price": 2000 },
+      { "name": "Per Shoot", "enabled": true, "price": 7500 }
+    ],
+    "socialMedia": [
+      {
+        "platform": "youtube",
+        "handle": "@arjunframes",
+        "tier": "Micro",
+        "contentTypes": [{ "name": "Video", "enabled": true, "price": 2500 }]
+      }
+    ],
+    "portfolio": "https://example.com/arjun-portfolio",
+    "location": { "state": "Maharashtra", "district": "Mumbai" },
+    "contact": { "whatsapp": true, "email": true, "call": true },
     "status": "pending"
   }
 ]

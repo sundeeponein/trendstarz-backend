@@ -71,6 +71,7 @@ export class CampaignInvitesService {
     private readonly submissionModel: Model<any>,
     @InjectModel("Campaign") private readonly campaignModel: Model<any>,
     @InjectModel("Brand") private readonly brandModel: Model<any>,
+    @InjectModel("Photographer") private readonly photographerModel: Model<any>,
     @InjectModel("Influencer") private readonly influencerModel: Model<any>,
     @InjectModel("CampaignTransaction")
     private readonly campaignTransactionModel: Model<any>,
@@ -1638,12 +1639,16 @@ export class CampaignInvitesService {
       ...new Set(invites.map((i) => String(i.influencerId)).filter(Boolean)),
     ];
 
-    const [campaigns, brands, influencers] = await Promise.all([
+    const [campaigns, brands, photographers, influencers] = await Promise.all([
       this.campaignModel
         .find({ _id: { $in: campaignIds } })
-        .select("title campaignType")
+        .select("title campaignType ownerType")
         .lean(),
       this.brandModel
+        .find({ _id: { $in: brandIds } })
+        .select("name email")
+        .lean(),
+      this.photographerModel
         .find({ _id: { $in: brandIds } })
         .select("name email")
         .lean(),
@@ -1655,13 +1660,14 @@ export class CampaignInvitesService {
 
     const cMap = new Map(campaigns.map((c: any) => [String(c._id), c]));
     const bMap = new Map(brands.map((b: any) => [String(b._id), b]));
+    const pMap = new Map(photographers.map((p: any) => [String(p._id), p]));
     const iMap = new Map(influencers.map((i: any) => [String(i._id), i]));
 
     return {
       invites: invites.map((inv: any) => ({
         ...inv,
         campaign: cMap.get(String(inv.campaignId)) || null,
-        brand: bMap.get(String(inv.brandId)) || null,
+        brand: bMap.get(String(inv.brandId)) || pMap.get(String(inv.brandId)) || null,
         influencer: iMap.get(String(inv.influencerId)) || null,
       })),
     };
