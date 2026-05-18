@@ -8,7 +8,10 @@ export class TiersController {
 
   @Get()
   async getAll() {
-    const tiers = await this.tierModel.find({}).lean().limit(100);
+    const tiers = await this.tierModel
+      .find({ showInFrontend: { $ne: false } })
+      .lean()
+      .limit(100);
     return tiers.length ? tiers : [];
   }
 }
@@ -21,7 +24,10 @@ export class LanguagesController {
 
   @Get()
   async getAll() {
-    const languages = await this.languageModel.find({}).lean().limit(100);
+    const languages = await this.languageModel
+      .find({ showInFrontend: { $ne: false } })
+      .lean()
+      .limit(100);
     return languages.length ? languages : [];
   }
 }
@@ -44,7 +50,12 @@ export class CategoriesController {
     // Fallback to legacy role-missing rows only when role data is unavailable.
     if (normalizedRole && normalizedRole !== "both") {
       const roleScoped = await this.categoryModel
-        .find({ $or: [{ role: normalizedRole }, { role: "both" }] })
+        .find({
+          $and: [
+            { $or: [{ role: normalizedRole }, { role: "both" }] },
+            { showInFrontend: { $ne: false } },
+          ],
+        })
         .sort({ sortIndex: 1, name: 1 })
         .lean()
         .limit(200);
@@ -54,7 +65,10 @@ export class CategoriesController {
       }
 
       const legacyScoped = await this.categoryModel
-        .find({ role: { $exists: false } })
+        .find({
+          role: { $exists: false },
+          showInFrontend: { $ne: false },
+        })
         .sort({ sortIndex: 1, name: 1 })
         .lean()
         .limit(200);
@@ -62,7 +76,7 @@ export class CategoriesController {
     }
 
     const categories = await this.categoryModel
-      .find({})
+      .find({ showInFrontend: { $ne: false } })
       .sort({ sortIndex: 1, name: 1 })
       .lean()
       .limit(200);
@@ -76,7 +90,10 @@ export class StatesController {
 
   @Get()
   async getAll() {
-    const states = await this.stateModel.find({}).lean().limit(100);
+    const states = await this.stateModel
+      .find({ showInFrontend: { $ne: false } })
+      .lean()
+      .limit(100);
     return states.length ? states : [];
   }
 }
@@ -96,11 +113,24 @@ export class DistrictsController {
     let resolvedState = (state || "").trim();
 
     if (!resolvedState && stateId) {
-      const stateDoc: any = await this.stateModel.findById(stateId).lean();
+      const stateDoc: any = await this.stateModel
+        .findOne({ _id: stateId, showInFrontend: { $ne: false } })
+        .lean();
       resolvedState = String(stateDoc?.name || "").trim();
     }
 
-    const filter: any = {};
+    if (resolvedState) {
+      const escaped = resolvedState.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      const stateDoc: any = await this.stateModel
+        .findOne({ name: new RegExp(`^${escaped}$`, "i"), showInFrontend: { $ne: false } })
+        .lean();
+      if (!stateDoc) {
+        return [];
+      }
+      resolvedState = String(stateDoc.name || resolvedState).trim();
+    }
+
+    const filter: any = { showInFrontend: { $ne: false } };
     if (resolvedState) {
       const escaped = resolvedState.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
       filter.state = new RegExp(`^${escaped}$`, "i");
@@ -119,7 +149,10 @@ export class SocialMediaController {
 
   @Get()
   async getAll() {
-    const socials = await this.socialMediaModel.find({}).lean().limit(100);
+    const socials = await this.socialMediaModel
+      .find({ showInFrontend: { $ne: false } })
+      .lean()
+      .limit(100);
     return socials.length ? socials : [];
   }
 }
