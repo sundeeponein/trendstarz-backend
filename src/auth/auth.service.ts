@@ -970,7 +970,7 @@ export class AuthService {
     const normalizedProfileImages = Array.isArray(data.profileImages)
       ? data.profileImages
           .filter((img: any) => img?.url && img?.public_id)
-          .slice(0, 1)
+          .slice(0, 10)
       : [];
 
     const signupAttribution = {
