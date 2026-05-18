@@ -11,9 +11,10 @@
 .DS_Store
 startup.log
 
-# Environment files
+# Environment files (keep example template tracked)
 .env
 .env.*
+!.env.production.example
 
 # Logs
 npm-debug.log*
