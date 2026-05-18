@@ -80,6 +80,48 @@ export class CampaignInvitesService {
     private readonly notificationsService: NotificationsService,
   ) {}
 
+  private normalizeRecipientRole(role: any): "influencer" | "photographer" {
+    return String(role || "influencer").trim().toLowerCase() === "photographer"
+      ? "photographer"
+      : "influencer";
+  }
+
+  private getRecipientModel(role: "influencer" | "photographer") {
+    return role === "photographer" ? this.photographerModel : this.influencerModel;
+  }
+
+  private async loadRecipientProfile(
+    role: "influencer" | "photographer",
+    recipientId: string,
+  ) {
+    return this.getRecipientModel(role)
+      .findById(recipientId)
+      .select(
+        "name email phoneNumber username profileImages socialMedia location isPremium premiumEnd createdAt premiumStart",
+      )
+      .lean();
+  }
+
+  private async attachRecipientProfile(invite: any) {
+    if (!invite?.influencerId) {
+      return invite;
+    }
+    const role = this.normalizeRecipientRole(invite?.recipientRole);
+    const recipient = await this.loadRecipientProfile(
+      role,
+      String(invite.influencerId),
+    );
+    if (!recipient) {
+      return invite;
+    }
+    if (!invite?.unlocked) {
+      const safeRecipient = recipient as Record<string, any>;
+      const { email: _e, phoneNumber: _p, ...redactedRecipient } = safeRecipient;
+      return { ...invite, recipientRole: role, influencerId: redactedRecipient };
+    }
+    return { ...invite, recipientRole: role, influencerId: recipient };
+  }
+
   /** True if user has an active premium right now. */
   private isCurrentlyPremium(user: any): boolean {
     if (!user?.isPremium) return false;
@@ -198,6 +240,24 @@ export class CampaignInvitesService {
         throw new BadRequestException("Not your campaign");
       }
     }
+    const recipientRole = this.normalizeRecipientRole(data?.recipientRole);
+    const recipientId = String(
+      data?.recipientId || data?.influencerId || data?.photographerId || "",
+    ).trim();
+    if (!recipientId) {
+      throw new BadRequestException("Recipient is required");
+    }
+    const recipientDoc: any = await this.loadRecipientProfile(
+      recipientRole,
+      recipientId,
+    );
+    if (!recipientDoc) {
+      throw new BadRequestException(
+        recipientRole === "photographer"
+          ? "Photographer not found"
+          : "Influencer not found",
+      );
+    }
     // Enforce invite limits for brands (admin-manageable)
     const caps = await this.plansService.getUserPlanCapabilities(brandId);
     const maxInvitesPerCampaign =
@@ -275,65 +335,67 @@ export class CampaignInvitesService {
       }
     }
 
-    // Enforce influencer recipient cap (anchored to influencer's plan-start)
-    const influencerDoc: any = await this.influencerModel
-      .findById(data.influencerId)
-      .select("createdAt premiumStart premiumEnd isPremium")
-      .lean();
-    if (influencerDoc) {
-      const recipientCaps =
-        await this.plansService.getUserPlanCapabilities(data.influencerId);
+    // Enforce recipient cap (anchored to the recipient's plan-start)
+    const recipientCaps =
+      await this.plansService.getUserPlanCapabilities(recipientId);
+    if (recipientDoc) {
       const recipientMonthlyCap =
         recipientCaps.limits.find(
           (l: any) => l.key === "maxInvitesPerCampaign",
         )?.value ?? -1;
       if (recipientMonthlyCap !== -1) {
-        const recipientCycleStart = this.computePlanCycleStart(influencerDoc);
+        const recipientCycleStart = this.computePlanCycleStart(recipientDoc);
         const recipientMonthCount = await this.inviteModel.countDocuments({
-          influencerId: data.influencerId,
+          influencerId: recipientId,
+          recipientRole,
           createdAt: { $gte: recipientCycleStart },
         });
         if (recipientMonthCount >= recipientMonthlyCap) {
           throw new BadRequestException(
-            `This influencer has reached their monthly invite limit (${recipientMonthlyCap}). Try again after their next cycle.`,
+            `This ${recipientRole} has reached their monthly invite limit (${recipientMonthlyCap}). Try again after their next cycle.`,
           );
         }
       }
     }
-    const invite = new this.inviteModel({ ...data, brandId });
+    const invite = new this.inviteModel({
+      ...data,
+      brandId,
+      influencerId: recipientId,
+      recipientRole,
+    });
     const saved = await invite.save();
 
-    // Send notification email to influencer
+    // Send notification email to recipient
     try {
-      const influencer: any = await this.influencerModel
-        .findById(data.influencerId)
-        .select("email name")
-        .lean();
+      const recipient: any = await this.loadRecipientProfile(
+        recipientRole,
+        recipientId,
+      );
       const brand: any = await this.brandModel
         .findById(brandId)
         .select("brandName")
         .lean();
-      if (influencer?.email) {
-        const text = `Hi ${influencer.name || ""},\n\nYou have a new campaign invite from ${brand?.brandName || "a brand"} for "${campaign.title}".\nLog in to TrendStarz to respond.\n`;
+      if (recipient?.email) {
+        const text = `Hi ${recipient.name || ""},\n\nYou have a new campaign invite from ${brand?.brandName || "a brand"} for "${campaign.title}".\nLog in to TrendStarz to respond.\n`;
         await sendAppEmail({
-          to: influencer.email,
+          to: recipient.email,
           subject: "New Campaign Invite",
           text,
         });
       }
-      // Push notification to influencer
-      this.pushService.sendToUser(String(data.influencerId), {
+      // Push notification to recipient
+      this.pushService.sendToUser(String(recipientId), {
         title: "New Campaign Invite 🎉",
         body: `${brand?.brandName || "A brand"} invited you to "${campaign.title}"`,
-        url: "/influencer-dashboard",
+        url: recipientRole === "photographer" ? "/photographer-dashboard" : "/influencer-dashboard",
       }).catch(() => { /* non-critical */ });
       this.notificationsService
         .createForUser({
-          userId: String(data.influencerId),
-          userRole: "influencer",
+          userId: String(recipientId),
+          userRole: recipientRole,
           title: "New Campaign Invite",
           body: `${brand?.brandName || "A brand"} invited you to "${campaign.title}"`,
-          url: "/influencer-dashboard",
+          url: recipientRole === "photographer" ? "/photographer-dashboard" : "/influencer-dashboard",
         })
         .catch(() => {
           /* non-critical */
@@ -353,22 +415,15 @@ export class CampaignInvitesService {
       if (/^[a-fA-F0-9]{24}$/.test(campaignId)) {
         queries.push({ campaignId: new Types.ObjectId(campaignId) });
       }
-      const invites = await this.inviteModel
-        .find({ $or: queries })
-        .populate(
-          "influencerId",
-          "name email phoneNumber username profileImages socialMedia location isPremium premiumEnd",
-        )
-        .lean();
+      const invites = await this.inviteModel.find({ $or: queries }).lean();
 
-      // Keep contact details hidden until the invite is unlocked.
-      return (Array.isArray(invites) ? invites : []).map((inv: any) => {
-        if (!inv?.unlocked && inv?.influencerId && typeof inv.influencerId === "object") {
-          const { email: _e, phoneNumber: _p, ...safeInfluencer } = inv.influencerId;
-          return { ...inv, influencerId: safeInfluencer };
-        }
-        return inv;
-      });
+      const enriched = await Promise.all(
+        (Array.isArray(invites) ? invites : []).map((inv: any) =>
+          this.attachRecipientProfile(inv),
+        ),
+      );
+
+      return enriched;
     } catch {
       return [];
     }
@@ -376,7 +431,10 @@ export class CampaignInvitesService {
 
   async findByInfluencer(influencerId: string) {
     const invites: any[] = await this.inviteModel
-      .find({ influencerId })
+      .find({
+        influencerId,
+        $or: [{ recipientRole: { $exists: false } }, { recipientRole: "influencer" }],
+      })
       .populate(
         "campaignId",
         "title description status campaignMode budgetMin budgetMax campaignType pricePerInfluencer maxInfluencers startDate endDate timelineStart timelineEnd deliverables platforms socialMedia specialInstructions venueName venueAddress venueCity venueDistrict venueState venueGoogleMapUrl productValue productDescription productPaymentMode productPaymentAmount inviteBenefits payToJoinBenefits payToJoinInstructions",
@@ -388,6 +446,31 @@ export class CampaignInvitesService {
       .lean();
 
     // Strip brand contact details from invites that haven't been unlocked yet
+    return invites.map((inv: any) => {
+      if (!inv.unlocked && inv.brandId) {
+        const { email: _e, phoneNumber: _p, ...safeB } = inv.brandId;
+        return { ...inv, brandId: safeB };
+      }
+      return inv;
+    });
+  }
+
+  async findByPhotographer(photographerId: string) {
+    const invites: any[] = await this.inviteModel
+      .find({
+        influencerId: photographerId,
+        recipientRole: "photographer",
+      })
+      .populate(
+        "campaignId",
+        "title description status campaignMode budgetMin budgetMax campaignType pricePerInfluencer maxInfluencers startDate endDate timelineStart timelineEnd deliverables platforms socialMedia specialInstructions venueName venueAddress venueCity venueDistrict venueState venueGoogleMapUrl productValue productDescription productPaymentMode productPaymentAmount inviteBenefits payToJoinBenefits payToJoinInstructions",
+      )
+      .populate(
+        "brandId",
+        "brandName brandUsername brandLogo location categories website email phoneNumber",
+      )
+      .lean();
+
     return invites.map((inv: any) => {
       if (!inv.unlocked && inv.brandId) {
         const { email: _e, phoneNumber: _p, ...safeB } = inv.brandId;
@@ -845,6 +928,14 @@ export class CampaignInvitesService {
       throw new BadRequestException("Invite already responded to");
     }
 
+    const recipientRole = this.normalizeRecipientRole(invite?.recipientRole);
+    const recipient = await this.loadRecipientProfile(recipientRole, influencerId);
+    if (!recipient) {
+      throw new NotFoundException(
+        recipientRole === "photographer" ? "Photographer not found" : "Influencer not found",
+      );
+    }
+
     if (status === "accepted") {
       if (!selectedPostDate) {
         throw new BadRequestException("selectedPostDate is required to accept");
@@ -857,11 +948,14 @@ export class CampaignInvitesService {
         .lean();
       if (!campaign) throw new NotFoundException("Campaign not found");
 
-      const influencer = await this.influencerModel
-        .findById(influencerId)
-        .select("socialMedia")
-        .lean();
-      if (!influencer) throw new NotFoundException("Influencer not found");
+      const influencer = recipientRole === "photographer"
+        ? await this.photographerModel.findById(influencerId).select("socialMedia").lean()
+        : await this.influencerModel.findById(influencerId).select("socialMedia").lean();
+      if (!influencer) {
+        throw new NotFoundException(
+          recipientRole === "photographer" ? "Photographer not found" : "Influencer not found",
+        );
+      }
 
       if (
         campaign?.acceptanceDeadline &&
@@ -892,7 +986,7 @@ export class CampaignInvitesService {
         });
         if (acceptedCount >= acceptanceCloseAt) {
           throw new BadRequestException(
-            `Campaign is closed: required influencer count reached (${acceptanceCloseAt}).`,
+            `Campaign is closed: required recipient count reached (${acceptanceCloseAt}).`,
           );
         }
       }
@@ -925,8 +1019,12 @@ export class CampaignInvitesService {
       invite.acceptedAt = new Date();
 
       const isTierFilteredOpen = String(campaign?.campaignMode || "") === "tier_filtered_open";
-      const lockedPlatform = isTierFilteredOpen ? "" : String(invite.selectedPlatform || "").trim();
+      const recipientCanUsePlatformRules = recipientRole !== "photographer";
+      const lockedPlatform = recipientCanUsePlatformRules && !isTierFilteredOpen
+        ? String(invite.selectedPlatform || "").trim()
+        : "";
       if (
+        recipientCanUsePlatformRules &&
         lockedPlatform &&
         selectedPlatform &&
         normalized(lockedPlatform) !== normalized(selectedPlatform)
@@ -935,9 +1033,11 @@ export class CampaignInvitesService {
           `This invite is locked to ${lockedPlatform}. Please select content from that platform only.`,
         );
       }
-      const effectivePlatform = selectedPlatform || lockedPlatform || undefined;
+      const effectivePlatform = recipientCanUsePlatformRules
+        ? (selectedPlatform || lockedPlatform || undefined)
+        : undefined;
 
-      if (isTierFilteredOpen && effectivePlatform) {
+      if (recipientCanUsePlatformRules && isTierFilteredOpen && effectivePlatform) {
         const TIER_ORDER = [
           "Starter", "Nano", "Micro", "Mid-Tier", "Macro", "Mega / Celebrity",
         ];
@@ -984,6 +1084,7 @@ export class CampaignInvitesService {
       if (effectivePlatform) invite.selectedPlatform = effectivePlatform;
       if (selectedContentType) invite.selectedContentType = selectedContentType;
       if (
+        recipientCanUsePlatformRules &&
         effectivePlatform &&
         selectedContentType &&
         campaign.socialMedia?.length
@@ -1004,7 +1105,7 @@ export class CampaignInvitesService {
       // Persist confirmed payout details on the influencer profile so admin
       // can prefill the payout popup later. Only update fields the influencer
       // actually provided/edited.
-      if (payout && (payout.upiId || payout.mobile || payout.accountHolderName)) {
+      if (recipientRole !== "photographer" && payout && (payout.upiId || payout.mobile || payout.accountHolderName)) {
         const set: any = { "payout.lastConfirmedAt": new Date() };
         const upiId = String(payout.upiId || "").trim();
         const mobile = String(payout.mobile || "").trim();
@@ -1017,7 +1118,7 @@ export class CampaignInvitesService {
             await this.influencerModel.findByIdAndUpdate(influencerId, { $set: set });
           }
         } catch (err) {
-          console.error("Failed to persist influencer payout details:", err);
+          console.error("Failed to persist recipient payout details:", err);
         }
       }
     }
@@ -1028,10 +1129,12 @@ export class CampaignInvitesService {
     // Log acceptance details for observability (platform/content/tier)
     if (status === 'accepted') {
       try {
+        const recipientRole = this.normalizeRecipientRole(invite?.recipientRole);
         const logObj: any = {
           inviteId: invite._id,
           campaignId: invite.campaignId,
           influencerId: invite.influencerId,
+          recipientRole,
           selectedPlatform: invite.selectedPlatform || null,
           selectedContentType: invite.selectedContentType || null,
           agreedAmount: invite.agreedAmount || null,
@@ -1051,16 +1154,16 @@ export class CampaignInvitesService {
           .findById(invite.brandId)
           .select("email brandName")
           .lean();
-        const influencer: any = await this.influencerModel
-          .findById(influencerId)
-          .select("name")
-          .lean();
+        const recipient: any = await this.loadRecipientProfile(
+          recipientRole,
+          influencerId,
+        );
         const campaign: any = await this.campaignModel
           .findById(invite.campaignId)
           .select("title")
           .lean();
         if (brand?.email) {
-          const text = `Hi ${brand.brandName || ""},\n\n${influencer?.name || "An influencer"} has accepted your campaign invite for "${campaign?.title || ""}".\n`;
+          const text = `Hi ${brand.brandName || ""},\n\n${recipient?.name || `A ${recipientRole}`} has accepted your campaign invite for "${campaign?.title || ""}".\n`;
           await sendAppEmail({
             to: brand.email,
             subject: "Campaign Invite Accepted",
@@ -1070,7 +1173,7 @@ export class CampaignInvitesService {
         // Push notification to brand
         this.pushService.sendToUser(String(invite.brandId), {
           title: "Invite Accepted ✅",
-          body: `${influencer?.name || "An influencer"} accepted your invite for "${campaign?.title || "your campaign"}"`,
+          body: `${recipient?.name || `A ${recipientRole}`} accepted your invite for "${campaign?.title || "your campaign"}"`,
           url: "/campaign-management",
         }).catch(() => { /* non-critical */ });
         this.notificationsService
@@ -1078,7 +1181,7 @@ export class CampaignInvitesService {
             userId: String(invite.brandId),
             userRole: "brand",
             title: "Invite Accepted",
-            body: `${influencer?.name || "An influencer"} accepted your invite for "${campaign?.title || "your campaign"}"`,
+            body: `${recipient?.name || `A ${recipientRole}`} accepted your invite for "${campaign?.title || "your campaign"}"`,
             url: "/campaign-management",
           })
           .catch(() => {

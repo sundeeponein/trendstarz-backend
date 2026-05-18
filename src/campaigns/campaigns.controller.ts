@@ -98,6 +98,45 @@ export class CampaignsController {
   }
 
   @UseGuards(JwtAuthGuard)
+  @Post(":id/invite-photographers")
+  async invitePhotographers(
+    @Param("id") id: string,
+    @Req() req: any,
+    @Body() body: { photographerIds: string[] },
+  ) {
+    const brandId = req.user?.userId;
+    const photographerIds = Array.isArray(body?.photographerIds)
+      ? body.photographerIds
+      : [];
+    if (!photographerIds.length) {
+      return { success: true, invites: [], count: 0, failures: [] };
+    }
+    const invites: any[] = [];
+    const failures: { photographerId: string; reason: string }[] = [];
+    for (const photographerId of photographerIds) {
+      try {
+        const invite = await this.campaignInvitesService.create(brandId, {
+          campaignId: id,
+          influencerId: photographerId,
+          recipientRole: "photographer",
+        });
+        invites.push(invite);
+      } catch (err: any) {
+        const reason =
+          err?.response?.message || err?.message || "Failed to send invite";
+        failures.push({ photographerId, reason });
+      }
+    }
+    return {
+      success: invites.length > 0,
+      invites,
+      count: invites.length,
+      failures,
+      requested: photographerIds.length,
+    };
+  }
+
+  @UseGuards(JwtAuthGuard)
   @Delete(":id")
   async remove(@Param("id") id: string, @Req() req: any) {
     const brandId = req.user?.userId;

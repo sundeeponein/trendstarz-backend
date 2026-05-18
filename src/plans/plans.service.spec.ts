@@ -88,6 +88,10 @@ describe("PlansService", () => {
       exists: jest.fn().mockResolvedValue(null),
     };
 
+    const mockPhotographerModel = {
+      exists: jest.fn().mockResolvedValue(null),
+    };
+
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         PlansService,
@@ -98,6 +102,7 @@ describe("PlansService", () => {
         },
         { provide: getModelToken("Influencer"), useValue: mockInfluencerModel },
         { provide: getModelToken("Brand"), useValue: mockBrandModel },
+        { provide: getModelToken("Photographer"), useValue: mockPhotographerModel },
       ],
     }).compile();
 

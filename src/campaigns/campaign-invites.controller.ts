@@ -86,6 +86,13 @@ export class CampaignInvitesController {
   }
 
   @UseGuards(JwtAuthGuard)
+  @Get("photographer")
+  async findByPhotographer(@Req() req: any) {
+    const photographerId = req.user?.userId;
+    return this.invitesService.findByPhotographer(photographerId);
+  }
+
+  @UseGuards(JwtAuthGuard)
   @Post("campaign/:campaignId/apply")
   async applyToCampaign(@Param("campaignId") campaignId: string, @Req() req: any, @Body() body: any) {
     const influencerId = req.user?.userId;
