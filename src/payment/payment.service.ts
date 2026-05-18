@@ -11,6 +11,7 @@ export class PaymentService {
     @InjectModel("Payment") private readonly paymentModel: Model<Payment>,
     @InjectModel("Influencer") private readonly influencerModel: Model<any>,
     @InjectModel("Brand") private readonly brandModel: Model<any>,
+    @InjectModel("Photographer") private readonly photographerModel: Model<any>,
     public readonly plansService: PlansService,
     private readonly notificationsService: NotificationsService,
   ) {}
@@ -51,6 +52,15 @@ export class PaymentService {
     });
     if (brand)
       return { success: true, message: "Premium activated", premiumEnd: end };
+    const photographer = await this.photographerModel.findByIdAndUpdate(
+      userId,
+      update,
+      {
+        new: true,
+      },
+    );
+    if (photographer)
+      return { success: true, message: "Premium activated", premiumEnd: end };
     return { success: false, message: "User not found" };
   }
 
@@ -62,7 +72,7 @@ export class PaymentService {
     amount: number,
     premiumDuration: "1m" | "3m" | "1y",
     paymentMethod: "upi" | "qr" = "upi",
-    userType: "Influencer" | "Brand" = "Influencer",
+    userType: "Influencer" | "Brand" | "Photographer" = "Influencer",
   ) {
     // Check if transaction ID already exists
     const existing = await this.paymentModel.findOne({ transactionId });
@@ -77,8 +87,10 @@ export class PaymentService {
     let user;
     if (userType === "Influencer") {
       user = await this.influencerModel.findById(userId).lean();
-    } else {
+    } else if (userType === "Brand") {
       user = await this.brandModel.findById(userId).lean();
+    } else {
+      user = await this.photographerModel.findById(userId).lean();
     }
     let userSnapshot = {};
     if (user && typeof user === "object" && !Array.isArray(user)) {
@@ -140,9 +152,12 @@ export class PaymentService {
       );
     }
 
-    const userRole = String(payment.userType).toLowerCase() === "brand"
+    const normalizedUserType = String(payment.userType).toLowerCase();
+    const userRole = normalizedUserType === "brand"
       ? "brand"
-      : "influencer";
+      : normalizedUserType === "photographer"
+        ? "photographer"
+        : "influencer";
     this.notificationsService
       .createForUser({
         userId: String(payment.userId),

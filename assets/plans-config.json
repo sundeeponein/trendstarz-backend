@@ -335,6 +335,169 @@
       "highlight": true,
       "isActive": true,
       "sortOrder": 1
+    },
+    {
+      "name": "Photographer Free",
+      "code": "photographer-free",
+      "userType": "PHOTOGRAPHER",
+      "price": {
+        "monthly": 0,
+        "quarterly": 0,
+        "yearly": 0
+      },
+      "features": [
+        {
+          "key": "publicProfileListing",
+          "label": "Public photographer profile",
+          "value": true
+        },
+        {
+          "key": "socialMediaVisibility",
+          "label": "Show social media links",
+          "value": true
+        },
+        {
+          "key": "contactVisibility",
+          "label": "Contact details visible to brands",
+          "value": false
+        },
+        {
+          "key": "priorityListing",
+          "label": "Priority search ranking",
+          "value": false
+        },
+        {
+          "key": "analyticsDashboard",
+          "label": "Analytics dashboard",
+          "value": false
+        },
+        {
+          "key": "canWriteReview",
+          "label": "Write reviews",
+          "value": false
+        },
+        {
+          "key": "canReadReviews",
+          "label": "View influencer & brand reviews",
+          "value": false
+        }
+      ],
+      "limits": [
+        {
+          "key": "maxPortfolioImages",
+          "label": "Portfolio images",
+          "value": 3
+        },
+        {
+          "key": "maxActiveCampaigns",
+          "label": "Active campaign",
+          "value": 1
+        },
+        {
+          "key": "maxInvitesPerCampaign",
+          "label": "Invites / campaign",
+          "value": 2
+        },
+        {
+          "key": "analytics",
+          "label": "Analytics",
+          "value": 0
+        }
+      ],
+      "policies": {
+        "imageRetentionDaysAfterExpiry": 45
+      },
+      "highlight": false,
+      "isActive": true,
+      "sortOrder": 0
+    },
+    {
+      "name": "Photographer Pro",
+      "code": "photographer-pro",
+      "userType": "PHOTOGRAPHER",
+      "price": {
+        "monthly": 399,
+        "quarterly": 1079,
+        "yearly": 3789
+      },
+      "features": [
+        {
+          "key": "publicProfileListing",
+          "label": "Public photographer profile",
+          "value": true
+        },
+        {
+          "key": "socialMediaVisibility",
+          "label": "Show social media links",
+          "value": true
+        },
+        {
+          "key": "contactVisibility",
+          "label": "Contact details visible to brands",
+          "value": true
+        },
+        {
+          "key": "priorityListing",
+          "label": "Priority search ranking",
+          "value": true
+        },
+        {
+          "key": "analyticsDashboard",
+          "label": "Analytics dashboard",
+          "value": true
+        },
+        {
+          "key": "canWriteReview",
+          "label": "Write reviews",
+          "value": true
+        },
+        {
+          "key": "canReadReviews",
+          "label": "View influencer & brand reviews",
+          "value": true
+        }
+      ],
+      "limits": [
+        {
+          "key": "maxPortfolioImages",
+          "label": "Portfolio images",
+          "value": 10
+        },
+        {
+          "key": "maxActiveCampaigns",
+          "label": "Active campaigns",
+          "value": 10
+        },
+        {
+          "key": "maxInvitesPerCampaign",
+          "label": "Invites / campaign",
+          "value": 10
+        },
+        {
+          "key": "analytics",
+          "label": "Analytics",
+          "value": 0
+        }
+      ],
+      "offers": [
+        {
+          "key": "trialPeriodDays",
+          "label": "Trial period (days)",
+          "value": 7
+        },
+        {
+          "key": "discountOnPhotographerPro",
+          "label": "Discount on Photographer Pro plan (%)",
+          "value": 25
+        }
+      ],
+      "discountLabel": "Limited Time Offer",
+      "policies": {
+        "imageRetentionDaysAfterExpiry": 45
+      },
+      "highlight": true,
+      "isActive": true,
+      "sortOrder": 1
     }
   ],
   "commission": {

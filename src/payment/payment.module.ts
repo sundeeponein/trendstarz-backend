@@ -7,6 +7,7 @@ import { PaymentSchema } from "../database/schemas/payment.schema";
 import {
   InfluencerSchema,
   BrandSchema,
+  PhotographerSchema,
 } from "../database/schemas/profile.schemas";
 import { PlansModule } from "../plans/plans.module";
 import { NotificationsModule } from "../notifications/notifications.module";
@@ -17,6 +18,7 @@ import { NotificationsModule } from "../notifications/notifications.module";
       { name: "Payment", schema: PaymentSchema, collection: "payments" },
       { name: "Influencer", schema: InfluencerSchema, collection: "influencers" },
       { name: "Brand", schema: BrandSchema, collection: "brands" },
+      { name: "Photographer", schema: PhotographerSchema, collection: "photographers" },
     ]),
     PlansModule,
     NotificationsModule,

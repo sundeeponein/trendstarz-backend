@@ -122,6 +122,22 @@ export class AuthController {
     }
   }
 
+  @Post("register-photographer")
+  @Throttle({ default: { ttl: 60000, limit: 3 } })
+  async registerPhotographer(@Body() body: any, @Res() res: Response) {
+    try {
+      const result = await this.authService.registerPhotographer(body);
+      return res.status(201).json(result);
+    } catch (err: any) {
+      console.error("Auth registerPhotographer error:", err);
+      const formatted = this.formatRegistrationError(
+        err,
+        "Registration failed",
+      );
+      return res.status(formatted.status).json(formatted.body);
+    }
+  }
+
   @Post("upload-image")
   @UseInterceptors(
     FileInterceptor("file", {

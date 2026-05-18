@@ -4,6 +4,7 @@ import {
   CampaignSchema,
   BrandSchema,
   InfluencerSchema,
+  PhotographerSchema,
   AppSettingsSchema,
 } from "../database/schemas/profile.schemas";
 import { CampaignInviteSchema } from "../database/schemas/campaign-invite.schema";
@@ -41,6 +42,11 @@ import { NotificationsModule } from "../notifications/notifications.module";
         collection: "campaigntransactions",
       },
       { name: "Brand", schema: BrandSchema, collection: "brands" },
+      {
+        name: "Photographer",
+        schema: PhotographerSchema,
+        collection: "photographers",
+      },
       {
         name: "Influencer",
         schema: InfluencerSchema,

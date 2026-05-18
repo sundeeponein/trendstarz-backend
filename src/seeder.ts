@@ -31,6 +31,7 @@ export async function seedDatabase(section?: string) {
   const UserModel = app.get<Model<any>>(getModelToken("User"));
   const InfluencerModel = app.get<Model<any>>(getModelToken("Influencer"));
   const BrandModel = app.get<Model<any>>(getModelToken("Brand"));
+  const PhotographerModel = app.get<Model<any>>(getModelToken("Photographer"));
   // ...existing code...
 
   let sampleUsers: any[] = [];
@@ -50,7 +51,10 @@ export async function seedDatabase(section?: string) {
       for (let i = 0; i < adminConfig.categories.length; i++) {
         const cat = adminConfig.categories[i];
         const role =
-          cat.role === "influencer" || cat.role === "brand" || cat.role === "both"
+          cat.role === "influencer" ||
+          cat.role === "brand" ||
+          cat.role === "photographer" ||
+          cat.role === "both"
             ? cat.role
             : "both";
 
@@ -268,22 +272,51 @@ export async function seedDatabase(section?: string) {
     if (sampleUsers.length > 0) {
       const influencers = sampleUsers.filter((u: any) => u.username);
       const brands = sampleUsers.filter((u: any) => u.brandName);
+      const photographers = sampleUsers.filter(
+        (u: any) =>
+          !u.username &&
+          !u.brandName &&
+          Array.isArray(u.skills),
+      );
       // Avoid duplicate influencer names and hash passwords
       for (const inf of influencers) {
-        const exists = await InfluencerModel.findOne({ email: inf.email });
+        const infOr: any[] = [{ email: inf.email }];
+        if (inf.username) infOr.push({ username: inf.username });
+        const exists = await InfluencerModel.findOne({ $or: infOr });
         if (!exists) {
           const hashed = await bcrypt.hash(inf.password, 10);
           await InfluencerModel.create({ ...inf, password: hashed });
           console.log(`Seeded influencer: ${inf.name}`);
+        } else {
+          console.log(
+            `Skipped influencer (already exists): ${inf.email || inf.username}`,
+          );
         }
       }
       // Avoid duplicate brand names and hash passwords
       for (const brand of brands) {
-        const exists = await BrandModel.findOne({ email: brand.email });
+        const brandOr: any[] = [{ email: brand.email }];
+        if (brand.brandUsername) brandOr.push({ brandUsername: brand.brandUsername });
+        const exists = await BrandModel.findOne({ $or: brandOr });
         if (!exists) {
           const hashed = await bcrypt.hash(brand.password, 10);
           await BrandModel.create({ ...brand, password: hashed });
           console.log(`Seeded brand: ${brand.brandName}`);
+        } else {
+          console.log(
+            `Skipped brand (already exists): ${brand.email || brand.brandUsername}`,
+          );
+        }
+      }
+      // Avoid duplicate photographers and hash passwords
+      for (const photographer of photographers) {
+        const exists = await PhotographerModel.findOne({
+          email: photographer.email,
+        });
+        if (!exists) {
+          const hashed = await bcrypt.hash(photographer.password, 10);
+          await PhotographerModel.create({ ...photographer, password: hashed });
+          console.log(`Seeded photographer: ${photographer.name}`);
         }
       }
     } else {

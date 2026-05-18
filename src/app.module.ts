@@ -15,6 +15,9 @@ import {
   TiersController,
   LanguagesController,
   PublicSupportContactController,
+  EquipmentOptionsController,
+  PricingOptionsController,
+  UserTagOptionsController,
 } from "./public-lists.controller";
 import { MongooseModule } from "@nestjs/mongoose";
 import { ConfigModule } from "@nestjs/config";
@@ -29,6 +32,7 @@ import {
   UserSchema,
   InfluencerSchema,
   BrandSchema,
+  PhotographerSchema,
   TierSchema,
   AppSettingsSchema,
   CampaignSchema,
@@ -52,6 +56,7 @@ import { ReviewsModule } from "./reviews/reviews.module";
 import { PaymentsPayoutsModule } from "./payments-payouts/payments-payouts.module";
 import { PushModule } from "./push/push.module";
 import { NotificationsModule } from "./notifications/notifications.module";
+import { PhotographersModule } from "./photographers/photographers.module";
 
 @Module({
   imports: [
@@ -83,6 +88,11 @@ import { NotificationsModule } from "./notifications/notifications.module";
         collection: "influencers",
       },
       { name: "Brand", schema: BrandSchema, collection: "brands" },
+      {
+        name: "Photographer",
+        schema: PhotographerSchema,
+        collection: "photographers",
+      },
       { name: "Tier", schema: TierSchema, collection: "tiers" },
       {
         name: "AppSettings",
@@ -115,6 +125,7 @@ import { NotificationsModule } from "./notifications/notifications.module";
     PaymentsPayoutsModule,
     PushModule,
     NotificationsModule,
+    PhotographersModule,
   ],
   controllers: [
     AppController,
@@ -126,6 +137,9 @@ import { NotificationsModule } from "./notifications/notifications.module";
     TiersController,
     LanguagesController,
     PublicSupportContactController,
+    EquipmentOptionsController,
+    PricingOptionsController,
+    UserTagOptionsController,
     AuthController,
     HealthController,
     AdminUserTableController,
