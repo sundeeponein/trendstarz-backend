@@ -8,6 +8,7 @@ import {
   Req,
   UseGuards,
 } from "@nestjs/common";
+import { Throttle } from "@nestjs/throttler";
 import { JwtAuthGuard } from "../auth/jwt-auth.guard";
 import { RolesGuard } from "../auth/roles.guard";
 import { PaymentsPayoutsService } from "./payments-payouts.service";
@@ -25,6 +26,7 @@ export class PaymentsPayoutsController {
     return this.paymentsPayoutsService.calculatePayment(campaignId, payerId);
   }
 
+  @Throttle({ default: { ttl: 60000, limit: 5 } }) // max 5 UTR submissions per minute per IP
   @UseGuards(JwtAuthGuard)
   @Post(":campaignId/submit-proof")
   async submitProof(
@@ -104,6 +106,7 @@ export class PaymentsPayoutsController {
   // ── Dispute endpoints ─────────────────────────────────────────────────────
 
   /** Brand or influencer raises a payment dispute → payment is frozen. */
+  @Throttle({ default: { ttl: 60000, limit: 5 } }) // max 5 disputes per minute per IP
   @UseGuards(JwtAuthGuard)
   @Post(":id/raise-dispute")
   async raiseDispute(
