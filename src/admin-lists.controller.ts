@@ -527,6 +527,29 @@ export class AdminListsController {
     });
     return { success: true, data: normalized };
   }
+
+  @Get("photographers")
+  async getAllPhotographers(@Query("status") status?: string) {
+    const filter: any = {};
+    if (status === "deleted") {
+      filter.isDeleted = true;
+    } else if (status) {
+      filter.status = status;
+      filter.isDeleted = { $ne: true };
+    } else {
+      filter.isDeleted = { $ne: true };
+    }
+    const docs = await this.photographerModel.find(filter).lean().limit(200);
+    const now = new Date();
+    const normalized = (docs || []).map((doc: any) => {
+      const hasActivePremium =
+        !!doc?.isPremium &&
+        (!doc?.premiumEnd || new Date(doc.premiumEnd) >= now);
+      return { ...doc, isPremium: hasActivePremium };
+    });
+    return { success: true, data: normalized };
+  }
+
   @Patch("states/:id")
   async patchState(
     @Param("id") id: string,

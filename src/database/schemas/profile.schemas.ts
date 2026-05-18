@@ -602,6 +602,11 @@ export const CampaignSchema = new Schema(
     targetCities: [{ type: String }],
     platformPreference: { type: String },
     specialInstructions: { type: String },
+    // photographer collaboration location fields
+    shootLocationType: { type: String },
+    shootLocationAddress: { type: String },
+    shootLocationMapUrl: { type: String },
+    shootLocationNotes: { type: String },
     // invite_location specific fields
     venueName: { type: String },
     venueAddress: { type: String },
@@ -643,6 +648,12 @@ export const CampaignInviteSchema = new Schema(
       type: Types.ObjectId,
       ref: "Influencer",
       required: true,
+      index: true,
+    },
+    recipientRole: {
+      type: String,
+      enum: ["influencer", "photographer"],
+      default: "influencer",
       index: true,
     },
     status: {

@@ -92,6 +92,10 @@ describe("AuthService", () => {
           provide: getModelToken("Brand"),
           useValue: { ...createMockModel(), constructor: jest.fn() },
         },
+        {
+          provide: getModelToken("Photographer"),
+          useValue: { ...createMockModel(), constructor: jest.fn() },
+        },
         { provide: getModelToken("Category"), useValue: createMockModel() },
         { provide: getModelToken("State"), useValue: createMockModel() },
         { provide: getModelToken("District"), useValue: createMockModel() },
