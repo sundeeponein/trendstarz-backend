@@ -1,6 +1,6 @@
 import { Schema, Types, model } from "mongoose";
 
-export const USER_TYPES = ["INFLUENCER", "BRAND"] as const;
+export const USER_TYPES = ["INFLUENCER", "BRAND", "PHOTOGRAPHER"] as const;
 export const BILLING_CYCLES = ["monthly", "quarterly", "yearly"] as const;
 
 // ── Feature toggle (boolean) ────────────────────────────────────────────────
@@ -206,6 +206,54 @@ export const FREE_PLAN_DEFAULTS = {
       { key: "maxActiveCampaigns", label: "Active campaign", value: 1 },
       { key: "maxInvitesPerCampaign", label: "Invites / campaign", value: 1 },
       { key: "maxTeamSeats", label: "Team seats", value: 1 },
+      { key: "analytics", label: "Analytics", value: 0 },
+    ],
+    policies: {
+      imageRetentionDaysAfterExpiry: 45,
+    },
+  },
+  PHOTOGRAPHER: {
+    features: [
+      {
+        key: "publicProfileListing",
+        label: "Public photographer profile",
+        value: true,
+      },
+      {
+        key: "socialMediaVisibility",
+        label: "Show social media links",
+        value: true,
+      },
+      {
+        key: "contactVisibility",
+        label: "Contact details visible to brands",
+        value: false,
+      },
+      {
+        key: "priorityListing",
+        label: "Priority search ranking",
+        value: false,
+      },
+      {
+        key: "analyticsDashboard",
+        label: "Analytics dashboard",
+        value: false,
+      },
+      {
+        key: "canWriteReview",
+        label: "Write reviews",
+        value: false,
+      },
+      {
+        key: "canReadReviews",
+        label: "View influencer & brand reviews",
+        value: false,
+      },
+    ],
+    limits: [
+      { key: "maxPortfolioImages", label: "Portfolio images", value: 3 },
+      { key: "maxActiveCampaigns", label: "Active campaign", value: 1 },
+      { key: "maxInvitesPerCampaign", label: "Invites / campaign", value: 2 },
       { key: "analytics", label: "Analytics", value: 0 },
     ],
     policies: {

@@ -48,12 +48,13 @@ export class AuthService {
   private async findAnyUserByEmail(email: string): Promise<AnyUserDoc | null> {
     // Parallel queries — eliminates sequential round-trips and prevents
     // timing-based user-enumeration across collections.
-    const [adminUser, influencer, brand] = await Promise.all([
+    const [adminUser, influencer, brand, photographer] = await Promise.all([
       this.userModel.findOne({ email }),
       this.influencerModel.findOne({ email }),
       this.brandModel.findOne({ email }),
+      this.photographerModel.findOne({ email }),
     ]);
-    return adminUser || influencer || brand || null;
+    return adminUser || influencer || brand || photographer || null;
   }
 
   async sendEmailVerificationLink(email: string) {
@@ -124,13 +125,14 @@ export class AuthService {
     const normalizedEmail = String(decoded.email).toLowerCase();
 
     // Parallel lookup — we need to know the user TYPE to apply the correct pre-approve setting.
-    const [adminUser, influencer, brand] = await Promise.all([
+    const [adminUser, influencer, brand, photographer] = await Promise.all([
       this.userModel.findOne({ email: normalizedEmail }),
       this.influencerModel.findOne({ email: normalizedEmail }),
       this.brandModel.findOne({ email: normalizedEmail }),
+      this.photographerModel.findOne({ email: normalizedEmail }),
     ]);
 
-    const user = adminUser || influencer || brand;
+    const user = adminUser || influencer || brand || photographer;
     if (!user) {
       throw new BadRequestException("User not found for verification token");
     }
@@ -171,6 +173,16 @@ export class AuthService {
           brand.status = "accepted";
           autoApproved = true;
         }
+      } else if (photographer && !adminUser) {
+        // Photographers auto-approve on email verification if preApproveInfluencers is enabled
+        // (reuse the influencer approval setting as a shared "creator" toggle)
+        const settings = (await this.appSettingsModel
+          .findOne({})
+          .lean()) as any;
+        if (settings?.preApproveInfluencers && photographer.status === "pending") {
+          photographer.status = "accepted";
+          autoApproved = true;
+        }
       }
 
       await user.save();
@@ -193,7 +205,8 @@ export class AuthService {
     const user =
       (await this.userModel.findOne({ email })) ||
       (await this.influencerModel.findOne({ email })) ||
-      (await this.brandModel.findOne({ email }));
+      (await this.brandModel.findOne({ email })) ||
+      (await this.photographerModel.findOne({ email }));
     if (!user) {
       throw new Error("Email not found. Please enter a registered email.");
     }
@@ -227,7 +240,7 @@ export class AuthService {
     const now = Date.now();
 
     // Parallel lookup across collections.
-    const [adminUser, influencer, brand] = await Promise.all([
+    const [adminUser, influencer, brand, photographer] = await Promise.all([
       this.userModel.findOne({
         resetToken: tokenHash,
         resetTokenExpires: { $gt: now },
@@ -240,8 +253,12 @@ export class AuthService {
         resetToken: tokenHash,
         resetTokenExpires: { $gt: now },
       }),
+      this.photographerModel.findOne({
+        resetToken: tokenHash,
+        resetTokenExpires: { $gt: now },
+      }),
     ]);
-    const user = adminUser || influencer || brand;
+    const user = adminUser || influencer || brand || photographer;
 
     if (!user) {
       throw new BadRequestException("Invalid or expired reset token");
@@ -290,13 +307,16 @@ export class AuthService {
       user = await this.influencerModel.findById(userId);
     } else if (normalizedRole === "brand") {
       user = await this.brandModel.findById(userId);
+    } else if (normalizedRole === "photographer") {
+      user = await this.photographerModel.findById(userId);
     } else {
-      const [adminUser, influencer, brand] = await Promise.all([
+      const [adminUser, influencer, brand, photographer] = await Promise.all([
         this.userModel.findById(userId),
         this.influencerModel.findById(userId),
         this.brandModel.findById(userId),
+        this.photographerModel.findById(userId),
       ]);
-      user = adminUser || influencer || brand;
+      user = adminUser || influencer || brand || photographer;
     }
 
     if (!user || !user.password) {
@@ -318,6 +338,7 @@ export class AuthService {
     @InjectModel("User") private readonly userModel: Model<any>,
     @InjectModel("Influencer") private readonly influencerModel: Model<any>,
     @InjectModel("Brand") private readonly brandModel: Model<any>,
+    @InjectModel("Photographer") private readonly photographerModel: Model<any>,
     @InjectModel("Category") private readonly categoryModel: Model<any>,
     @InjectModel("State") private readonly stateModel: Model<any>,
     @InjectModel("District") private readonly districtModel: Model<any>,
@@ -399,17 +420,18 @@ export class AuthService {
   async login(email: string, password: string) {
     const normalizedEmail = (email || "").trim().toLowerCase();
 
-    // Fetch all three collections in parallel to eliminate sequential DB round-trips
+    // Fetch all collections in parallel to eliminate sequential DB round-trips
     // and prevent timing-based enumeration of which collection a user belongs to.
-    const [adminUser, influencer, brandRaw] = await Promise.all([
+    const [adminUser, influencer, brandRaw, photographer] = await Promise.all([
       this.userModel.findOne({ email: normalizedEmail, role: "admin" }),
       this.influencerModel.findOne({ email: normalizedEmail }),
       this.brandModel.findOne({ email: normalizedEmail }),
+      this.photographerModel.findOne({ email: normalizedEmail }),
     ]);
 
     // If user is a brand but no brand profile exists, auto-create a minimal profile
     let brand = brandRaw;
-    if (!brand && !adminUser && !influencer) {
+    if (!brand && !adminUser && !influencer && !photographer) {
       // Create minimal brand profile
       const minimalBrand = new this.brandModel({
         brandName: normalizedEmail.split("@")[0] || "Brand",
@@ -533,6 +555,44 @@ export class AuthService {
       };
     }
 
+    if (photographer) {
+      const isMatch = await bcrypt.compare(password, photographer.password);
+      if (!isMatch) throw new UnauthorizedException("Invalid credentials");
+      if (photographer.isDeleted === true || photographer.isDeleted === "true") {
+        throw new UnauthorizedException(
+          "Your account has been deleted. Please contact support.",
+        );
+      }
+      if (photographer.status === "pending") {
+        throw new UnauthorizedException(
+          "Your account is pending approval. Please wait for admin to activate your account.",
+        );
+      }
+      const profileImageUrl =
+        Array.isArray(photographer.profileImages) &&
+        photographer.profileImages.length > 0 &&
+        photographer.profileImages[0].url
+          ? photographer.profileImages[0].url
+          : null;
+
+      const token = jwt.sign(
+        { userId: photographer._id, email: photographer.email, role: "photographer" },
+        getJwtSecret(),
+        { expiresIn: "7d" },
+      );
+      return {
+        token,
+        userType: "photographer",
+        user: {
+          id: photographer._id,
+          name: photographer.name || "",
+          email: photographer.email,
+          role: "photographer",
+          profileImage: profileImageUrl,
+        },
+      };
+    }
+
     throw new UnauthorizedException("Invalid credentials");
   }
 
@@ -611,7 +671,7 @@ export class AuthService {
     const normalizedProfileImages = Array.isArray(data.profileImages)
       ? data.profileImages
           .filter((img: any) => img?.url && img?.public_id)
-          .slice(0, 1)
+          .slice(0, 10)
       : [];
 
     const signupAttribution = {
@@ -815,6 +875,142 @@ export class AuthService {
       console.error("Failed to send brand verification email:", verifyMailErr);
     }
     return { success: true, message: "Brand registered", brand: savedBrand };
+  }
+
+  async registerPhotographer(data: any) {
+    if (!data.password || data.password.length < 8) {
+      throw new BadRequestException("Password must be at least 8 characters.");
+    }
+    if (data.confirmPassword && data.password !== data.confirmPassword) {
+      throw new BadRequestException("Passwords do not match.");
+    }
+    this.validatePasswordStrength(data.password);
+
+    const normalizedEmail = data.email
+      ? String(data.email).trim().toLowerCase()
+      : null;
+    const normalizedPhone = data.phoneNumber
+      ? String(data.phoneNumber).trim()
+      : null;
+    const emailRegex = normalizedEmail
+      ? new RegExp(
+          `^${normalizedEmail.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`,
+          "i",
+        )
+      : null;
+
+    // Check email/phone uniqueness across all roles
+    const [
+      existingEmailPhotographer,
+      existingEmailInfluencer,
+      existingEmailBrand,
+      existingEmailAdmin,
+      existingPhonePhotographer,
+      existingPhoneInfluencer,
+      existingPhoneBrand,
+    ] = await Promise.all([
+      emailRegex ? this.photographerModel.findOne({ email: emailRegex }) : null,
+      emailRegex ? this.influencerModel.findOne({ email: emailRegex }) : null,
+      emailRegex ? this.brandModel.findOne({ email: emailRegex }) : null,
+      emailRegex ? this.userModel.findOne({ email: emailRegex }) : null,
+      normalizedPhone
+        ? this.photographerModel.findOne({ phoneNumber: normalizedPhone })
+        : null,
+      normalizedPhone
+        ? this.influencerModel.findOne({ phoneNumber: normalizedPhone })
+        : null,
+      normalizedPhone
+        ? this.brandModel.findOne({ phoneNumber: normalizedPhone })
+        : null,
+    ]);
+
+    const duplicateFields: string[] = [];
+    if (
+      existingEmailPhotographer ||
+      existingEmailInfluencer ||
+      existingEmailBrand ||
+      existingEmailAdmin
+    )
+      duplicateFields.push("email");
+    if (
+      existingPhonePhotographer ||
+      existingPhoneInfluencer ||
+      existingPhoneBrand
+    )
+      duplicateFields.push("phoneNumber");
+
+    if (duplicateFields.length) {
+      throw new BadRequestException({
+        message: "Some fields already exist",
+        duplicateFields,
+      });
+    }
+
+    // Resolve state/district IDs to names if IDs were provided
+    const stateId =
+      data?.location?.state && this.isObjectId(data.location.state)
+        ? data.location.state
+        : null;
+    const districtId =
+      data?.location?.district && this.isObjectId(data.location.district)
+        ? data.location.district
+        : null;
+    const [stateDoc, districtDoc] = await Promise.all([
+      stateId ? this.stateModel.findById(stateId).lean() : null,
+      districtId ? this.districtModel.findById(districtId).lean() : null,
+    ]);
+    const stateName = stateDoc
+      ? (stateDoc as any).name
+      : data?.location?.state || "";
+    const districtName = districtDoc
+      ? (districtDoc as any).name
+      : data?.location?.district || "";
+
+    const hashedPassword = await bcrypt.hash(data.password, 10);
+    const normalizedProfileImages = Array.isArray(data.profileImages)
+      ? data.profileImages
+          .filter((img: any) => img?.url && img?.public_id)
+          .slice(0, 1)
+      : [];
+
+    const signupAttribution = {
+      source:
+        data?.signupAttribution?.source ||
+        data?.source ||
+        data?.utm_source ||
+        null,
+      audience: data?.signupAttribution?.audience || data?.audience || null,
+      referrerPath:
+        data?.signupAttribution?.referrerPath || data?.referrerPath || null,
+      capturedAt: new Date(),
+    };
+
+    const photographer = new this.photographerModel({
+      ...data,
+      email: normalizedEmail || data.email,
+      phoneNumber: normalizedPhone || data.phoneNumber,
+      password: hashedPassword,
+      location: { state: stateName, district: districtName },
+      profileImages: normalizedProfileImages,
+      signupAttribution,
+    });
+
+    try {
+      const saved = await photographer.save();
+      void this.sendEmailVerificationLink(saved.email).catch((verifyMailErr) => {
+        console.error(
+          "Failed to send photographer verification email:",
+          verifyMailErr,
+        );
+      });
+      return { success: true, message: "Photographer registered", photographer: saved };
+    } catch (err) {
+      const error = err instanceof Error ? err : new Error(String(err));
+      console.error("Photographer save error:", err);
+      throw new BadRequestException(
+        "Failed to save photographer: " + error.message,
+      );
+    }
   }
 
   async getPublicSettings() {

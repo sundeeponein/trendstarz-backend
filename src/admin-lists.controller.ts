@@ -32,12 +32,60 @@ interface BatchVisibilityBody {
   languages?: VisibilityItem[];
   states?: VisibilityItem[];
   districts?: VisibilityItem[];
+  userTags?: {
+    influencer?: Array<{ name: string; visible: boolean }>;
+    brand?: Array<{ name: string; visible: boolean }>;
+    photographer?: Array<{ name: string; visible: boolean }>;
+    commission?: Array<{ name: string; visible: boolean }>;
+  };
 }
 
 @Controller("admin")
 @UseGuards(JwtAuthGuard, RolesGuard)
 export class AdminListsController {
   private plansConfig: any = null;
+
+  private getAdminConfigPath(): string {
+    let configPath = path.join(__dirname, "../assets/admin-config.json");
+    if (!fs.existsSync(configPath)) {
+      configPath = path.join(process.cwd(), "assets/admin-config.json");
+    }
+    return configPath;
+  }
+
+  private readAdminConfig(): any {
+    const configPath = this.getAdminConfigPath();
+    if (!fs.existsSync(configPath)) {
+      return {};
+    }
+    const raw = fs.readFileSync(configPath, "utf-8");
+    return JSON.parse(raw || "{}");
+  }
+
+  private writeAdminConfig(nextConfig: any): void {
+    const configPath = this.getAdminConfigPath();
+    fs.writeFileSync(configPath, JSON.stringify(nextConfig || {}, null, 2), "utf-8");
+  }
+
+  private normalizeUserTagList(list: unknown): Array<{ name: string; visible: boolean }> {
+    if (!Array.isArray(list)) return [];
+    return list
+      .map((item: any) => {
+        if (typeof item === "string") {
+          const name = item.trim();
+          return name ? { name, visible: true } : null;
+        }
+        if (item && typeof item === "object") {
+          const name = String(item.name || "").trim();
+          if (!name) return null;
+          return { name, visible: item.visible !== false };
+        }
+        return null;
+      })
+      .filter(
+        (item): item is { name: string; visible: boolean } => !!item,
+      );
+  }
 
   constructor(
     @InjectModel("Tier") private readonly tierModel: Model<any>,
@@ -48,6 +96,7 @@ export class AdminListsController {
     @InjectModel("Language") private readonly languageModel: Model<any>,
     @InjectModel("Influencer") private readonly influencerModel: Model<any>,
     @InjectModel("Brand") private readonly brandModel: Model<any>,
+    @InjectModel("Photographer") private readonly photographerModel: Model<any>,
     @InjectModel("Campaign") private readonly campaignModel: Model<any>,
     @InjectModel("CampaignInvite")
     private readonly campaignInviteModel: Model<any>,
@@ -104,6 +153,7 @@ export class AdminListsController {
       brandRequireEmailVerified: true,
       brandRequireMobileVerified: false,
       campaignApprovalMode: "manual",
+      collaborationApprovalMode: "manual",
       platformFeeEnabled: false,
       platformFeePercent: commissionDefaults.platformFeePercent,
       gstPercent: commissionDefaults.gstPercent,
@@ -142,6 +192,15 @@ export class AdminListsController {
       }
       next.campaignApprovalMode = mode;
     }
+    if (next.collaborationApprovalMode !== undefined) {
+      const mode = String(next.collaborationApprovalMode || "").trim();
+      if (!["manual", "auto_live"].includes(mode)) {
+        throw new BadRequestException(
+          "collaborationApprovalMode must be manual or auto_live",
+        );
+      }
+      next.collaborationApprovalMode = mode;
+    }
     if (next.earlyAccessAssignmentMode !== undefined) {
       const mode = String(next.earlyAccessAssignmentMode || "").trim();
       if (!["manual", "auto"].includes(mode)) {
@@ -159,7 +218,10 @@ export class AdminListsController {
   }
 
   @Get("campaigns")
-  async getCampaignsForApproval(@Query("status") status?: string) {
+  async getCampaignsForApproval(
+    @Query("status") status?: string,
+    @Query("ownerType") ownerType?: string,
+  ) {
     const normalized = String(status || "pending_review")
       .trim()
       .toLowerCase();
@@ -177,6 +239,13 @@ export class AdminListsController {
     const filter: any = {};
     if (allowed.has(normalized) && normalized !== "all") {
       filter.status = normalized;
+    }
+
+    const normalizedOwnerType = String(ownerType || "")
+      .trim()
+      .toLowerCase();
+    if (["brand", "photographer"].includes(normalizedOwnerType)) {
+      filter.ownerType = normalizedOwnerType;
     }
 
     const campaigns = await this.campaignModel
@@ -226,7 +295,20 @@ export class AdminListsController {
 
     const brandIds = Array.from(
       new Set(
-        campaigns.map((c: any) => String(c.brandId || "")).filter(Boolean),
+        campaigns
+          .filter((c: any) => String(c?.ownerType || "brand") === "brand")
+          .map((c: any) => String(c.brandId || ""))
+          .filter(Boolean),
+      ),
+    );
+    const photographerIds = Array.from(
+      new Set(
+        campaigns
+          .filter(
+            (c: any) => String(c?.ownerType || "").toLowerCase() === "photographer",
+          )
+          .map((c: any) => String(c.brandId || ""))
+          .filter(Boolean),
       ),
     );
     const brands = await this.brandModel
@@ -234,26 +316,55 @@ export class AdminListsController {
       .select("brandName brandUsername email verifiedByTrendStarz")
       .lean();
     const brandMap = new Map(brands.map((b: any) => [String(b._id), b]));
+    const photographers = await this.photographerModel
+      .find({ _id: { $in: photographerIds } })
+      .select("name email profileImage profileImages verifiedByTrendStarz")
+      .lean();
+    const photographerMap = new Map(
+      photographers.map((p: any) => [String(p._id), p]),
+    );
 
     const rows = campaigns.map((campaign: any) => {
-      const brand = brandMap.get(String(campaign.brandId));
+      const isPhotographerOwner =
+        String(campaign?.ownerType || "").toLowerCase() === "photographer";
+      const brand = isPhotographerOwner
+        ? null
+        : brandMap.get(String(campaign.brandId));
+      const photographer = isPhotographerOwner
+        ? photographerMap.get(String(campaign.brandId))
+        : null;
       const stats = inviteStatsByCampaign.get(String(campaign._id)) || {
         inviteCount: 0,
         hasInfluencerProgress: false,
       };
       return {
         ...campaign,
+        ownerType: isPhotographerOwner ? "photographer" : "brand",
         inviteCount: stats.inviteCount,
         hasInfluencerProgress: stats.hasInfluencerProgress,
-        brand: brand
-          ? {
-              _id: brand._id,
-              brandName: brand.brandName,
-              brandUsername: brand.brandUsername,
-              email: brand.email,
-              verifiedByTrendStarz: !!brand.verifiedByTrendStarz,
-            }
-          : null,
+        brand: isPhotographerOwner
+          ? photographer
+            ? {
+                _id: photographer._id,
+                brandName: photographer.name,
+                brandUsername: null,
+                email: photographer.email,
+                verifiedByTrendStarz: !!photographer.verifiedByTrendStarz,
+                profileImage:
+                  photographer.profileImage ||
+                  photographer.profileImages?.[0]?.url ||
+                  null,
+              }
+            : null
+          : brand
+            ? {
+                _id: brand._id,
+                brandName: brand.brandName,
+                brandUsername: brand.brandUsername,
+                email: brand.email,
+                verifiedByTrendStarz: !!brand.verifiedByTrendStarz,
+              }
+            : null,
       };
     });
 
@@ -457,7 +568,7 @@ export class AdminListsController {
   // Categories
   @Get("categories")
   async getCategories(@Query("role") role?: string) {
-    const normalizedRole = ["influencer", "brand", "both"].includes(
+    const normalizedRole = ["influencer", "brand", "photographer", "both"].includes(
       String(role || "").toLowerCase(),
     )
       ? String(role).toLowerCase()
@@ -480,7 +591,7 @@ export class AdminListsController {
   }
   @Post("categories")
   async addCategory(
-    @Body() body: { name: string; role?: "influencer" | "brand" | "both" },
+    @Body() body: { name: string; role?: "influencer" | "brand" | "photographer" | "both" },
   ) {
     return this.categoryModel.create(body);
   }
@@ -682,12 +793,45 @@ export class AdminListsController {
           }
         }
       }
+      if (body.userTags) {
+        const currentConfig = this.readAdminConfig();
+        const nextUserTags = {
+          influencer: this.normalizeUserTagList(
+            body.userTags.influencer ?? currentConfig?.userTags?.influencer,
+          ),
+          brand: this.normalizeUserTagList(
+            body.userTags.brand ?? currentConfig?.userTags?.brand,
+          ),
+          photographer: this.normalizeUserTagList(
+            body.userTags.photographer ?? currentConfig?.userTags?.photographer,
+          ),
+          commission: this.normalizeUserTagList(
+            body.userTags.commission ?? currentConfig?.userTags?.commission,
+          ),
+        };
+        this.writeAdminConfig({
+          ...currentConfig,
+          userTags: nextUserTags,
+        });
+      }
       return { message: "Visibility updated" };
     } catch (err: unknown) {
       const message =
         err instanceof Error ? err.message : "Error updating visibility";
       throw new BadRequestException(message);
     }
+  }
+
+  @Get("user-tags-config")
+  async getUserTagsConfig() {
+    const config = this.readAdminConfig();
+    const userTags = config?.userTags || {};
+    return {
+      influencer: this.normalizeUserTagList(userTags.influencer),
+      brand: this.normalizeUserTagList(userTags.brand),
+      photographer: this.normalizeUserTagList(userTags.photographer),
+      commission: this.normalizeUserTagList(userTags.commission),
+    };
   }
 
   // ============ Commission Override Management ============

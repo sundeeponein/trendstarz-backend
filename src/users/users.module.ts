@@ -9,6 +9,7 @@ import {
   UserSchema,
   InfluencerSchema,
   BrandSchema,
+  PhotographerSchema,
 } from "../database/schemas/profile.schemas";
 import { CampaignInviteSchema } from "../database/schemas/campaign-invite.schema";
 import { PlansModule } from "../plans/plans.module";
@@ -23,6 +24,11 @@ import { PlansModule } from "../plans/plans.module";
         collection: "influencers",
       },
       { name: "Brand", schema: BrandSchema, collection: "brands" },
+      {
+        name: "Photographer",
+        schema: PhotographerSchema,
+        collection: "photographers",
+      },
       {
         name: "CampaignInvite",
         schema: CampaignInviteSchema,

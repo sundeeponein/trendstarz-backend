@@ -24,16 +24,24 @@ export class CampaignsService {
   constructor(
     @InjectModel("Campaign") private readonly campaignModel: Model<any>,
     @InjectModel("Brand") private readonly brandModel: Model<any>,
+    @InjectModel("Photographer") private readonly photographerModel: Model<any>,
     @InjectModel("Influencer") private readonly influencerModel: Model<any>,
     @InjectModel("AppSettings") private readonly appSettingsModel: Model<any>,
     private readonly plansService: PlansService,
   ) {}
 
-  private async resolveInitialCampaignStatus(status: unknown): Promise<string> {
+  private async resolveInitialCampaignStatus(
+    status: unknown,
+    ownerType: "brand" | "photographer" = "brand",
+  ): Promise<string> {
     const requested = String(status || "").trim().toLowerCase();
     const settings = await this.appSettingsModel.findOne({}).lean().exec();
     const settingsDoc = Array.isArray(settings) ? settings[0] : settings;
-    const mode = String(settingsDoc?.campaignApprovalMode || "manual").toLowerCase();
+    const modeField =
+      ownerType === "photographer"
+        ? "collaborationApprovalMode"
+        : "campaignApprovalMode";
+    const mode = String(settingsDoc?.[modeField] || "manual").toLowerCase();
 
     if (requested === "draft") return "draft";
 
@@ -202,8 +210,9 @@ export class CampaignsService {
 
   async create(brandId: string, data: any) {
     this.assertCampaignModeAvailability(data);
-    // Enforce campaign creation limit for brands (admin-manageable)
+    // Enforce creation limit for owners (brand/photographer)
     let brand = await this.brandModel.findById(brandId).lean();
+    let ownerType: "brand" | "photographer" = "brand";
     // If brand profile is missing, auto-create a minimal profile with valid dummy values
     if (
       !brand &&
@@ -230,7 +239,11 @@ export class CampaignsService {
         );
       }
     }
-    if (!brand) throw new NotFoundException("Brand not found");
+    if (!brand) {
+      const photographer = await this.photographerModel.findById(brandId).lean();
+      if (!photographer) throw new NotFoundException("Owner profile not found");
+      ownerType = "photographer";
+    }
     // Lazy load PlansService to avoid circular dep
     const caps = await this.plansService.getUserPlanCapabilities(brandId);
     const maxCampaigns =
@@ -245,7 +258,7 @@ export class CampaignsService {
         `Plan limit: Only ${maxCampaigns} active campaign(s) allowed. Upgrade for more.`,
       );
     }
-    // Premium-only campaign types: Product & Invite (Free brands can only run Paid)
+    // Premium-only collaboration types: Product & Invite
     const premiumOnlyTypes = new Set(["product", "invite_location"]);
     if (
       data?.campaignType &&
@@ -253,11 +266,14 @@ export class CampaignsService {
       !caps.hasPremium
     ) {
       throw new BadRequestException(
-        "Product & Invite campaigns require a Premium plan. Upgrade to unlock these collaboration types.",
+        "Product & Invite opportunities require a Premium plan. Upgrade to unlock these collaboration types.",
       );
     }
     const normalized = this.normalizeCampaignPayload(data);
-    normalized.status = await this.resolveInitialCampaignStatus(data?.status);
+    normalized.status = await this.resolveInitialCampaignStatus(
+      data?.status,
+      ownerType,
+    );
     const campaign = new this.campaignModel({ ...normalized, brandId });
     return await campaign.save();
   }
@@ -273,6 +289,12 @@ export class CampaignsService {
       .findById(brandId)
       .select("brandName brandUsername brandLogo")
       .lean();
+    const photographer: any = !brand
+      ? await this.photographerModel
+          .findById(brandId)
+          .select("name profileImages")
+          .lean()
+      : null;
     const brandInfo = brand
       ? {
           _id: brand._id,
@@ -280,6 +302,13 @@ export class CampaignsService {
           username: brand.brandUsername,
           logo: brand.brandLogo?.[0]?.url || null,
         }
+      : photographer
+        ? {
+            _id: photographer._id,
+            name: photographer.name,
+            username: null,
+            logo: photographer.profileImages?.[0]?.url || null,
+          }
       : null;
 
     return results.map((c: any) => ({ ...c, brand: brandInfo }));
@@ -369,10 +398,18 @@ export class CampaignsService {
       .find({ _id: { $in: brandIds } })
       .select("brandName brandUsername brandLogo")
       .lean();
+    const photographers: any[] = await this.photographerModel
+      .find({ _id: { $in: brandIds } })
+      .select("name profileImages")
+      .lean();
     const brandMap = new Map(brands.map((b) => [String(b._id), b]));
+    const photographerMap = new Map(
+      photographers.map((p) => [String(p._id), p]),
+    );
 
     return visible.map((c) => {
       const brand = brandMap.get(String(c.brandId));
+      const photographer = photographerMap.get(String(c.brandId));
       return {
         ...c,
         brand: brand
@@ -382,6 +419,13 @@ export class CampaignsService {
               username: brand.brandUsername,
               logo: brand.brandLogo?.[0]?.url || null,
             }
+          : photographer
+            ? {
+                _id: photographer._id,
+                name: photographer.name,
+                username: null,
+                logo: photographer.profileImages?.[0]?.url || null,
+              }
           : null,
       };
     });

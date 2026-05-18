@@ -5,13 +5,13 @@ export const ReviewSchema = new Schema(
     reviewerId: { type: String, required: true },
     reviewerType: {
       type: String,
-      enum: ["brand", "influencer"],
+      enum: ["brand", "influencer", "photographer"],
       required: true,
     },
     targetId: { type: String, required: true },
     targetType: {
       type: String,
-      enum: ["brand", "influencer"],
+      enum: ["brand", "influencer", "photographer"],
       required: true,
     },
     campaignId: { type: String, required: true },

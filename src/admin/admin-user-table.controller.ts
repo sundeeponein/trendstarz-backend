@@ -30,6 +30,7 @@ export class AdminUserTableController {
   constructor(
     @InjectModel("Influencer") private readonly influencerModel: Model<any>,
     @InjectModel("Brand") private readonly brandModel: Model<any>,
+    @InjectModel("Photographer") private readonly photographerModel: Model<any>,
     @InjectModel("Payment") private readonly paymentModel: Model<Payment>,
     private readonly earlyAccessAssignmentService: EarlyAccessAssignmentService,
   ) {}
@@ -61,8 +62,15 @@ export class AdminUserTableController {
     ];
   }
 
-  private getEarlyAccessConfig(userType: "influencer" | "brand") {
+  private getEarlyAccessConfig(userType: "influencer" | "brand" | "photographer") {
     if (userType === "influencer") {
+      return {
+        cap: 50,
+        badge: "early_access_creator",
+        note: "Auto-assigned Early Access Creator (0% for 30 days)",
+      };
+    }
+    if (userType === "photographer") {
       return {
         cap: 50,
         badge: "early_access_creator",
@@ -132,12 +140,16 @@ export class AdminUserTableController {
   }
 
   private async getActiveEarlyAccessCount(
-    userType: "influencer" | "brand",
+    userType: "influencer" | "brand" | "photographer",
     badge: string,
     excludeUserId?: string,
   ): Promise<number> {
     const model =
-      userType === "influencer" ? this.influencerModel : this.brandModel;
+      userType === "influencer"
+        ? this.influencerModel
+        : userType === "brand"
+          ? this.brandModel
+          : this.photographerModel;
     const now = new Date();
     const filter: Record<string, any> = {
       status: "accepted",
@@ -231,6 +243,38 @@ export class AdminUserTableController {
     return brands;
   }
 
+  @Get("photographers")
+  async getPhotographers(
+    @Query("status") status?: string,
+    @Query("q") q?: string,
+    @Query("category") category?: string,
+  ) {
+    const filter: any = {};
+    if (status === "deleted") {
+      filter.isDeleted = { $in: [true, "true"] };
+    } else {
+      filter.isDeleted = { $nin: [true, "true"] };
+    }
+    if (q) filter.q = q;
+    if (category) filter.skills = category;
+
+    const photographers = await this.photographerModel
+      .find(filter)
+      .lean()
+      .limit(100);
+
+    await Promise.all(
+      photographers.map(async (p: any) => {
+        (p as any).latestPayment = await this.paymentModel
+          .findOne({ userId: p._id, status: "approved" })
+          .sort({ approvedAt: -1 })
+          .lean();
+      }),
+    );
+
+    return photographers;
+  }
+
   @Patch("users/:type/:id/tags")
   async patchUserTags(
     @Param("type") type: string,
@@ -242,13 +286,21 @@ export class AdminUserTableController {
     let adminTags = this.keepSingleCommissionTag(
       this.normalizeAdminTags(body?.adminTags),
     );
-    if (normalizedType !== "influencer" && normalizedType !== "brand") {
+    if (
+      normalizedType !== "influencer" &&
+      normalizedType !== "brand" &&
+      normalizedType !== "photographer"
+    ) {
       return { message: "Unsupported user type", type, id };
     }
 
-    const userType = normalizedType;
+    const userType = normalizedType as "influencer" | "brand" | "photographer";
     const model =
-      userType === "influencer" ? this.influencerModel : this.brandModel;
+      userType === "influencer"
+        ? this.influencerModel
+        : userType === "brand"
+          ? this.brandModel
+          : this.photographerModel;
     const currentUser: any = await model.findById(id).lean();
     if (!currentUser) {
       return { message: "User not found", type, id };
@@ -294,9 +346,9 @@ export class AdminUserTableController {
           adminTags = adminTags.filter((tag) => tag !== this.earlyAccessTag);
           updateSet.adminTags = adminTags;
           warnings.push(
-            userType === "influencer"
-              ? "Early Access cap reached (50 approved influencers)."
-              : "Early Access cap reached (20 approved brands).",
+            userType === "brand"
+              ? "Early Access cap reached (20 approved brands)."
+              : "Early Access cap reached (50 approved creators).",
           );
         } else {
           updateSet.commissionBadge = earlyAccessConfig.badge;
@@ -436,14 +488,20 @@ export class AdminUserTableController {
     },
   ) {
     const normalizedType = String(type || "").toLowerCase();
-    if (normalizedType !== "influencer" && normalizedType !== "brand") {
+    if (
+      normalizedType !== "influencer" &&
+      normalizedType !== "brand" &&
+      normalizedType !== "photographer"
+    ) {
       return { message: "Unsupported user type", type, id };
     }
 
     const user =
       normalizedType === "influencer"
         ? await this.influencerModel.findById(id)
-        : await this.brandModel.findById(id);
+        : normalizedType === "brand"
+          ? await this.brandModel.findById(id)
+          : await this.photographerModel.findById(id);
 
     if (!user) {
       return { message: "User not found", type, id };

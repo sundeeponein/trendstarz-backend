@@ -11,7 +11,7 @@ export class NotificationsService {
 
   async createForUser(data: {
     userId: string;
-    userRole: "brand" | "influencer" | "admin";
+    userRole: "brand" | "influencer" | "photographer" | "admin";
     title: string;
     body: string;
     url?: string;

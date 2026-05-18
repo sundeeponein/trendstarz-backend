@@ -3,6 +3,7 @@ import { getModelToken } from "@nestjs/mongoose";
 import { Test, TestingModule } from "@nestjs/testing";
 import { PaymentsPayoutsService } from "./payments-payouts.service";
 import { PushService } from "../push/push.service";
+import { NotificationsService } from "../notifications/notifications.service";
 
 describe("PaymentsPayoutsService", () => {
   let service: PaymentsPayoutsService;
@@ -43,6 +44,10 @@ describe("PaymentsPayoutsService", () => {
       sendToUser: jest.fn().mockResolvedValue(undefined),
     };
 
+    const mockNotificationsService = {
+      createForUser: jest.fn().mockResolvedValue(undefined),
+    };
+
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         PaymentsPayoutsService,
@@ -56,6 +61,7 @@ describe("PaymentsPayoutsService", () => {
         { provide: getModelToken("Brand"), useValue: mockBrandModel },
         { provide: getModelToken("Influencer"), useValue: mockInfluencerModel },
         { provide: PushService, useValue: mockPushService },
+        { provide: NotificationsService, useValue: mockNotificationsService },
       ],
     }).compile();
 

@@ -34,7 +34,7 @@ export class CategoriesController {
 
   @Get()
   async getAll(@Query("role") role?: string) {
-    const normalizedRole = ["influencer", "brand", "both"].includes(
+    const normalizedRole = ["influencer", "brand", "photographer", "both"].includes(
       String(role || "").toLowerCase(),
     )
       ? String(role).toLowerCase()
@@ -153,5 +153,134 @@ export class PublicSupportContactController {
         "For now, please contact our team to complete campaign payments. Our admin will update the payment status once received.",
       verificationCallNumber: settings.verificationCallNumber || "",
     };
+  }
+}
+
+@Controller("equipment-options")
+export class EquipmentOptionsController {
+  private equipmentOptions: any[] = [];
+
+  constructor() {
+    this.loadEquipmentOptions();
+  }
+
+  private loadEquipmentOptions() {
+    try {
+      const fs = require("fs");
+      const path = require("path");
+      let configPath = path.join(__dirname, "../assets/admin-config.json");
+      if (!fs.existsSync(configPath)) {
+        configPath = path.join(process.cwd(), "assets/admin-config.json");
+      }
+      if (fs.existsSync(configPath)) {
+        const raw = fs.readFileSync(configPath, "utf-8");
+        const config = JSON.parse(raw);
+        this.equipmentOptions = (config.equipmentOptions || [])
+          .filter((e: any) => e.visible !== false);
+      }
+    } catch (err) {
+      console.error("Error loading equipment options:", err);
+      this.equipmentOptions = [];
+    }
+  }
+
+  @Get()
+  async getAll() {
+    return this.equipmentOptions.length ? this.equipmentOptions : [];
+  }
+}
+
+@Controller("pricing-options")
+export class PricingOptionsController {
+  private pricingOptions: any[] = [];
+
+  constructor() {
+    this.loadPricingOptions();
+  }
+
+  private loadPricingOptions() {
+    try {
+      const fs = require("fs");
+      const path = require("path");
+      let configPath = path.join(__dirname, "../assets/admin-config.json");
+      if (!fs.existsSync(configPath)) {
+        configPath = path.join(process.cwd(), "assets/admin-config.json");
+      }
+      if (fs.existsSync(configPath)) {
+        const raw = fs.readFileSync(configPath, "utf-8");
+        const config = JSON.parse(raw);
+        this.pricingOptions = (config.pricingOptions || [])
+          .filter((p: any) => p.visible !== false);
+      }
+    } catch (err) {
+      console.error("Error loading pricing options:", err);
+      this.pricingOptions = [];
+    }
+  }
+
+  @Get()
+  async getAll() {
+    return this.pricingOptions.length ? this.pricingOptions : [];
+  }
+}
+
+@Controller("user-tag-options")
+export class UserTagOptionsController {
+  private userTags = {
+    influencer: ["Founder", "Internal Creator", "Verified Creator", "Featured Creator"],
+    brand: ["Founder-owned", "Partner Brand", "Early Access Brand", "Verified Brand"],
+    photographer: ["Founder", "Internal Creator", "Verified Creator", "Featured Creator"],
+    commission: ["Early Access", "Partner", "Internal/Test"],
+  };
+
+  constructor() {
+    this.loadUserTagOptions();
+  }
+
+  private loadUserTagOptions() {
+    try {
+      const fs = require("fs");
+      const path = require("path");
+      let configPath = path.join(__dirname, "../assets/admin-config.json");
+      if (!fs.existsSync(configPath)) {
+        configPath = path.join(process.cwd(), "assets/admin-config.json");
+      }
+      if (!fs.existsSync(configPath)) return;
+
+      const raw = fs.readFileSync(configPath, "utf-8");
+      const config = JSON.parse(raw);
+      const fromConfig = config?.userTags || {};
+
+      const toList = (value: unknown, fallback: string[]): string[] => {
+        if (!Array.isArray(value)) return fallback;
+        return value
+          .map((item: any) => {
+            if (typeof item === "string") {
+              return item.trim();
+            }
+            if (item && typeof item === "object") {
+              if (item.visible === false) return "";
+              return String(item.name || "").trim();
+            }
+            return "";
+          })
+          .filter((v: string) => !!v);
+      };
+
+      this.userTags = {
+        influencer: toList(fromConfig.influencer, this.userTags.influencer),
+        brand: toList(fromConfig.brand, this.userTags.brand),
+        photographer: toList(fromConfig.photographer, this.userTags.photographer),
+        commission: toList(fromConfig.commission, this.userTags.commission),
+      };
+    } catch (err) {
+      console.error("Error loading user tag options:", err);
+    }
+  }
+
+  @Get()
+  async getAll() {
+    this.loadUserTagOptions();
+    return this.userTags;
   }
 }

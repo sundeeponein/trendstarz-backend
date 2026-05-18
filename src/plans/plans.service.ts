@@ -14,10 +14,16 @@ export class PlansService {
     @InjectModel("Subscription") public readonly subscriptionModel: Model<any>,
     @InjectModel("Influencer") private readonly influencerModel: Model<any>,
     @InjectModel("Brand") private readonly brandModel: Model<any>,
+    @InjectModel("Photographer") private readonly photographerModel: Model<any>,
   ) {}
 
-  private normalizeUserType(userType?: string): "INFLUENCER" | "BRAND" {
-    return userType?.toUpperCase() === "BRAND" ? "BRAND" : "INFLUENCER";
+  private normalizeUserType(
+    userType?: string,
+  ): "INFLUENCER" | "BRAND" | "PHOTOGRAPHER" {
+    const normalized = String(userType || "").toUpperCase();
+    if (normalized === "BRAND") return "BRAND";
+    if (normalized === "PHOTOGRAPHER") return "PHOTOGRAPHER";
+    return "INFLUENCER";
   }
 
   private durationToBillingCycle(
@@ -81,12 +87,14 @@ export class PlansService {
 
   private async resolveUserTypeById(
     userId: string,
-  ): Promise<"INFLUENCER" | "BRAND"> {
+  ): Promise<"INFLUENCER" | "BRAND" | "PHOTOGRAPHER"> {
     const objectId = new Types.ObjectId(userId);
     const influencer = await this.influencerModel.exists({ _id: objectId });
     if (influencer) return "INFLUENCER";
     const brand = await this.brandModel.exists({ _id: objectId });
     if (brand) return "BRAND";
+    const photographer = await this.photographerModel.exists({ _id: objectId });
+    if (photographer) return "PHOTOGRAPHER";
     return "INFLUENCER";
   }
 
@@ -190,7 +198,7 @@ export class PlansService {
   /** Activate/renew a subscription for userId after payment approval */
   async activateSubscription(
     userId: string,
-    userType: "Influencer" | "Brand",
+    userType: "Influencer" | "Brand" | "Photographer",
     planId: string,
     duration: "1m" | "3m" | "1y",
     source: "admin" | "payment" = "payment",
@@ -252,7 +260,11 @@ export class PlansService {
     if (!sub) {
       const userType = await this.resolveUserTypeById(userId);
       const userModel =
-        userType === "BRAND" ? this.brandModel : this.influencerModel;
+        userType === "BRAND"
+          ? this.brandModel
+          : userType === "PHOTOGRAPHER"
+            ? this.photographerModel
+            : this.influencerModel;
       let legacyUser: any = null;
       if (typeof (userModel as any)?.findById === "function") {
         legacyUser = (await userModel
@@ -268,7 +280,11 @@ export class PlansService {
         (!legacyUser?.premiumEnd || new Date(legacyUser.premiumEnd) >= new Date());
       if (hasLegacyPremium) {
         const proPlan = await this.findProPlanForUserType(
-          userType === "BRAND" ? "Brand" : "Influencer",
+          userType === "BRAND"
+            ? "Brand"
+            : userType === "PHOTOGRAPHER"
+              ? "Photographer"
+              : "Influencer",
         );
         return {
           hasPremium: true,
@@ -368,7 +384,9 @@ export class PlansService {
   }
 
   /** Get the first active Pro plan for the matching userType (used by payment approval) */
-  async findProPlanForUserType(userType: "Influencer" | "Brand") {
+  async findProPlanForUserType(
+    userType: "Influencer" | "Brand" | "Photographer",
+  ) {
     const mapped = this.normalizeUserType(userType);
     // Prefer the plan with the highest sortOrder that has a non-zero price (i.e. the Pro plan)
     let plan = (await this.planModel

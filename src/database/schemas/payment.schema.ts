@@ -4,7 +4,7 @@ import { Schema, Document } from 'mongoose';
 export const PaymentSchema = new Schema(
   {
     userId: { type: Schema.Types.ObjectId, refPath: 'userType', required: false },
-    userType: { type: String, enum: ['Influencer', 'Brand'], required: true },
+    userType: { type: String, enum: ['Influencer', 'Brand', 'Photographer'], required: true },
     userSnapshot: {
       name: { type: String },
       email: { type: String },
@@ -28,7 +28,7 @@ export const PaymentSchema = new Schema(
 
 export interface Payment extends Document {
   userId: string;
-  userType: 'Influencer' | 'Brand';
+  userType: 'Influencer' | 'Brand' | 'Photographer';
   transactionId: string;
   amount: number;
   premiumDuration: '1m' | '3m' | '1y';

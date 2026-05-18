@@ -8,12 +8,14 @@ import { BadRequestException, NotFoundException } from "@nestjs/common";
 import { CampaignInvitesService } from "./campaign-invites.service";
 import { PlansService } from "../plans/plans.service";
 import { PushService } from "../push/push.service";
+import { NotificationsService } from "../notifications/notifications.service";
 import { sendAppEmail } from "../utils/app-email.service";
 
 describe("CampaignInvitesService (admin disputes + remind)", () => {
   let service: CampaignInvitesService;
   let inviteModel: any;
   let brandModel: any;
+  let photographerModel: any;
   let influencerModel: any;
   let campaignModel: any;
 
@@ -26,6 +28,10 @@ describe("CampaignInvitesService (admin disputes + remind)", () => {
     brandModel = jest.fn();
     brandModel.findById = jest.fn();
     brandModel.find = jest.fn();
+
+    photographerModel = jest.fn();
+    photographerModel.findById = jest.fn();
+    photographerModel.find = jest.fn();
 
     influencerModel = jest.fn();
     influencerModel.findById = jest.fn();
@@ -48,6 +54,7 @@ describe("CampaignInvitesService (admin disputes + remind)", () => {
         },
         { provide: getModelToken("Campaign"), useValue: campaignModel },
         { provide: getModelToken("Brand"), useValue: brandModel },
+        { provide: getModelToken("Photographer"), useValue: photographerModel },
         { provide: getModelToken("Influencer"), useValue: influencerModel },
         {
           provide: getModelToken("CampaignTransaction"),
@@ -55,6 +62,7 @@ describe("CampaignInvitesService (admin disputes + remind)", () => {
         },
         { provide: PlansService, useValue: {} },
         { provide: PushService, useValue: { sendToUser: jest.fn().mockResolvedValue(undefined) } },
+        { provide: NotificationsService, useValue: { createForUser: jest.fn().mockResolvedValue(undefined) } },
       ],
     }).compile();
 
@@ -126,6 +134,72 @@ describe("CampaignInvitesService (admin disputes + remind)", () => {
       await service.adminResolveDispute("i", { outcome: "withdrawn" });
       expect(invite.withdrawnAt).toBeInstanceOf(Date);
       expect(invite.status).toBe("withdrawn");
+    });
+  });
+
+  describe("adminListDisputes", () => {
+    it("falls back to photographer owner when brand lookup is empty", async () => {
+      inviteModel.find.mockReturnValue({
+        sort: jest.fn().mockReturnValue({
+          limit: jest.fn().mockReturnValue({
+            lean: jest.fn().mockResolvedValue([
+              {
+                _id: "inv1",
+                campaignId: "camp1",
+                brandId: "photo1",
+                influencerId: "inf1",
+                status: "disputed",
+                reportedIssue: { reportedAt: new Date(), resolvedAt: null },
+              },
+            ]),
+          }),
+        }),
+      });
+
+      campaignModel.find.mockReturnValue({
+        select: jest.fn().mockReturnValue({
+          lean: jest.fn().mockResolvedValue([
+            {
+              _id: "camp1",
+              title: "Studio Test",
+              campaignType: "creative_project",
+              ownerType: "photographer",
+            },
+          ]),
+        }),
+      });
+
+      brandModel.find.mockReturnValue({
+        select: jest.fn().mockReturnValue({
+          lean: jest.fn().mockResolvedValue([]),
+        }),
+      });
+
+      photographerModel.find.mockReturnValue({
+        select: jest.fn().mockReturnValue({
+          lean: jest.fn().mockResolvedValue([
+            { _id: "photo1", name: "Lens Master", email: "photo@test.com" },
+          ]),
+        }),
+      });
+
+      influencerModel.find.mockReturnValue({
+        select: jest.fn().mockReturnValue({
+          lean: jest.fn().mockResolvedValue([
+            { _id: "inf1", name: "Creator A", email: "inf@test.com" },
+          ]),
+        }),
+      });
+
+      const result = await service.adminListDisputes();
+
+      expect(result.invites).toHaveLength(1);
+      expect(result.invites[0].brand).toEqual(
+        expect.objectContaining({ name: "Lens Master", email: "photo@test.com" }),
+      );
+      expect(result.invites[0].campaign).toEqual(
+        expect.objectContaining({ ownerType: "photographer" }),
+      );
     });
   });
 
@@ -275,10 +349,12 @@ describe("CampaignInvitesService – create() gating", () => {
         { provide: getModelToken("CampaignSubmission"), useValue: {} },
         { provide: getModelToken("Campaign"), useValue: campaignModel },
         { provide: getModelToken("Brand"), useValue: brandModel },
+        { provide: getModelToken("Photographer"), useValue: jest.fn() },
         { provide: getModelToken("Influencer"), useValue: influencerModel },
         { provide: getModelToken("CampaignTransaction"), useValue: {} },
         { provide: PlansService, useValue: plansService },
         { provide: PushService, useValue: { sendToUser: jest.fn().mockResolvedValue(undefined) } },
+        { provide: NotificationsService, useValue: { createForUser: jest.fn().mockResolvedValue(undefined) } },
       ],
     }).compile();
 
@@ -406,10 +482,12 @@ describe("CampaignInvitesService – respond()", () => {
         { provide: getModelToken("CampaignSubmission"), useValue: {} },
         { provide: getModelToken("Campaign"), useValue: campaignModel },
         { provide: getModelToken("Brand"), useValue: brandModel },
+        { provide: getModelToken("Photographer"), useValue: jest.fn() },
         { provide: getModelToken("Influencer"), useValue: influencerModel },
         { provide: getModelToken("CampaignTransaction"), useValue: {} },
         { provide: PlansService, useValue: plansService },
         { provide: PushService, useValue: { sendToUser: jest.fn().mockResolvedValue(undefined) } },
+        { provide: NotificationsService, useValue: { createForUser: jest.fn().mockResolvedValue(undefined) } },
       ],
     }).compile();
 
@@ -617,10 +695,12 @@ describe("CampaignInvitesService – submitPost() insights lock", () => {
         { provide: getModelToken("CampaignSubmission"), useValue: submissionModel },
         { provide: getModelToken("Campaign"), useValue: campaignModel },
         { provide: getModelToken("Brand"), useValue: brandModel },
+        { provide: getModelToken("Photographer"), useValue: jest.fn() },
         { provide: getModelToken("Influencer"), useValue: influencerModel },
         { provide: getModelToken("CampaignTransaction"), useValue: campaignTransactionModel },
         { provide: PlansService, useValue: {} },
         { provide: PushService, useValue: { sendToUser: jest.fn().mockResolvedValue(undefined) } },
+        { provide: NotificationsService, useValue: { createForUser: jest.fn().mockResolvedValue(undefined) } },
       ],
     }).compile();
 
@@ -734,10 +814,12 @@ describe("CampaignInvitesService – applyToCampaign()", () => {
         { provide: getModelToken("CampaignSubmission"), useValue: {} },
         { provide: getModelToken("Campaign"), useValue: campaignModel },
         { provide: getModelToken("Brand"), useValue: jest.fn() },
+        { provide: getModelToken("Photographer"), useValue: jest.fn() },
         { provide: getModelToken("Influencer"), useValue: jest.fn() },
         { provide: getModelToken("CampaignTransaction"), useValue: {} },
         { provide: PlansService, useValue: {} },
         { provide: PushService, useValue: { sendToUser: jest.fn().mockResolvedValue(undefined) } },
+        { provide: NotificationsService, useValue: { createForUser: jest.fn().mockResolvedValue(undefined) } },
       ],
     }).compile();
 

@@ -79,13 +79,7 @@ export const InfluencerSchema = new Schema(
     ],
     verificationStatus: {
       type: String,
-      enum: [
-        "not_submitted",
-        "pending",
-        "approved",
-        "rejected",
-        "removed",
-      ],
+      enum: ["not_submitted", "pending", "approved", "rejected", "removed"],
       default: "not_submitted",
     },
     verificationDisclaimerAccepted: { type: Boolean, default: false },
@@ -107,13 +101,7 @@ export const InfluencerSchema = new Schema(
         },
         status: {
           type: String,
-          enum: [
-            "not_submitted",
-            "pending",
-            "approved",
-            "rejected",
-            "removed",
-          ],
+          enum: ["not_submitted", "pending", "approved", "rejected", "removed"],
           default: "not_submitted",
         },
         note: { type: String, default: "" },
@@ -229,6 +217,13 @@ export const BrandSchema = new Schema(
         handle: { type: String },
         tier: { type: String },
         followersCount: { type: Number },
+        contentTypes: [
+          {
+            name: { type: String },
+            enabled: { type: Boolean, default: false },
+            price: { type: Number, default: 0 },
+          },
+        ],
       },
     ],
     googleMapAddress: { type: String },
@@ -359,6 +354,87 @@ BrandSchema.index({ commissionBadge: 1 });
 
 export const BrandModel = model("Brand", BrandSchema);
 
+// Photographer / Videographer schema
+export const PhotographerSchema = new Schema(
+  {
+    password: { type: String, required: true },
+    name: { type: String, required: true },
+    email: { type: String, required: true, unique: true },
+    phoneNumber: { type: String, required: true },
+    isEmailVerified: { type: Boolean, default: false },
+    isMobileVerified: { type: Boolean, default: false },
+    profileImages: [
+      {
+        url: { type: String, required: true },
+        public_id: { type: String, required: true },
+      },
+    ],
+    profileImage: { type: String },
+    profileImagePublicId: { type: String },
+    dateOfBirth: { type: Date, default: null },
+    gender: { type: String, default: "" },
+    portfolio: { type: String, default: "" }, // optional website/portfolio URL
+    location: {
+      state: { type: String, default: "" },
+      district: { type: String, default: "" },
+    },
+    // Skill chips: e.g. "Fashion Photography", "Reels", "Drone"
+    skills: [{ type: String }],
+    // Pricing options: each entry has name, enabled flag, and price
+    pricing: [
+      {
+        name: { type: String }, // e.g. "Starting Price", "Per Reel", "Per Shoot", "Hourly", "Equipment"
+        enabled: { type: Boolean, default: false },
+        price: { type: Number, default: 0 },
+      },
+    ],
+    // Equipment chips: e.g. "Sony", "Canon", "DJI", "iPhone Creator"
+    equipment: [{ type: String }],
+    // Social platforms for trust (at least one required before inviting/hiring)
+    socialMedia: [
+      {
+        platform: { type: String },
+        handle: { type: String },
+        tier: { type: String },
+        followersCount: { type: Number },
+      },
+    ],
+    contact: {
+      whatsapp: { type: Boolean, default: false },
+      email: { type: Boolean, default: false },
+      call: { type: Boolean, default: false },
+    },
+    isDeleted: { type: Boolean, default: false },
+    deletedAt: { type: Date },
+    status: {
+      type: String,
+      enum: ["pending", "accepted", "declined", "deleted"],
+      default: "pending",
+    },
+    signupAttribution: {
+      source: { type: String },
+      audience: { type: String },
+      referrerPath: { type: String },
+      capturedAt: { type: Date },
+    },
+    profileTraffic: {
+      impressions: { type: Number, default: 0 },
+      clicks: { type: Number, default: 0 },
+      lastImpressionAt: { type: Date, default: null },
+      lastClickAt: { type: Date, default: null },
+    },
+    resetToken: { type: String, default: null },
+    resetTokenExpires: { type: Number, default: null },
+  },
+  { timestamps: true },
+);
+PhotographerSchema.index({ status: 1 });
+PhotographerSchema.index({ skills: 1 });
+PhotographerSchema.index({ "location.state": 1 });
+PhotographerSchema.index({ resetToken: 1 }, { sparse: true });
+
+export const PhotographerModel = model("Photographer", PhotographerSchema);
+
 export const AppSettingsSchema = new Schema({
   preApproveInfluencers: { type: Boolean, default: false },
   influencerRequireEmailVerified: { type: Boolean, default: true },
@@ -367,6 +443,11 @@ export const AppSettingsSchema = new Schema({
   brandRequireEmailVerified: { type: Boolean, default: true },
   brandRequireMobileVerified: { type: Boolean, default: false },
   campaignApprovalMode: {
+    type: String,
+    enum: ["manual", "auto_live"],
+    default: "manual",
+  },
+  collaborationApprovalMode: {
     type: String,
     enum: ["manual", "auto_live"],
     default: "manual",
@@ -405,7 +486,7 @@ export const CategorySchema = new Schema({
   name: { type: String, required: true },
   role: {
     type: String,
-    enum: ["influencer", "brand", "both"],
+    enum: ["influencer", "brand", "photographer", "both"],
     default: "both",
   },
   showInFrontend: { type: Boolean, default: true },
