@@ -58,6 +58,17 @@ describe("CampaignsService", () => {
     const mockInfluencerModel: any = jest.fn();
     mockInfluencerModel.findById = jest.fn();
 
+    const mockPhotographerModel: any = jest.fn();
+    mockPhotographerModel.findById = jest.fn();
+
+    const mockAppSettingsModel = {
+      findOne: jest.fn().mockReturnValue({
+        lean: jest.fn().mockReturnValue({
+          exec: jest.fn().mockResolvedValue({}),
+        }),
+      }),
+    };
+
     const mockPlansService = {
       getUserPlanCapabilities: jest.fn().mockResolvedValue({
         hasPremium: false,
@@ -71,6 +82,8 @@ describe("CampaignsService", () => {
         { provide: getModelToken("Campaign"), useValue: mockCampaignModel },
         { provide: getModelToken("Brand"), useValue: mockBrandModel },
         { provide: getModelToken("Influencer"), useValue: mockInfluencerModel },
+        { provide: getModelToken("Photographer"), useValue: mockPhotographerModel },
+        { provide: getModelToken("AppSettings"), useValue: mockAppSettingsModel },
         { provide: PlansService, useValue: mockPlansService },
       ],
     }).compile();

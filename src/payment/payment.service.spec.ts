@@ -2,6 +2,7 @@ import { Test, TestingModule } from "@nestjs/testing";
 import { getModelToken } from "@nestjs/mongoose";
 import { PaymentService } from "./payment.service";
 import { PlansService } from "../plans/plans.service";
+import { NotificationsService } from "../notifications/notifications.service";
 
 describe("PaymentService", () => {
   let service: PaymentService;
@@ -61,6 +62,17 @@ describe("PaymentService", () => {
       findByIdAndUpdate: jest.fn().mockResolvedValue(null),
     };
 
+    const mockPhotographerModel = {
+      findById: jest
+        .fn()
+        .mockReturnValue({ lean: jest.fn().mockResolvedValue(null) }),
+      findByIdAndUpdate: jest.fn().mockResolvedValue(null),
+    };
+
+    const mockNotificationsService = {
+      createForUser: jest.fn().mockResolvedValue({}),
+    };
+
     const mockPlansService = {
       findProPlanForUserType: jest
         .fn()
@@ -74,7 +86,9 @@ describe("PaymentService", () => {
         { provide: getModelToken("Payment"), useValue: mockPaymentModel },
         { provide: getModelToken("Influencer"), useValue: mockInfluencerModel },
         { provide: getModelToken("Brand"), useValue: mockBrandModel },
+        { provide: getModelToken("Photographer"), useValue: mockPhotographerModel },
         { provide: PlansService, useValue: mockPlansService },
+        { provide: NotificationsService, useValue: mockNotificationsService },
       ],
     }).compile();
 
