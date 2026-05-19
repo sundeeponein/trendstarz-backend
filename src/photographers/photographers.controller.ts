@@ -18,13 +18,28 @@ export class PhotographersController {
   /** Public: search/list accepted photographers */
   @Get()
   async searchPhotographers(
-    @Query() query: { skill?: string; location?: string; keyword?: string; limit?: string },
+    @Query()
+    query: {
+      skill?: string;
+      location?: string;
+      keyword?: string;
+      limit?: string;
+      viewerState?: string;
+      viewerDistrict?: string;
+      smartLocationPriority?: string;
+    },
   ) {
+    const smartPriority =
+      String(query.smartLocationPriority || "").toLowerCase() === "1" ||
+      String(query.smartLocationPriority || "").toLowerCase() === "true";
     return this.photographersService.searchPhotographers({
       skill: query.skill,
       location: query.location,
       keyword: query.keyword,
       limit: Number(query.limit) || 60,
+      viewerState: query.viewerState,
+      viewerDistrict: query.viewerDistrict,
+      smartLocationPriority: smartPriority,
     });
   }
 

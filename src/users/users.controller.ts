@@ -159,15 +159,30 @@ export class UsersController {
     @Query("page") page?: string,
     @Query("limit") limit?: string,
     @Query("lite") lite?: string,
+    @Query("state") state?: string,
+    @Query("district") district?: string,
+    @Query("viewerState") viewerState?: string,
+    @Query("viewerDistrict") viewerDistrict?: string,
+    @Query("smartLocationPriority") smartLocationPriority?: string,
     @Req() req?: Request,
   ) {
     const viewerId = extractOptionalViewerId(req);
     const liteMode = String(lite || "").toLowerCase() === "1" || String(lite || "").toLowerCase() === "true";
+    const smartPriority =
+      String(smartLocationPriority || "").toLowerCase() === "1" ||
+      String(smartLocationPriority || "").toLowerCase() === "true";
     return this.usersService.getInfluencers(
       page ? parseInt(page, 10) : undefined,
       limit ? parseInt(limit, 10) : undefined,
       viewerId,
       liteMode,
+      {
+        state,
+        district,
+        viewerState,
+        viewerDistrict,
+        smartLocationPriority: smartPriority,
+      },
     );
   }
 
