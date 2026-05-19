@@ -10,10 +10,13 @@ import {
 import { CampaignInviteSchema } from "../database/schemas/campaign-invite.schema";
 import { CampaignSubmissionSchema } from "../database/schemas/campaign-submission.schema";
 import { CampaignTransactionSchema } from "../database/schemas/campaign-transaction.schema";
+import { AnalyticsEventSchema } from "../database/schemas/analytics-event.schema";
 import { CampaignsController } from "./campaigns.controller";
 import { CampaignsService } from "./campaigns.service";
 import { CampaignInvitesController } from "./campaign-invites.controller";
 import { CampaignInvitesService } from "./campaign-invites.service";
+import { AnalyticsEventsController } from "./analytics-events.controller";
+import { AnalyticsEventsService } from "./analytics-events.service";
 import { PlansModule } from "../plans/plans.module";
 import { CloudinaryService } from "../cloudinary.service";
 import { PushModule } from "../push/push.module";
@@ -41,6 +44,11 @@ import { NotificationsModule } from "../notifications/notifications.module";
         schema: CampaignTransactionSchema,
         collection: "campaigntransactions",
       },
+      {
+        name: "AnalyticsEvent",
+        schema: AnalyticsEventSchema,
+        collection: "analyticsevents",
+      },
       { name: "Brand", schema: BrandSchema, collection: "brands" },
       {
         name: "Photographer",
@@ -59,7 +67,16 @@ import { NotificationsModule } from "../notifications/notifications.module";
       },
     ]),
   ],
-  controllers: [CampaignsController, CampaignInvitesController],
-  providers: [CampaignsService, CampaignInvitesService, CloudinaryService],
+  controllers: [
+    CampaignsController,
+    CampaignInvitesController,
+    AnalyticsEventsController,
+  ],
+  providers: [
+    CampaignsService,
+    CampaignInvitesService,
+    AnalyticsEventsService,
+    CloudinaryService,
+  ],
 })
 export class CampaignsModule {}
