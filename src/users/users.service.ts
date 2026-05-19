@@ -921,6 +921,14 @@ export class UsersService {
     const hasManualLocationFilter = !!stateFilter || !!districtFilter;
     const useSmartLocationPriority =
       !!options?.smartLocationPriority && !hasManualLocationFilter;
+    const smartLocationMeta = {
+      smartLocationPriorityApplied: useSmartLocationPriority,
+      manualLocationFilterApplied: hasManualLocationFilter,
+      smartLocationContext: {
+        viewerState: viewerState || null,
+        viewerDistrict: viewerDistrict || null,
+      },
+    };
 
     const baseFilter: any = { status: "accepted" };
     if (stateFilter) {
@@ -983,7 +991,7 @@ export class UsersService {
         contactRestricted: true,
       }));
 
-      return { data, total, page, limit };
+      return { data, total, page, limit, ...smartLocationMeta };
     }
 
     // Plan caps for monthly invite reception (key reused: maxInvitesPerCampaign)
@@ -1068,7 +1076,7 @@ export class UsersService {
         };
       }),
     );
-    return { data, total, page, limit };
+    return { data, total, page, limit, ...smartLocationMeta };
   }
 
   private computeAgeRangeFromDob(dob: unknown): string | null {
