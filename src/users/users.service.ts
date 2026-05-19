@@ -905,25 +905,73 @@ export class UsersService {
     limit = 20,
     viewerId?: string | null,
     lite = false,
+    options?: {
+      state?: string;
+      district?: string;
+      viewerState?: string;
+      viewerDistrict?: string;
+      smartLocationPriority?: boolean;
+    },
   ) {
     const skip = (page - 1) * limit;
+    const stateFilter = String(options?.state || "").trim();
+    const districtFilter = String(options?.district || "").trim();
+    const viewerState = String(options?.viewerState || "").trim();
+    const viewerDistrict = String(options?.viewerDistrict || "").trim();
+    const hasManualLocationFilter = !!stateFilter || !!districtFilter;
+    const useSmartLocationPriority =
+      !!options?.smartLocationPriority && !hasManualLocationFilter;
+
+    const baseFilter: any = { status: "accepted" };
+    if (stateFilter) {
+      baseFilter["location.state"] = new RegExp(
+        `^${this.escapeRegex(stateFilter)}$`,
+        "i",
+      );
+    }
+    if (districtFilter) {
+      baseFilter["location.district"] = new RegExp(
+        `^${this.escapeRegex(districtFilter)}$`,
+        "i",
+      );
+    }
 
     if (lite) {
-      const filter = { status: "accepted" };
-      const [rows, total] = await Promise.all([
-        this.influencerModel
-          .find(filter)
-          .select(
-            "name username profileImage profileImages categories influencerCategory verificationStatus verifiedByTrendStarz location socialMedia adminTags isPremium premiumEnd promotionalPrice dateOfBirth",
-          )
-          .sort({ updatedAt: -1 })
-          .skip(skip)
-          .limit(limit)
-          .lean(),
-        this.influencerModel.countDocuments(filter),
-      ]);
+      const selection =
+        "name username profileImage profileImages categories influencerCategory verificationStatus verifiedByTrendStarz location socialMedia adminTags isPremium premiumEnd promotionalPrice dateOfBirth";
+      const [rows, total] = useSmartLocationPriority
+        ? await Promise.all([
+            this.influencerModel.find(baseFilter).select(selection).lean(),
+            this.influencerModel.countDocuments(baseFilter),
+          ])
+        : await Promise.all([
+            this.influencerModel
+              .find(baseFilter)
+              .select(selection)
+              .sort({ updatedAt: -1 })
+              .skip(skip)
+              .limit(limit)
+              .lean(),
+            this.influencerModel.countDocuments(baseFilter),
+          ]);
 
-      const data = (rows || []).map((inf: any) => ({
+      const rankedRows = useSmartLocationPriority
+        ? [...(rows || [])].sort((a: any, b: any) => {
+            const scoreA = this.getLocationPriorityScore(a, viewerState, viewerDistrict);
+            const scoreB = this.getLocationPriorityScore(b, viewerState, viewerDistrict);
+            if (scoreA !== scoreB) return scoreB - scoreA;
+            const followersA = this.extractTopFollowersCount(a);
+            const followersB = this.extractTopFollowersCount(b);
+            if (followersA !== followersB) return followersB - followersA;
+            return new Date(b?.updatedAt || 0).getTime() - new Date(a?.updatedAt || 0).getTime();
+          })
+        : rows || [];
+
+      const pagedRows = useSmartLocationPriority
+        ? rankedRows.slice(skip, skip + limit)
+        : rankedRows;
+
+      const data = (pagedRows || []).map((inf: any) => ({
         ...inf,
         isPremium: this.isCurrentlyPremium(inf),
         ageRange: this.computeAgeRangeFromDob(inf?.dateOfBirth),
@@ -957,7 +1005,7 @@ export class UsersService {
       // fall back to defaults above
     }
 
-    const all = await this.influencerModel.find({ status: "accepted" }).lean();
+    const all = await this.influencerModel.find(baseFilter).lean();
 
     // Per-influencer monthly cycle anchored on signup (free) or premiumStart (pro)
     const now = new Date();
@@ -980,6 +1028,18 @@ export class UsersService {
       if (cap === -1) return true;
       return inviteCounts[idx] < cap;
     });
+
+    if (useSmartLocationPriority) {
+      eligible.sort((a: any, b: any) => {
+        const scoreA = this.getLocationPriorityScore(a, viewerState, viewerDistrict);
+        const scoreB = this.getLocationPriorityScore(b, viewerState, viewerDistrict);
+        if (scoreA !== scoreB) return scoreB - scoreA;
+        const followersA = this.extractTopFollowersCount(a);
+        const followersB = this.extractTopFollowersCount(b);
+        if (followersA !== followersB) return followersB - followersA;
+        return new Date(b?.updatedAt || 0).getTime() - new Date(a?.updatedAt || 0).getTime();
+      });
+    }
 
     const total = eligible.length;
     const pageItems = eligible.slice(skip, skip + limit);
@@ -1031,6 +1091,35 @@ export class UsersService {
     if (age <= 34) return "25-34";
     if (age <= 44) return "35-44";
     return "45+";
+  }
+
+  private normalizeLocationValue(value: unknown): string {
+    return String(value || "").trim().toLowerCase();
+  }
+
+  private getLocationPriorityScore(
+    user: any,
+    viewerStateRaw?: string,
+    viewerDistrictRaw?: string,
+  ): number {
+    const viewerState = this.normalizeLocationValue(viewerStateRaw);
+    const viewerDistrict = this.normalizeLocationValue(viewerDistrictRaw);
+    if (!viewerState) return 0;
+
+    const userState = this.normalizeLocationValue(user?.location?.state);
+    const userDistrict = this.normalizeLocationValue(user?.location?.district);
+
+    if (viewerDistrict && userDistrict && viewerDistrict === userDistrict) return 100;
+    if (userState && viewerState === userState) return 70;
+    return 30;
+  }
+
+  private extractTopFollowersCount(user: any): number {
+    const platforms = Array.isArray(user?.socialMedia) ? user.socialMedia : [];
+    return platforms.reduce((max: number, sm: any) => {
+      const followers = Number(sm?.followersCount || 0);
+      return followers > max ? followers : max;
+    }, 0);
   }
 
   /**

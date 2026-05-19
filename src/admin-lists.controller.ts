@@ -588,6 +588,12 @@ export class AdminListsController {
   ) {
     return this.tierModel.findByIdAndUpdate(id, body, { new: true });
   }
+
+  @Get("tiers")
+  async getTiers() {
+    return this.tierModel.find().lean().limit(100);
+  }
+
   // Categories
   @Get("categories")
   async getCategories(@Query("role") role?: string) {
@@ -719,9 +725,18 @@ export class AdminListsController {
   // Social Media
   @Get("social-media")
   async getSocialMedia() {
-    // Return all social media entries with new fields
+    // Return all social media entries including visibility flag for admin toggles.
     return this.socialMediaModel
-      .find({}, { socialMedia: 1, handleName: 1, tier: 1, followersCount: 1 })
+      .find(
+        {},
+        {
+          socialMedia: 1,
+          handleName: 1,
+          tier: 1,
+          followersCount: 1,
+          showInFrontend: 1,
+        },
+      )
       .lean()
       .limit(100);
   }
