@@ -81,6 +81,14 @@ export class PhotographersService {
 
     const hasManualLocationFilter = !!String(query.location || "").trim();
     const useSmartPriority = !!query.smartLocationPriority && !hasManualLocationFilter;
+    const smartLocationMeta = {
+      smartLocationPriorityApplied: useSmartPriority,
+      manualLocationFilterApplied: hasManualLocationFilter,
+      smartLocationContext: {
+        viewerState: this.normalizeLocationValue(query.viewerState) || null,
+        viewerDistrict: this.normalizeLocationValue(query.viewerDistrict) || null,
+      },
+    };
     if (useSmartPriority) {
       const viewerState = this.normalizeLocationValue(query.viewerState);
       const viewerDistrict = this.normalizeLocationValue(query.viewerDistrict);
@@ -94,7 +102,10 @@ export class PhotographersService {
       });
     }
 
-    return docs;
+    return {
+      data: docs,
+      ...smartLocationMeta,
+    };
   }
 
   private normalizeLocationValue(value: unknown): string {
