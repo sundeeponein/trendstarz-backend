@@ -37,6 +37,33 @@ export class AnalyticsEventsService {
       return { accepted: 0, dropped: rows.length };
     }
 
+    const dedupeQuery = this.buildCampaignCompletionDedupeQuery(docs);
+    if (dedupeQuery.length > 0) {
+      const existing = await this.analyticsEventModel
+        .find({ $or: dedupeQuery })
+        .select("eventType metadata")
+        .lean();
+
+      const existingKeys = new Set(
+        (existing || [])
+          .map((event: any) => this.getCompletionDedupeKey(event))
+          .filter((key: string | null) => !!key),
+      );
+
+      const filtered = docs.filter((doc: any) => {
+        const key = this.getCompletionDedupeKey(doc);
+        if (!key) return true;
+        return !existingKeys.has(key);
+      });
+
+      if (!filtered.length) {
+        return { accepted: 0, dropped: rows.length };
+      }
+
+      docs.length = 0;
+      docs.push(...filtered);
+    }
+
     await this.analyticsEventModel.insertMany(docs, { ordered: false });
     const dropped = rows.length - docs.length;
     if (dropped > 0) {
@@ -64,5 +91,30 @@ export class AnalyticsEventsService {
         row.metadata && typeof row.metadata === "object" ? row.metadata : {},
       receivedAt: new Date(),
     };
+  }
+
+  private getCompletionDedupeKey(event: any): string | null {
+    const eventType = String(event?.eventType || "");
+    const stage = String(event?.metadata?.completionStage || "");
+    const inviteId = String(event?.metadata?.inviteId || "");
+    if (eventType !== "campaign_completed" || !stage || !inviteId) return null;
+    return `${eventType}:${stage}:${inviteId}`;
+  }
+
+  private buildCampaignCompletionDedupeQuery(docs: any[]): any[] {
+    return docs
+      .map((doc: any) => {
+        const stage = String(doc?.metadata?.completionStage || "");
+        const inviteId = String(doc?.metadata?.inviteId || "");
+        if (String(doc?.eventType || "") !== "campaign_completed" || !stage || !inviteId) {
+          return null;
+        }
+        return {
+          eventType: "campaign_completed",
+          "metadata.completionStage": stage,
+          "metadata.inviteId": inviteId,
+        };
+      })
+      .filter((row: any) => !!row);
   }
 }
