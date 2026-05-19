@@ -53,6 +53,9 @@ export class PhotographersService {
     location?: string;
     keyword?: string;
     limit?: number;
+    viewerState?: string;
+    viewerDistrict?: string;
+    smartLocationPriority?: boolean;
   }) {
     const filter: any = { status: "accepted", isDeleted: { $ne: true } };
     if (query.skill) filter.skills = query.skill;
@@ -76,7 +79,47 @@ export class PhotographersService {
       });
     }
 
+    const hasManualLocationFilter = !!String(query.location || "").trim();
+    const useSmartPriority = !!query.smartLocationPriority && !hasManualLocationFilter;
+    if (useSmartPriority) {
+      const viewerState = this.normalizeLocationValue(query.viewerState);
+      const viewerDistrict = this.normalizeLocationValue(query.viewerDistrict);
+      docs = [...docs].sort((a: any, b: any) => {
+        const scoreA = this.getLocationPriorityScore(a, viewerState, viewerDistrict);
+        const scoreB = this.getLocationPriorityScore(b, viewerState, viewerDistrict);
+        if (scoreA !== scoreB) return scoreB - scoreA;
+        const followersA = this.extractTopFollowersCount(a);
+        const followersB = this.extractTopFollowersCount(b);
+        return followersB - followersA;
+      });
+    }
+
     return docs;
+  }
+
+  private normalizeLocationValue(value: unknown): string {
+    return String(value || "").trim().toLowerCase();
+  }
+
+  private getLocationPriorityScore(
+    user: any,
+    viewerState: string,
+    viewerDistrict: string,
+  ): number {
+    if (!viewerState) return 0;
+    const userState = this.normalizeLocationValue(user?.location?.state);
+    const userDistrict = this.normalizeLocationValue(user?.location?.district);
+    if (viewerDistrict && userDistrict && viewerDistrict === userDistrict) return 100;
+    if (userState && viewerState === userState) return 70;
+    return 30;
+  }
+
+  private extractTopFollowersCount(user: any): number {
+    const platforms = Array.isArray(user?.socialMedia) ? user.socialMedia : [];
+    return platforms.reduce((max: number, sm: any) => {
+      const followers = Number(sm?.followersCount || 0);
+      return followers > max ? followers : max;
+    }, 0);
   }
 
   async getPhotographerById(id: string) {
