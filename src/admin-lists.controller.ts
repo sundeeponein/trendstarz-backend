@@ -244,8 +244,20 @@ export class AdminListsController {
     const normalizedOwnerType = String(ownerType || "")
       .trim()
       .toLowerCase();
-    if (["brand", "photographer"].includes(normalizedOwnerType)) {
-      filter.ownerType = normalizedOwnerType;
+    if (normalizedOwnerType === "photographer") {
+      // Photographer queue should include explicit ownerType plus legacy rows keyed by createdByRole.
+      filter.$or = [
+        { ownerType: "photographer" },
+        { createdByRole: "photographer" },
+      ];
+    } else if (normalizedOwnerType === "brand") {
+      // Brand queue should include legacy rows where ownerType was not persisted.
+      filter.$or = [
+        { ownerType: "brand" },
+        { ownerType: { $exists: false } },
+        { ownerType: null },
+        { ownerType: "" },
+      ];
     }
 
     const campaigns = await this.campaignModel
