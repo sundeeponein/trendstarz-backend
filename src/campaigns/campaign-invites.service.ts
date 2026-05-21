@@ -277,9 +277,7 @@ export class CampaignInvitesService {
       );
     }
 
-    const acceptanceCloseAt = Number(
-      campaign?.minInfluencers || campaign?.maxInfluencers || 0,
-    );
+    const acceptanceCloseAt = Number(campaign?.maxInfluencers || 0);
     if (
       campaign?.acceptanceDeadline &&
       Date.now() > new Date(campaign.acceptanceDeadline).getTime()
@@ -966,9 +964,7 @@ export class CampaignInvitesService {
         );
       }
 
-      const acceptanceCloseAt = Number(
-        campaign?.minInfluencers || campaign?.maxInfluencers || 0,
-      );
+      const acceptanceCloseAt = Number(campaign?.maxInfluencers || 0);
       if (acceptanceCloseAt > 0) {
         // 'disputed' (no-show) is excluded so the slot re-opens for a replacement
         const acceptedCount = await this.inviteModel.countDocuments({

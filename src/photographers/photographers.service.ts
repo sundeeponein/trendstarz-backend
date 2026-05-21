@@ -1,14 +1,20 @@
 import { Injectable, BadRequestException, NotFoundException } from "@nestjs/common";
 import { InjectModel } from "@nestjs/mongoose";
-import { Model } from "mongoose";
+import { Model, Types } from "mongoose";
 import { CloudinaryService } from "../cloudinary.service";
 
 @Injectable()
 export class PhotographersService {
   constructor(
     @InjectModel("Photographer") private readonly photographerModel: Model<any>,
+    @InjectModel("State") private readonly stateModel: Model<any>,
+    @InjectModel("District") private readonly districtModel: Model<any>,
     private readonly cloudinaryService: CloudinaryService,
   ) {}
+
+  private isObjectId(value: any): boolean {
+    return !!value && Types.ObjectId.isValid(String(value));
+  }
 
   async getProfile(userId: string) {
     const doc = await this.photographerModel.findById(userId).lean();
@@ -37,7 +43,28 @@ export class PhotographersService {
       "profileImages",
     ];
     const update: any = {};
+
+    if (data?.location !== undefined) {
+      const stateRaw = data?.location?.state ?? "";
+      const districtRaw = data?.location?.district ?? "";
+      const stateId = this.isObjectId(stateRaw) ? String(stateRaw) : null;
+      const districtId = this.isObjectId(districtRaw) ? String(districtRaw) : null;
+
+      const [stateDoc, districtDoc] = await Promise.all([
+        stateId ? this.stateModel.findById(stateId).lean() : null,
+        districtId ? this.districtModel.findById(districtId).lean() : null,
+      ]);
+
+      update.location = {
+        state: stateDoc ? String((stateDoc as any)?.name || "") : String(stateRaw || ""),
+        district: districtDoc
+          ? String((districtDoc as any)?.name || "")
+          : String(districtRaw || ""),
+      };
+    }
+
     for (const key of allowedFields) {
+      if (key === "location") continue;
       if (data[key] !== undefined) {
         update[key] = data[key];
       }
@@ -67,7 +94,7 @@ export class PhotographersService {
     let docs = await this.photographerModel
       .find(filter)
       .select(
-        "name email phoneNumber profileImage profileImages location skills pricing equipment socialMedia contact gender portfolio status",
+        "name username email phoneNumber profileImage profileImages location skills pricing equipment socialMedia contact gender portfolio status adminTags isPremium verifiedByTrendStarz verificationStatus",
       )
       .limit(limit)
       .lean();
@@ -139,7 +166,7 @@ export class PhotographersService {
     const doc = await this.photographerModel
       .findOne({ _id: id, status: "accepted", isDeleted: { $ne: true } })
       .select(
-        "name email phoneNumber profileImage profileImages location skills pricing equipment socialMedia contact gender portfolio status",
+        "name username email phoneNumber profileImage profileImages location skills pricing equipment socialMedia contact gender portfolio status adminTags isPremium verifiedByTrendStarz verificationStatus",
       )
       .lean();
     if (!doc) throw new NotFoundException("Photographer not found");
