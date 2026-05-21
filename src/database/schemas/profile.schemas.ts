@@ -359,6 +359,7 @@ export const PhotographerSchema = new Schema(
   {
     password: { type: String, required: true },
     name: { type: String, required: true },
+    username: { type: String, default: "" },
     email: { type: String, required: true, unique: true },
     phoneNumber: { type: String, required: true },
     isEmailVerified: { type: Boolean, default: false },

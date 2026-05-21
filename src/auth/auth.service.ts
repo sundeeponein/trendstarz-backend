@@ -886,6 +886,15 @@ export class AuthService {
     }
     this.validatePasswordStrength(data.password);
 
+    const normalizedUsername = data.username
+      ? String(data.username).trim().toLowerCase()
+      : "";
+    if (!normalizedUsername || !/^[a-z0-9_-]+$/.test(normalizedUsername)) {
+      throw new BadRequestException(
+        "Username is required and can contain only letters, numbers, hyphens and underscores.",
+      );
+    }
+
     const normalizedEmail = data.email
       ? String(data.email).trim().toLowerCase()
       : null;
@@ -898,8 +907,12 @@ export class AuthService {
           "i",
         )
       : null;
+    const usernameRegex = new RegExp(
+      `^${normalizedUsername.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`,
+      "i",
+    );
 
-    // Check email/phone uniqueness across all roles
+    // Check email/phone/username uniqueness across all roles
     const [
       existingEmailPhotographer,
       existingEmailInfluencer,
@@ -908,6 +921,9 @@ export class AuthService {
       existingPhonePhotographer,
       existingPhoneInfluencer,
       existingPhoneBrand,
+      existingUsernamePhotographer,
+      existingUsernameInfluencer,
+      existingUsernameBrand,
     ] = await Promise.all([
       emailRegex ? this.photographerModel.findOne({ email: emailRegex }) : null,
       emailRegex ? this.influencerModel.findOne({ email: emailRegex }) : null,
@@ -922,6 +938,9 @@ export class AuthService {
       normalizedPhone
         ? this.brandModel.findOne({ phoneNumber: normalizedPhone })
         : null,
+      this.photographerModel.findOne({ username: usernameRegex }),
+      this.influencerModel.findOne({ username: usernameRegex }),
+      this.brandModel.findOne({ brandUsername: usernameRegex }),
     ]);
 
     const duplicateFields: string[] = [];
@@ -938,6 +957,12 @@ export class AuthService {
       existingPhoneBrand
     )
       duplicateFields.push("phoneNumber");
+    if (
+      existingUsernamePhotographer ||
+      existingUsernameInfluencer ||
+      existingUsernameBrand
+    )
+      duplicateFields.push("username");
 
     if (duplicateFields.length) {
       throw new BadRequestException({
@@ -987,6 +1012,7 @@ export class AuthService {
 
     const photographer = new this.photographerModel({
       ...data,
+      username: normalizedUsername,
       email: normalizedEmail || data.email,
       phoneNumber: normalizedPhone || data.phoneNumber,
       password: hashedPassword,

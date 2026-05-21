@@ -20,6 +20,7 @@ export class PhotographersService {
   async updateProfile(userId: string, data: any) {
     const allowedFields = [
       "name",
+      "username",
       "phoneNumber",
       "gender",
       "dateOfBirth",
