@@ -6,6 +6,7 @@ import { getModelToken } from "@nestjs/mongoose";
 import * as bcrypt from "bcryptjs";
 import * as fs from "fs";
 import * as path from "path";
+import { PlansService } from "./plans/plans.service";
 
 export async function seedDatabase(section?: string) {
   // Load admin-config.json for visibility data
@@ -323,6 +324,25 @@ export async function seedDatabase(section?: string) {
       console.log(
         "sample-users.json not found in assets, skipping influencer/brand seeding.",
       );
+    }
+  }
+
+  if (!section || section === "plans") {
+    let plansConfigPath = path.join(__dirname, "../assets/plans-config.json");
+    if (!fs.existsSync(plansConfigPath)) {
+      plansConfigPath = path.join(process.cwd(), "assets/plans-config.json");
+    }
+    if (fs.existsSync(plansConfigPath)) {
+      const plansConfig = JSON.parse(fs.readFileSync(plansConfigPath, "utf-8"));
+      if (Array.isArray(plansConfig.plans)) {
+        const plansService = app.get(PlansService);
+        const seeded = await plansService.replaceAllFromConfig(plansConfig.plans);
+        console.log(`Seeded ${seeded.length} plans from plans-config.json`);
+      } else {
+        console.warn("plans-config.json does not contain a 'plans' array, skipping.");
+      }
+    } else {
+      console.warn("plans-config.json not found, skipping plans seeding.");
     }
   }
 

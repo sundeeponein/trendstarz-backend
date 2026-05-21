@@ -30,6 +30,7 @@ export class PhotographersService {
       "equipment",
       "socialMedia",
       "contact",
+      "payout",
       "profileImage",
       "profileImagePublicId",
       "profileImages",

@@ -404,6 +404,12 @@ export const PhotographerSchema = new Schema(
       email: { type: Boolean, default: false },
       call: { type: Boolean, default: false },
     },
+    payout: {
+      upiId: { type: String, default: "" },
+      mobile: { type: String, default: "" },
+      accountHolderName: { type: String, default: "" },
+      lastConfirmedAt: { type: Date, default: null },
+    },
     isDeleted: { type: Boolean, default: false },
     deletedAt: { type: Date },
     status: {
