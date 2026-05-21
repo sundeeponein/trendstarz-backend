@@ -359,6 +359,7 @@ export const PhotographerSchema = new Schema(
   {
     password: { type: String, required: true },
     name: { type: String, required: true },
+    username: { type: String, default: "" },
     email: { type: String, required: true, unique: true },
     phoneNumber: { type: String, required: true },
     isEmailVerified: { type: Boolean, default: false },
@@ -403,6 +404,12 @@ export const PhotographerSchema = new Schema(
       whatsapp: { type: Boolean, default: false },
       email: { type: Boolean, default: false },
       call: { type: Boolean, default: false },
+    },
+    payout: {
+      upiId: { type: String, default: "" },
+      mobile: { type: String, default: "" },
+      accountHolderName: { type: String, default: "" },
+      lastConfirmedAt: { type: Date, default: null },
     },
     isDeleted: { type: Boolean, default: false },
     deletedAt: { type: Date },

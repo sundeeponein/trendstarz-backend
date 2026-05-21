@@ -389,8 +389,8 @@ describe("CampaignInvitesService – create() gating", () => {
     ).resolves.toBeDefined();
   });
 
-  it("throws when acceptedCount >= minInfluencers (threshold reached)", async () => {
-    mockCampaignLean({ minInfluencers: 3 });
+  it("throws when acceptedCount >= maxInfluencers (threshold reached)", async () => {
+    mockCampaignLean({ maxInfluencers: 3 });
     inviteModel.countDocuments
       .mockResolvedValueOnce(0) // inviteCount for maxInfluencers check
       .mockResolvedValueOnce(3); // acceptedCount for threshold
@@ -400,8 +400,8 @@ describe("CampaignInvitesService – create() gating", () => {
   });
 
   it("does NOT close when disputed invites inflate count (slot re-opens)", async () => {
-    // minInfluencers = 2, only 1 non-disputed accepted — must NOT close
-    mockCampaignLean({ minInfluencers: 2 });
+    // maxInfluencers = 2, only 1 non-disputed accepted — must NOT close
+    mockCampaignLean({ maxInfluencers: 2 });
     inviteModel.countDocuments
       .mockResolvedValueOnce(0) // inviteCount for maxInfluencers check
       .mockResolvedValueOnce(1); // acceptedCount (disputed excluded by query)
@@ -542,7 +542,7 @@ describe("CampaignInvitesService – respond()", () => {
 
   it("throws when acceptance threshold already reached", async () => {
     inviteModel.findById.mockResolvedValue(pendingInvite());
-    campaignModel.findById.mockReturnValue(mockCampaignSelect({ minInfluencers: 2 }));
+    campaignModel.findById.mockReturnValue(mockCampaignSelect({ maxInfluencers: 2 }));
     inviteModel.countDocuments.mockResolvedValue(2); // already 2 accepted
     await expect(service.respond("inv1", "inf1", "accepted", "2026-07-01")).rejects.toThrow(
       BadRequestException,
