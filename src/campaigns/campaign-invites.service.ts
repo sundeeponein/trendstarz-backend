@@ -405,7 +405,20 @@ export class CampaignInvitesService {
     return saved;
   }
 
-  async findByCampaign(campaignId: string) {
+  async findByCampaign(
+    campaignId: string,
+    requesterId?: string,
+    requesterRole?: string,
+  ) {
+    if (requesterId && String(requesterRole || "").toLowerCase() !== "admin") {
+      const campaign: any = await this.campaignModel
+        .findById(campaignId)
+        .select("brandId")
+        .lean();
+      if (!campaign || String(campaign.brandId) !== String(requesterId)) {
+        throw new BadRequestException("Not your campaign");
+      }
+    }
     // Query using both string and ObjectId forms to handle legacy/mixed data
     try {
       const { Types } = await import("mongoose");
