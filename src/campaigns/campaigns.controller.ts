@@ -36,6 +36,11 @@ export class CampaignsController {
     @Query("status") status?: string,
   ) {
     if (brandId) {
+      const requesterId = String(req.user?.userId || "");
+      const requesterRole = String(req.user?.role || "").toLowerCase();
+      if (requesterRole !== "admin" && requesterId !== String(brandId)) {
+        return [];
+      }
       return this.campaignsService.findByBrandId(brandId);
     }
     const influencerId = req.user?.role === "influencer" ? req.user?.userId : undefined;
@@ -67,6 +72,30 @@ export class CampaignsController {
     @Body() body: { influencerIds: string[] },
   ) {
     const brandId = req.user?.userId;
+    const campaign: any = await this.campaignsService.findById(id);
+    if (!campaign) {
+      return {
+        success: false,
+        invites: [],
+        count: 0,
+        failures: [{ influencerId: "", reason: "Campaign not found" }],
+      };
+    }
+    const expectedRole = String(campaign?.inviteRecipientRole || "influencer");
+    if (expectedRole !== "influencer") {
+      return {
+        success: false,
+        invites: [],
+        count: 0,
+        failures: [
+          {
+            influencerId: "",
+            reason:
+              "This request is configured for photographers only. Use invite-photographers.",
+          },
+        ],
+      };
+    }
     const influencerIds = Array.isArray(body?.influencerIds)
       ? body.influencerIds
       : [];
@@ -105,6 +134,31 @@ export class CampaignsController {
     @Body() body: { photographerIds: string[] },
   ) {
     const brandId = req.user?.userId;
+    const campaign: any = await this.campaignsService.findById(id);
+    if (!campaign) {
+      return {
+        success: false,
+        invites: [],
+        count: 0,
+        failures: [{ photographerId: "", reason: "Campaign not found" }],
+      };
+    }
+    const ownerType = String(campaign?.ownerType || campaign?.createdByRole || "brand");
+    const expectedRole = String(campaign?.inviteRecipientRole || "influencer");
+    if (ownerType !== "brand" || expectedRole !== "photographer") {
+      return {
+        success: false,
+        invites: [],
+        count: 0,
+        failures: [
+          {
+            photographerId: "",
+            reason:
+              "Only brand creative requirements can invite photographers.",
+          },
+        ],
+      };
+    }
     const photographerIds = Array.isArray(body?.photographerIds)
       ? body.photographerIds
       : [];

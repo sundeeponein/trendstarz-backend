@@ -74,8 +74,12 @@ export class CampaignInvitesController {
 
   @UseGuards(JwtAuthGuard)
   @Get("campaign/:campaignId")
-  async findByCampaign(@Param("campaignId") campaignId: string) {
-    return this.invitesService.findByCampaign(campaignId);
+  async findByCampaign(@Param("campaignId") campaignId: string, @Req() req: any) {
+    return this.invitesService.findByCampaign(
+      campaignId,
+      req.user?.userId,
+      req.user?.role,
+    );
   }
 
   @UseGuards(JwtAuthGuard)

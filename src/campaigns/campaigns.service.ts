@@ -19,6 +19,13 @@ const VALID_TRANSITIONS: Record<string, string[]> = {
 
 const TIER_FILTERED_OPEN_ROLLOUT_AT = new Date("2026-05-05T00:00:00.000Z"); // Rolled out May 2026
 
+type CampaignOwnerType = "brand" | "photographer";
+type InviteRecipientRole = "influencer" | "photographer";
+type RequestKind =
+  | "brand_campaign"
+  | "creative_requirement"
+  | "photographer_collaboration";
+
 @Injectable()
 export class CampaignsService {
   constructor(
@@ -208,6 +215,31 @@ export class CampaignsService {
     }
   }
 
+  private normalizeInviteRecipientRole(
+    value: unknown,
+    ownerType: CampaignOwnerType,
+  ): InviteRecipientRole {
+    if (ownerType === "photographer") {
+      return "influencer";
+    }
+    return String(value || "influencer").trim().toLowerCase() === "photographer"
+      ? "photographer"
+      : "influencer";
+  }
+
+  private resolveRequestKind(
+    ownerType: CampaignOwnerType,
+    inviteRecipientRole: InviteRecipientRole,
+  ): RequestKind {
+    if (ownerType === "photographer") {
+      return "photographer_collaboration";
+    }
+    if (inviteRecipientRole === "photographer") {
+      return "creative_requirement";
+    }
+    return "brand_campaign";
+  }
+
   async create(brandId: string, data: any) {
     this.assertCampaignModeAvailability(data);
     // Enforce creation limit for owners (brand/photographer)
@@ -270,6 +302,22 @@ export class CampaignsService {
       );
     }
     const normalized = this.normalizeCampaignPayload(data);
+    const inviteRecipientRole = this.normalizeInviteRecipientRole(
+      data?.inviteRecipientRole,
+      ownerType,
+    );
+    if (ownerType === "photographer") {
+      normalized.campaignMode = "invite_only";
+    }
+    if (inviteRecipientRole === "photographer") {
+      normalized.campaignMode = "invite_only";
+    }
+    normalized.ownerType = ownerType;
+    normalized.inviteRecipientRole = inviteRecipientRole;
+    normalized.requestKind = this.resolveRequestKind(
+      ownerType,
+      inviteRecipientRole,
+    );
     normalized.status = await this.resolveInitialCampaignStatus(
       data?.status,
       ownerType,
@@ -508,7 +556,28 @@ export class CampaignsService {
       }
     }
 
+    const campaignOwnerType: CampaignOwnerType =
+      String(campaign.ownerType || campaign.createdByRole || "brand") ===
+      "photographer"
+        ? "photographer"
+        : "brand";
     const normalized = this.normalizeCampaignPayload(data);
+    const inviteRecipientRole = this.normalizeInviteRecipientRole(
+      data?.inviteRecipientRole ?? campaign.inviteRecipientRole,
+      campaignOwnerType,
+    );
+    if (campaignOwnerType === "photographer") {
+      normalized.campaignMode = "invite_only";
+    }
+    if (inviteRecipientRole === "photographer") {
+      normalized.campaignMode = "invite_only";
+    }
+    normalized.ownerType = campaignOwnerType;
+    normalized.inviteRecipientRole = inviteRecipientRole;
+    normalized.requestKind = this.resolveRequestKind(
+      campaignOwnerType,
+      inviteRecipientRole,
+    );
     Object.assign(campaign, normalized);
     return campaign.save();
   }
