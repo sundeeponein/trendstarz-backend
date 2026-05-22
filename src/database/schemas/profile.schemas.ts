@@ -554,6 +554,24 @@ export const CampaignSchema = new Schema(
       default: "invite_only",
       index: true,
     },
+    ownerType: {
+      type: String,
+      enum: ["brand", "photographer"],
+      default: "brand",
+      index: true,
+    },
+    inviteRecipientRole: {
+      type: String,
+      enum: ["influencer", "photographer"],
+      default: "influencer",
+      index: true,
+    },
+    requestKind: {
+      type: String,
+      enum: ["brand_campaign", "creative_requirement", "photographer_collaboration"],
+      default: "brand_campaign",
+      index: true,
+    },
     image: {
       url: { type: String },
       public_id: { type: String },
