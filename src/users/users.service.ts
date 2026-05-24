@@ -826,6 +826,8 @@ export class UsersService {
         (dto as any).promotionalPrice = (dto as any).price;
         delete (dto as any).price;
       }
+      (dto as any).firstRegisteredAt =
+        (dto as any).firstRegisteredAt || new Date();
       const influencer = new this.influencerModel(dto);
       const savedInfluencer = await influencer.save();
       return savedInfluencer;
@@ -885,6 +887,8 @@ export class UsersService {
         (dto as any).promotionalPrice = (dto as any).price;
         delete (dto as any).price;
       }
+      (dto as any).firstRegisteredAt =
+        (dto as any).firstRegisteredAt || new Date();
       const brand = new this.brandModel(dto);
       const savedBrand = await brand.save();
       return savedBrand;
@@ -1631,8 +1635,21 @@ export class UsersService {
   }
 
   async getInfluencerProfileById(userId: string) {
-    const user = await this.influencerModel.findById(userId).lean();
+    let user = await this.influencerModel.findById(userId).lean();
     if (!user || Array.isArray(user)) return null;
+    if (!user.lastLoginAt) {
+      const now = new Date();
+      const firstRegisteredAt = user.firstRegisteredAt || user.createdAt || now;
+      await this.influencerModel.updateOne(
+        { _id: user._id },
+        { $set: { lastLoginAt: now, firstRegisteredAt } },
+      );
+      user = {
+        ...user,
+        lastLoginAt: now,
+        firstRegisteredAt,
+      };
+    }
     const isPremium = this.isCurrentlyPremium(user);
     return {
       _id: user._id?.toString() || user.id?.toString() || "",
@@ -1665,6 +1682,8 @@ export class UsersService {
       premiumDuration: user.premiumDuration || null,
       premiumStart: user.premiumStart || null,
       premiumEnd: user.premiumEnd || null,
+      firstRegisteredAt: user.firstRegisteredAt || user.createdAt || null,
+      lastLoginAt: user.lastLoginAt || null,
       promotionalPrice: user.promotionalPrice,
       payout: user.payout || {
         upiId: "",
@@ -1677,8 +1696,21 @@ export class UsersService {
   }
 
   async getBrandProfileById(userId: string) {
-    const user = await this.brandModel.findById(userId).lean();
+    let user = await this.brandModel.findById(userId).lean();
     if (!user || Array.isArray(user)) return null;
+    if (!user.lastLoginAt) {
+      const now = new Date();
+      const firstRegisteredAt = user.firstRegisteredAt || user.createdAt || now;
+      await this.brandModel.updateOne(
+        { _id: user._id },
+        { $set: { lastLoginAt: now, firstRegisteredAt } },
+      );
+      user = {
+        ...user,
+        lastLoginAt: now,
+        firstRegisteredAt,
+      };
+    }
     const isPremium = this.isCurrentlyPremium(user);
     // Attach planCapabilities from PlansService
     let planCapabilities = null;
@@ -1715,6 +1747,8 @@ export class UsersService {
       premiumDuration: user.premiumDuration || null,
       premiumStart: user.premiumStart || null,
       premiumEnd: user.premiumEnd || null,
+      firstRegisteredAt: user.firstRegisteredAt || user.createdAt || null,
+      lastLoginAt: user.lastLoginAt || null,
       isEmailVerified: user.isEmailVerified || false,
       isMobileVerified: user.isMobileVerified || false,
       planCapabilities,

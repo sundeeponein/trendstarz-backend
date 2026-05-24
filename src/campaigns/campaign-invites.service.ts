@@ -440,7 +440,32 @@ export class CampaignInvitesService {
     }
   }
 
-  async findByInfluencer(influencerId: string) {
+  private normalizeInfluencerInviteScope(scope?: string): "campaign" | "collaboration" | null {
+    const normalized = String(scope || "").trim().toLowerCase();
+    if (normalized === "campaign") return "campaign";
+    if (normalized === "collaboration") return "collaboration";
+    return null;
+  }
+
+  private isCollaborationInvite(invite: any): boolean {
+    const campaign = invite?.campaignId || {};
+    const ownerType = String(
+      campaign?.ownerType || campaign?.createdByRole || "",
+    )
+      .trim()
+      .toLowerCase();
+    const requestKind = String(campaign?.requestKind || "")
+      .trim()
+      .toLowerCase();
+    return (
+      ownerType === "photographer" ||
+      ownerType === "videographer" ||
+      requestKind === "photographer_collaboration" ||
+      requestKind === "videographer_collaboration"
+    );
+  }
+
+  async findByInfluencer(influencerId: string, scope?: string) {
     const invites: any[] = await this.inviteModel
       .find({
         influencerId,
@@ -448,7 +473,7 @@ export class CampaignInvitesService {
       })
       .populate(
         "campaignId",
-        "title description status campaignMode budgetMin budgetMax campaignType pricePerInfluencer maxInfluencers startDate endDate timelineStart timelineEnd deliverables platforms socialMedia specialInstructions venueName venueAddress venueCity venueDistrict venueState venueGoogleMapUrl productValue productDescription productPaymentMode productPaymentAmount inviteBenefits payToJoinBenefits payToJoinInstructions",
+        "title description status campaignMode budgetMin budgetMax campaignType pricePerInfluencer maxInfluencers startDate endDate timelineStart timelineEnd deliverables platforms socialMedia specialInstructions venueName venueAddress venueCity venueDistrict venueState venueGoogleMapUrl productValue productDescription productPaymentMode productPaymentAmount inviteBenefits payToJoinBenefits payToJoinInstructions ownerType createdByRole requestKind",
       )
       .populate(
         "brandId",
@@ -456,8 +481,15 @@ export class CampaignInvitesService {
       )
       .lean();
 
+    const feedScope = this.normalizeInfluencerInviteScope(scope);
+    const scoped = (invites || []).filter((inv: any) => {
+      if (!feedScope) return true;
+      const isCollab = this.isCollaborationInvite(inv);
+      return feedScope === "collaboration" ? isCollab : !isCollab;
+    });
+
     // Strip brand contact details from invites that haven't been unlocked yet
-    return invites.map((inv: any) => {
+    return scoped.map((inv: any) => {
       if (!inv.unlocked && inv.brandId) {
         const { email: _e, phoneNumber: _p, ...safeB } = inv.brandId;
         return { ...inv, brandId: safeB };

@@ -17,8 +17,24 @@ export class PhotographersService {
   }
 
   async getProfile(userId: string) {
-    const doc = await this.photographerModel.findById(userId).lean();
-    if (!doc) throw new NotFoundException("Photographer not found");
+    const rawDoc = await this.photographerModel.findById(userId).lean();
+    if (!rawDoc || Array.isArray(rawDoc)) {
+      throw new NotFoundException("Photographer not found");
+    }
+    let doc: any = rawDoc;
+    if (!doc.lastLoginAt) {
+      const now = new Date();
+      const firstRegisteredAt = doc.firstRegisteredAt || doc.createdAt || now;
+      await this.photographerModel.updateOne(
+        { _id: doc._id },
+        { $set: { lastLoginAt: now, firstRegisteredAt } },
+      );
+      doc = {
+        ...doc,
+        lastLoginAt: now,
+        firstRegisteredAt,
+      };
+    }
     const { password: _pw, resetToken: _rt, resetTokenExpires: _rte, ...safe } = doc as any;
     return safe;
   }

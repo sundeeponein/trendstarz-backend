@@ -84,9 +84,9 @@ export class CampaignInvitesController {
 
   @UseGuards(JwtAuthGuard)
   @Get("influencer")
-  async findByInfluencer(@Req() req: any) {
+  async findByInfluencer(@Req() req: any, @Query("scope") scope?: string) {
     const influencerId = req.user?.userId;
-    return this.invitesService.findByInfluencer(influencerId);
+    return this.invitesService.findByInfluencer(influencerId, scope);
   }
 
   @UseGuards(JwtAuthGuard)

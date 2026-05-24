@@ -438,6 +438,7 @@ export class AuthService {
         email: normalizedEmail,
         phoneNumber: "",
         password: await bcrypt.hash(password, 10),
+        firstRegisteredAt: new Date(),
         status: "pending",
       });
       try {
@@ -452,6 +453,17 @@ export class AuthService {
     if (adminUser) {
       const isMatch = await bcrypt.compare(password, adminUser.password);
       if (!isMatch) throw new UnauthorizedException("Invalid credentials");
+      const now = new Date();
+      await this.userModel.updateOne(
+        { _id: adminUser._id },
+        {
+          $set: {
+            lastLoginAt: now,
+            firstRegisteredAt:
+              adminUser.firstRegisteredAt || adminUser.createdAt || now,
+          },
+        },
+      );
       const token = jwt.sign(
         { userId: adminUser._id, email: adminUser.email, role: adminUser.role },
         getJwtSecret(),
@@ -487,6 +499,17 @@ export class AuthService {
           "Your account is pending approval. Please wait for admin to activate your account.",
         );
       }
+      const now = new Date();
+      await this.influencerModel.updateOne(
+        { _id: influencer._id },
+        {
+          $set: {
+            lastLoginAt: now,
+            firstRegisteredAt:
+              influencer.firstRegisteredAt || influencer.createdAt || now,
+          },
+        },
+      );
       const displayName =
         influencer.name && influencer.name !== influencer.email
           ? influencer.name
@@ -529,6 +552,16 @@ export class AuthService {
       }
       // Allow login even if status is pending for auto-created minimal brands
       // (optionally, you can enforce approval here if needed)
+      const now = new Date();
+      await this.brandModel.updateOne(
+        { _id: brand._id },
+        {
+          $set: {
+            lastLoginAt: now,
+            firstRegisteredAt: brand.firstRegisteredAt || brand.createdAt || now,
+          },
+        },
+      );
       const displayName = brand.brandName || brand.email;
       const brandLogoArr = Array.isArray(brand.brandLogo)
         ? brand.brandLogo
@@ -568,6 +601,17 @@ export class AuthService {
           "Your account is pending approval. Please wait for admin to activate your account.",
         );
       }
+      const now = new Date();
+      await this.photographerModel.updateOne(
+        { _id: photographer._id },
+        {
+          $set: {
+            lastLoginAt: now,
+            firstRegisteredAt:
+              photographer.firstRegisteredAt || photographer.createdAt || now,
+          },
+        },
+      );
       const profileImageUrl =
         Array.isArray(photographer.profileImages) &&
         photographer.profileImages.length > 0 &&
@@ -722,6 +766,7 @@ export class AuthService {
       email: normalizedEmail || data.email,
       phoneNumber: normalizedPhone || data.phoneNumber,
       password: hashedPassword,
+      firstRegisteredAt: new Date(),
       categories: categoryNames,
       location: { state: stateName, district: districtName },
       languages: languageNames,
@@ -861,6 +906,7 @@ export class AuthService {
       email: normalizedEmail || data.email,
       phoneNumber: normalizedPhone || data.phoneNumber,
       password: hashedPassword,
+      firstRegisteredAt: new Date(),
       categories: categoryNames,
       location: { state: stateName, district: districtName },
       languages: languageNames,
@@ -1016,6 +1062,7 @@ export class AuthService {
       email: normalizedEmail || data.email,
       phoneNumber: normalizedPhone || data.phoneNumber,
       password: hashedPassword,
+      firstRegisteredAt: new Date(),
       location: { state: stateName, district: districtName },
       profileImages: normalizedProfileImages,
       signupAttribution,

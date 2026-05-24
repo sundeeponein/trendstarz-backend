@@ -26,6 +26,8 @@ type RequestKind =
   | "creative_requirement"
   | "photographer_collaboration";
 
+type InfluencerFeedScope = "campaign" | "collaboration";
+
 @Injectable()
 export class CampaignsService {
   constructor(
@@ -362,7 +364,27 @@ export class CampaignsService {
     return results.map((c: any) => ({ ...c, brand: brandInfo }));
   }
 
-  async findPublic(status: string = "active", influencerId?: string) {
+  private normalizeInfluencerFeedScope(scope?: string): InfluencerFeedScope | null {
+    const normalized = String(scope || "").trim().toLowerCase();
+    if (normalized === "campaign") return "campaign";
+    if (normalized === "collaboration") return "collaboration";
+    return null;
+  }
+
+  private isCollaborationCampaign(campaign: any): boolean {
+    const ownerType = String(campaign?.ownerType || campaign?.createdByRole || "")
+      .trim()
+      .toLowerCase();
+    const requestKind = String(campaign?.requestKind || "").trim().toLowerCase();
+    return (
+      ownerType === "photographer" ||
+      ownerType === "videographer" ||
+      requestKind === "photographer_collaboration" ||
+      requestKind === "videographer_collaboration"
+    );
+  }
+
+  async findPublic(status: string = "active", influencerId?: string, scope?: string) {
     const TIER_ORDER = ["Starter", "Nano", "Micro", "Mid-Tier", "Macro", "Mega / Celebrity"];
     const allowedStatuses = new Set([
       "active",
@@ -408,8 +430,19 @@ export class CampaignsService {
       return matching.some((entry: any) => TIER_ORDER.indexOf(entry.tier ?? "") === requiredIdx);
     };
 
-    // Filter: for tier_filtered_open campaigns, only show campaigns the influencer qualifies for
+    const feedScope = influencerId
+      ? this.normalizeInfluencerFeedScope(scope)
+      : null;
+
+    // Filter: scope + tier/location eligibility for influencer discovery.
     const visible = campaigns.filter((c) => {
+      if (feedScope === "campaign" && this.isCollaborationCampaign(c)) {
+        return false;
+      }
+      if (feedScope === "collaboration" && !this.isCollaborationCampaign(c)) {
+        return false;
+      }
+
       if (c.campaignMode !== "tier_filtered_open") return true; // invite_only always shown (brand side)
       if (!influencer) return true; // no influencer context — show all (brand/admin)
 

@@ -21,11 +21,13 @@ export const UserSchema = new Schema({
   email: { type: String, required: true, unique: true },
   password: { type: String, required: true },
   role: { type: String, enum: ["admin", "user"], default: "user" },
+  firstRegisteredAt: { type: Date, default: Date.now },
+  lastLoginAt: { type: Date, default: null },
   isEmailVerified: { type: Boolean, default: false },
   isMobileVerified: { type: Boolean, default: false },
   resetToken: { type: String, default: null },
   resetTokenExpires: { type: Number, default: null },
-});
+}, { timestamps: true });
 UserSchema.index({ resetToken: 1 }, { sparse: true });
 export const UserModel = model("User", UserSchema);
 
@@ -39,6 +41,8 @@ export const InfluencerSchema = new Schema(
     username: { type: String, required: true, unique: true },
     isEmailVerified: { type: Boolean, default: false },
     isMobileVerified: { type: Boolean, default: false },
+    firstRegisteredAt: { type: Date, default: Date.now },
+    lastLoginAt: { type: Date, default: null },
     profileImages: [
       {
         url: { type: String, required: true },
@@ -237,6 +241,8 @@ export const BrandSchema = new Schema(
     phoneNumber: { type: String, required: true },
     isEmailVerified: { type: Boolean, default: false },
     isMobileVerified: { type: Boolean, default: false },
+    firstRegisteredAt: { type: Date, default: Date.now },
+    lastLoginAt: { type: Date, default: null },
     brandLogo: [
       {
         url: { type: String, required: true },
@@ -364,6 +370,8 @@ export const PhotographerSchema = new Schema(
     phoneNumber: { type: String, required: true },
     isEmailVerified: { type: Boolean, default: false },
     isMobileVerified: { type: Boolean, default: false },
+    firstRegisteredAt: { type: Date, default: Date.now },
+    lastLoginAt: { type: Date, default: null },
     profileImages: [
       {
         url: { type: String, required: true },

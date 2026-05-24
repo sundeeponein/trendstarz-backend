@@ -34,6 +34,7 @@ export class CampaignsController {
     @Req() req: any,
     @Query("brandId") brandId?: string,
     @Query("status") status?: string,
+    @Query("scope") scope?: string,
   ) {
     if (brandId) {
       const requesterId = String(req.user?.userId || "");
@@ -44,7 +45,7 @@ export class CampaignsController {
       return this.campaignsService.findByBrandId(brandId);
     }
     const influencerId = req.user?.role === "influencer" ? req.user?.userId : undefined;
-    return this.campaignsService.findPublic(status || "active", influencerId);
+    return this.campaignsService.findPublic(status || "active", influencerId, scope);
   }
 
   @Get("brand-name/:brandName")
