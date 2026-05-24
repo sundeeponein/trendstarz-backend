@@ -242,49 +242,27 @@ export class CampaignsService {
     return "brand_campaign";
   }
 
-  async create(brandId: string, data: any) {
+  async create(ownerId: string, data: any, requesterRole?: string) {
     this.assertCampaignModeAvailability(data);
     // Enforce creation limit for owners (brand/photographer)
-    let brand = await this.brandModel.findById(brandId).lean();
-    let ownerType: "brand" | "photographer" = "brand";
-    // If brand profile is missing, auto-create a minimal profile with valid dummy values
-    if (
-      !brand &&
-      brandId &&
-      typeof brandId === "string" &&
-      brandId.length === 24 &&
-      /^[a-fA-F0-9]{24}$/.test(brandId)
-    ) {
-      try {
-        const minimalBrand = new this.brandModel({
-          _id: brandId,
-          brandName: "Brand",
-          email: `brand_${brandId}@dummy.com`,
-          phoneNumber: "0000000000",
-          password: "dummy-password",
-          status: "pending",
-        });
-        brand = (await minimalBrand.save()).toObject();
-      } catch (e: unknown) {
-        const msg = e instanceof Error ? e.message : String(e);
-        // If creation fails, throw error with details
-        throw new NotFoundException(
-          "Brand not found and could not be auto-created: " + msg,
-        );
-      }
-    }
-    if (!brand) {
-      const photographer = await this.photographerModel.findById(brandId).lean();
-      if (!photographer) throw new NotFoundException("Owner profile not found");
-      ownerType = "photographer";
+    const normalizedRole = String(requesterRole || "").trim().toLowerCase();
+    const ownerType: "brand" | "photographer" =
+      normalizedRole === "photographer" ? "photographer" : "brand";
+
+    if (ownerType === "brand") {
+      const brand = await this.brandModel.findById(ownerId).lean();
+      if (!brand) throw new NotFoundException("Brand profile not found");
+    } else {
+      const photographer = await this.photographerModel.findById(ownerId).lean();
+      if (!photographer) throw new NotFoundException("Photographer profile not found");
     }
     // Lazy load PlansService to avoid circular dep
-    const caps = await this.plansService.getUserPlanCapabilities(brandId);
+    const caps = await this.plansService.getUserPlanCapabilities(ownerId);
     const maxCampaigns =
       caps.limits.find((l: any) => l.key === "maxActiveCampaigns")?.value ?? 1;
     // Count currently active/pending/draft campaigns — completed or deleted do NOT count toward the cap
     const count = await this.campaignModel.countDocuments({
-      brandId,
+      brandId: ownerId,
       status: { $in: ["active", "pending", "draft", "paused"] },
     });
     if (maxCampaigns !== -1 && count >= maxCampaigns) {
@@ -324,7 +302,7 @@ export class CampaignsService {
       data?.status,
       ownerType,
     );
-    const campaign = new this.campaignModel({ ...normalized, brandId });
+    const campaign = new this.campaignModel({ ...normalized, brandId: ownerId });
     return await campaign.save();
   }
 
@@ -371,17 +349,23 @@ export class CampaignsService {
     return null;
   }
 
-  private isCollaborationCampaign(campaign: any): boolean {
+  private isCollaborationCampaign(campaign: any, photographerOwnerIds?: Set<string>): boolean {
     const ownerType = String(campaign?.ownerType || campaign?.createdByRole || "")
       .trim()
       .toLowerCase();
     const requestKind = String(campaign?.requestKind || "").trim().toLowerCase();
-    return (
+    if (
       ownerType === "photographer" ||
       ownerType === "videographer" ||
       requestKind === "photographer_collaboration" ||
       requestKind === "videographer_collaboration"
-    );
+    ) {
+      return true;
+    }
+    if (photographerOwnerIds?.has(String(campaign?.brandId || ""))) {
+      return true;
+    }
+    return false;
   }
 
   async findPublic(status: string = "active", influencerId?: string, scope?: string) {
@@ -434,12 +418,25 @@ export class CampaignsService {
       ? this.normalizeInfluencerFeedScope(scope)
       : null;
 
+    const campaignOwnerIds = [
+      ...new Set(campaigns.map((c: any) => String(c?.brandId || "")).filter(Boolean)),
+    ];
+    const photographerOwnerRows: any[] = campaignOwnerIds.length
+      ? await this.photographerModel
+          .find({ _id: { $in: campaignOwnerIds } })
+          .select("_id")
+          .lean()
+      : [];
+    const photographerOwnerIds = new Set(
+      (photographerOwnerRows || []).map((p: any) => String(p?._id || "")).filter(Boolean),
+    );
+
     // Filter: scope + tier/location eligibility for influencer discovery.
     const visible = campaigns.filter((c) => {
-      if (feedScope === "campaign" && this.isCollaborationCampaign(c)) {
+      if (feedScope === "campaign" && this.isCollaborationCampaign(c, photographerOwnerIds)) {
         return false;
       }
-      if (feedScope === "collaboration" && !this.isCollaborationCampaign(c)) {
+      if (feedScope === "collaboration" && !this.isCollaborationCampaign(c, photographerOwnerIds)) {
         return false;
       }
 
@@ -499,6 +496,7 @@ export class CampaignsService {
               name: brand.brandName,
               username: brand.brandUsername,
               logo: brand.brandLogo?.[0]?.url || null,
+              role: "brand",
             }
           : photographer
             ? {
@@ -506,6 +504,7 @@ export class CampaignsService {
                 name: photographer.name,
                 username: null,
                 logo: photographer.profileImages?.[0]?.url || null,
+                role: "photographer",
               }
           : null,
       };

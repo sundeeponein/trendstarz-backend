@@ -6,6 +6,7 @@ import {
   PhotographerSchema,
   StateSchema,
   DistrictSchema,
+  CampaignInviteSchema,
 } from "../database/schemas/profile.schemas";
 import { CloudinaryService } from "../cloudinary.service";
 
@@ -16,6 +17,11 @@ import { CloudinaryService } from "../cloudinary.service";
         name: "Photographer",
         schema: PhotographerSchema,
         collection: "photographers",
+      },
+      {
+        name: "CampaignInvite",
+        schema: CampaignInviteSchema,
+        collection: "campaigninvites",
       },
       { name: "State", schema: StateSchema, collection: "states" },
       { name: "District", schema: DistrictSchema, collection: "districts" },

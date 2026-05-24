@@ -240,6 +240,15 @@ export class CampaignInvitesService {
         throw new BadRequestException("Not your campaign");
       }
     }
+    // Collaboration invites can be sent only after admin moderation is live.
+    if (
+      this.isCollaborationCampaign(campaign) &&
+      !this.isCampaignLiveForRecipient(campaign)
+    ) {
+      throw new BadRequestException(
+        "This collaboration is awaiting admin approval. You can invite after it is approved.",
+      );
+    }
     const recipientRole = this.normalizeRecipientRole(data?.recipientRole);
     const recipientId = String(
       data?.recipientId || data?.influencerId || data?.photographerId || "",
@@ -447,11 +456,8 @@ export class CampaignInvitesService {
     return null;
   }
 
-  private isCollaborationInvite(invite: any): boolean {
-    const campaign = invite?.campaignId || {};
-    const ownerType = String(
-      campaign?.ownerType || campaign?.createdByRole || "",
-    )
+  private isCollaborationCampaign(campaign: any): boolean {
+    const ownerType = String(campaign?.ownerType || campaign?.createdByRole || "")
       .trim()
       .toLowerCase();
     const requestKind = String(campaign?.requestKind || "")
@@ -465,6 +471,32 @@ export class CampaignInvitesService {
     );
   }
 
+  private isCampaignLiveForRecipient(campaign: any): boolean {
+    const status = String(campaign?.status || "").trim().toLowerCase();
+    return status === "active" || status === "completed";
+  }
+
+  private isCollaborationInvite(invite: any, photographerOwnerIds?: Set<string>): boolean {
+    const campaign = invite?.campaignId || {};
+    const ownerType = String(
+      campaign?.ownerType || campaign?.createdByRole || "",
+    )
+      .trim()
+      .toLowerCase();
+    const requestKind = String(campaign?.requestKind || "")
+      .trim()
+      .toLowerCase();
+    if (
+      ownerType === "photographer" ||
+      ownerType === "videographer" ||
+      requestKind === "photographer_collaboration" ||
+      requestKind === "videographer_collaboration"
+    ) {
+      return true;
+    }
+    return photographerOwnerIds?.has(String(campaign?.brandId || "")) || false;
+  }
+
   async findByInfluencer(influencerId: string, scope?: string) {
     const invites: any[] = await this.inviteModel
       .find({
@@ -473,7 +505,7 @@ export class CampaignInvitesService {
       })
       .populate(
         "campaignId",
-        "title description status campaignMode budgetMin budgetMax campaignType pricePerInfluencer maxInfluencers startDate endDate timelineStart timelineEnd deliverables platforms socialMedia specialInstructions venueName venueAddress venueCity venueDistrict venueState venueGoogleMapUrl productValue productDescription productPaymentMode productPaymentAmount inviteBenefits payToJoinBenefits payToJoinInstructions ownerType createdByRole requestKind",
+        "title description status campaignMode budgetMin budgetMax campaignType pricePerInfluencer maxInfluencers startDate endDate timelineStart timelineEnd deliverables platforms socialMedia specialInstructions venueName venueAddress venueCity venueDistrict venueState venueGoogleMapUrl productValue productDescription productPaymentMode productPaymentAmount inviteBenefits payToJoinBenefits payToJoinInstructions ownerType createdByRole requestKind brandId",
       )
       .populate(
         "brandId",
@@ -481,15 +513,36 @@ export class CampaignInvitesService {
       )
       .lean();
 
+    const campaignOwnerIds = [
+      ...new Set((invites || []).map((inv: any) => String(inv?.campaignId?.brandId || "")).filter(Boolean)),
+    ];
+    const photographerOwnerRows: any[] = campaignOwnerIds.length
+      ? await this.photographerModel
+          .find({ _id: { $in: campaignOwnerIds } })
+          .select("_id")
+          .lean()
+      : [];
+    const photographerOwnerIds = new Set(
+      (photographerOwnerRows || []).map((p: any) => String(p?._id || "")).filter(Boolean),
+    );
+
     const feedScope = this.normalizeInfluencerInviteScope(scope);
     const scoped = (invites || []).filter((inv: any) => {
       if (!feedScope) return true;
-      const isCollab = this.isCollaborationInvite(inv);
+      const isCollab = this.isCollaborationInvite(inv, photographerOwnerIds);
       return feedScope === "collaboration" ? isCollab : !isCollab;
     });
 
+    const visible = scoped.filter((inv: any) => {
+      const campaign = inv?.campaignId;
+      if (!campaign) return false;
+      const isCollab = this.isCollaborationInvite(inv, photographerOwnerIds);
+      if (!isCollab) return true;
+      return this.isCampaignLiveForRecipient(campaign);
+    });
+
     // Strip brand contact details from invites that haven't been unlocked yet
-    return scoped.map((inv: any) => {
+    return visible.map((inv: any) => {
       if (!inv.unlocked && inv.brandId) {
         const { email: _e, phoneNumber: _p, ...safeB } = inv.brandId;
         return { ...inv, brandId: safeB };
@@ -986,10 +1039,20 @@ export class CampaignInvitesService {
       const campaign: any = await this.campaignModel
         .findById(invite.campaignId)
         .select(
-          "startDate endDate timelineStart timelineEnd socialMedia platforms campaignMode minInfluencerTier minInfluencers maxInfluencers acceptanceDeadline",
+          "status ownerType createdByRole requestKind startDate endDate timelineStart timelineEnd socialMedia platforms campaignMode minInfluencerTier minInfluencers maxInfluencers acceptanceDeadline",
         )
         .lean();
       if (!campaign) throw new NotFoundException("Campaign not found");
+
+      // Guard: recipient cannot accept a collaboration until admin approval is live.
+      if (
+        this.isCollaborationCampaign(campaign) &&
+        !this.isCampaignLiveForRecipient(campaign)
+      ) {
+        throw new BadRequestException(
+          "This collaboration is still under admin review. You can accept after it is approved.",
+        );
+      }
 
       const influencer = recipientRole === "photographer"
         ? await this.photographerModel.findById(influencerId).select("socialMedia").lean()

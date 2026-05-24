@@ -7,10 +7,43 @@ import { CloudinaryService } from "../cloudinary.service";
 export class PhotographersService {
   constructor(
     @InjectModel("Photographer") private readonly photographerModel: Model<any>,
+    @InjectModel("CampaignInvite") private readonly campaignInviteModel: Model<any>,
     @InjectModel("State") private readonly stateModel: Model<any>,
     @InjectModel("District") private readonly districtModel: Model<any>,
     private readonly cloudinaryService: CloudinaryService,
   ) {}
+
+  private async canViewPhotographerContact(
+    photographer: any,
+    viewerId?: string | null,
+  ): Promise<boolean> {
+    if (!viewerId) return false;
+    if (String(photographer?._id) === String(viewerId)) return true;
+
+    const viewerObjectId = this.isObjectId(viewerId)
+      ? new Types.ObjectId(String(viewerId))
+      : null;
+
+    const invite = await this.campaignInviteModel
+      .findOne({
+        unlocked: true,
+        $or: [
+          {
+            influencerId: { $in: [photographer._id, String(photographer._id)] },
+            recipientRole: "photographer",
+            brandId: viewerObjectId ? { $in: [viewerObjectId, String(viewerId)] } : String(viewerId),
+          },
+          {
+            brandId: { $in: [photographer._id, String(photographer._id)] },
+            influencerId: viewerObjectId ? { $in: [viewerObjectId, String(viewerId)] } : String(viewerId),
+          },
+        ],
+      })
+      .select("_id")
+      .lean();
+
+    return !!invite;
+  }
 
   private isObjectId(value: any): boolean {
     return !!value && Types.ObjectId.isValid(String(value));
@@ -178,14 +211,54 @@ export class PhotographersService {
     }, 0);
   }
 
-  async getPhotographerById(id: string) {
-    const doc = await this.photographerModel
-      .findOne({ _id: id, status: "accepted", isDeleted: { $ne: true } })
+  async getPhotographerById(id: string, viewerId?: string | null) {
+    if (!this.isObjectId(id)) {
+      return null;
+    }
+    const rawDoc: any = await this.photographerModel
+      .findOne({ _id: id, isDeleted: { $ne: true } })
       .select(
         "name username email phoneNumber profileImage profileImages location skills pricing equipment socialMedia contact gender portfolio status adminTags isPremium verifiedByTrendStarz verificationStatus",
       )
       .lean();
-    if (!doc) throw new NotFoundException("Photographer not found");
-    return doc;
+    if (!rawDoc || Array.isArray(rawDoc)) {
+      return null;
+    }
+    const doc: any = rawDoc;
+    const allowContact = await this.canViewPhotographerContact(doc, viewerId);
+    return {
+      ...doc,
+      email: allowContact ? doc.email : undefined,
+      phoneNumber: allowContact ? doc.phoneNumber : undefined,
+      portfolio: allowContact ? doc.portfolio : undefined,
+      contact: allowContact ? doc.contact : undefined,
+      contactRestricted: !allowContact,
+    };
+  }
+
+  async getPhotographerByUsername(
+    username: string,
+    viewerId?: string | null,
+  ) {
+    if (!username) return null;
+    const rawDoc: any = await this.photographerModel
+      .findOne({ username, isDeleted: { $ne: true } })
+      .select(
+        "name username email phoneNumber profileImage profileImages location skills pricing equipment socialMedia contact gender portfolio status adminTags isPremium verifiedByTrendStarz verificationStatus",
+      )
+      .lean();
+    if (!rawDoc || Array.isArray(rawDoc)) {
+      return null;
+    }
+    const doc: any = rawDoc;
+    const allowContact = await this.canViewPhotographerContact(doc, viewerId);
+    return {
+      ...doc,
+      email: allowContact ? doc.email : undefined,
+      phoneNumber: allowContact ? doc.phoneNumber : undefined,
+      portfolio: allowContact ? doc.portfolio : undefined,
+      contact: allowContact ? doc.contact : undefined,
+      contactRestricted: !allowContact,
+    };
   }
 }

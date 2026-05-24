@@ -24,8 +24,9 @@ export class CampaignsController {
   @UseGuards(JwtAuthGuard)
   @Post()
   async create(@Req() req: any, @Body() body: any) {
-    const brandId = req.user?.userId;
-    return this.campaignsService.create(brandId, body);
+    const ownerId = req.user?.userId;
+    const requesterRole = String(req.user?.role || '').trim().toLowerCase();
+    return this.campaignsService.create(ownerId, body, requesterRole);
   }
 
   @UseGuards(JwtAuthGuard)

@@ -17,7 +17,9 @@
     "lint": "eslint \"{src,apps,libs,test}/**/*.ts\" --fix",
     "test": "jest",
     "test:e2e": "jest --config ./test/jest-e2e.json",
-    "seeder": "node dist/run-seeder.js"
+    "seeder": "node dist/run-seeder.js",
+    "backfill:campaign-scope": "node cron/backfillCampaignScopeFields.js",
+    "normalize:nonlive-collab-invites": "node cron/normalizeNonLiveCollaborationInvites.js"
   },
   "dependencies": {
     "@nestjs/cli": "^11.0.16",
