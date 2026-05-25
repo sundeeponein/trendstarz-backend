@@ -1102,6 +1102,11 @@ export class AuthService {
       gstPercent: settings?.gstPercent ?? 18,
       // Campaign payment UPI shown to brands on the payment screen
       paymentUpiId: settings?.paymentUpiId || "trendstarzin@kotak",
+      showSearchLink: settings?.showSearchLink !== false,
+      showRegisterInfluencerLink: settings?.showRegisterInfluencerLink !== false,
+      showRegisterBrandLink: settings?.showRegisterBrandLink !== false,
+      showRegisterPhotographerLink:
+        settings?.showRegisterPhotographerLink !== false,
     };
   }
 

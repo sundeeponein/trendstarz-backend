@@ -494,6 +494,11 @@ export const AppSettingsSchema = new Schema({
   },
   // Campaign payment UPI address shown to brands on the payment screen
   paymentUpiId: { type: String, default: "trendstarzin@kotak" },
+  // Navbar link visibility controls (admin-managed)
+  showSearchLink: { type: Boolean, default: true },
+  showRegisterInfluencerLink: { type: Boolean, default: true },
+  showRegisterBrandLink: { type: Boolean, default: true },
+  showRegisterPhotographerLink: { type: Boolean, default: true },
 });
 export const AppSettingsModel = model("AppSettings", AppSettingsSchema);
 

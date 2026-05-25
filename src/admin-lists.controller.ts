@@ -174,6 +174,10 @@ export class AdminListsController {
       verificationCallNumber: "",
       supportContactMessage:
         "For now, please contact our team to complete campaign payments. Our admin will update the payment status once received.",
+      showSearchLink: true,
+      showRegisterInfluencerLink: true,
+      showRegisterBrandLink: true,
+      showRegisterPhotographerLink: true,
     };
     const settings = await this.appSettingsModel.findOne({}).lean();
     const merged = { ...defaults, ...(settings || {}) };
