@@ -36,6 +36,14 @@ export const CampaignInviteSchema = new Schema({
   selectedContentType: { type: String },
   agreedAmount: { type: Number },
   acceptedAt: { type: Date },
+  // Contact preference snapshot at acceptance time.
+  // This keeps existing accepted invites stable even if profile preferences change later.
+  acceptedContact: {
+    whatsapp: { type: Boolean, default: false },
+    email: { type: Boolean, default: false },
+    call: { type: Boolean, default: false },
+  },
+  acceptedContactSnapshotAt: { type: Date },
   // ── Contact unlock (single-rule: brand pays/premium → both sides see contact) ──
   unlocked: { type: Boolean, default: false },
   unlockedAt: { type: Date },

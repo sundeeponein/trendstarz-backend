@@ -97,7 +97,7 @@ export class CampaignInvitesService {
     return this.getRecipientModel(role)
       .findById(recipientId)
       .select(
-        "name email phoneNumber username profileImages socialMedia location isPremium premiumEnd createdAt premiumStart",
+        "name email phoneNumber username profileImages socialMedia location isPremium premiumEnd createdAt premiumStart contact isEmailVerified isMobileVerified",
       )
       .lean();
   }
@@ -1121,6 +1121,12 @@ export class CampaignInvitesService {
       // Insights (screenshot + metrics) unlock 24h after the posting date
       invite.insightsUnlocksAt = new Date(selected.getTime() + 24 * 60 * 60 * 1000);
       invite.acceptedAt = new Date();
+      invite.acceptedContact = {
+        whatsapp: !!recipient?.contact?.whatsapp,
+        email: !!recipient?.contact?.email,
+        call: !!recipient?.contact?.call,
+      };
+      invite.acceptedContactSnapshotAt = new Date();
 
       const isTierFilteredOpen = String(campaign?.campaignMode || "") === "tier_filtered_open";
       const recipientCanUsePlatformRules = recipientRole !== "photographer";
@@ -1482,7 +1488,7 @@ export class CampaignInvitesService {
       throw new BadRequestException("Not your invite");
     }
     if (
-      !["accepted", "payment_confirmed", "working", "submitted"].includes(
+      !["accepted", "payment_confirmed", "working"].includes(
         invite.status,
       )
     ) {
@@ -1542,30 +1548,26 @@ export class CampaignInvitesService {
 
     const engagementRate = computeEngagementRate(data);
 
-    // Upsert: one submission per invite
+    // One submission per invite for MVP: once submitted, influencer cannot edit URL/type again.
     const existing = await this.submissionModel.findOne({ inviteId });
-    let submission;
     if (existing) {
-      Object.assign(existing, {
-        ...data,
-        postPlatform,
-        engagementRate,
-        submittedAt: new Date(),
-        status: "submitted",
-      });
-      submission = await existing.save();
-    } else {
-      submission = await this.submissionModel.create({
-        campaignId: invite.campaignId,
-        influencerId,
-        inviteId,
-        ...data,
-        postPlatform,
-        engagementRate,
-        submittedAt: new Date(),
-        status: "submitted",
-      });
+      throw new BadRequestException(
+        "Submission already posted and locked. You cannot change it again.",
+      );
     }
+
+    // Create one submission record per invite
+    let submission;
+    submission = await this.submissionModel.create({
+      campaignId: invite.campaignId,
+      influencerId,
+      inviteId,
+      ...data,
+      postPlatform,
+      engagementRate,
+      submittedAt: new Date(),
+      status: "submitted",
+    });
 
     // Update invite status to submitted
     invite.status = "submitted";
@@ -1680,6 +1682,27 @@ export class CampaignInvitesService {
     if (!submission) throw new NotFoundException("Submission not found");
 
     const now = new Date();
+    if (action === "approve") {
+      const submittedAtRaw =
+        (submission as any).submittedAt ||
+        (submission as any).updatedAt ||
+        (submission as any).createdAt;
+
+      if (!submittedAtRaw) {
+        throw new BadRequestException(
+          "Mark Completed unlocks 24 hours after influencer submission.",
+        );
+      }
+
+      const submittedAt = new Date(submittedAtRaw);
+      const unlockAt = new Date(submittedAt.getTime() + 24 * 60 * 60 * 1000);
+      if (Number.isNaN(submittedAt.getTime()) || now.getTime() < unlockAt.getTime()) {
+        throw new BadRequestException(
+          `Mark Completed unlocks after 24 hours from submission. Unlocks at: ${unlockAt.toUTCString()}`,
+        );
+      }
+    }
+
     if (action === "approve") {
       submission.status = "approved";
       submission.brandFeedback = feedback || "";
