@@ -1121,10 +1121,11 @@ export class CampaignInvitesService {
       // Insights (screenshot + metrics) unlock 24h after the posting date
       invite.insightsUnlocksAt = new Date(selected.getTime() + 24 * 60 * 60 * 1000);
       invite.acceptedAt = new Date();
+      const recipientAny = recipient as any;
       invite.acceptedContact = {
-        whatsapp: !!recipient?.contact?.whatsapp,
-        email: !!recipient?.contact?.email,
-        call: !!recipient?.contact?.call,
+        whatsapp: !!recipientAny?.contact?.whatsapp,
+        email: !!recipientAny?.contact?.email,
+        call: !!recipientAny?.contact?.call,
       };
       invite.acceptedContactSnapshotAt = new Date();
 
