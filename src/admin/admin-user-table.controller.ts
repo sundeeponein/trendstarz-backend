@@ -35,6 +35,52 @@ export class AdminUserTableController {
     private readonly earlyAccessAssignmentService: EarlyAccessAssignmentService,
   ) {}
 
+  private getPaging(pageRaw?: string, limitRaw?: string) {
+    const page = Math.max(1, Number(pageRaw) || 1);
+    const limit = Math.min(100, Math.max(1, Number(limitRaw) || 50));
+    return {
+      page,
+      limit,
+      skip: (page - 1) * limit,
+    };
+  }
+
+  private async loadLatestPaymentsByUserIds(userIds: string[]) {
+    if (!userIds.length) return new Map<string, any>();
+    const payments = await this.paymentModel
+      .aggregate([
+        {
+          $match: {
+            userId: { $in: userIds },
+            status: "approved",
+          },
+        },
+        { $sort: { approvedAt: -1, updatedAt: -1, createdAt: -1 } },
+        {
+          $group: {
+            _id: "$userId",
+            latest: { $first: "$$ROOT" },
+          },
+        },
+      ])
+      .exec();
+
+    const byUserId = new Map<string, any>();
+    for (const row of payments || []) {
+      const key = String(row?._id || "");
+      if (key) byUserId.set(key, row?.latest || null);
+    }
+    return byUserId;
+  }
+
+  private toRegex(value?: string) {
+    if (!value) return null;
+    const trimmed = String(value).trim();
+    if (!trimmed) return null;
+    const escaped = trimmed.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    return new RegExp(escaped, "i");
+  }
+
   private normalizeAdminTags(tags: unknown): string[] {
     if (!Array.isArray(tags)) return [];
     return Array.from(
@@ -183,28 +229,42 @@ export class AdminUserTableController {
     @Query("status") status?: string,
     @Query("q") q?: string,
     @Query("category") category?: string,
+    @Query("page") page?: string,
+    @Query("limit") limit?: string,
   ) {
+    const paging = this.getPaging(page, limit);
     const filter: any = {};
     if (status === "deleted") {
       filter.isDeleted = { $in: [true, "true"] };
     } else {
       filter.isDeleted = { $nin: [true, "true"] };
     }
-    if (q) filter.q = q;
-    if (category) filter.category = category;
+    const qRegex = this.toRegex(q);
+    if (qRegex) {
+      filter.$or = [
+        { name: qRegex },
+        { username: qRegex },
+        { email: qRegex },
+        { phoneNumber: qRegex },
+      ];
+    }
+    const categoryRegex = this.toRegex(category);
+    if (categoryRegex) {
+      filter.categories = categoryRegex;
+    }
     const influencers = await this.influencerModel
       .find(filter)
+      .sort({ createdAt: -1 })
+      .skip(paging.skip)
+      .limit(paging.limit)
       .lean()
-      .limit(100);
-    await Promise.all(
-      influencers.map(async (u) => {
-        // Fetch latest approved payment
-        u.latestPayment = await this.paymentModel
-          .findOne({ userId: u._id, status: "approved" })
-          .sort({ approvedAt: -1 })
-          .lean();
-      }),
+      .exec();
+    const latestPayments = await this.loadLatestPaymentsByUserIds(
+      influencers.map((u: any) => String(u?._id || "")).filter(Boolean),
     );
+    for (const u of influencers as any[]) {
+      u.latestPayment = latestPayments.get(String(u?._id || "")) || null;
+    }
     return influencers;
   }
 
@@ -213,33 +273,47 @@ export class AdminUserTableController {
     @Query("status") status?: string,
     @Query("q") q?: string,
     @Query("category") category?: string,
+    @Query("page") page?: string,
+    @Query("limit") limit?: string,
   ) {
+    const paging = this.getPaging(page, limit);
     const filter: any = {};
     if (status === "deleted") {
       filter.isDeleted = { $in: [true, "true"] };
     } else {
       filter.isDeleted = { $nin: [true, "true"] };
     }
-    if (q) filter.q = q;
-    if (category) filter.category = category;
-    const brands = await this.brandModel.find(filter).lean().limit(100);
-    await Promise.all(
-      brands.map(async (b) => {
-        if (!b.brandLogo) b.brandLogo = [];
-        if (!b.products) b.products = [];
-        if (
-          b.promotionalPrice === undefined &&
-          (b as any).price !== undefined
-        ) {
-          b.promotionalPrice = (b as any).price;
-        }
-        // Fetch latest approved payment
-        (b as any).latestPayment = await this.paymentModel
-          .findOne({ userId: b._id, status: "approved" })
-          .sort({ approvedAt: -1 })
-          .lean();
-      }),
+    const qRegex = this.toRegex(q);
+    if (qRegex) {
+      filter.$or = [
+        { brandName: qRegex },
+        { brandUsername: qRegex },
+        { email: qRegex },
+        { phoneNumber: qRegex },
+      ];
+    }
+    const categoryRegex = this.toRegex(category);
+    if (categoryRegex) {
+      filter.categories = categoryRegex;
+    }
+    const brands = await this.brandModel
+      .find(filter)
+      .sort({ createdAt: -1 })
+      .skip(paging.skip)
+      .limit(paging.limit)
+      .lean()
+      .exec();
+    const latestPayments = await this.loadLatestPaymentsByUserIds(
+      brands.map((b: any) => String(b?._id || "")).filter(Boolean),
     );
+    for (const b of brands as any[]) {
+      if (!b.brandLogo) b.brandLogo = [];
+      if (!b.products) b.products = [];
+      if (b.promotionalPrice === undefined && (b as any).price !== undefined) {
+        b.promotionalPrice = (b as any).price;
+      }
+      (b as any).latestPayment = latestPayments.get(String(b?._id || "")) || null;
+    }
     return brands;
   }
 
@@ -248,29 +322,41 @@ export class AdminUserTableController {
     @Query("status") status?: string,
     @Query("q") q?: string,
     @Query("category") category?: string,
+    @Query("page") page?: string,
+    @Query("limit") limit?: string,
   ) {
+    const paging = this.getPaging(page, limit);
     const filter: any = {};
     if (status === "deleted") {
       filter.isDeleted = { $in: [true, "true"] };
     } else {
       filter.isDeleted = { $nin: [true, "true"] };
     }
-    if (q) filter.q = q;
-    if (category) filter.skills = category;
+    const qRegex = this.toRegex(q);
+    if (qRegex) {
+      filter.$or = [
+        { name: qRegex },
+        { username: qRegex },
+        { email: qRegex },
+        { phoneNumber: qRegex },
+      ];
+    }
+    const categoryRegex = this.toRegex(category);
+    if (categoryRegex) filter.skills = categoryRegex;
 
     const photographers = await this.photographerModel
       .find(filter)
+      .sort({ createdAt: -1 })
+      .skip(paging.skip)
+      .limit(paging.limit)
       .lean()
-      .limit(100);
-
-    await Promise.all(
-      photographers.map(async (p: any) => {
-        (p as any).latestPayment = await this.paymentModel
-          .findOne({ userId: p._id, status: "approved" })
-          .sort({ approvedAt: -1 })
-          .lean();
-      }),
+      .exec();
+    const latestPayments = await this.loadLatestPaymentsByUserIds(
+      photographers.map((p: any) => String(p?._id || "")).filter(Boolean),
     );
+    for (const p of photographers as any[]) {
+      (p as any).latestPayment = latestPayments.get(String(p?._id || "")) || null;
+    }
 
     return photographers;
   }

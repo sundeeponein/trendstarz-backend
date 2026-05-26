@@ -51,17 +51,13 @@ export class UsersService {
 
     if (brand) return brand;
 
+    // FIX #21: Use regex query instead of fetching entire collection
+    // Search by slug pattern (kebab-case). This leverages a potential text index if available.
     const decoded = this.slugify(normalized);
-    const candidates = await this.brandModel
-      .find({})
-      .select("_id brandName")
+    const slugRegex = new RegExp(`^${decoded}$|^${decoded}-|\\b${decoded}\\b`, "i");
+    return this.brandModel
+      .findOne({ brandName: slugRegex })
       .lean();
-    const match = candidates.find(
-      (b: any) => this.slugify(b.brandName || "") === decoded,
-    );
-    if (!match) return null;
-
-    return this.brandModel.findById(match._id).lean();
   }
 
   async trackInfluencerProfileImpression(username: string) {

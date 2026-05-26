@@ -6,6 +6,7 @@ import {
 import { InjectModel } from "@nestjs/mongoose";
 import { Model } from "mongoose";
 import { PlansService } from "../plans/plans.service";
+import { getRequiredFields } from "./campaign-required-fields";
 
 const VALID_TRANSITIONS: Record<string, string[]> = {
   draft: ["pending", "pending_review", "active", "needs_changes"],
@@ -207,13 +208,114 @@ export class CampaignsService {
       }
     }
 
+    // Multi-role invite slots (additive). Sanitize each entry; reject bad
+    // role values up front so the document never lands in an invalid state.
+    if (Array.isArray(data.inviteSlots)) {
+      const allowedRoles = new Set(["influencer", "photographer"]);
+      normalized.inviteSlots = data.inviteSlots
+        .map((slot: any) => {
+          const role = String(slot?.role || "").trim().toLowerCase();
+          const count = Number(slot?.count);
+          if (!allowedRoles.has(role)) return null;
+          if (!Number.isFinite(count) || count <= 0) return null;
+          const entry: any = {
+            role,
+            count: Math.round(count),
+            notes: slot?.notes ? String(slot.notes).trim() : "",
+          };
+          if (slot?.comp !== undefined && slot?.comp !== null) {
+            const comp = Number(slot.comp);
+            if (Number.isFinite(comp) && comp > 0) {
+              entry.comp = Math.round(comp);
+            }
+          }
+          return entry;
+        })
+        .filter(Boolean);
+    }
+
+    // Derive logisticsType (additive discriminator) from the merged payload.
+    // Honour an explicit incoming value if it's a known enum, otherwise derive.
+    const explicit = String(data?.logisticsType || "").trim();
+    const allowed = new Set([
+      "none",
+      "ship_to_creator",
+      "in_person_event",
+      "on_location_shoot",
+      "remote_delivery",
+      "pay_to_join_program",
+    ]);
+    normalized.logisticsType = allowed.has(explicit)
+      ? explicit
+      : this.deriveLogisticsType(normalized);
+
     return normalized;
+  }
+
+  /**
+   * Derive a logistics flow discriminator from campaign fields. Used to keep
+   * fulfilment/analytics code decoupled from creator-facing `campaignType`
+   * labels (which can multiply over time without changing the underlying flow).
+   */
+  private deriveLogisticsType(payload: any): string {
+    const type = String(payload?.campaignType || "");
+    const ownerType = String(payload?.ownerType || "brand");
+    const inviteRole = String(payload?.inviteRecipientRole || "influencer");
+    const shootLoc = String(payload?.shootLocationType || "");
+    const shipping = payload?.productShippingRequired === true;
+
+    if (type === "invite_location") return "in_person_event";
+    if (type === "pay_to_join") return "pay_to_join_program";
+    if (type === "product") {
+      return shipping ? "ship_to_creator" : "none";
+    }
+    // Photographer-led collabs (or brand→photographer requirement) with a shoot location.
+    const photographerInvolved =
+      ownerType === "photographer" || inviteRole === "photographer";
+    if (photographerInvolved) {
+      if (shootLoc === "remote") return "remote_delivery";
+      if (shootLoc) return "on_location_shoot";
+    }
+    if (type === "creative_project" && shootLoc === "remote") {
+      return "remote_delivery";
+    }
+    return "none";
   }
 
   private assertCampaignModeAvailability(data: any) {
     const mode = String(data?.campaignMode || "invite_only");
     if (!["invite_only", "tier_filtered_open"].includes(mode)) {
       throw new BadRequestException("Invalid campaign access mode.");
+    }
+  }
+
+  /**
+   * Validate that all required fields for the given campaign type are present.
+   * Uses the shared `getRequiredFields` rule set so frontend and backend stay
+   * in lock-step on what is mandatory per campaign type / owner role.
+   */
+  private assertRequiredFieldsForCampaign(payload: any): void {
+    const required = getRequiredFields({
+      campaignType: String(payload?.campaignType || ""),
+      ownerType: payload?.ownerType,
+      inviteRecipientRole: payload?.inviteRecipientRole,
+      productPaymentMode: payload?.productPaymentMode,
+      shootLocationType: payload?.shootLocationType,
+    });
+    const missing: string[] = [];
+    for (const name of required) {
+      const v = payload?.[name];
+      if (v === undefined || v === null) {
+        missing.push(name);
+        continue;
+      }
+      if (typeof v === "string" && !v.trim()) missing.push(name);
+      else if (typeof v === "number" && !(v > 0)) missing.push(name);
+    }
+    if (missing.length) {
+      throw new BadRequestException(
+        `Missing required field(s) for this campaign type: ${missing.join(", ")}`,
+      );
     }
   }
 
@@ -302,6 +404,10 @@ export class CampaignsService {
       data?.status,
       ownerType,
     );
+    // Re-derive logisticsType now that ownerType/inviteRecipientRole are set
+    // (additive discriminator — see deriveLogisticsType).
+    normalized.logisticsType = this.deriveLogisticsType(normalized);
+    this.assertRequiredFieldsForCampaign(normalized);
     const campaign = new this.campaignModel({ ...normalized, brandId: ownerId });
     return await campaign.save();
   }
@@ -610,6 +716,16 @@ export class CampaignsService {
       campaignOwnerType,
       inviteRecipientRole,
     );
+    // Validate the merged (existing + incoming) document so partial updates
+    // don't bypass type-specific required-field rules.
+    const mergedForValidation = {
+      ...(campaign.toObject ? campaign.toObject() : campaign),
+      ...normalized,
+    };
+    // Re-derive logisticsType from the merged document to keep the
+    // discriminator consistent across partial updates.
+    normalized.logisticsType = this.deriveLogisticsType(mergedForValidation);
+    this.assertRequiredFieldsForCampaign(mergedForValidation);
     Object.assign(campaign, normalized);
     return campaign.save();
   }

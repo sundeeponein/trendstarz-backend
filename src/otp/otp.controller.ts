@@ -1,10 +1,49 @@
-import { Controller, Post, Body } from "@nestjs/common";
-import { randomInt } from "crypto";
+import {
+  Controller,
+  Post,
+  Body,
+  HttpException,
+  HttpStatus,
+} from "@nestjs/common";
+import { randomInt, randomBytes, createHash, timingSafeEqual } from "crypto";
 import { DevEmailService } from "../utils/dev-email.service";
 import { SesEmailService } from "../utils/ses-email.service";
 
-const otpStore = new Map<string, { otp: string; expires: number }>();
+/**
+ * OTP record stored in-memory.
+ * - `hash`/`salt`: sha256(salt + otp) — we never persist the plaintext OTP.
+ * - `attempts`: failed verification attempts; locks out after MAX_ATTEMPTS.
+ * - `sendHistory`: timestamps of recent sends used for per-value rate-limiting.
+ */
+interface OtpRecord {
+  hash: string;
+  salt: string;
+  expires: number;
+  attempts: number;
+  sendHistory: number[];
+}
+
+const otpStore = new Map<string, OtpRecord>();
 const OTP_TTL = 5 * 60 * 1000; // 5 minutes
+const MAX_VERIFY_ATTEMPTS = 5;
+const SEND_MIN_INTERVAL_MS = 30 * 1000; // 30s between sends per value
+const SEND_HOURLY_LIMIT = 5; // max sends per value per rolling hour
+const SEND_WINDOW_MS = 60 * 60 * 1000;
+
+function hashOtp(otp: string, salt: string): string {
+  return createHash("sha256").update(`${salt}:${otp}`).digest("hex");
+}
+
+function safeEqualHex(a: string, b: string): boolean {
+  try {
+    const bufA = Buffer.from(a, "hex");
+    const bufB = Buffer.from(b, "hex");
+    if (bufA.length !== bufB.length) return false;
+    return timingSafeEqual(bufA, bufB);
+  } catch {
+    return false;
+  }
+}
 
 @Controller("otp")
 export class OtpController {
@@ -15,12 +54,42 @@ export class OtpController {
 
   @Post("send")
   async sendOtp(@Body() body: any) {
-    const { type, value } = body;
+    const { type, value } = body || {};
     if (!type || !value) {
       return { error: "Missing type or value" };
     }
-    const otp = randomInt(100000, 999999).toString();
-    otpStore.set(value, { otp, expires: Date.now() + OTP_TTL });
+    const key = String(value).trim().toLowerCase();
+
+    // Pull existing record to enforce send rate limits and preserve send history.
+    const now = Date.now();
+    const existing = otpStore.get(key);
+    const history = (existing?.sendHistory || []).filter(
+      (t) => now - t < SEND_WINDOW_MS,
+    );
+    if (history.length && now - history[history.length - 1] < SEND_MIN_INTERVAL_MS) {
+      throw new HttpException(
+        { error: "Please wait a moment before requesting another OTP." },
+        HttpStatus.TOO_MANY_REQUESTS,
+      );
+    }
+    if (history.length >= SEND_HOURLY_LIMIT) {
+      throw new HttpException(
+        { error: "Too many OTP requests. Please try again later." },
+        HttpStatus.TOO_MANY_REQUESTS,
+      );
+    }
+
+    const otp = randomInt(100000, 1000000).toString();
+    const salt = randomBytes(16).toString("hex");
+    const hash = hashOtp(otp, salt);
+    history.push(now);
+    otpStore.set(key, {
+      hash,
+      salt,
+      expires: now + OTP_TTL,
+      attempts: 0,
+      sendHistory: history,
+    });
     if (type === "email") {
       const subject = "Your TrendStarz OTP";
       const text = `Your OTP is: ${otp}`;
@@ -35,15 +104,41 @@ export class OtpController {
 
   @Post("verify")
   verifyOtp(@Body() body: any) {
-    const { type, value, otp } = body;
+    const { type, value, otp } = body || {};
     if (!type || !value || !otp) {
       return { error: "Missing type, value, or otp" };
     }
-    const stored = otpStore.get(value);
-    if (!stored || stored.otp !== otp || Date.now() > stored.expires) {
+    const key = String(value).trim().toLowerCase();
+    const stored = otpStore.get(key);
+    if (!stored) {
       return { error: "Invalid or expired OTP" };
     }
-    otpStore.delete(value);
+    if (Date.now() > stored.expires) {
+      otpStore.delete(key);
+      return { error: "Invalid or expired OTP" };
+    }
+    if (stored.attempts >= MAX_VERIFY_ATTEMPTS) {
+      otpStore.delete(key);
+      throw new HttpException(
+        { error: "Too many incorrect attempts. Please request a new OTP." },
+        HttpStatus.TOO_MANY_REQUESTS,
+      );
+    }
+    const candidate = hashOtp(String(otp), stored.salt);
+    if (!safeEqualHex(candidate, stored.hash)) {
+      stored.attempts += 1;
+      const remaining = MAX_VERIFY_ATTEMPTS - stored.attempts;
+      if (remaining <= 0) {
+        otpStore.delete(key);
+        throw new HttpException(
+          { error: "Too many incorrect attempts. Please request a new OTP." },
+          HttpStatus.TOO_MANY_REQUESTS,
+        );
+      }
+      return { error: "Invalid or expired OTP" };
+    }
+    otpStore.delete(key);
     return { message: "OTP verified successfully" };
   }
 }
+

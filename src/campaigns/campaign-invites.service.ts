@@ -1053,6 +1053,16 @@ export class CampaignInvitesService {
       mobile?: string;
       accountHolderName?: string;
     },
+    shippingAddress?: {
+      contactName?: string;
+      contactMobile?: string;
+      line1?: string;
+      line2?: string;
+      city?: string;
+      state?: string;
+      pincode?: string;
+      landmark?: string;
+    },
   ) {
     const normalized = (v: string) => (v || "").toLowerCase().trim();
     const invite = await this.inviteModel.findById(inviteId);
@@ -1079,7 +1089,7 @@ export class CampaignInvitesService {
       const campaign: any = await this.campaignModel
         .findById(invite.campaignId)
         .select(
-          "status ownerType createdByRole requestKind startDate endDate timelineStart timelineEnd socialMedia platforms campaignMode minInfluencerTier minInfluencers maxInfluencers acceptanceDeadline",
+          "status ownerType createdByRole requestKind startDate endDate timelineStart timelineEnd socialMedia platforms campaignMode minInfluencerTier minInfluencers maxInfluencers acceptanceDeadline campaignType productShippingRequired",
         )
         .lean();
       if (!campaign) throw new NotFoundException("Campaign not found");
@@ -1092,6 +1102,50 @@ export class CampaignInvitesService {
         throw new BadRequestException(
           "This collaboration is still under admin review. You can accept after it is approved.",
         );
+      }
+
+      // Shipping address capture — required when brand is shipping a physical product.
+      const requiresShippingAddress =
+        campaign.campaignType === "product" &&
+        campaign.productShippingRequired === true;
+      if (requiresShippingAddress) {
+        const sa = shippingAddress || {};
+        const missing: string[] = [];
+        const required: Array<[keyof typeof sa, string]> = [
+          ["contactName", "contact name"],
+          ["contactMobile", "contact mobile"],
+          ["line1", "address line 1"],
+          ["city", "city"],
+          ["state", "state"],
+          ["pincode", "pincode"],
+        ];
+        for (const [k, label] of required) {
+          if (!String((sa as any)[k] || "").trim()) missing.push(label);
+        }
+        const mobile = String(sa.contactMobile || "").replace(/\D/g, "");
+        if (mobile && (mobile.length < 10 || mobile.length > 13)) {
+          missing.push("valid contact mobile");
+        }
+        const pincode = String(sa.pincode || "").replace(/\D/g, "");
+        if (pincode && (pincode.length < 4 || pincode.length > 10)) {
+          missing.push("valid pincode");
+        }
+        if (missing.length) {
+          throw new BadRequestException(
+            `Shipping address required to accept this product collab. Missing/invalid: ${missing.join(", ")}.`,
+          );
+        }
+        (invite as any).shippingAddress = {
+          contactName: String(sa.contactName || "").trim(),
+          contactMobile: String(sa.contactMobile || "").trim(),
+          line1: String(sa.line1 || "").trim(),
+          line2: String(sa.line2 || "").trim(),
+          city: String(sa.city || "").trim(),
+          state: String(sa.state || "").trim(),
+          pincode: String(sa.pincode || "").trim(),
+          landmark: String(sa.landmark || "").trim(),
+          capturedAt: new Date(),
+        };
       }
 
       const influencer = recipientRole === "photographer"

@@ -161,6 +161,16 @@ export class CampaignInvitesController {
         mobile?: string;
         accountHolderName?: string;
       };
+      shippingAddress?: {
+        contactName?: string;
+        contactMobile?: string;
+        line1?: string;
+        line2?: string;
+        city?: string;
+        state?: string;
+        pincode?: string;
+        landmark?: string;
+      };
     },
   ) {
     const influencerId = req.user?.userId;
@@ -172,6 +182,7 @@ export class CampaignInvitesController {
       body.selectedPlatform,
       body.selectedContentType,
       body.payout,
+      body.shippingAddress,
     );
   }
 

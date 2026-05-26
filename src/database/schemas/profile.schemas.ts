@@ -557,8 +557,35 @@ export const CampaignSchema = new Schema(
     description: { type: String },
     campaignType: {
       type: String,
-      enum: ["paid_collab", "product", "invite_location", "pay_to_join"],
+      enum: [
+        // Brand-led campaign types
+        "paid_collab",
+        "product",
+        "invite_location",
+        "pay_to_join",
+        // Photographer-led collaboration types
+        "portfolio_collab",
+        "reel_collab",
+        "creative_project",
+      ],
       default: "paid_collab",
+      index: true,
+    },
+    // Logistics discriminator — derived from campaignType + ownerType + shoot/shipping flags.
+    // Additive: existing consumers still use campaignType. New consumers can branch on this
+    // to keep downstream logic (fulfilment, dashboards, analytics) decoupled from
+    // creator-facing campaign labels.
+    logisticsType: {
+      type: String,
+      enum: [
+        "none",
+        "ship_to_creator",
+        "in_person_event",
+        "on_location_shoot",
+        "remote_delivery",
+        "pay_to_join_program",
+      ],
+      default: "none",
       index: true,
     },
     campaignMode: {
@@ -579,6 +606,28 @@ export const CampaignSchema = new Schema(
       default: "influencer",
       index: true,
     },
+    /**
+     * Multi-role invite slots (additive). Models campaigns that need more than
+     * one creator role on the same shoot/event, e.g. "1 photographer + 2
+     * influencers". When empty, the legacy single-role `inviteRecipientRole`
+     * + `maxInfluencers` flow is used. Consumers MUST treat absence as the
+     * legacy single-role mode for backwards-compatibility.
+     */
+    inviteSlots: [
+      {
+        role: {
+          type: String,
+          enum: ["influencer", "photographer"],
+          required: true,
+        },
+        count: { type: Number, required: true, min: 1 },
+        // Compensation override per slot (paise). Optional — falls back to
+        // campaign-level `pricePerInfluencer` when not set.
+        comp: { type: Number, default: null },
+        // Free-text role notes (e.g. "fashion creator", "reel specialist").
+        notes: { type: String, default: "" },
+      },
+    ],
     requestKind: {
       type: String,
       enum: ["brand_campaign", "creative_requirement", "photographer_collaboration"],
@@ -700,6 +749,19 @@ export const CampaignInviteSchema = new Schema(
       default: "pending",
     },
     selectedPlatform: { type: String, default: null }, // platform the influencer will post on
+    // Shipping address captured from the creator at acceptance time for Product Collabs.
+    // Required server-side when campaign.campaignType === 'product' && campaign.productShippingRequired === true.
+    shippingAddress: {
+      contactName: { type: String },
+      contactMobile: { type: String },
+      line1: { type: String },
+      line2: { type: String },
+      city: { type: String },
+      state: { type: String },
+      pincode: { type: String },
+      landmark: { type: String },
+      capturedAt: { type: Date },
+    },
     analytics: {
       reach: { type: Number },
       engagement: { type: Number },
