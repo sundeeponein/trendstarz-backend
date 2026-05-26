@@ -26,11 +26,15 @@ export const CampaignTransactionSchema = new Schema(
       index: true,
     },
     payerId: { type: Schema.Types.Mixed, required: true, index: true },
-    payerRole: { type: String, enum: ["brand", "influencer"], required: true },
+    payerRole: {
+      type: String,
+      enum: ["brand", "influencer", "photographer"],
+      required: true,
+    },
     recipientId: { type: Schema.Types.Mixed, required: true, index: true },
     recipientRole: {
       type: String,
-      enum: ["influencer", "brand"],
+      enum: ["influencer", "brand", "photographer"],
       required: true,
     },
     agreedAmount: { type: Number, required: true },
@@ -89,7 +93,7 @@ export const CampaignTransactionSchema = new Schema(
     },
     disputeReason: { type: String },
     disputedBy: { type: Schema.Types.Mixed },     // userId of whoever raised dispute
-    disputedByRole: { type: String },              // 'brand' | 'influencer' | 'admin'
+    disputedByRole: { type: String },              // 'brand' | 'influencer' | 'photographer' | 'admin'
     disputedAt: { type: Date },
     resolveOutcome: {
       type: String,
@@ -111,9 +115,9 @@ export interface CampaignTransaction extends Document {
   campaignId: string;
   inviteId: string;
   payerId: string;
-  payerRole: "brand" | "influencer";
+  payerRole: "brand" | "influencer" | "photographer";
   recipientId: string;
-  recipientRole: "influencer" | "brand";
+  recipientRole: "influencer" | "brand" | "photographer";
   agreedAmount: number;
   platformFee: number;
   payerTotal: number;

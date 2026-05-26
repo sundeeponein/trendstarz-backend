@@ -115,7 +115,13 @@ export class PaymentsPayoutsController {
     @Req() req: any,
   ) {
     const userId = req.user?.userId;
-    const role = req.user?.role === "brand" ? "brand" : "influencer";
+    const normalizedRole = String(req.user?.role || "").toLowerCase();
+    const role =
+      normalizedRole === "brand"
+        ? "brand"
+        : normalizedRole === "photographer"
+          ? "photographer"
+          : "influencer";
     return this.paymentsPayoutsService.raiseDispute(id, userId, role, body.reason);
   }
 

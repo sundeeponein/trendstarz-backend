@@ -24,6 +24,7 @@ export class PaymentsPayoutsService {
     @InjectModel("AppSettings") private readonly appSettingsModel: Model<any>,
     @InjectModel("Brand") private readonly brandModel: Model<any>,
     @InjectModel("Influencer") private readonly influencerModel: Model<any>,
+    @InjectModel("Photographer") private readonly photographerModel: Model<any>,
     private readonly pushService: PushService,
     private readonly notificationsService: NotificationsService,
   ) {}
@@ -197,7 +198,7 @@ export class PaymentsPayoutsService {
       platformFeeEnabled,
       platformFeePercent: effectiveCommissionPercent, // Use effective percent instead of global
       trustLabels: [
-        "You pay only for accepted influencers",
+        "You pay only for accepted recipients",
         "Payment secured by TrendStarz",
         "Released after campaign approval",
       ],
@@ -221,7 +222,7 @@ export class PaymentsPayoutsService {
     const calc = await this.calculatePayment(campaignId, payerId);
     if (!calc.acceptedCount) {
       throw new BadRequestException(
-        "No accepted influencers found for payment",
+        "No accepted recipients found for payment",
       );
     }
 
@@ -249,6 +250,11 @@ export class PaymentsPayoutsService {
     for (let i = 0; i < acceptedInvites.length; i++) {
       const invite = acceptedInvites[i];
       const influencerId = String(invite.influencerId);
+      const inviteRecipientRole =
+        String(invite?.recipientRole || "").trim().toLowerCase() ===
+        "photographer"
+          ? "photographer"
+          : "influencer";
       const recipientId =
         calc.campaignType === "pay_to_join"
           ? String(campaign.brandId)
@@ -270,10 +276,11 @@ export class PaymentsPayoutsService {
         campaignId,
         inviteId: invite._id,
         payerId,
-        payerRole: calc.campaignType === "pay_to_join" ? "influencer" : "brand",
+        payerRole:
+          calc.campaignType === "pay_to_join" ? inviteRecipientRole : "brand",
         recipientId,
         recipientRole:
-          calc.campaignType === "pay_to_join" ? "brand" : "influencer",
+          calc.campaignType === "pay_to_join" ? "brand" : inviteRecipientRole,
         agreedAmount: agreedSplit[i],
         platformFee: feeSplit[i],
         payerTotal: payerSplit[i],
@@ -301,8 +308,8 @@ export class PaymentsPayoutsService {
     sendAppEmail({
       to: adminEmail,
       subject: `[TrendStarZ] New payment proof — ${campaign.title || campaignId}`,
-      text: `A brand has submitted a UTR reference for campaign "${campaign.title || campaignId}".\n\nUTR: ${utrNumber}\nInfluencers: ${saved.length}\n\nReview: ${adminUrl}`,
-      html: `<p>A brand has submitted a UTR reference for campaign <strong>${campaign.title || campaignId}</strong>.</p><p><strong>UTR:</strong> ${utrNumber}<br/><strong>Influencers:</strong> ${saved.length}</p><p><a href="${adminUrl}">Review in admin panel</a></p>`,
+      text: `A brand has submitted a UTR reference for campaign "${campaign.title || campaignId}".\n\nUTR: ${utrNumber}\nRecipients: ${saved.length}\n\nReview: ${adminUrl}`,
+      html: `<p>A brand has submitted a UTR reference for campaign <strong>${campaign.title || campaignId}</strong>.</p><p><strong>UTR:</strong> ${utrNumber}<br/><strong>Recipients:</strong> ${saved.length}</p><p><a href="${adminUrl}">Review in admin panel</a></p>`,
     }).catch((err: unknown) => {
       console.error(
         "[PaymentsPayoutsService] Failed to send admin UTR alert:",
@@ -334,10 +341,14 @@ export class PaymentsPayoutsService {
     // prefill the "Mark Payout Paid" popup (name, UPI ID, mobile) without
     // an extra round-trip per row.
     const influencerIds = new Set<string>();
+    const photographerIds = new Set<string>();
     const brandIds = new Set<string>();
     for (const r of rows as any[]) {
       if (r.recipientRole === "influencer" && r.recipientId) {
         influencerIds.add(String(r.recipientId));
+      }
+      if (r.recipientRole === "photographer" && r.recipientId) {
+        photographerIds.add(String(r.recipientId));
       }
       if (r.recipientRole === "brand" && r.recipientId) {
         brandIds.add(String(r.recipientId));
@@ -345,15 +356,24 @@ export class PaymentsPayoutsService {
       if (r.payerRole === "influencer" && r.payerId) {
         influencerIds.add(String(r.payerId));
       }
+      if (r.payerRole === "photographer" && r.payerId) {
+        photographerIds.add(String(r.payerId));
+      }
       if (r.payerRole === "brand" && r.payerId) {
         brandIds.add(String(r.payerId));
       }
     }
 
-    const [influencers, brands] = await Promise.all([
+    const [influencers, photographers, brands] = await Promise.all([
       influencerIds.size
         ? this.influencerModel
             .find({ _id: { $in: Array.from(influencerIds) } })
+            .select("name email phoneNumber payout")
+            .lean()
+        : Promise.resolve([] as any[]),
+      photographerIds.size
+        ? this.photographerModel
+            .find({ _id: { $in: Array.from(photographerIds) } })
             .select("name email phoneNumber payout")
             .lean()
         : Promise.resolve([] as any[]),
@@ -367,6 +387,8 @@ export class PaymentsPayoutsService {
 
     const inflMap = new Map<string, any>();
     for (const i of influencers) inflMap.set(String(i._id), i);
+    const photographerMap = new Map<string, any>();
+    for (const p of photographers) photographerMap.set(String(p._id), p);
     const brandMap = new Map<string, any>();
     for (const b of brands) brandMap.set(String(b._id), b);
 
@@ -414,6 +436,21 @@ export class PaymentsPayoutsService {
           payoutMobile: b.payout?.mobile || "",
           payoutName: b.payout?.accountHolderName || "",
           lastConfirmedAt: b.payout?.lastConfirmedAt || null,
+        };
+      }
+      if (role === "photographer") {
+        const p = photographerMap.get(sid);
+        if (!p) return { id: sid, role: "photographer", name: "" };
+        return {
+          id: sid,
+          role: "photographer",
+          name: p.name || "",
+          email: p.email || "",
+          mobile: p.phoneNumber || "",
+          payoutUpiId: p.payout?.upiId || "",
+          payoutMobile: p.payout?.mobile || "",
+          payoutName: p.payout?.accountHolderName || "",
+          lastConfirmedAt: p.payout?.lastConfirmedAt || null,
         };
       }
       return null;
@@ -483,7 +520,9 @@ export class PaymentsPayoutsService {
 
     // Brand pays → unlock contact for the linked invite (paid_collab payment path).
     // Also advance invite status to payment_confirmed if still in accepted.
-    let paymentConfirmedInfluencerId: string | null = null;
+    let paymentConfirmedRecipientId: string | null = null;
+    let paymentConfirmedRecipientRole: "influencer" | "photographer" =
+      "influencer";
     let paymentConfirmedCampaignId: string | null = null;
     if (tx.inviteId && tx.transactionType === "paid_collab") {
       const update: any = {
@@ -494,21 +533,28 @@ export class PaymentsPayoutsService {
       };
       const invite: any = await this.inviteModel
         .findById(tx.inviteId)
-        .select("status influencerId campaignId")
+        .select("status influencerId campaignId recipientRole")
         .lean();
       if (invite && invite.status === "accepted") {
         update.status = "payment_confirmed";
-        paymentConfirmedInfluencerId = String(invite.influencerId || "");
+        paymentConfirmedRecipientId = String(invite.influencerId || "");
+        paymentConfirmedRecipientRole =
+          String(invite?.recipientRole || "").trim().toLowerCase() ===
+          "photographer"
+            ? "photographer"
+            : "influencer";
         paymentConfirmedCampaignId = String(invite.campaignId || "");
       }
       await this.inviteModel.findByIdAndUpdate(tx.inviteId, { $set: update });
     }
 
-    // Notify influencer as soon as payment is confirmed so they can start posting.
-    if (paymentConfirmedInfluencerId) {
+    // Notify recipient as soon as payment is confirmed so they can start posting.
+    if (paymentConfirmedRecipientId) {
       Promise.all([
-        this.influencerModel
-          .findById(paymentConfirmedInfluencerId)
+        (paymentConfirmedRecipientRole === "photographer"
+          ? this.photographerModel
+          : this.influencerModel)
+          .findById(paymentConfirmedRecipientId)
           .select("email name username")
           .lean(),
         paymentConfirmedCampaignId
@@ -520,11 +566,13 @@ export class PaymentsPayoutsService {
       ])
         .then(([inf, campaign]: any[]) => {
           if (!inf?.email) return;
-          const name = inf.name || inf.username || "Influencer";
+          const name = inf.name || inf.username || "Creator";
           const campaignTitle = campaign?.title || "your campaign";
           const dashboardUrl =
             (process.env.FRONTEND_URL || "https://trendstarz.com") +
-            "/influencer-dashboard";
+            (paymentConfirmedRecipientRole === "photographer"
+              ? "/photographer-dashboard"
+              : "/influencer-dashboard");
           return sendAppEmail({
             to: inf.email,
             subject: "[TrendStarZ] Verified - you can start posting",
@@ -534,24 +582,30 @@ export class PaymentsPayoutsService {
         })
         .catch((err: unknown) => {
           console.error(
-            "[PaymentsPayoutsService] Failed to send payment-confirmed email to influencer:",
+            "[PaymentsPayoutsService] Failed to send payment-confirmed email to recipient:",
             err,
           );
         });
 
       // Web push
-      this.pushService.sendToUser(paymentConfirmedInfluencerId, {
+      this.pushService.sendToUser(paymentConfirmedRecipientId, {
         title: "Payment verified ✅",
         body: `You can now start posting for your campaign.`,
-        url: "/influencer-dashboard",
+        url:
+          paymentConfirmedRecipientRole === "photographer"
+            ? "/photographer-dashboard"
+            : "/influencer-dashboard",
       }).catch(() => { /* non-critical */ });
       this.notificationsService
         .createForUser({
-          userId: paymentConfirmedInfluencerId,
-          userRole: "influencer",
+          userId: paymentConfirmedRecipientId,
+          userRole: paymentConfirmedRecipientRole,
           title: "Payment Verified",
           body: "Brand payment was verified. You can start working on the campaign.",
-          url: "/influencer-dashboard",
+          url:
+            paymentConfirmedRecipientRole === "photographer"
+              ? "/photographer-dashboard"
+              : "/influencer-dashboard",
         })
         .catch(() => {
           /* non-critical */
@@ -673,14 +727,19 @@ export class PaymentsPayoutsService {
     await tx.save();
 
     // Fire-and-forget: notify influencer their payout has been sent
-    if (tx.recipientId && tx.recipientRole === "influencer") {
-      this.influencerModel
+    if (
+      tx.recipientId &&
+      (tx.recipientRole === "influencer" || tx.recipientRole === "photographer")
+    ) {
+      (tx.recipientRole === "photographer"
+        ? this.photographerModel
+        : this.influencerModel)
         .findById(tx.recipientId)
         .select("email name username")
         .lean()
         .then((inf: any) => {
           if (!inf?.email) return;
-          const name = inf.name || inf.username || "Influencer";
+          const name = inf.name || inf.username || "Creator";
           const amount =
             tx.recipientPayout != null
               ? `₹${(tx.recipientPayout / 100).toFixed(2)}`
@@ -706,8 +765,11 @@ export class PaymentsPayoutsService {
   }
 
   async listMine(userId: string, role: string) {
-    const normalizedRole =
-      role === "brand" || role === "BRAND" ? "brand" : "influencer";
+    const normalizedRole = ["brand", "influencer", "photographer"].includes(
+      String(role || "").toLowerCase(),
+    )
+      ? String(role || "").toLowerCase()
+      : "influencer";
     const rows = await this.transactionModel
       .find({ $or: [{ payerId: userId }, { recipientId: userId }] })
       .sort({ createdAt: -1 })
@@ -716,6 +778,7 @@ export class PaymentsPayoutsService {
     // Collect IDs to look up in bulk
     const campaignIds = new Set<string>();
     const influencerIds = new Set<string>();
+    const photographerIds = new Set<string>();
     const brandIds = new Set<string>();
     for (const r of rows as any[]) {
       if (r.campaignId) campaignIds.add(String(r.campaignId));
@@ -723,12 +786,16 @@ export class PaymentsPayoutsService {
         influencerIds.add(String(r.recipientId));
       if (r.payerRole === "influencer" && r.payerId)
         influencerIds.add(String(r.payerId));
+      if (r.recipientRole === "photographer" && r.recipientId)
+        photographerIds.add(String(r.recipientId));
+      if (r.payerRole === "photographer" && r.payerId)
+        photographerIds.add(String(r.payerId));
       if (r.recipientRole === "brand" && r.recipientId)
         brandIds.add(String(r.recipientId));
       if (r.payerRole === "brand" && r.payerId) brandIds.add(String(r.payerId));
     }
 
-    const [campaigns, influencers, brands] = await Promise.all([
+    const [campaigns, influencers, photographers, brands] = await Promise.all([
       campaignIds.size
         ? this.campaignModel
             .find({ _id: { $in: Array.from(campaignIds) } })
@@ -738,6 +805,12 @@ export class PaymentsPayoutsService {
       influencerIds.size
         ? this.influencerModel
             .find({ _id: { $in: Array.from(influencerIds) } })
+            .select("name username")
+            .lean()
+        : Promise.resolve([] as any[]),
+      photographerIds.size
+        ? this.photographerModel
+            .find({ _id: { $in: Array.from(photographerIds) } })
             .select("name username")
             .lean()
         : Promise.resolve([] as any[]),
@@ -753,12 +826,16 @@ export class PaymentsPayoutsService {
     for (const c of campaigns) campaignMap.set(String(c._id), c);
     const inflMap = new Map<string, any>();
     for (const i of influencers) inflMap.set(String(i._id), i);
+    const photographerMap = new Map<string, any>();
+    for (const p of photographers) photographerMap.set(String(p._id), p);
     const brandMap = new Map<string, any>();
     for (const b of brands) brandMap.set(String(b._id), b);
 
     const getPartyName = (role: string, id: any): string => {
       const sid = String(id);
       if (role === "influencer") return inflMap.get(sid)?.name || "";
+      if (role === "photographer")
+        return photographerMap.get(sid)?.name || "";
       if (role === "brand")
         return brandMap.get(sid)?.name || brandMap.get(sid)?.brandName || "";
       return "";
@@ -829,7 +906,7 @@ export class PaymentsPayoutsService {
   async raiseDispute(
     txId: string,
     userId: string,
-    userRole: "brand" | "influencer",
+    userRole: "brand" | "influencer" | "photographer",
     reason: string,
   ) {
     if (!reason?.trim()) {
@@ -842,7 +919,9 @@ export class PaymentsPayoutsService {
     const isBrand = userRole === "brand" && String(tx.payerId) === userId;
     const isInfluencer =
       userRole === "influencer" && String(tx.recipientId) === userId;
-    if (!isBrand && !isInfluencer) {
+    const isPhotographer =
+      userRole === "photographer" && String(tx.recipientId) === userId;
+    if (!isBrand && !isInfluencer && !isPhotographer) {
       throw new BadRequestException("You are not a party to this transaction");
     }
     if (tx.disputeStatus === "open") {
@@ -872,14 +951,19 @@ export class PaymentsPayoutsService {
 
     const counterpartId =
       userRole === "brand" ? String(tx.recipientId) : String(tx.payerId);
-    const counterpartRole = userRole === "brand" ? "influencer" : "brand";
+    const counterpartRole = userRole === "brand" ? tx.recipientRole : "brand";
     this.notificationsService
       .createForUser({
         userId: counterpartId,
         userRole: counterpartRole,
         title: "Dispute Raised",
         body: "A dispute was raised on a campaign transaction involving you.",
-        url: counterpartRole === "brand" ? "/transactions" : "/influencer-dashboard",
+        url:
+          counterpartRole === "brand"
+            ? "/transactions"
+            : counterpartRole === "photographer"
+              ? "/photographer-dashboard"
+              : "/influencer-dashboard",
       })
       .catch(() => {
         /* non-critical */
@@ -957,10 +1041,13 @@ export class PaymentsPayoutsService {
     this.notificationsService
       .createForUser({
         userId: String(tx.recipientId),
-        userRole: "influencer",
+        userRole: tx.recipientRole,
         title: "Dispute Resolved",
         body: resolutionMessage,
-        url: "/influencer-dashboard",
+        url:
+          tx.recipientRole === "photographer"
+            ? "/photographer-dashboard"
+            : "/influencer-dashboard",
       })
       .catch(() => {
         /* non-critical */
