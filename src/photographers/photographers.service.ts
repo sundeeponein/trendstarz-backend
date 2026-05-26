@@ -27,6 +27,7 @@ export class PhotographersService {
     const invite = await this.campaignInviteModel
       .findOne({
         unlocked: true,
+        unlockType: "paid_collab_payment",
         $or: [
           {
             influencerId: { $in: [photographer._id, String(photographer._id)] },
@@ -47,6 +48,14 @@ export class PhotographersService {
 
   private isObjectId(value: any): boolean {
     return !!value && Types.ObjectId.isValid(String(value));
+  }
+
+  private normalizePhone(value: any): string {
+    return String(value ?? "").replace(/\D/g, "");
+  }
+
+  private normalizeEmail(value: any): string {
+    return String(value ?? "").trim().toLowerCase();
   }
 
   async getProfile(userId: string) {
@@ -77,6 +86,7 @@ export class PhotographersService {
       "name",
       "username",
       "phoneNumber",
+      "email",
       "gender",
       "dateOfBirth",
       "portfolio",
@@ -118,6 +128,34 @@ export class PhotographersService {
         update[key] = data[key];
       }
     }
+
+    const current: any = await this.photographerModel
+      .findById(userId)
+      .select("phoneNumber email isMobileVerified")
+      .lean();
+    if (!current) throw new NotFoundException("Photographer not found");
+
+    if (Object.prototype.hasOwnProperty.call(update, "phoneNumber")) {
+      const existingPhone = this.normalizePhone(current.phoneNumber);
+      const incomingPhone = this.normalizePhone(update.phoneNumber);
+      if (current.isMobileVerified && existingPhone !== incomingPhone) {
+        throw new BadRequestException(
+          "Mobile number is verified by TrendStarz Team. Contact support to change it.",
+        );
+      }
+      if (existingPhone !== incomingPhone) {
+        update.isMobileVerified = false;
+      }
+    }
+
+    if (Object.prototype.hasOwnProperty.call(update, "email")) {
+      const existingEmail = this.normalizeEmail(current.email);
+      const incomingEmail = this.normalizeEmail(update.email);
+      if (existingEmail !== incomingEmail) {
+        update.isEmailVerified = false;
+      }
+    }
+
     const updated = await this.photographerModel
       .findByIdAndUpdate(userId, { $set: update }, { new: true })
       .lean();
@@ -218,7 +256,7 @@ export class PhotographersService {
     const rawDoc: any = await this.photographerModel
       .findOne({ _id: id, isDeleted: { $ne: true } })
       .select(
-        "name username email phoneNumber profileImage profileImages location skills pricing equipment socialMedia contact gender portfolio status adminTags isPremium verifiedByTrendStarz verificationStatus",
+        "name username email phoneNumber profileImage profileImages location skills pricing equipment socialMedia contact gender portfolio status adminTags isPremium verifiedByTrendStarz verificationStatus isEmailVerified isMobileVerified",
       )
       .lean();
     if (!rawDoc || Array.isArray(rawDoc)) {
@@ -228,8 +266,9 @@ export class PhotographersService {
     const allowContact = await this.canViewPhotographerContact(doc, viewerId);
     return {
       ...doc,
-      email: allowContact ? doc.email : undefined,
-      phoneNumber: allowContact ? doc.phoneNumber : undefined,
+      email: allowContact && doc?.isEmailVerified ? doc.email : undefined,
+      phoneNumber:
+        allowContact && doc?.isMobileVerified ? doc.phoneNumber : undefined,
       portfolio: allowContact ? doc.portfolio : undefined,
       contact: allowContact ? doc.contact : undefined,
       contactRestricted: !allowContact,
@@ -244,7 +283,7 @@ export class PhotographersService {
     const rawDoc: any = await this.photographerModel
       .findOne({ username, isDeleted: { $ne: true } })
       .select(
-        "name username email phoneNumber profileImage profileImages location skills pricing equipment socialMedia contact gender portfolio status adminTags isPremium verifiedByTrendStarz verificationStatus",
+        "name username email phoneNumber profileImage profileImages location skills pricing equipment socialMedia contact gender portfolio status adminTags isPremium verifiedByTrendStarz verificationStatus isEmailVerified isMobileVerified",
       )
       .lean();
     if (!rawDoc || Array.isArray(rawDoc)) {
@@ -254,8 +293,9 @@ export class PhotographersService {
     const allowContact = await this.canViewPhotographerContact(doc, viewerId);
     return {
       ...doc,
-      email: allowContact ? doc.email : undefined,
-      phoneNumber: allowContact ? doc.phoneNumber : undefined,
+      email: allowContact && doc?.isEmailVerified ? doc.email : undefined,
+      phoneNumber:
+        allowContact && doc?.isMobileVerified ? doc.phoneNumber : undefined,
       portfolio: allowContact ? doc.portfolio : undefined,
       contact: allowContact ? doc.contact : undefined,
       contactRestricted: !allowContact,

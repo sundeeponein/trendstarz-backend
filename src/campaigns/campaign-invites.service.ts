@@ -102,6 +102,10 @@ export class CampaignInvitesService {
       .lean();
   }
 
+  private isInviteContactVisible(invite: any): boolean {
+    return !!invite?.unlocked && String(invite?.unlockType || "") === "paid_collab_payment";
+  }
+
   private async attachRecipientProfile(invite: any) {
     if (!invite?.influencerId) {
       return invite;
@@ -114,12 +118,25 @@ export class CampaignInvitesService {
     if (!recipient) {
       return invite;
     }
-    if (!invite?.unlocked) {
+    if (!this.isInviteContactVisible(invite)) {
       const safeRecipient = recipient as Record<string, any>;
       const { email: _e, phoneNumber: _p, ...redactedRecipient } = safeRecipient;
       return { ...invite, recipientRole: role, influencerId: redactedRecipient };
     }
-    return { ...invite, recipientRole: role, influencerId: recipient };
+    const recipientDoc: any = recipient as any;
+    return {
+      ...invite,
+      recipientRole: role,
+      influencerId: {
+        ...recipientDoc,
+        email: recipientDoc?.isEmailVerified
+          ? recipientDoc?.email
+          : undefined,
+        phoneNumber: recipientDoc?.isMobileVerified
+          ? recipientDoc?.phoneNumber
+          : undefined,
+      },
+    };
   }
 
   /** True if user has an active premium right now. */
@@ -505,11 +522,11 @@ export class CampaignInvitesService {
       })
       .populate(
         "campaignId",
-        "title description status campaignMode budgetMin budgetMax campaignType pricePerInfluencer maxInfluencers startDate endDate timelineStart timelineEnd deliverables platforms socialMedia specialInstructions venueName venueAddress venueCity venueDistrict venueState venueGoogleMapUrl productValue productDescription productPaymentMode productPaymentAmount inviteBenefits payToJoinBenefits payToJoinInstructions ownerType createdByRole requestKind brandId",
+        "title description status campaignMode budgetMin budgetMax campaignType pricePerInfluencer maxInfluencers startDate endDate timelineStart timelineEnd acceptanceDeadline deliverables platforms socialMedia specialInstructions venueName venueAddress venueCity venueDistrict venueState venueGoogleMapUrl productValue productDescription productPaymentMode productPaymentAmount inviteBenefits payToJoinBenefits payToJoinInstructions ownerType createdByRole requestKind brandId",
       )
       .populate(
         "brandId",
-        "brandName brandUsername brandLogo location categories website email phoneNumber",
+        "brandName brandUsername brandLogo location categories website email phoneNumber isEmailVerified isMobileVerified",
       )
       .lean();
 
@@ -543,9 +560,20 @@ export class CampaignInvitesService {
 
     // Strip brand contact details from invites that haven't been unlocked yet
     return visible.map((inv: any) => {
-      if (!inv.unlocked && inv.brandId) {
-        const { email: _e, phoneNumber: _p, ...safeB } = inv.brandId;
-        return { ...inv, brandId: safeB };
+      if (inv.brandId) {
+        const shouldShowContact = this.isInviteContactVisible(inv);
+        if (!shouldShowContact) {
+          const { email: _e, phoneNumber: _p, ...safeB } = inv.brandId;
+          return { ...inv, brandId: safeB };
+        }
+        const safeBrand = {
+          ...inv.brandId,
+          email: inv.brandId?.isEmailVerified ? inv.brandId?.email : undefined,
+          phoneNumber: inv.brandId?.isMobileVerified
+            ? inv.brandId?.phoneNumber
+            : undefined,
+        };
+        return { ...inv, brandId: safeBrand };
       }
       return inv;
     });
@@ -559,18 +587,29 @@ export class CampaignInvitesService {
       })
       .populate(
         "campaignId",
-        "title description status campaignMode budgetMin budgetMax campaignType pricePerInfluencer maxInfluencers startDate endDate timelineStart timelineEnd deliverables platforms socialMedia specialInstructions venueName venueAddress venueCity venueDistrict venueState venueGoogleMapUrl productValue productDescription productPaymentMode productPaymentAmount inviteBenefits payToJoinBenefits payToJoinInstructions",
+        "title description status campaignMode budgetMin budgetMax campaignType pricePerInfluencer maxInfluencers startDate endDate timelineStart timelineEnd acceptanceDeadline deliverables platforms socialMedia specialInstructions venueName venueAddress venueCity venueDistrict venueState venueGoogleMapUrl productValue productDescription productPaymentMode productPaymentAmount inviteBenefits payToJoinBenefits payToJoinInstructions",
       )
       .populate(
         "brandId",
-        "brandName brandUsername brandLogo location categories website email phoneNumber",
+        "brandName brandUsername brandLogo location categories website email phoneNumber isEmailVerified isMobileVerified",
       )
       .lean();
 
     return invites.map((inv: any) => {
-      if (!inv.unlocked && inv.brandId) {
-        const { email: _e, phoneNumber: _p, ...safeB } = inv.brandId;
-        return { ...inv, brandId: safeB };
+      if (inv.brandId) {
+        const shouldShowContact = this.isInviteContactVisible(inv);
+        if (!shouldShowContact) {
+          const { email: _e, phoneNumber: _p, ...safeB } = inv.brandId;
+          return { ...inv, brandId: safeB };
+        }
+        const safeBrand = {
+          ...inv.brandId,
+          email: inv.brandId?.isEmailVerified ? inv.brandId?.email : undefined,
+          phoneNumber: inv.brandId?.isMobileVerified
+            ? inv.brandId?.phoneNumber
+            : undefined,
+        };
+        return { ...inv, brandId: safeBrand };
       }
       return inv;
     });
@@ -689,10 +728,11 @@ export class CampaignInvitesService {
     let unlockType: "premium" | "paid_collab_payment" | "free_unlock" =
       "free_unlock";
 
-    if (hasPremium) {
-      unlockType = "premium";
-    } else if (isPaidCollab) {
+    // Paid collaborations must be explicitly payment-gated for contact visibility.
+    if (isPaidCollab) {
       unlockType = "paid_collab_payment";
+    } else if (hasPremium) {
+      unlockType = "premium";
     }
 
     invite.unlocked = true;

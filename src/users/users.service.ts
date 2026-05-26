@@ -17,6 +17,14 @@ if (USE_LOCAL_IMAGES && !fs.existsSync(LOCAL_IMAGE_DIR)) {
 
 @Injectable()
 export class UsersService {
+  private normalizePhone(value: any): string {
+    return String(value ?? "").replace(/\D/g, "");
+  }
+
+  private normalizeEmail(value: any): string {
+    return String(value ?? "").trim().toLowerCase();
+  }
+
   private slugify(text: string): string {
     return (text || "")
       .toString()
@@ -555,6 +563,7 @@ export class UsersService {
         ],
         influencerId: viewerId,
         unlocked: true,
+        unlockType: "paid_collab_payment",
       })
       .select("_id")
       .lean();
@@ -618,8 +627,8 @@ export class UsersService {
     return {
       _id,
       name,
-      email: allowAccess ? email : undefined,
-      phoneNumber: allowAccess ? phoneNumber : undefined,
+      email: allowAccess && user?.isEmailVerified ? email : undefined,
+      phoneNumber: allowAccess && user?.isMobileVerified ? phoneNumber : undefined,
       categories,
       location: location || { state: "" },
       socialMedia: allowAccess ? socialMedia : [],
@@ -666,6 +675,7 @@ export class UsersService {
       .findOne({
         influencerId: influencer._id,
         unlocked: true,
+        unlockType: "paid_collab_payment",
         $or: [
           { brandId: brand._id },
           { brandId: String(brand._id) },
@@ -1072,8 +1082,10 @@ export class UsersService {
           verificationAdminNotes: undefined,
           verificationAuditLog: undefined,
           verificationDisclaimerAccepted: undefined,
-          email: allowContact ? inf.email : undefined,
-          phoneNumber: allowContact ? inf.phoneNumber : undefined,
+          email:
+            allowContact && inf?.isEmailVerified ? inf.email : undefined,
+          phoneNumber:
+            allowContact && inf?.isMobileVerified ? inf.phoneNumber : undefined,
           website: allowContact ? inf.website : undefined,
           dateOfBirth: undefined,
           contactRestricted: !allowContact,
@@ -1231,8 +1243,8 @@ export class UsersService {
       username: userUsername,
       profileImage,
       profileImages: profileImages || [],
-      email: allowContact ? email : undefined,
-      phoneNumber: allowContact ? phoneNumber : undefined,
+      email: allowContact && user?.isEmailVerified ? email : undefined,
+      phoneNumber: allowContact && user?.isMobileVerified ? phoneNumber : undefined,
       website: allowContact ? website : undefined,
       contactRestricted: !allowContact,
       categories,
@@ -1286,8 +1298,8 @@ export class UsersService {
       username,
       profileImage,
       profileImages: profileImages || [],
-      email: allowContact ? email : undefined,
-      phoneNumber: allowContact ? phoneNumber : undefined,
+      email: allowContact && user?.isEmailVerified ? email : undefined,
+      phoneNumber: allowContact && user?.isMobileVerified ? phoneNumber : undefined,
       website: allowContact ? website : undefined,
       contactRestricted: !allowContact,
       categories,
@@ -1379,6 +1391,8 @@ export class UsersService {
         return {
           ...brandForList,
           isPremium,
+          email: brand?.isEmailVerified ? brand?.email : undefined,
+          phoneNumber: brand?.isMobileVerified ? brand?.phoneNumber : undefined,
           socialMediaRestricted: false,
           contactRestricted: false,
         };
@@ -1821,6 +1835,27 @@ export class UsersService {
     const userDoc: any = await this.influencerModel.findById(userId);
     if (!userDoc) return { message: "Influencer not found", userId };
 
+    if (Object.prototype.hasOwnProperty.call(updateData, "phoneNumber")) {
+      const existingPhone = this.normalizePhone(userDoc.phoneNumber);
+      const incomingPhone = this.normalizePhone(updateData.phoneNumber);
+      if (userDoc.isMobileVerified && existingPhone !== incomingPhone) {
+        throw new BadRequestException(
+          "Mobile number is verified by TrendStarz Team. Contact support to change it.",
+        );
+      }
+      if (existingPhone !== incomingPhone) {
+        userDoc.set("isMobileVerified", false);
+      }
+    }
+
+    if (Object.prototype.hasOwnProperty.call(updateData, "email")) {
+      const existingEmail = this.normalizeEmail(userDoc.email);
+      const incomingEmail = this.normalizeEmail(updateData.email);
+      if (existingEmail !== incomingEmail) {
+        userDoc.set("isEmailVerified", false);
+      }
+    }
+
     for (const [key, value] of Object.entries(updateData)) {
       userDoc.set(key, value);
     }
@@ -1958,6 +1993,34 @@ export class UsersService {
     for (const key of allowedFields) {
       if (update[key] !== undefined) updateData[key] = update[key];
     }
+
+    const existingBrand: any = await this.brandModel
+      .findById(userId)
+      .select("phoneNumber email isMobileVerified")
+      .lean();
+    if (!existingBrand) return { message: "Brand not found", userId };
+
+    if (Object.prototype.hasOwnProperty.call(updateData, "phoneNumber")) {
+      const existingPhone = this.normalizePhone(existingBrand.phoneNumber);
+      const incomingPhone = this.normalizePhone(updateData.phoneNumber);
+      if (existingBrand.isMobileVerified && existingPhone !== incomingPhone) {
+        throw new BadRequestException(
+          "Mobile number is verified by TrendStarz Team. Contact support to change it.",
+        );
+      }
+      if (existingPhone !== incomingPhone) {
+        updateData.isMobileVerified = false;
+      }
+    }
+
+    if (Object.prototype.hasOwnProperty.call(updateData, "email")) {
+      const existingEmail = this.normalizeEmail(existingBrand.email);
+      const incomingEmail = this.normalizeEmail(updateData.email);
+      if (existingEmail !== incomingEmail) {
+        updateData.isEmailVerified = false;
+      }
+    }
+
     // Remove price if present
     if ("price" in updateData) delete updateData.price;
     // NOTE: isPremium is intentionally excluded — it is only set via upgradeSelfPremium or admin setPremium

@@ -832,3 +832,158 @@ describe("CampaignInvitesService – applyToCampaign()", () => {
     );
   });
 });
+
+describe("CampaignInvitesService contact visibility in invite lists", () => {
+  let service: CampaignInvitesService;
+  let inviteModel: any;
+  let photographerModel: any;
+
+  beforeEach(async () => {
+    inviteModel = jest.fn();
+    inviteModel.find = jest.fn();
+
+    photographerModel = jest.fn();
+    photographerModel.find = jest.fn().mockReturnValue({
+      select: jest.fn().mockReturnValue({
+        lean: jest.fn().mockResolvedValue([]),
+      }),
+    });
+
+    const module: TestingModule = await Test.createTestingModule({
+      providers: [
+        CampaignInvitesService,
+        { provide: getModelToken("CampaignInvite"), useValue: inviteModel },
+        { provide: getModelToken("CampaignSubmission"), useValue: {} },
+        { provide: getModelToken("Campaign"), useValue: {} },
+        { provide: getModelToken("Brand"), useValue: jest.fn() },
+        { provide: getModelToken("Photographer"), useValue: photographerModel },
+        { provide: getModelToken("Influencer"), useValue: jest.fn() },
+        { provide: getModelToken("CampaignTransaction"), useValue: {} },
+        { provide: PlansService, useValue: {} },
+        { provide: PushService, useValue: { sendToUser: jest.fn().mockResolvedValue(undefined) } },
+        { provide: NotificationsService, useValue: { createForUser: jest.fn().mockResolvedValue(undefined) } },
+      ],
+    }).compile();
+
+    service = module.get<CampaignInvitesService>(CampaignInvitesService);
+  });
+
+  it("shows only verified brand contact fields on paid unlock", async () => {
+    inviteModel.find.mockReturnValue({
+      populate: jest.fn().mockReturnValue({
+        populate: jest.fn().mockReturnValue({
+          lean: jest.fn().mockResolvedValue([
+            {
+              _id: "inv-1",
+              influencerId: "inf-1",
+              unlocked: true,
+              unlockType: "paid_collab_payment",
+              campaignId: { _id: "camp-1", brandId: "brand-1" },
+              brandId: {
+                brandName: "Brand One",
+                email: "brand@example.com",
+                phoneNumber: "9999999999",
+                isEmailVerified: false,
+                isMobileVerified: true,
+              },
+            },
+          ]),
+        }),
+      }),
+    });
+
+    const result = await service.findByInfluencer("inf-1");
+
+    expect(result[0].brandId.email).toBeUndefined();
+    expect(result[0].brandId.phoneNumber).toBe("9999999999");
+  });
+
+  it("redacts brand contact fields when unlock is not paid", async () => {
+    inviteModel.find.mockReturnValue({
+      populate: jest.fn().mockReturnValue({
+        populate: jest.fn().mockReturnValue({
+          lean: jest.fn().mockResolvedValue([
+            {
+              _id: "inv-1",
+              influencerId: "inf-1",
+              unlocked: true,
+              unlockType: "free_unlock",
+              campaignId: { _id: "camp-1", brandId: "brand-1" },
+              brandId: {
+                brandName: "Brand One",
+                email: "brand@example.com",
+                phoneNumber: "9999999999",
+                isEmailVerified: true,
+                isMobileVerified: true,
+              },
+            },
+          ]),
+        }),
+      }),
+    });
+
+    const result = await service.findByInfluencer("inf-1");
+
+    expect(result[0].brandId.email).toBeUndefined();
+    expect(result[0].brandId.phoneNumber).toBeUndefined();
+  });
+});
+
+describe("CampaignInvitesService unlockContact policy", () => {
+  let service: CampaignInvitesService;
+  let inviteModel: any;
+  let campaignModel: any;
+  let plansService: any;
+
+  beforeEach(async () => {
+    inviteModel = jest.fn();
+    inviteModel.findById = jest.fn();
+
+    campaignModel = {
+      findById: jest.fn().mockReturnValue({
+        select: jest.fn().mockReturnValue({
+          lean: jest.fn().mockResolvedValue({ campaignType: "paid_collab" }),
+        }),
+      }),
+    };
+
+    plansService = {
+      getUserPlanCapabilities: jest.fn().mockResolvedValue({ hasPremium: true }),
+    };
+
+    const module: TestingModule = await Test.createTestingModule({
+      providers: [
+        CampaignInvitesService,
+        { provide: getModelToken("CampaignInvite"), useValue: inviteModel },
+        { provide: getModelToken("CampaignSubmission"), useValue: {} },
+        { provide: getModelToken("Campaign"), useValue: campaignModel },
+        { provide: getModelToken("Brand"), useValue: { findById: jest.fn() } },
+        { provide: getModelToken("Photographer"), useValue: {} },
+        { provide: getModelToken("Influencer"), useValue: {} },
+        { provide: getModelToken("CampaignTransaction"), useValue: {} },
+        { provide: PlansService, useValue: plansService },
+        { provide: PushService, useValue: { sendToUser: jest.fn().mockResolvedValue(undefined) } },
+        { provide: NotificationsService, useValue: { createForUser: jest.fn().mockResolvedValue(undefined) } },
+      ],
+    }).compile();
+
+    service = module.get<CampaignInvitesService>(CampaignInvitesService);
+  });
+
+  it("uses paid_collab_payment unlock type even for premium brand on paid_collab", async () => {
+    const invite: any = {
+      _id: "inv-1",
+      brandId: "brand-1",
+      campaignId: "camp-1",
+      status: "payment_confirmed",
+      unlocked: false,
+      save: jest.fn().mockResolvedValue(undefined),
+    };
+    inviteModel.findById.mockResolvedValue(invite);
+
+    const result = await service.unlockContact("inv-1", "brand-1");
+
+    expect(result.unlockType).toBe("paid_collab_payment");
+    expect(invite.unlockType).toBe("paid_collab_payment");
+  });
+});
