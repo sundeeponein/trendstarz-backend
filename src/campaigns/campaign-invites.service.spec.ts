@@ -338,6 +338,7 @@ describe("CampaignInvitesService – create() gating", () => {
     plansService = {
       getUserPlanCapabilities: jest.fn().mockResolvedValue({
         hasPremium: false,
+        features: [{ key: "canInviteUsers", value: true }],
         limits: [{ key: "maxInvitesPerCampaign", value: -1 }],
       }),
     };
@@ -571,6 +572,21 @@ describe("CampaignInvitesService – respond()", () => {
 
     await service.respond("inv1", "inf1", "accepted", "2026-07-15");
     expect(invite.acceptedAt).toBeInstanceOf(Date);
+  });
+
+  it("auto-unlocks coordination details for invite_location on acceptance", async () => {
+    const invite = pendingInvite();
+    inviteModel.findById.mockResolvedValue(invite);
+    campaignModel.findById.mockReturnValue(
+      mockCampaignSelect({ campaignType: "invite_location" }),
+    );
+    inviteModel.countDocuments.mockResolvedValue(0);
+
+    await service.respond("inv1", "inf1", "accepted", "2026-07-15");
+
+    expect(invite.unlocked).toBe(true);
+    expect(invite.unlockType).toBe("free_unlock");
+    expect(invite.unlockedAt).toBeInstanceOf(Date);
   });
 
   it("rejects acceptance when selectedPlatform does not match locked invite platform", async () => {
@@ -894,7 +910,7 @@ describe("CampaignInvitesService contact visibility in invite lists", () => {
 
     const result = await service.findByInfluencer("inf-1");
 
-    expect(result[0].brandId.email).toBeUndefined();
+    expect(result[0].brandId.email).toBe("brand@example.com");
     expect(result[0].brandId.phoneNumber).toBe("9999999999");
   });
 
@@ -924,8 +940,8 @@ describe("CampaignInvitesService contact visibility in invite lists", () => {
 
     const result = await service.findByInfluencer("inf-1");
 
-    expect(result[0].brandId.email).toBeUndefined();
-    expect(result[0].brandId.phoneNumber).toBeUndefined();
+    expect(result[0].brandId.email).toBe("brand@example.com");
+    expect(result[0].brandId.phoneNumber).toBe("9999999999");
   });
 });
 

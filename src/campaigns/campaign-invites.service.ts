@@ -1333,6 +1333,14 @@ export class CampaignInvitesService {
           console.error("Failed to persist recipient payout details:", err);
         }
       }
+
+      // Location collaborations should unlock coordination details as soon as both
+      // sides are aligned (invite accepted), without a separate unlock-payment step.
+      if (String(campaign?.campaignType || "") === "invite_location") {
+        invite.unlocked = true;
+        invite.unlockedAt = new Date();
+        invite.unlockType = "free_unlock";
+      }
     }
 
     invite.status = status;

@@ -372,15 +372,15 @@ export class CampaignsService {
         `Plan limit: Only ${maxCampaigns} active campaign(s) allowed. Upgrade for more.`,
       );
     }
-    // Premium-only collaboration types: Product & Invite
-    const premiumOnlyTypes = new Set(["product", "invite_location"]);
-    if (
-      data?.campaignType &&
-      premiumOnlyTypes.has(String(data.campaignType)) &&
-      !caps.hasPremium
-    ) {
+    // Premium-only collaboration types differ by owner role.
+    const selectedType = String(data?.campaignType || "");
+    const isPremiumOnlyType =
+      ownerType === "brand"
+        ? new Set(["product", "invite_location"]).has(selectedType)
+        : new Set(["product", "invite_location"]).has(selectedType);
+    if (selectedType && isPremiumOnlyType && !caps.hasPremium) {
       throw new BadRequestException(
-        "Product & Invite opportunities require a Premium plan. Upgrade to unlock these collaboration types.",
+        "This collaboration type requires a Premium plan. Upgrade to unlock it.",
       );
     }
     const normalized = this.normalizeCampaignPayload(data);
@@ -681,14 +681,23 @@ export class CampaignsService {
       }
     }
 
-    // Premium-only campaign types: Product & Invite (Free brands can only run Paid)
+    // Premium-only collaboration types differ by owner role.
     if (data?.campaignType && data.campaignType !== campaign.campaignType) {
-      const premiumOnlyTypes = new Set(["product", "invite_location"]);
-      if (premiumOnlyTypes.has(String(data.campaignType))) {
+      const campaignOwnerType: "brand" | "photographer" =
+        String(campaign.ownerType || campaign.createdByRole || "brand") ===
+        "photographer"
+          ? "photographer"
+          : "brand";
+      const selectedType = String(data.campaignType);
+      const isPremiumOnlyType =
+        campaignOwnerType === "brand"
+          ? new Set(["product", "invite_location"]).has(selectedType)
+          : new Set(["product", "invite_location"]).has(selectedType);
+      if (isPremiumOnlyType) {
         const caps = await this.plansService.getUserPlanCapabilities(brandId);
         if (!caps.hasPremium) {
           throw new BadRequestException(
-            "Product & Invite campaigns require a Premium plan. Upgrade to unlock these collaboration types.",
+            "This collaboration type requires a Premium plan. Upgrade to unlock it.",
           );
         }
       }

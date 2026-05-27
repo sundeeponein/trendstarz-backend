@@ -156,7 +156,13 @@ export class MonetizationService {
 
     const settingsRes = await this.getFeeSettings();
     const feeSettings = settingsRes.feeSettings;
-    const isPaidCampaign = String(campaign?.campaignType || "") === "paid_collab";
+    const campaignType = String(campaign?.campaignType || "");
+    if (campaignType === "invite_location") {
+      throw new BadRequestException(
+        "Invite to Location does not require unlock payment. Contact and venue details unlock after acceptance.",
+      );
+    }
+    const isPaidCampaign = campaignType === "paid_collab";
     const amount = isPaidCampaign
       ? Math.max(Number(campaign?.pricePerInfluencer || 0), feeSettings.minimumCampaignFee)
       : feeSettings.inviteUnlockFee;
