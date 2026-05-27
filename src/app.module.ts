@@ -58,6 +58,7 @@ import { PaymentsPayoutsModule } from "./payments-payouts/payments-payouts.modul
 import { PushModule } from "./push/push.module";
 import { NotificationsModule } from "./notifications/notifications.module";
 import { PhotographersModule } from "./photographers/photographers.module";
+import { MonetizationModule } from "./monetization/monetization.module";
 
 @Module({
   imports: [
@@ -127,6 +128,7 @@ import { PhotographersModule } from "./photographers/photographers.module";
     PushModule,
     NotificationsModule,
     PhotographersModule,
+    MonetizationModule,
   ],
   controllers: [
     AppController,

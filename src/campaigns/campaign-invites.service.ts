@@ -287,6 +287,14 @@ export class CampaignInvitesService {
     }
     // Enforce invite limits for brands (admin-manageable)
     const caps = await this.plansService.getUserPlanCapabilities(brandId);
+    const canInviteUsers = (caps?.features || []).some(
+      (f: any) => String(f?.key || "") === "canInviteUsers" && !!f?.value,
+    );
+    if (!canInviteUsers) {
+      throw new BadRequestException(
+        "Upgrade to Premium to send collaboration invites.",
+      );
+    }
     const maxInvitesPerCampaign =
       caps.limits.find((l: any) => l.key === "maxInvitesPerCampaign")?.value ??
       5;

@@ -18,6 +18,8 @@ import { UsersService } from "./users.service";
 import { Request } from "express";
 import * as jwt from "jsonwebtoken";
 import { getJwtSecret } from "../auth/jwt-secret";
+import { DailyUsageGuard } from "../monetization/guards/daily-usage.guard";
+import { UsageLimit } from "../monetization/decorators/usage-limit.decorator";
 
 /** Decode JWT from request without throwing. Returns userId or null. */
 function extractOptionalViewerId(req: any): string | null {
@@ -36,6 +38,8 @@ function extractOptionalViewerId(req: any): string | null {
 @Controller("users")
 export class UsersController {
   @Get("brands/name/:brandName")
+  @UseGuards(JwtAuthGuard, DailyUsageGuard)
+  @UsageLimit("profile_view", "dailyProfileViewLimit")
   async getBrandByName(
     @Param("brandName") brandName: string,
     @Req() req: Request,
@@ -46,12 +50,16 @@ export class UsersController {
   constructor(private readonly usersService: UsersService) {}
 
   @Get("influencers/:id")
+  @UseGuards(JwtAuthGuard, DailyUsageGuard)
+  @UsageLimit("profile_view", "dailyProfileViewLimit")
   async getInfluencerById(@Param("id") id: string, @Req() req: Request) {
     const viewerId = extractOptionalViewerId(req);
     return this.usersService.getInfluencerById(id, viewerId);
   }
 
   @Get("influencers/username/:username")
+  @UseGuards(JwtAuthGuard, DailyUsageGuard)
+  @UsageLimit("profile_view", "dailyProfileViewLimit")
   async getInfluencerByUsername(
     @Param("username") username: string,
     @Req() req: Request,
@@ -128,6 +136,8 @@ export class UsersController {
   }
 
   @Get("influencers/search")
+  @UseGuards(JwtAuthGuard, DailyUsageGuard)
+  @UsageLimit("search", "dailySearchLimit")
   async searchInfluencers(
     @Query("q") q?: string,
     @Query("category") category?: string,
@@ -155,6 +165,8 @@ export class UsersController {
   }
 
   @Get("influencers")
+  @UseGuards(JwtAuthGuard, DailyUsageGuard)
+  @UsageLimit("search", "dailySearchLimit")
   async getInfluencers(
     @Query("page") page?: string,
     @Query("limit") limit?: string,
@@ -187,6 +199,8 @@ export class UsersController {
   }
 
   @Get("brands")
+  @UseGuards(JwtAuthGuard, DailyUsageGuard)
+  @UsageLimit("search", "dailySearchLimit")
   async getBrands(
     @Query("page") page?: string,
     @Query("limit") limit?: string,

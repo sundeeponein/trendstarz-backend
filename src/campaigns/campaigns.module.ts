@@ -78,5 +78,6 @@ import { NotificationsModule } from "../notifications/notifications.module";
     AnalyticsEventsService,
     CloudinaryService,
   ],
+  exports: [CampaignInvitesService],
 })
 export class CampaignsModule {}

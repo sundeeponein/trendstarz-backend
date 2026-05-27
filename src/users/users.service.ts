@@ -533,8 +533,7 @@ export class UsersService {
 
   /**
    * Decide whether `viewerId` is allowed to see the brand's social media handles.
-   * SINGLE RULE: contact is visible only when an accepted CampaignInvite between
-   * brand & influencer has been UNLOCKED by the brand (premium / paid_collab payment / 1 free unlock).
+   * Rule: opening social links is controlled by viewer plan capabilities.
    */
   async canViewBrandSocialMedia(
     brand: any,
@@ -543,27 +542,21 @@ export class UsersService {
     if (!brand) return false;
     if (!viewerId) return false;
     if (String(brand._id) === String(viewerId)) return true;
+    return this.canViewerOpenSocialLinks(viewerId);
+  }
 
-    const influencerViewer = await this.influencerModel
-      .findById(viewerId)
-      .select("_id")
-      .lean();
-    if (!influencerViewer) return false;
-
-    const invite = await this.campaignInviteModel
-      .findOne({
-        $or: [
-          { brandId: brand._id },
-          { brandId: String(brand._id) },
-          { brandId: brand.brandUsername },
-        ],
-        influencerId: viewerId,
-        unlocked: true,
-        unlockType: "paid_collab_payment",
-      })
-      .select("_id")
-      .lean();
-    return !!invite;
+  private async canViewerOpenSocialLinks(viewerId?: string | null): Promise<boolean> {
+    if (!viewerId) return false;
+    const caps = await this.plansService.getUserPlanCapabilities(String(viewerId));
+    const hasSocialFeature = (caps?.features || []).some((f: any) => {
+      const key = String(f?.key || "");
+      const enabled = !!f?.value;
+      return (
+        enabled &&
+        (key === "socialMediaVisibility" || key === "viewSocialLinks")
+      );
+    });
+    return hasSocialFeature;
   }
 
   /** Throw if the user has already reached their maxImages plan limit */
@@ -941,6 +934,7 @@ export class UsersService {
     };
 
     const baseFilter: any = { status: "accepted" };
+    const allowSocialLinks = await this.canViewerOpenSocialLinks(viewerId);
     if (stateFilter) {
       baseFilter["location.state"] = new RegExp(
         `^${this.escapeRegex(stateFilter)}$`,
@@ -993,6 +987,8 @@ export class UsersService {
         ...inf,
         isPremium: this.isCurrentlyPremium(inf),
         ageRange: this.computeAgeRangeFromDob(inf?.dateOfBirth),
+        socialMedia: allowSocialLinks ? inf?.socialMedia || [] : [],
+        socialMediaRestricted: !allowSocialLinks,
         dateOfBirth: undefined,
         gender: undefined,
         email: undefined,
@@ -1072,6 +1068,8 @@ export class UsersService {
         return {
           ...inf,
           isPremium,
+          socialMedia: allowSocialLinks ? inf?.socialMedia || [] : [],
+          socialMediaRestricted: !allowSocialLinks,
           ageRange,
           gender: undefined,
           verificationDocuments: undefined,
@@ -1212,6 +1210,7 @@ export class UsersService {
     if (!user) return null;
     const allowContact = await this.canViewInfluencerContact(user, viewerId);
     const allowGender = await this.canViewInfluencerGender(user, viewerId);
+    const allowSocial = await this.canViewerOpenSocialLinks(viewerId);
     const isPremium = this.isCurrentlyPremium(user);
     const {
       _id,
@@ -1250,7 +1249,8 @@ export class UsersService {
       verificationStatus: verificationStatus || "not_submitted",
       verifiedByTrendStarz: !!verifiedByTrendStarz,
       location: location || { state: "" },
-      socialMedia,
+      socialMedia: allowSocial ? socialMedia : [],
+      socialMediaRestricted: !allowSocial,
       isPremium,
       gender: allowGender ? user.gender || undefined : undefined,
       promotionalPrice,
@@ -1267,6 +1267,7 @@ export class UsersService {
     if (!user) return null;
     const allowContact = await this.canViewInfluencerContact(user, viewerId);
     const allowGender = await this.canViewInfluencerGender(user, viewerId);
+    const allowSocial = await this.canViewerOpenSocialLinks(viewerId);
     const isPremium = this.isCurrentlyPremium(user);
     const {
       _id,
@@ -1305,7 +1306,8 @@ export class UsersService {
       verificationStatus: verificationStatus || "not_submitted",
       verifiedByTrendStarz: !!verifiedByTrendStarz,
       location: location || { state: "" },
-      socialMedia,
+      socialMedia: allowSocial ? socialMedia : [],
+      socialMediaRestricted: !allowSocial,
       isPremium,
       gender: allowGender ? user.gender || undefined : undefined,
       promotionalPrice,

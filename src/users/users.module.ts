@@ -13,6 +13,7 @@ import {
 } from "../database/schemas/profile.schemas";
 import { CampaignInviteSchema } from "../database/schemas/campaign-invite.schema";
 import { PlansModule } from "../plans/plans.module";
+import { MonetizationModule } from "../monetization/monetization.module";
 
 @Module({
   imports: [
@@ -36,6 +37,7 @@ import { PlansModule } from "../plans/plans.module";
       },
     ]),
     PlansModule,
+    MonetizationModule,
   ],
   controllers: [UsersController, BrandsController, InfluencersController],
   providers: [UsersService, CloudinaryService],

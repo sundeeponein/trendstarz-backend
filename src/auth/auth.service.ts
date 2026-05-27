@@ -1099,6 +1099,9 @@ export class AuthService {
       brandRequireMobileVerified: !!settings?.brandRequireMobileVerified,
       platformFeeEnabled: !!settings?.platformFeeEnabled,
       platformFeePercent: settings?.platformFeePercent ?? 10,
+      platformCommissionPercent: settings?.platformCommissionPercent ?? 12,
+      inviteUnlockFee: settings?.inviteUnlockFee ?? 499,
+      minimumCampaignFee: settings?.minimumCampaignFee ?? 1000,
       gstPercent: settings?.gstPercent ?? 18,
       // Campaign payment UPI shown to brands on the payment screen
       paymentUpiId: settings?.paymentUpiId || "trendstarzin@kotak",

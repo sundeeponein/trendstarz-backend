@@ -474,6 +474,9 @@ export const AppSettingsSchema = new Schema({
   },
   platformFeeEnabled: { type: Boolean, default: false },
   platformFeePercent: { type: Number, default: 5 },
+  platformCommissionPercent: { type: Number, default: 12 },
+  inviteUnlockFee: { type: Number, default: 499 },
+  minimumCampaignFee: { type: Number, default: 1000 },
   gstPercent: { type: Number, default: 0 },
   earlyAccessAssignmentMode: {
     type: String,

@@ -259,6 +259,13 @@ export class PlansService {
     const sub = await this.getActiveSubscription(userId);
     if (!sub) {
       const userType = await this.resolveUserTypeById(userId);
+      const freePlan = await this.findFreePlanForUserType(
+        userType === "BRAND"
+          ? "Brand"
+          : userType === "PHOTOGRAPHER"
+            ? "Photographer"
+            : "Influencer",
+      );
       const userModel =
         userType === "BRAND"
           ? this.brandModel
@@ -296,10 +303,17 @@ export class PlansService {
         };
       }
 
-      const defaults = FREE_PLAN_DEFAULTS[userType] as any;
+      const defaults = freePlan
+        ? {
+            features: freePlan.features ?? [],
+            limits: freePlan.limits ?? [],
+            policies:
+              freePlan.policies ?? { imageRetentionDaysAfterExpiry: 45 },
+          }
+        : (FREE_PLAN_DEFAULTS[userType] as any);
       return {
         hasPremium: false,
-        planName: "Free",
+        planName: freePlan?.name || "Free",
         features: defaults.features,
         limits: defaults.limits,
         policies: defaults.policies,
@@ -407,5 +421,30 @@ export class PlansService {
     if (!plan)
       throw new BadRequestException("No active plan found for user type");
     return plan;
+  }
+
+  /** Find the free plan for user type from DB (admin-managed), fallback to null. */
+  async findFreePlanForUserType(
+    userType: "Influencer" | "Brand" | "Photographer",
+  ) {
+    const mapped = this.normalizeUserType(userType);
+    let plan = (await this.planModel
+      .findOne({ isActive: true, userType: mapped, code: `${mapped.toLowerCase()}-free` })
+      .sort({ sortOrder: 1 })
+      .lean()) as any;
+
+    if (!plan) {
+      plan = (await this.planModel
+        .findOne({
+          isActive: true,
+          userType: mapped,
+          "price.monthly": 0,
+          "price.quarterly": 0,
+          "price.yearly": 0,
+        })
+        .sort({ sortOrder: 1 })
+        .lean()) as any;
+    }
+    return plan || null;
   }
 }

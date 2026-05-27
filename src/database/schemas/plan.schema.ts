@@ -120,8 +120,8 @@ export const FREE_PLAN_DEFAULTS = {
       },
       {
         key: "socialMediaVisibility",
-        label: "Show social media links",
-        value: true,
+        label: "Open social media links",
+        value: false,
       },
       {
         key: "contactVisibility",
@@ -148,12 +148,20 @@ export const FREE_PLAN_DEFAULTS = {
         label: "View influencer & brand reviews",
         value: false,
       },
+      {
+        key: "canInviteUsers",
+        label: "Can invite users",
+        value: false,
+      },
     ],
     limits: [
+      { key: "dailyProfileViewLimit", label: "Daily profile views", value: 25 },
+      { key: "dailySearchLimit", label: "Daily searches", value: 10 },
       { key: "maxProductImages", label: "Product images", value: 3 },
       { key: "maxActiveCampaigns", label: "Active campaign", value: 1 },
       { key: "maxInvitesPerCampaign", label: "Invites / campaign", value: 2 },
       { key: "maxInviteOptions", label: "Invite options", value: 5 },
+      { key: "maxCampaignPosts", label: "Max campaign posts", value: 1 },
     ],
     policies: {
       imageRetentionDaysAfterExpiry: 45,
@@ -168,13 +176,13 @@ export const FREE_PLAN_DEFAULTS = {
       },
       {
         key: "viewSocialLinks",
-        label: "View public social links",
-        value: true,
+        label: "Open creator social profile links",
+        value: false,
       },
       {
         key: "viewContactDetails",
         label: "View contact details",
-        value: true,
+        value: false,
       },
       {
         key: "advancedSearchFilters",
@@ -201,12 +209,30 @@ export const FREE_PLAN_DEFAULTS = {
         label: "View influencer & brand reviews",
         value: false,
       },
+      {
+        key: "canInviteUsers",
+        label: "Can invite users",
+        value: false,
+      },
+      {
+        key: "canViewAnalytics",
+        label: "Can view analytics",
+        value: false,
+      },
+      {
+        key: "featuredBadge",
+        label: "Featured badge",
+        value: false,
+      },
     ],
     limits: [
+      { key: "dailyProfileViewLimit", label: "Daily profile views", value: 30 },
+      { key: "dailySearchLimit", label: "Daily searches", value: 15 },
       { key: "maxActiveCampaigns", label: "Active campaign", value: 1 },
       { key: "maxInvitesPerCampaign", label: "Invites / campaign", value: 1 },
       { key: "maxTeamSeats", label: "Team seats", value: 1 },
       { key: "analytics", label: "Analytics", value: 0 },
+      { key: "maxCampaignPosts", label: "Max campaign posts", value: 2 },
     ],
     policies: {
       imageRetentionDaysAfterExpiry: 45,
@@ -221,8 +247,8 @@ export const FREE_PLAN_DEFAULTS = {
       },
       {
         key: "socialMediaVisibility",
-        label: "Show social media links",
-        value: true,
+        label: "Open social media links",
+        value: false,
       },
       {
         key: "contactVisibility",
@@ -249,12 +275,25 @@ export const FREE_PLAN_DEFAULTS = {
         label: "View influencer & brand reviews",
         value: false,
       },
+      {
+        key: "canInviteUsers",
+        label: "Can invite users",
+        value: false,
+      },
+      {
+        key: "canViewAnalytics",
+        label: "Can view analytics",
+        value: false,
+      },
     ],
     limits: [
+      { key: "dailyProfileViewLimit", label: "Daily profile views", value: 25 },
+      { key: "dailySearchLimit", label: "Daily searches", value: 10 },
       { key: "maxPortfolioImages", label: "Portfolio images", value: 3 },
       { key: "maxActiveCampaigns", label: "Active campaign", value: 1 },
       { key: "maxInvitesPerCampaign", label: "Invites / campaign", value: 2 },
       { key: "analytics", label: "Analytics", value: 0 },
+      { key: "maxCampaignPosts", label: "Max campaign posts", value: 2 },
     ],
     policies: {
       imageRetentionDaysAfterExpiry: 45,
