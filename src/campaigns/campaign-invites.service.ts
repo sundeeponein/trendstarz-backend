@@ -103,7 +103,8 @@ export class CampaignInvitesService {
   }
 
   private isInviteContactVisible(invite: any): boolean {
-    return !!invite?.unlocked && String(invite?.unlockType || "") === "paid_collab_payment";
+    // Contact visibility should follow explicit unlock state across all campaign types.
+    return !!invite?.unlocked;
   }
 
   private async attachRecipientProfile(invite: any) {
@@ -568,10 +569,9 @@ export class CampaignInvitesService {
         }
         const safeBrand = {
           ...inv.brandId,
-          email: inv.brandId?.isEmailVerified ? inv.brandId?.email : undefined,
-          phoneNumber: inv.brandId?.isMobileVerified
-            ? inv.brandId?.phoneNumber
-            : undefined,
+          // Once contact is unlocked, both sides should see the brand's saved contact details.
+          email: inv.brandId?.email,
+          phoneNumber: inv.brandId?.phoneNumber,
         };
         return { ...inv, brandId: safeBrand };
       }
@@ -604,10 +604,9 @@ export class CampaignInvitesService {
         }
         const safeBrand = {
           ...inv.brandId,
-          email: inv.brandId?.isEmailVerified ? inv.brandId?.email : undefined,
-          phoneNumber: inv.brandId?.isMobileVerified
-            ? inv.brandId?.phoneNumber
-            : undefined,
+          // Once contact is unlocked, both sides should see the brand's saved contact details.
+          email: inv.brandId?.email,
+          phoneNumber: inv.brandId?.phoneNumber,
         };
         return { ...inv, brandId: safeBrand };
       }
