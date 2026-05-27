@@ -219,6 +219,7 @@ export class EquipmentOptionsController {
 
   @Get()
   async getAll() {
+    this.loadEquipmentOptions();
     return this.equipmentOptions.length ? this.equipmentOptions : [];
   }
 }
@@ -253,6 +254,7 @@ export class PricingOptionsController {
 
   @Get()
   async getAll() {
+    this.loadPricingOptions();
     return this.pricingOptions.length ? this.pricingOptions : [];
   }
 }

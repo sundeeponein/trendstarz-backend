@@ -32,6 +32,8 @@ interface BatchVisibilityBody {
   languages?: VisibilityItem[];
   states?: VisibilityItem[];
   districts?: VisibilityItem[];
+  equipmentOptions?: Array<{ name?: string; visible?: boolean }>;
+  pricingOptions?: Array<{ key?: string; label?: string; visible?: boolean }>;
   userTags?: {
     influencer?: Array<{ name: string; visible: boolean }>;
     brand?: Array<{ name: string; visible: boolean }>;
@@ -84,6 +86,55 @@ export class AdminListsController {
       })
       .filter(
         (item): item is { name: string; visible: boolean } => !!item,
+      );
+  }
+
+  private normalizeEquipmentOptionList(
+    list: unknown,
+  ): Array<{ name: string; visible: boolean }> {
+    if (!Array.isArray(list)) return [];
+    return list
+      .map((item: any) => {
+        if (typeof item === "string") {
+          const name = item.trim();
+          return name ? { name, visible: true } : null;
+        }
+        if (item && typeof item === "object") {
+          const name = String(item.name || "").trim();
+          if (!name) return null;
+          return { name, visible: item.visible !== false };
+        }
+        return null;
+      })
+      .filter(
+        (
+          item: { name: string; visible: boolean } | null,
+        ): item is { name: string; visible: boolean } => !!item,
+      );
+  }
+
+  private normalizePricingOptionList(
+    list: unknown,
+  ): Array<{ key: string; label: string; visible: boolean }> {
+    if (!Array.isArray(list)) return [];
+    return list
+      .map((item: any) => {
+        if (typeof item === "string") {
+          const key = item.trim();
+          return key ? { key, label: key, visible: true } : null;
+        }
+        if (item && typeof item === "object") {
+          const key = String(item.key || item.label || "").trim();
+          if (!key) return null;
+          const label = String(item.label || key).trim() || key;
+          return { key, label, visible: item.visible !== false };
+        }
+        return null;
+      })
+      .filter(
+        (
+          item: { key: string; label: string; visible: boolean } | null,
+        ): item is { key: string; label: string; visible: boolean } => !!item,
       );
   }
 
@@ -152,6 +203,11 @@ export class AdminListsController {
       preApproveBrands: false,
       brandRequireEmailVerified: true,
       brandRequireMobileVerified: false,
+      pendingUserAutoDeleteEnabled: false,
+      pendingUserAutoDeleteDays: 45,
+      pendingUserAutoDeleteLastRunAt: null,
+      pendingUserAutoDeleteLastRunCount: 0,
+      pendingUserAutoDeleteLastRunBy: "",
       campaignApprovalMode: "manual",
       collaborationApprovalMode: "manual",
       platformFeeEnabled: false,
@@ -213,6 +269,18 @@ export class AdminListsController {
         );
       }
       next.earlyAccessAssignmentMode = mode;
+    }
+    if (next.pendingUserAutoDeleteEnabled !== undefined) {
+      next.pendingUserAutoDeleteEnabled = !!next.pendingUserAutoDeleteEnabled;
+    }
+    if (next.pendingUserAutoDeleteDays !== undefined) {
+      const days = Number(next.pendingUserAutoDeleteDays);
+      if (!Number.isFinite(days) || days < 1 || days > 3650) {
+        throw new BadRequestException(
+          "pendingUserAutoDeleteDays must be a number between 1 and 3650",
+        );
+      }
+      next.pendingUserAutoDeleteDays = Math.floor(days);
     }
     // Only update fields present in the request body
     const settings = await this.appSettingsModel
@@ -746,6 +814,7 @@ export class AdminListsController {
       .find(
         {},
         {
+          name: 1,
           socialMedia: 1,
           handleName: 1,
           tier: 1,
@@ -779,6 +848,18 @@ export class AdminListsController {
   @Delete("social-media/:id")
   async deleteSocialMedia(@Param("id") id: string) {
     return this.socialMediaModel.findByIdAndDelete(id);
+  }
+
+  @Get("equipment-options")
+  async getEquipmentOptionsAdmin() {
+    const config = this.readAdminConfig();
+    return this.normalizeEquipmentOptionList(config?.equipmentOptions);
+  }
+
+  @Get("pricing-options")
+  async getPricingOptionsAdmin() {
+    const config = this.readAdminConfig();
+    return this.normalizePricingOptionList(config?.pricingOptions);
   }
 
   @Post("batch-update-visibility")
@@ -847,26 +928,45 @@ export class AdminListsController {
           }
         }
       }
-      if (body.userTags) {
+      const needsConfigUpdate =
+        !!body.userTags ||
+        !!body.equipmentOptions ||
+        !!body.pricingOptions;
+
+      if (needsConfigUpdate) {
         const currentConfig = this.readAdminConfig();
-        const nextUserTags = {
-          influencer: this.normalizeUserTagList(
-            body.userTags.influencer ?? currentConfig?.userTags?.influencer,
-          ),
-          brand: this.normalizeUserTagList(
-            body.userTags.brand ?? currentConfig?.userTags?.brand,
-          ),
-          photographer: this.normalizeUserTagList(
-            body.userTags.photographer ?? currentConfig?.userTags?.photographer,
-          ),
-          commission: this.normalizeUserTagList(
-            body.userTags.commission ?? currentConfig?.userTags?.commission,
-          ),
-        };
-        this.writeAdminConfig({
-          ...currentConfig,
-          userTags: nextUserTags,
-        });
+        const nextConfig = { ...currentConfig };
+
+        if (body.userTags) {
+          nextConfig.userTags = {
+            influencer: this.normalizeUserTagList(
+              body.userTags.influencer ?? currentConfig?.userTags?.influencer,
+            ),
+            brand: this.normalizeUserTagList(
+              body.userTags.brand ?? currentConfig?.userTags?.brand,
+            ),
+            photographer: this.normalizeUserTagList(
+              body.userTags.photographer ?? currentConfig?.userTags?.photographer,
+            ),
+            commission: this.normalizeUserTagList(
+              body.userTags.commission ?? currentConfig?.userTags?.commission,
+            ),
+          };
+        }
+
+        if (body.equipmentOptions) {
+          nextConfig.equipmentOptions = this.normalizeEquipmentOptionList(
+            body.equipmentOptions,
+          );
+        }
+
+        if (body.pricingOptions) {
+          nextConfig.pricingOptions = this.normalizePricingOptionList(
+            body.pricingOptions,
+          );
+        }
+
+        this.writeAdminConfig(nextConfig);
       }
       return { message: "Visibility updated" };
     } catch (err: unknown) {

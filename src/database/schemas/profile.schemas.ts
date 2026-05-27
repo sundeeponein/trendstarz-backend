@@ -457,6 +457,11 @@ export const AppSettingsSchema = new Schema({
   preApproveBrands: { type: Boolean, default: false },
   brandRequireEmailVerified: { type: Boolean, default: true },
   brandRequireMobileVerified: { type: Boolean, default: false },
+  pendingUserAutoDeleteEnabled: { type: Boolean, default: false },
+  pendingUserAutoDeleteDays: { type: Number, default: 45 },
+  pendingUserAutoDeleteLastRunAt: { type: Date, default: null },
+  pendingUserAutoDeleteLastRunCount: { type: Number, default: 0 },
+  pendingUserAutoDeleteLastRunBy: { type: String, default: "" },
   campaignApprovalMode: {
     type: String,
     enum: ["manual", "auto_live"],

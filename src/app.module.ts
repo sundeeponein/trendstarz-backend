@@ -45,6 +45,7 @@ import { AuthService } from "./auth/auth.service";
 import { AuthController } from "./auth/auth.controller";
 import { AdminUserTableController } from "./admin/admin-user-table.controller";
 import { EarlyAccessAssignmentService } from "./admin/early-access-assignment.service";
+import { PendingUserCleanupService } from "./admin/pending-user-cleanup.service";
 import { PaymentModule } from "./payment/payment.module";
 import { UsersModule } from "./users/users.module";
 import { CampaignsModule } from "./campaigns/campaigns.module";
@@ -151,6 +152,7 @@ import { PhotographersModule } from "./photographers/photographers.module";
     AppService,
     AuthService,
     EarlyAccessAssignmentService,
+    PendingUserCleanupService,
     MongoLogger,
     CloudinaryService,
     DashboardService,
