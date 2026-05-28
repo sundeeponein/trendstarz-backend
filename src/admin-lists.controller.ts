@@ -19,6 +19,11 @@ import { InjectModel } from "@nestjs/mongoose";
 import { Model } from "mongoose";
 import * as fs from "fs";
 import * as path from "path";
+import {
+  CampaignTypeConfigItem,
+  getCampaignTypeConfigDefaults,
+  resolveCampaignTypeConfigs,
+} from "./campaign-type-configs";
 
 interface VisibilityItem {
   _id: string;
@@ -66,10 +71,16 @@ export class AdminListsController {
 
   private writeAdminConfig(nextConfig: any): void {
     const configPath = this.getAdminConfigPath();
-    fs.writeFileSync(configPath, JSON.stringify(nextConfig || {}, null, 2), "utf-8");
+    fs.writeFileSync(
+      configPath,
+      JSON.stringify(nextConfig || {}, null, 2),
+      "utf-8",
+    );
   }
 
-  private normalizeUserTagList(list: unknown): Array<{ name: string; visible: boolean }> {
+  private normalizeUserTagList(
+    list: unknown,
+  ): Array<{ name: string; visible: boolean }> {
     if (!Array.isArray(list)) return [];
     return list
       .map((item: any) => {
@@ -84,9 +95,7 @@ export class AdminListsController {
         }
         return null;
       })
-      .filter(
-        (item): item is { name: string; visible: boolean } => !!item,
-      );
+      .filter((item): item is { name: string; visible: boolean } => !!item);
   }
 
   private normalizeEquipmentOptionList(
@@ -136,6 +145,12 @@ export class AdminListsController {
           item: { key: string; label: string; visible: boolean } | null,
         ): item is { key: string; label: string; visible: boolean } => !!item,
       );
+  }
+
+  private normalizeCampaignTypeConfigs(
+    list: unknown,
+  ): CampaignTypeConfigItem[] {
+    return resolveCampaignTypeConfigs(list);
   }
 
   constructor(
@@ -234,9 +249,14 @@ export class AdminListsController {
       showRegisterInfluencerLink: true,
       showRegisterBrandLink: true,
       showRegisterPhotographerLink: true,
+      campaignTypeConfigs: getCampaignTypeConfigDefaults(),
     };
     const settings = await this.appSettingsModel.findOne({}).lean();
-    const merged = { ...defaults, ...(settings || {}) };
+    const merged: any = { ...defaults, ...(settings || {}) };
+    merged.campaignTypeConfigs = this.normalizeCampaignTypeConfigs(
+      merged.campaignTypeConfigs,
+    );
+    merged.campaignTypeConfigDefaults = getCampaignTypeConfigDefaults();
     return merged;
   }
 
@@ -281,6 +301,11 @@ export class AdminListsController {
         );
       }
       next.pendingUserAutoDeleteDays = Math.floor(days);
+    }
+    if (next.campaignTypeConfigs !== undefined) {
+      next.campaignTypeConfigs = this.normalizeCampaignTypeConfigs(
+        next.campaignTypeConfigs,
+      );
     }
     // Only update fields present in the request body
     const settings = await this.appSettingsModel
@@ -389,7 +414,8 @@ export class AdminListsController {
       new Set(
         campaigns
           .filter(
-            (c: any) => String(c?.ownerType || "").toLowerCase() === "photographer",
+            (c: any) =>
+              String(c?.ownerType || "").toLowerCase() === "photographer",
           )
           .map((c: any) => String(c.brandId || ""))
           .filter(Boolean),
@@ -681,9 +707,12 @@ export class AdminListsController {
   // Categories
   @Get("categories")
   async getCategories(@Query("role") role?: string) {
-    const normalizedRole = ["influencer", "brand", "photographer", "both"].includes(
-      String(role || "").toLowerCase(),
-    )
+    const normalizedRole = [
+      "influencer",
+      "brand",
+      "photographer",
+      "both",
+    ].includes(String(role || "").toLowerCase())
       ? String(role).toLowerCase()
       : "";
 
@@ -704,7 +733,11 @@ export class AdminListsController {
   }
   @Post("categories")
   async addCategory(
-    @Body() body: { name: string; role?: "influencer" | "brand" | "photographer" | "both" },
+    @Body()
+    body: {
+      name: string;
+      role?: "influencer" | "brand" | "photographer" | "both";
+    },
   ) {
     return this.categoryModel.create(body);
   }
@@ -929,9 +962,7 @@ export class AdminListsController {
         }
       }
       const needsConfigUpdate =
-        !!body.userTags ||
-        !!body.equipmentOptions ||
-        !!body.pricingOptions;
+        !!body.userTags || !!body.equipmentOptions || !!body.pricingOptions;
 
       if (needsConfigUpdate) {
         const currentConfig = this.readAdminConfig();
@@ -946,7 +977,8 @@ export class AdminListsController {
               body.userTags.brand ?? currentConfig?.userTags?.brand,
             ),
             photographer: this.normalizeUserTagList(
-              body.userTags.photographer ?? currentConfig?.userTags?.photographer,
+              body.userTags.photographer ??
+                currentConfig?.userTags?.photographer,
             ),
             commission: this.normalizeUserTagList(
               body.userTags.commission ?? currentConfig?.userTags?.commission,

@@ -1325,6 +1325,80 @@
       ]
     }
   ],
+  "campaignTypeConfigs": [
+    {
+      "key": "paid_collab",
+      "label": "Paid Collab",
+      "ownerType": "brand",
+      "enabled": true,
+      "premiumOnly": false,
+      "sortOrder": 10
+    },
+    {
+      "key": "product",
+      "label": "Product Collab",
+      "ownerType": "brand",
+      "enabled": true,
+      "premiumOnly": true,
+      "sortOrder": 20
+    },
+    {
+      "key": "invite_location",
+      "label": "Invite to Location",
+      "ownerType": "brand",
+      "enabled": true,
+      "premiumOnly": true,
+      "sortOrder": 30
+    },
+    {
+      "key": "paid_collab",
+      "label": "Paid Shoot",
+      "ownerType": "photographer",
+      "enabled": true,
+      "premiumOnly": false,
+      "sortOrder": 10
+    },
+    {
+      "key": "product",
+      "label": "Barter / Product Shoot",
+      "ownerType": "photographer",
+      "enabled": true,
+      "premiumOnly": true,
+      "sortOrder": 20
+    },
+    {
+      "key": "invite_location",
+      "label": "Event Coverage",
+      "ownerType": "photographer",
+      "enabled": true,
+      "premiumOnly": true,
+      "sortOrder": 30
+    },
+    {
+      "key": "portfolio_collab",
+      "label": "Portfolio Collaboration",
+      "ownerType": "photographer",
+      "enabled": true,
+      "premiumOnly": false,
+      "sortOrder": 40
+    },
+    {
+      "key": "reel_collab",
+      "label": "Reel Collaboration",
+      "ownerType": "photographer",
+      "enabled": true,
+      "premiumOnly": false,
+      "sortOrder": 50
+    },
+    {
+      "key": "creative_project",
+      "label": "Creative Project",
+      "ownerType": "photographer",
+      "enabled": true,
+      "premiumOnly": false,
+      "sortOrder": 60
+    }
+  ],
   "equipmentOptions": [
     {
       "name": "Sony",

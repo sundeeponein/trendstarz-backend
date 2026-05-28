@@ -6,6 +6,10 @@ import {
 import { InjectModel } from "@nestjs/mongoose";
 import { Model } from "mongoose";
 import { PlansService } from "../plans/plans.service";
+import {
+  CampaignTypeConfigItem,
+  resolveCampaignTypeConfigs,
+} from "../campaign-type-configs";
 import { getRequiredFields } from "./campaign-required-fields";
 
 const VALID_TRANSITIONS: Record<string, string[]> = {
@@ -289,6 +293,38 @@ export class CampaignsService {
     }
   }
 
+  private getCampaignTypeConfigs(settings: any): CampaignTypeConfigItem[] {
+    return resolveCampaignTypeConfigs(settings?.campaignTypeConfigs);
+  }
+
+  private assertCampaignTypeAllowed(
+    ownerType: CampaignOwnerType,
+    selectedType: string,
+    hasPremium: boolean,
+    settings: any,
+  ): void {
+    const type = String(selectedType || "").trim();
+    if (!type) return;
+
+    const config = this.getCampaignTypeConfigs(settings).find(
+      (item) => item.ownerType === ownerType && item.key === type,
+    );
+
+    if (!config) {
+      throw new BadRequestException("Invalid collaboration type selected.");
+    }
+    if (!config.enabled) {
+      throw new BadRequestException(
+        "This collaboration type is currently unavailable.",
+      );
+    }
+    if (config.premiumOnly && !hasPremium) {
+      throw new BadRequestException(
+        "This collaboration type requires a Premium plan. Upgrade to unlock it.",
+      );
+    }
+  }
+
   /**
    * Validate that all required fields for the given campaign type are present.
    * Uses the shared `getRequiredFields` rule set so frontend and backend stay
@@ -360,6 +396,7 @@ export class CampaignsService {
     }
     // Lazy load PlansService to avoid circular dep
     const caps = await this.plansService.getUserPlanCapabilities(ownerId);
+    const settings = await this.appSettingsModel.findOne({}).lean().exec();
     const maxCampaigns =
       caps.limits.find((l: any) => l.key === "maxActiveCampaigns")?.value ?? 1;
     // Count currently active/pending/draft campaigns — completed or deleted do NOT count toward the cap
@@ -372,26 +409,14 @@ export class CampaignsService {
         `Plan limit: Only ${maxCampaigns} active campaign(s) allowed. Upgrade for more.`,
       );
     }
-    // Premium-only collaboration types differ by owner role.
     const selectedType = String(data?.campaignType || "");
-    const isPremiumOnlyType =
-      ownerType === "brand"
-        ? new Set(["product", "invite_location"]).has(selectedType)
-        : new Set(["product", "invite_location"]).has(selectedType);
-    if (selectedType && isPremiumOnlyType && !caps.hasPremium) {
-      throw new BadRequestException(
-        "This collaboration type requires a Premium plan. Upgrade to unlock it.",
-      );
-    }
+    this.assertCampaignTypeAllowed(ownerType, selectedType, caps.hasPremium, settings);
     const normalized = this.normalizeCampaignPayload(data);
     const inviteRecipientRole = this.normalizeInviteRecipientRole(
       data?.inviteRecipientRole,
       ownerType,
     );
     if (ownerType === "photographer") {
-      normalized.campaignMode = "invite_only";
-    }
-    if (inviteRecipientRole === "photographer") {
       normalized.campaignMode = "invite_only";
     }
     normalized.ownerType = ownerType;
@@ -681,7 +706,6 @@ export class CampaignsService {
       }
     }
 
-    // Premium-only collaboration types differ by owner role.
     if (data?.campaignType && data.campaignType !== campaign.campaignType) {
       const campaignOwnerType: "brand" | "photographer" =
         String(campaign.ownerType || campaign.createdByRole || "brand") ===
@@ -689,18 +713,14 @@ export class CampaignsService {
           ? "photographer"
           : "brand";
       const selectedType = String(data.campaignType);
-      const isPremiumOnlyType =
-        campaignOwnerType === "brand"
-          ? new Set(["product", "invite_location"]).has(selectedType)
-          : new Set(["product", "invite_location"]).has(selectedType);
-      if (isPremiumOnlyType) {
-        const caps = await this.plansService.getUserPlanCapabilities(brandId);
-        if (!caps.hasPremium) {
-          throw new BadRequestException(
-            "This collaboration type requires a Premium plan. Upgrade to unlock it.",
-          );
-        }
-      }
+      const caps = await this.plansService.getUserPlanCapabilities(brandId);
+      const settings = await this.appSettingsModel.findOne({}).lean().exec();
+      this.assertCampaignTypeAllowed(
+        campaignOwnerType,
+        selectedType,
+        caps.hasPremium,
+        settings,
+      );
     }
 
     const campaignOwnerType: CampaignOwnerType =
@@ -714,9 +734,6 @@ export class CampaignsService {
       campaignOwnerType,
     );
     if (campaignOwnerType === "photographer") {
-      normalized.campaignMode = "invite_only";
-    }
-    if (inviteRecipientRole === "photographer") {
       normalized.campaignMode = "invite_only";
     }
     normalized.ownerType = campaignOwnerType;

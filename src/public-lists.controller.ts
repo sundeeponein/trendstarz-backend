@@ -1,6 +1,9 @@
 import { Controller, Get, Query } from "@nestjs/common";
 import { InjectModel } from "@nestjs/mongoose";
 import { Model } from "mongoose";
+import {
+  resolveCampaignTypeConfigs,
+} from "./campaign-type-configs";
 
 @Controller("tiers")
 export class TiersController {
@@ -185,6 +188,22 @@ export class PublicSupportContactController {
         settings.supportContactMessage ||
         "For now, please contact our team to complete campaign payments. Our admin will update the payment status once received.",
       verificationCallNumber: settings.verificationCallNumber || "",
+    };
+  }
+}
+
+@Controller("public/campaign-type-configs")
+export class PublicCampaignTypeConfigsController {
+  constructor(
+    @InjectModel("AppSettings") private readonly appSettingsModel: Model<any>,
+  ) {}
+
+  @Get()
+  async get() {
+    const settings: any =
+      (await this.appSettingsModel.findOne({}).lean()) || {};
+    return {
+      items: resolveCampaignTypeConfigs(settings.campaignTypeConfigs),
     };
   }
 }

@@ -16,18 +16,21 @@ export const LanguageSchema = new Schema({
 export const LanguageModel = model("Language", LanguageSchema);
 
 // User schema (for admin and future users)
-export const UserSchema = new Schema({
-  name: { type: String, required: true },
-  email: { type: String, required: true, unique: true },
-  password: { type: String, required: true },
-  role: { type: String, enum: ["admin", "user"], default: "user" },
-  firstRegisteredAt: { type: Date, default: Date.now },
-  lastLoginAt: { type: Date, default: null },
-  isEmailVerified: { type: Boolean, default: false },
-  isMobileVerified: { type: Boolean, default: false },
-  resetToken: { type: String, default: null },
-  resetTokenExpires: { type: Number, default: null },
-}, { timestamps: true });
+export const UserSchema = new Schema(
+  {
+    name: { type: String, required: true },
+    email: { type: String, required: true, unique: true },
+    password: { type: String, required: true },
+    role: { type: String, enum: ["admin", "user"], default: "user" },
+    firstRegisteredAt: { type: Date, default: Date.now },
+    lastLoginAt: { type: Date, default: null },
+    isEmailVerified: { type: Boolean, default: false },
+    isMobileVerified: { type: Boolean, default: false },
+    resetToken: { type: String, default: null },
+    resetTokenExpires: { type: Number, default: null },
+  },
+  { timestamps: true },
+);
 UserSchema.index({ resetToken: 1 }, { sparse: true });
 export const UserModel = model("User", UserSchema);
 
@@ -507,6 +510,10 @@ export const AppSettingsSchema = new Schema({
   showRegisterInfluencerLink: { type: Boolean, default: true },
   showRegisterBrandLink: { type: Boolean, default: true },
   showRegisterPhotographerLink: { type: Boolean, default: true },
+  campaignTypeConfigs: {
+    type: [Schema.Types.Mixed],
+    default: () => [],
+  },
 });
 export const AppSettingsModel = model("AppSettings", AppSettingsSchema);
 
@@ -638,7 +645,11 @@ export const CampaignSchema = new Schema(
     ],
     requestKind: {
       type: String,
-      enum: ["brand_campaign", "creative_requirement", "photographer_collaboration"],
+      enum: [
+        "brand_campaign",
+        "creative_requirement",
+        "photographer_collaboration",
+      ],
       default: "brand_campaign",
       index: true,
     },
