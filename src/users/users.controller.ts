@@ -61,6 +61,15 @@ function toDayKey(date = new Date()): string {
   return `${y}-${m}-${d}`;
 }
 
+function nextDayKey(date = new Date()): string {
+  return toDayKey(new Date(date.getTime() + 24 * 60 * 60 * 1000));
+}
+
+function parseBooleanLike(value: unknown): boolean {
+  const normalized = String(value || "").trim().toLowerCase();
+  return normalized === "1" || normalized === "true" || normalized === "yes";
+}
+
 @Controller("users")
 export class UsersController {
   @Get("brands/name/:brandName")
@@ -122,7 +131,7 @@ export class UsersController {
 
     if ((doc?.used || 0) >= maxLimit) {
       throw new ForbiddenException(
-        "You have exhausted today's usage limit. Please upgrade your plan.",
+        `You have exhausted today's usage limit (${maxLimit}/day on your current plan). You can search again on ${nextDayKey()}. Upgrade your plan for higher limits.`,
       );
     }
 
@@ -140,6 +149,24 @@ export class UsersController {
       limit: maxLimit,
       day,
     };
+  }
+
+  private shouldConsumeSearchQuota(params: {
+    countSearch?: string;
+    countReason?: string;
+    page?: string;
+    limit?: string;
+  }): boolean {
+    if (!parseBooleanLike(params.countSearch)) return false;
+
+    const reason = String(params.countReason || "").trim().toLowerCase();
+    if (reason === "query" || reason === "filter") return true;
+    if (reason !== "pagination") return false;
+
+    const page = Math.max(parseInt(String(params.page || "1"), 10) || 1, 1);
+    const limit = Math.max(parseInt(String(params.limit || "120"), 10) || 120, 1);
+    const offset = (page - 1) * limit;
+    return offset >= 120;
   }
 
   @Get("influencers/:id")
@@ -267,9 +294,18 @@ export class UsersController {
     @Query("viewerState") viewerState?: string,
     @Query("viewerDistrict") viewerDistrict?: string,
     @Query("smartLocationPriority") smartLocationPriority?: string,
+    @Query("countSearch") countSearch?: string,
+    @Query("countReason") countReason?: string,
     @Req() req?: Request,
   ) {
-    const usage = await this.consumeDailySearchQuotaIfAuthenticated(req);
+    const usage = this.shouldConsumeSearchQuota({
+      countSearch,
+      countReason,
+      page,
+      limit,
+    })
+      ? await this.consumeDailySearchQuotaIfAuthenticated(req)
+      : null;
 
     const viewerId = extractOptionalViewerId(req);
     const liteMode = String(lite || "").toLowerCase() === "1" || String(lite || "").toLowerCase() === "true";

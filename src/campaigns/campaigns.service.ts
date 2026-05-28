@@ -24,7 +24,7 @@ const VALID_TRANSITIONS: Record<string, string[]> = {
 
 const TIER_FILTERED_OPEN_ROLLOUT_AT = new Date("2026-05-05T00:00:00.000Z"); // Rolled out May 2026
 
-type CampaignOwnerType = "brand" | "photographer";
+type CampaignOwnerType = "brand" | "photographer" | "influencer";
 type InviteRecipientRole = "influencer" | "photographer";
 type RequestKind =
   | "brand_campaign"
@@ -46,15 +46,15 @@ export class CampaignsService {
 
   private async resolveInitialCampaignStatus(
     status: unknown,
-    ownerType: "brand" | "photographer" = "brand",
+    ownerType: CampaignOwnerType = "brand",
   ): Promise<string> {
     const requested = String(status || "").trim().toLowerCase();
     const settings = await this.appSettingsModel.findOne({}).lean().exec();
     const settingsDoc = Array.isArray(settings) ? settings[0] : settings;
     const modeField =
-      ownerType === "photographer"
-        ? "collaborationApprovalMode"
-        : "campaignApprovalMode";
+      ownerType === "brand"
+        ? "campaignApprovalMode"
+        : "collaborationApprovalMode";
     const mode = String(settingsDoc?.[modeField] || "manual").toLowerCase();
 
     if (requested === "draft") return "draft";
@@ -380,20 +380,138 @@ export class CampaignsService {
     return "brand_campaign";
   }
 
+  private isObjectIdLike(value: string): boolean {
+    return /^[a-fA-F0-9]{24}$/.test(String(value || "").trim());
+  }
+
+  private async safeFindById(
+    model: any,
+    id: string,
+    selectFields = "_id",
+  ): Promise<any | null> {
+    try {
+      const query = model?.findById?.(id);
+      if (!query) return null;
+      if (typeof query.select === "function") {
+        const selected = query.select(selectFields);
+        if (selected && typeof selected.lean === "function") {
+          return await selected.lean();
+        }
+        return await selected;
+      }
+      if (typeof query.lean === "function") {
+        return await query.lean();
+      }
+      return await query;
+    } catch {
+      return null;
+    }
+  }
+
+  private async safeFindOne(
+    model: any,
+    filter: any,
+    selectFields = "_id",
+  ): Promise<any | null> {
+    try {
+      const query = model?.findOne?.(filter);
+      if (!query) return null;
+      if (typeof query.select === "function") {
+        const selected = query.select(selectFields);
+        if (selected && typeof selected.lean === "function") {
+          return await selected.lean();
+        }
+        return await selected;
+      }
+      if (typeof query.lean === "function") {
+        return await query.lean();
+      }
+      return await query;
+    } catch {
+      return null;
+    }
+  }
+
+  private async findBrandProfile(ownerId: string): Promise<any | null> {
+    const id = String(ownerId || "").trim();
+    if (!id) return null;
+    if (this.isObjectIdLike(id)) {
+      const byId = await this.safeFindById(this.brandModel, id, "_id");
+      if (byId) return byId;
+    }
+    return this.safeFindOne(
+      this.brandModel,
+      {
+        $or: [{ brandUsername: id }, { username: id }],
+      },
+      "_id",
+    );
+  }
+
+  private async findPhotographerProfile(ownerId: string): Promise<any | null> {
+    const id = String(ownerId || "").trim();
+    if (!id) return null;
+    if (this.isObjectIdLike(id)) {
+      const byId = await this.safeFindById(this.photographerModel, id, "_id");
+      if (byId) return byId;
+    }
+    return this.safeFindOne(
+      this.photographerModel,
+      {
+        $or: [{ username: id }, { photographerUsername: id }],
+      },
+      "_id",
+    );
+  }
+
+  private async findInfluencerProfile(ownerId: string): Promise<any | null> {
+    const id = String(ownerId || "").trim();
+    if (!id) return null;
+    if (this.isObjectIdLike(id)) {
+      const byId = await this.safeFindById(this.influencerModel, id, "_id");
+      if (byId) return byId;
+    }
+    return this.safeFindOne(
+      this.influencerModel,
+      { username: id },
+      "_id",
+    );
+  }
+
+  private async resolveOwnerTypeByProfile(
+    ownerId: string,
+    requesterRole?: string,
+  ): Promise<CampaignOwnerType> {
+    const normalizedRole = String(requesterRole || "").trim().toLowerCase();
+    if (normalizedRole === "photographer" || normalizedRole === "videographer") {
+      return "photographer";
+    }
+    if (normalizedRole === "influencer") {
+      return "influencer";
+    }
+    if (normalizedRole === "brand") {
+      return "brand";
+    }
+
+    const [brand, photographer, influencer] = await Promise.all([
+      this.findBrandProfile(ownerId),
+      this.findPhotographerProfile(ownerId),
+      this.findInfluencerProfile(ownerId),
+    ]);
+    if (brand) return "brand";
+    if (photographer) return "photographer";
+    if (influencer) return "influencer";
+
+    throw new NotFoundException("User profile not found");
+  }
+
   async create(ownerId: string, data: any, requesterRole?: string) {
     this.assertCampaignModeAvailability(data);
     // Enforce creation limit for owners (brand/photographer)
-    const normalizedRole = String(requesterRole || "").trim().toLowerCase();
-    const ownerType: "brand" | "photographer" =
-      normalizedRole === "photographer" ? "photographer" : "brand";
-
-    if (ownerType === "brand") {
-      const brand = await this.brandModel.findById(ownerId).lean();
-      if (!brand) throw new NotFoundException("Brand profile not found");
-    } else {
-      const photographer = await this.photographerModel.findById(ownerId).lean();
-      if (!photographer) throw new NotFoundException("Photographer profile not found");
-    }
+    const ownerType: CampaignOwnerType = await this.resolveOwnerTypeByProfile(
+      ownerId,
+      requesterRole,
+    );
     // Lazy load PlansService to avoid circular dep
     const caps = await this.plansService.getUserPlanCapabilities(ownerId);
     const settings = await this.appSettingsModel.findOne({}).lean().exec();
@@ -410,19 +528,26 @@ export class CampaignsService {
       );
     }
     const selectedType = String(data?.campaignType || "");
-    this.assertCampaignTypeAllowed(ownerType, selectedType, caps.hasPremium, settings);
+    this.assertCampaignTypeAllowed(
+      ownerType === "influencer" ? "brand" : ownerType,
+      selectedType,
+      caps.hasPremium,
+      settings,
+    );
+    const persistedOwnerType: CampaignOwnerType =
+      ownerType === "influencer" ? "brand" : ownerType;
     const normalized = this.normalizeCampaignPayload(data);
     const inviteRecipientRole = this.normalizeInviteRecipientRole(
       data?.inviteRecipientRole,
-      ownerType,
+      persistedOwnerType,
     );
     if (ownerType === "photographer") {
       normalized.campaignMode = "invite_only";
     }
-    normalized.ownerType = ownerType;
+    normalized.ownerType = persistedOwnerType;
     normalized.inviteRecipientRole = inviteRecipientRole;
     normalized.requestKind = this.resolveRequestKind(
-      ownerType,
+      persistedOwnerType,
       inviteRecipientRole,
     );
     normalized.status = await this.resolveInitialCampaignStatus(

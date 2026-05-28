@@ -86,6 +86,96 @@ export class CampaignInvitesService {
       : "influencer";
   }
 
+  private async safeFindById(
+    model: any,
+    id: string,
+    selectFields: string,
+  ): Promise<any | null> {
+    try {
+      const query = model?.findById?.(id);
+      if (!query) return null;
+      if (typeof query.select === "function") {
+        const selected = query.select(selectFields);
+        if (selected && typeof selected.lean === "function") {
+          return await selected.lean();
+        }
+        return await selected;
+      }
+      if (typeof query.lean === "function") {
+        return await query.lean();
+      }
+      return await query;
+    } catch {
+      return null;
+    }
+  }
+
+  private async safeFindOne(
+    model: any,
+    filter: any,
+    selectFields: string,
+  ): Promise<any | null> {
+    try {
+      const query = model?.findOne?.(filter);
+      if (!query) return null;
+      if (typeof query.select === "function") {
+        const selected = query.select(selectFields);
+        if (selected && typeof selected.lean === "function") {
+          return await selected.lean();
+        }
+        return await selected;
+      }
+      if (typeof query.lean === "function") {
+        return await query.lean();
+      }
+      return await query;
+    } catch {
+      return null;
+    }
+  }
+
+  private async resolveOwnerIdentifiers(ownerId: string): Promise<string[]> {
+    const normalized = String(ownerId || "").trim();
+    if (!normalized) return [];
+
+    const docs = await Promise.all([
+      this.safeFindOne(
+        this.brandModel,
+        {
+          $or: [{ _id: normalized }, { brandUsername: normalized }, { username: normalized }],
+        },
+        "_id brandUsername username",
+      ),
+      this.safeFindOne(
+        this.photographerModel,
+        {
+          $or: [{ _id: normalized }, { username: normalized }, { photographerUsername: normalized }],
+        },
+        "_id username photographerUsername",
+      ),
+      this.safeFindOne(
+        this.influencerModel,
+        {
+          $or: [{ _id: normalized }, { username: normalized }],
+        },
+        "_id username",
+      ),
+    ]);
+
+    const values = new Set<string>([normalized]);
+    for (const doc of docs) {
+      if (!doc || typeof doc !== "object") continue;
+      const anyDoc: any = doc;
+      for (const key of ["_id", "brandUsername", "username", "photographerUsername"]) {
+        const raw = anyDoc?.[key];
+        if (raw !== undefined && raw !== null && String(raw).trim()) {
+          values.add(String(raw).trim());
+        }
+      }
+    }
+    return Array.from(values);
+  }
+
   private getRecipientModel(role: "influencer" | "photographer") {
     return role === "photographer" ? this.photographerModel : this.influencerModel;
   }
@@ -100,6 +190,71 @@ export class CampaignInvitesService {
         "name email phoneNumber username profileImages socialMedia location isPremium premiumEnd createdAt premiumStart contact isEmailVerified isMobileVerified",
       )
       .lean();
+  }
+
+  private async loadOwnerPlanAnchor(ownerId: string) {
+    const [brand, influencer, photographer] = await Promise.all([
+      this.brandModel
+        .findById(ownerId)
+        .select("createdAt premiumStart premiumEnd isPremium")
+        .lean(),
+      this.influencerModel
+        .findById(ownerId)
+        .select("createdAt premiumStart premiumEnd isPremium")
+        .lean(),
+      this.photographerModel
+        .findById(ownerId)
+        .select("createdAt premiumStart premiumEnd isPremium")
+        .lean(),
+    ]);
+    return brand || influencer || photographer || null;
+  }
+
+  private async resolveSenderProfile(ownerId: string): Promise<{
+    role: "brand" | "influencer" | "photographer";
+    name: string;
+    email?: string;
+  }> {
+    const brand: any = await this.safeFindById(
+      this.brandModel,
+      ownerId,
+      "brandName name email",
+    );
+    if (brand) {
+      return {
+        role: "brand",
+        name: String(brand.brandName || brand.name || "Brand").trim() || "Brand",
+        email: brand.email,
+      };
+    }
+
+    const influencer: any = await this.safeFindById(
+      this.influencerModel,
+      ownerId,
+      "name email",
+    );
+    if (influencer) {
+      return {
+        role: "influencer",
+        name: String(influencer.name || "Influencer").trim() || "Influencer",
+        email: influencer.email,
+      };
+    }
+
+    const photographer: any = await this.safeFindById(
+      this.photographerModel,
+      ownerId,
+      "name email",
+    );
+    if (photographer) {
+      return {
+        role: "photographer",
+        name: String(photographer.name || "Photographer").trim() || "Photographer",
+        email: photographer.email,
+      };
+    }
+
+    return { role: "brand", name: "Creator" };
   }
 
   private isInviteContactVisible(invite: any): boolean {
@@ -244,28 +399,24 @@ export class CampaignInvitesService {
       .findById(data.campaignId)
       .lean();
     if (!campaign) throw new NotFoundException("Campaign not found");
-    // Allow if campaign.brandId matches the user's ObjectId OR their brandUsername (string)
+    // Allow if campaign owner matches creator id/username across supported owner profiles.
     if (String(campaign.brandId) !== brandId) {
-      const brand = await this.brandModel
-        .findById(brandId)
-        .select("brandUsername")
-        .lean();
-      const brandUsername =
-        brand && typeof brand === "object" && "brandUsername" in brand
-          ? brand.brandUsername
-          : undefined;
-      if (!brandUsername || String(campaign.brandId) !== brandUsername) {
+      const ownerIdentifiers = await this.resolveOwnerIdentifiers(brandId);
+      if (!ownerIdentifiers.includes(String(campaign.brandId))) {
         throw new BadRequestException("Not your campaign");
       }
     }
-    // Collaboration invites can be sent only after admin moderation is live.
-    if (
-      this.isCollaborationCampaign(campaign) &&
-      !this.isCampaignLiveForRecipient(campaign)
-    ) {
-      throw new BadRequestException(
-        "This collaboration is awaiting admin approval. You can invite after it is approved.",
-      );
+    // Collaboration invites can be queued by the owner even while pending_review.
+    // Recipients will not be able to accept until the collaboration goes live.
+    // Block only truly terminal/unknown states (rejected, completed, draft).
+    if (this.isCollaborationCampaign(campaign)) {
+      const campStatus = String(campaign?.status || "").trim().toLowerCase();
+      const allowedForOwner = new Set(["active", "pending", "pending_review", "needs_changes"]);
+      if (!allowedForOwner.has(campStatus)) {
+        throw new BadRequestException(
+          "Invites can only be sent for active or pending-review collaborations.",
+        );
+      }
     }
     const recipientRole = this.normalizeRecipientRole(data?.recipientRole);
     const recipientId = String(
@@ -287,7 +438,9 @@ export class CampaignInvitesService {
     }
     // Enforce invite limits for brands (admin-manageable)
     const caps = await this.plansService.getUserPlanCapabilities(brandId);
-    const canInviteUsers = (caps?.features || []).some(
+    const capFeatures = Array.isArray(caps?.features) ? caps.features : [];
+    const capLimits = Array.isArray(caps?.limits) ? caps.limits : [];
+    const canInviteUsers = capFeatures.some(
       (f: any) => String(f?.key || "") === "canInviteUsers" && !!f?.value,
     );
     if (!canInviteUsers) {
@@ -296,9 +449,9 @@ export class CampaignInvitesService {
       );
     }
     const maxInvitesPerCampaign =
-      caps.limits.find((l: any) => l.key === "maxInvitesPerCampaign")?.value ??
+      capLimits.find((l: any) => l.key === "maxInvitesPerCampaign")?.value ??
       5;
-    const maxInvitesPerMonthEntry = caps.limits.find(
+    const maxInvitesPerMonthEntry = capLimits.find(
       (l: any) => l.key === "maxInvitesPerMonth",
     );
     // Count invites for this campaign
@@ -352,11 +505,8 @@ export class CampaignInvitesService {
       maxInvitesPerMonthEntry !== undefined &&
       maxInvitesPerMonthEntry.value !== -1
     ) {
-      const brandDoc = await this.brandModel
-        .findById(brandId)
-        .select("createdAt premiumStart premiumEnd isPremium")
-        .lean();
-      const cycleStart = this.computePlanCycleStart(brandDoc);
+      const ownerDoc = await this.loadOwnerPlanAnchor(brandId);
+      const cycleStart = this.computePlanCycleStart(ownerDoc);
       const monthInviteCount = await this.inviteModel.countDocuments({
         brandId,
         createdAt: { $gte: cycleStart },
@@ -371,9 +521,12 @@ export class CampaignInvitesService {
     // Enforce recipient cap (anchored to the recipient's plan-start)
     const recipientCaps =
       await this.plansService.getUserPlanCapabilities(recipientId);
+    const recipientLimits = Array.isArray(recipientCaps?.limits)
+      ? recipientCaps.limits
+      : [];
     if (recipientDoc) {
       const recipientMonthlyCap =
-        recipientCaps.limits.find(
+        recipientLimits.find(
           (l: any) => l.key === "maxInvitesPerCampaign",
         )?.value ?? -1;
       if (recipientMonthlyCap !== -1) {
@@ -404,12 +557,9 @@ export class CampaignInvitesService {
         recipientRole,
         recipientId,
       );
-      const brand: any = await this.brandModel
-        .findById(brandId)
-        .select("brandName")
-        .lean();
+      const sender = await this.resolveSenderProfile(brandId);
       if (recipient?.email) {
-        const text = `Hi ${recipient.name || ""},\n\nYou have a new campaign invite from ${brand?.brandName || "a brand"} for "${campaign.title}".\nLog in to TrendStarz to respond.\n`;
+        const text = `Hi ${recipient.name || ""},\n\nYou have a new campaign invite from ${sender.name || "a creator"} for "${campaign.title}".\nLog in to TrendStarz to respond.\n`;
         await sendAppEmail({
           to: recipient.email,
           subject: "New Campaign Invite",
@@ -419,7 +569,7 @@ export class CampaignInvitesService {
       // Push notification to recipient
       this.pushService.sendToUser(String(recipientId), {
         title: "New Campaign Invite 🎉",
-        body: `${brand?.brandName || "A brand"} invited you to "${campaign.title}"`,
+        body: `${sender.name || "A creator"} invited you to "${campaign.title}"`,
         url: recipientRole === "photographer" ? "/photographer-dashboard" : "/influencer-dashboard",
       }).catch(() => { /* non-critical */ });
       this.notificationsService
@@ -427,7 +577,7 @@ export class CampaignInvitesService {
           userId: String(recipientId),
           userRole: recipientRole,
           title: "New Campaign Invite",
-          body: `${brand?.brandName || "A brand"} invited you to "${campaign.title}"`,
+          body: `${sender.name || "A creator"} invited you to "${campaign.title}"`,
           url: recipientRole === "photographer" ? "/photographer-dashboard" : "/influencer-dashboard",
         })
         .catch(() => {
@@ -983,12 +1133,21 @@ export class CampaignInvitesService {
     };
   }
 
-  /** Brand withdraws a pending/accepted invite before execution starts. */
+  /** Brand withdraws a pending/accepted invite before execution starts.
+   * Once the influencer is working (payment_confirmed / working / submitted / completed)
+   * the invite is locked and cannot be withdrawn.
+   */
   async withdrawInvite(inviteId: string, brandId: string, reason?: string) {
     const invite = await this.assertBrandOwnsInvite(inviteId, brandId);
-    if (invite.status !== "pending" && invite.status !== "accepted") {
+    const lockedStatuses = new Set(["payment_confirmed", "working", "submitted", "completed", "approved", "disputed"]);
+    if (lockedStatuses.has(invite.status)) {
       throw new BadRequestException(
-        "Only pending or accepted invites can be withdrawn. Use Report for progressed invites.",
+        "This invite cannot be withdrawn because the creator has already started working. Use Report to flag an issue.",
+      );
+    }
+    if (invite.status !== "pending" && invite.status !== "accepted" && invite.status !== "invited") {
+      throw new BadRequestException(
+        "Only pending or accepted invites can be withdrawn.",
       );
     }
     invite.status = "withdrawn";
@@ -1370,10 +1529,7 @@ export class CampaignInvitesService {
     // Send notification email to brand on acceptance
     if (status === "accepted") {
       try {
-        const brand: any = await this.brandModel
-          .findById(invite.brandId)
-          .select("email brandName")
-          .lean();
+        const sender = await this.resolveSenderProfile(String(invite.brandId));
         const recipient: any = await this.loadRecipientProfile(
           recipientRole,
           influencerId,
@@ -1382,10 +1538,10 @@ export class CampaignInvitesService {
           .findById(invite.campaignId)
           .select("title")
           .lean();
-        if (brand?.email) {
-          const text = `Hi ${brand.brandName || ""},\n\n${recipient?.name || `A ${recipientRole}`} has accepted your campaign invite for "${campaign?.title || ""}".\n`;
+        if (sender?.email) {
+          const text = `Hi ${sender.name || ""},\n\n${recipient?.name || `A ${recipientRole}`} has accepted your campaign invite for "${campaign?.title || ""}".\n`;
           await sendAppEmail({
-            to: brand.email,
+            to: sender.email,
             subject: "Campaign Invite Accepted",
             text,
           });
@@ -1399,7 +1555,7 @@ export class CampaignInvitesService {
         this.notificationsService
           .createForUser({
             userId: String(invite.brandId),
-            userRole: "brand",
+            userRole: sender.role,
             title: "Invite Accepted",
             body: `${recipient?.name || `A ${recipientRole}`} accepted your invite for "${campaign?.title || "your campaign"}"`,
             url: "/campaign-management",
@@ -1690,10 +1846,7 @@ export class CampaignInvitesService {
 
     // Notify brand
     try {
-      const brand: any = await this.brandModel
-        .findById(invite.brandId)
-        .select("email brandName")
-        .lean();
+      const sender = await this.resolveSenderProfile(String(invite.brandId));
       const influencer: any = await this.influencerModel
         .findById(influencerId)
         .select("name")
@@ -1702,21 +1855,22 @@ export class CampaignInvitesService {
         .findById(invite.campaignId)
         .select("title")
         .lean();
-      if (brand?.email) {
+      if (sender?.email) {
         await sendAppEmail({
-          to: brand.email,
+          to: sender.email,
           subject: "Post Submitted for Review",
-          text: `Hi ${brand.brandName || ""},\n\n${influencer?.name || "An influencer"} has submitted their post for campaign "${campaign?.title || ""}". Please review it in your dashboard.\n`,
+          text: `Hi ${sender.name || ""},\n\n${influencer?.name || "An influencer"} has submitted their post for campaign "${campaign?.title || ""}". Please review it in your dashboard.\n`,
         });
       }
     } catch (e) {
       console.error("Failed to send submission email:", e);
     }
 
+    const submissionOwner = await this.resolveSenderProfile(String(invite.brandId));
     this.notificationsService
       .createForUser({
         userId: String(invite.brandId),
-        userRole: "brand",
+        userRole: submissionOwner.role,
         title: "Post Submitted",
         body: "An influencer submitted content for your review.",
         url: "/campaign-management",

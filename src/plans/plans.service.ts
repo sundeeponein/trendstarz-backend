@@ -323,9 +323,11 @@ export class PlansService {
     return {
       hasPremium: true,
       planName: sub.planName,
-      features: sub.featuresSnapshot,
-      limits: sub.limitsSnapshot,
-      policies: sub.policiesSnapshot,
+      features: Array.isArray(sub.featuresSnapshot)
+        ? sub.featuresSnapshot
+        : [],
+      limits: Array.isArray(sub.limitsSnapshot) ? sub.limitsSnapshot : [],
+      policies: sub.policiesSnapshot ?? { imageRetentionDaysAfterExpiry: 45 },
       endDate: sub.endDate,
     };
   }

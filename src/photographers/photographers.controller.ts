@@ -54,6 +54,15 @@ function toDayKey(date = new Date()): string {
   return `${y}-${m}-${d}`;
 }
 
+function nextDayKey(date = new Date()): string {
+  return toDayKey(new Date(date.getTime() + 24 * 60 * 60 * 1000));
+}
+
+function parseBooleanLike(value: unknown): boolean {
+  const normalized = String(value || "").trim().toLowerCase();
+  return normalized === "1" || normalized === "true" || normalized === "yes";
+}
+
 @Controller("users/photographers")
 export class PhotographersController {
   constructor(
@@ -105,7 +114,7 @@ export class PhotographersController {
 
     if ((doc?.used || 0) >= maxLimit) {
       throw new ForbiddenException(
-        "You have exhausted today's usage limit. Please upgrade your plan.",
+        `You have exhausted today's usage limit (${maxLimit}/day on your current plan). You can search again on ${nextDayKey()}. Upgrade your plan for higher limits.`,
       );
     }
 
@@ -123,6 +132,24 @@ export class PhotographersController {
       limit: maxLimit,
       day,
     };
+  }
+
+  private shouldConsumeSearchQuota(query: {
+    countSearch?: string;
+    countReason?: string;
+    page?: string;
+    limit?: string;
+  }): boolean {
+    if (!parseBooleanLike(query.countSearch)) return false;
+
+    const reason = String(query.countReason || "").trim().toLowerCase();
+    if (reason === "query" || reason === "filter") return true;
+    if (reason !== "pagination") return false;
+
+    const page = Math.max(parseInt(String(query.page || "1"), 10) || 1, 1);
+    const limit = Math.max(parseInt(String(query.limit || "120"), 10) || 120, 1);
+    const offset = (page - 1) * limit;
+    return offset >= 120;
   }
 
   private async consumeDailyProfileViewQuotaIfAuthenticated(req?: Request): Promise<void> {
@@ -185,13 +212,18 @@ export class PhotographersController {
       skill?: string;
       location?: string;
       keyword?: string;
+      page?: string;
       limit?: string;
       viewerState?: string;
       viewerDistrict?: string;
       smartLocationPriority?: string;
+      countSearch?: string;
+      countReason?: string;
     },
   ) {
-    const usage = await this.consumeDailySearchQuotaIfAuthenticated(req);
+    const usage = this.shouldConsumeSearchQuota(query)
+      ? await this.consumeDailySearchQuotaIfAuthenticated(req)
+      : null;
 
     const smartPriority =
       String(query.smartLocationPriority || "").toLowerCase() === "1" ||
