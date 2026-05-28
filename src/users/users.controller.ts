@@ -11,15 +11,18 @@ import {
   Delete,
   ForbiddenException,
 } from "@nestjs/common";
+import { InjectModel } from "@nestjs/mongoose";
 import { JwtAuthGuard } from "../auth/jwt-auth.guard";
 import { RolesGuard } from "../auth/roles.guard";
 import { InfluencerProfileDto, BrandProfileDto } from "./dto/profile.dto";
 import { UsersService } from "./users.service";
 import { Request } from "express";
+import { Model } from "mongoose";
 import * as jwt from "jsonwebtoken";
 import { getJwtSecret } from "../auth/jwt-secret";
 import { DailyUsageGuard } from "../monetization/guards/daily-usage.guard";
 import { UsageLimit } from "../monetization/decorators/usage-limit.decorator";
+import { PlansService } from "../plans/plans.service";
 
 /** Decode JWT from request without throwing. Returns userId or null. */
 function extractOptionalViewerId(req: any): string | null {
@@ -35,6 +38,29 @@ function extractOptionalViewerId(req: any): string | null {
   }
 }
 
+function extractOptionalViewerContext(req: any): { userId: string; role: string } | null {
+  try {
+    const auth = req?.headers?.authorization;
+    if (!auth) return null;
+    const token = auth.split(" ")[1];
+    if (!token) return null;
+    const decoded: any = jwt.verify(token, getJwtSecret());
+    const userId = String(decoded?.userId || "").trim();
+    const role = String(decoded?.role || "").trim().toLowerCase();
+    if (!userId || !role) return null;
+    return { userId, role };
+  } catch {
+    return null;
+  }
+}
+
+function toDayKey(date = new Date()): string {
+  const y = date.getUTCFullYear();
+  const m = String(date.getUTCMonth() + 1).padStart(2, "0");
+  const d = String(date.getUTCDate()).padStart(2, "0");
+  return `${y}-${m}-${d}`;
+}
+
 @Controller("users")
 export class UsersController {
   @Get("brands/name/:brandName")
@@ -47,7 +73,74 @@ export class UsersController {
     const viewerId = extractOptionalViewerId(req);
     return this.usersService.getBrandByName(brandName, viewerId);
   }
-  constructor(private readonly usersService: UsersService) {}
+  constructor(
+    private readonly usersService: UsersService,
+    private readonly plansService: PlansService,
+    @InjectModel("UsageCounter") private readonly usageModel: Model<any>,
+  ) {}
+
+  private async consumeDailySearchQuotaIfAuthenticated(req?: Request): Promise<{
+    used: number;
+    remaining: number;
+    limit: number;
+    day: string;
+  } | null> {
+    const viewer = extractOptionalViewerContext(req);
+    if (!viewer) return null;
+
+    const caps = await this.plansService.getUserPlanCapabilities(viewer.userId);
+    const limitEntry = (caps?.limits || []).find(
+      (l: any) => String(l?.key || "") === "dailySearchLimit",
+    );
+    const maxLimit = Number(limitEntry?.value ?? 0);
+
+    if (maxLimit <= 0) {
+      throw new ForbiddenException(
+        "Daily limit reached. Upgrade your plan for higher limits.",
+      );
+    }
+
+    const day = toDayKey();
+    const doc = await this.usageModel.findOneAndUpdate(
+      {
+        userId: viewer.userId,
+        userRole: viewer.role,
+        usageType: "search",
+        day,
+      },
+      {
+        $setOnInsert: {
+          userId: viewer.userId,
+          userRole: viewer.role,
+          usageType: "search",
+          day,
+          used: 0,
+        },
+      },
+      { new: true, upsert: true },
+    );
+
+    if ((doc?.used || 0) >= maxLimit) {
+      throw new ForbiddenException(
+        "You have exhausted today's usage limit. Please upgrade your plan.",
+      );
+    }
+
+    const updated = await this.usageModel.findByIdAndUpdate(doc._id, {
+      $inc: { used: 1 },
+      $set: {
+        limit: maxLimit,
+        remaining: Math.max(maxLimit - ((doc?.used || 0) + 1), 0),
+      },
+    }, { new: true });
+
+    return {
+      used: Number(updated?.used || 0),
+      remaining: Number(updated?.remaining || 0),
+      limit: maxLimit,
+      day,
+    };
+  }
 
   @Get("influencers/:id")
   @UseGuards(JwtAuthGuard, DailyUsageGuard)
@@ -165,8 +258,6 @@ export class UsersController {
   }
 
   @Get("influencers")
-  @UseGuards(JwtAuthGuard, DailyUsageGuard)
-  @UsageLimit("search", "dailySearchLimit")
   async getInfluencers(
     @Query("page") page?: string,
     @Query("limit") limit?: string,
@@ -178,12 +269,14 @@ export class UsersController {
     @Query("smartLocationPriority") smartLocationPriority?: string,
     @Req() req?: Request,
   ) {
+    const usage = await this.consumeDailySearchQuotaIfAuthenticated(req);
+
     const viewerId = extractOptionalViewerId(req);
     const liteMode = String(lite || "").toLowerCase() === "1" || String(lite || "").toLowerCase() === "true";
     const smartPriority =
       String(smartLocationPriority || "").toLowerCase() === "1" ||
       String(smartLocationPriority || "").toLowerCase() === "true";
-    return this.usersService.getInfluencers(
+    const result = await this.usersService.getInfluencers(
       page ? parseInt(page, 10) : undefined,
       limit ? parseInt(limit, 10) : undefined,
       viewerId,
@@ -196,6 +289,12 @@ export class UsersController {
         smartLocationPriority: smartPriority,
       },
     );
+
+    if (!usage) return result;
+    if (Array.isArray(result)) {
+      return { data: result, usage: { search: usage } };
+    }
+    return { ...(result || {}), usage: { search: usage } };
   }
 
   @Get("brands")

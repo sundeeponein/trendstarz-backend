@@ -212,8 +212,9 @@ export class AuthService {
     }
     // Generate a cryptographically secure reset token
     const resetToken = crypto.randomBytes(32).toString("hex");
+    const resetTokenHash = crypto.createHash("sha256").update(resetToken).digest("hex");
     // Save token to user (or a real token store in production)
-    user.resetToken = resetToken;
+    user.resetToken = resetTokenHash;
     user.resetTokenExpires = Date.now() + 1000 * 60 * 60; // 1 hour expiry
     await user.save();
     // Send email (use your email util)
@@ -240,21 +241,23 @@ export class AuthService {
     const now = Date.now();
 
     // Parallel lookup across collections.
+    // Accept both the legacy raw token and the hashed token so existing reset
+    // emails continue to work while new tokens are stored hashed.
     const [adminUser, influencer, brand, photographer] = await Promise.all([
       this.userModel.findOne({
-        resetToken: tokenHash,
+        resetToken: { $in: [token, tokenHash] },
         resetTokenExpires: { $gt: now },
       }),
       this.influencerModel.findOne({
-        resetToken: tokenHash,
+        resetToken: { $in: [token, tokenHash] },
         resetTokenExpires: { $gt: now },
       }),
       this.brandModel.findOne({
-        resetToken: tokenHash,
+        resetToken: { $in: [token, tokenHash] },
         resetTokenExpires: { $gt: now },
       }),
       this.photographerModel.findOne({
-        resetToken: tokenHash,
+        resetToken: { $in: [token, tokenHash] },
         resetTokenExpires: { $gt: now },
       }),
     ]);

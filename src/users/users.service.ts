@@ -1208,9 +1208,11 @@ export class UsersService {
   async getInfluencerByUsername(username: string, viewerId?: string | null) {
     const user: any = await this.influencerModel.findOne({ username }).lean();
     if (!user) return null;
-    const allowContact = await this.canViewInfluencerContact(user, viewerId);
-    const allowGender = await this.canViewInfluencerGender(user, viewerId);
-    const allowSocial = await this.canViewerOpenSocialLinks(viewerId);
+    const [allowContact, allowGender, allowSocial] = await Promise.all([
+      this.canViewInfluencerContact(user, viewerId),
+      this.canViewInfluencerGender(user, viewerId),
+      this.canViewerOpenSocialLinks(viewerId),
+    ]);
     const isPremium = this.isCurrentlyPremium(user);
     const {
       _id,
@@ -1265,9 +1267,11 @@ export class UsersService {
   async getInfluencerById(id: string, viewerId?: string | null) {
     const user: any = await this.influencerModel.findById(id).lean();
     if (!user) return null;
-    const allowContact = await this.canViewInfluencerContact(user, viewerId);
-    const allowGender = await this.canViewInfluencerGender(user, viewerId);
-    const allowSocial = await this.canViewerOpenSocialLinks(viewerId);
+    const [allowContact, allowGender, allowSocial] = await Promise.all([
+      this.canViewInfluencerContact(user, viewerId),
+      this.canViewInfluencerGender(user, viewerId),
+      this.canViewerOpenSocialLinks(viewerId),
+    ]);
     const isPremium = this.isCurrentlyPremium(user);
     const {
       _id,

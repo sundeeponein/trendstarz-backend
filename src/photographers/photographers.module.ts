@@ -9,9 +9,12 @@ import {
   CampaignInviteSchema,
 } from "../database/schemas/profile.schemas";
 import { CloudinaryService } from "../cloudinary.service";
+import { UsageCounterSchema } from "../database/schemas/usage-counter.schema";
+import { PlansModule } from "../plans/plans.module";
 
 @Module({
   imports: [
+    PlansModule,
     MongooseModule.forFeature([
       {
         name: "Photographer",
@@ -22,6 +25,11 @@ import { CloudinaryService } from "../cloudinary.service";
         name: "CampaignInvite",
         schema: CampaignInviteSchema,
         collection: "campaigninvites",
+      },
+      {
+        name: "UsageCounter",
+        schema: UsageCounterSchema,
+        collection: "usage_counters",
       },
       { name: "State", schema: StateSchema, collection: "states" },
       { name: "District", schema: DistrictSchema, collection: "districts" },
