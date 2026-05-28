@@ -1,7 +1,7 @@
 import { Module } from "@nestjs/common";
 import { UsersController } from "./users.controller";
 import { BrandsController } from "./brands.controller";
-import { InfluencersController } from './influencers.controller';
+import { InfluencersController } from "./influencers.controller";
 import { UsersService } from "./users.service";
 import { CloudinaryService } from "../cloudinary.service";
 import { MongooseModule } from "@nestjs/mongoose";
@@ -12,6 +12,7 @@ import {
   PhotographerSchema,
 } from "../database/schemas/profile.schemas";
 import { CampaignInviteSchema } from "../database/schemas/campaign-invite.schema";
+import { UsageCounterSchema } from "../database/schemas/usage-counter.schema";
 import { PlansModule } from "../plans/plans.module";
 import { MonetizationModule } from "../monetization/monetization.module";
 
@@ -34,6 +35,11 @@ import { MonetizationModule } from "../monetization/monetization.module";
         name: "CampaignInvite",
         schema: CampaignInviteSchema,
         collection: "campaigninvites",
+      },
+      {
+        name: "UsageCounter",
+        schema: UsageCounterSchema,
+        collection: "usage_counters",
       },
     ]),
     PlansModule,
