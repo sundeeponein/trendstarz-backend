@@ -537,6 +537,12 @@ export class CampaignsService {
     const persistedOwnerType: CampaignOwnerType =
       ownerType === "influencer" ? "brand" : ownerType;
     const normalized = this.normalizeCampaignPayload(data);
+    if (!Number.isFinite(Number(normalized.maxInfluencers)) || Number(normalized.maxInfluencers) <= 0) {
+      throw new BadRequestException("maxInfluencers is required and must be greater than 0");
+    }
+    if (!Number.isFinite(Number(normalized.minInfluencers)) || Number(normalized.minInfluencers) <= 0) {
+      normalized.minInfluencers = 1;
+    }
     const inviteRecipientRole = this.normalizeInviteRecipientRole(
       data?.inviteRecipientRole,
       persistedOwnerType,
@@ -873,6 +879,15 @@ export class CampaignsService {
       ...(campaign.toObject ? campaign.toObject() : campaign),
       ...normalized,
     };
+    const mergedMax = Number((mergedForValidation as any)?.maxInfluencers || 0);
+    if (!Number.isFinite(mergedMax) || mergedMax <= 0) {
+      throw new BadRequestException("maxInfluencers is required and must be greater than 0");
+    }
+    const mergedMin = Number((mergedForValidation as any)?.minInfluencers || 0);
+    if (!Number.isFinite(mergedMin) || mergedMin <= 0) {
+      normalized.minInfluencers = 1;
+      (mergedForValidation as any).minInfluencers = 1;
+    }
     // Re-derive logisticsType from the merged document to keep the
     // discriminator consistent across partial updates.
     normalized.logisticsType = this.deriveLogisticsType(mergedForValidation);
