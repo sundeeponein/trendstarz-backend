@@ -766,6 +766,54 @@ export class CampaignInvitesService {
     return status === "active" || status === "completed";
   }
 
+  private toPaiseFromMaybeRupees(value: any): number {
+    const n = Number(value || 0);
+    if (!Number.isFinite(n) || n <= 0) return 0;
+    // Invite card prices/counters are entered in rupees.
+    return Math.round(n * 100);
+  }
+
+  private toRupeesFromPaise(value: any): number {
+    const n = Number(value || 0);
+    if (!Number.isFinite(n) || n <= 0) return 0;
+    return Math.round(n / 100);
+  }
+
+  private isDeliverableBasedPricing(
+    campaign: any,
+    recipientRole: "influencer" | "photographer",
+  ): boolean {
+    const t = String(campaign?.campaignType || "").trim().toLowerCase();
+    const ownerType = String(campaign?.ownerType || campaign?.createdByRole || "")
+      .trim()
+      .toLowerCase();
+    if (t === "reel_collab") return true;
+    return t === "paid_collab" && ownerType !== "photographer" && recipientRole === "influencer";
+  }
+
+  private resolveDeliverableOfferRupees(
+    campaign: any,
+    selectedPlatform?: string,
+    selectedContentType?: string,
+  ): number {
+    if (!selectedPlatform || !selectedContentType || !Array.isArray(campaign?.socialMedia)) {
+      return 0;
+    }
+    const smEntry = campaign.socialMedia.find(
+      (sm: any) =>
+        String(sm?.platform || "").toLowerCase() ===
+        String(selectedPlatform || "").toLowerCase(),
+    );
+    const ctEntry = smEntry?.contentTypes?.find(
+      (ct: any) =>
+        String(ct?.name || "").toLowerCase() ===
+          String(selectedContentType || "").toLowerCase() &&
+        !!ct?.enabled,
+    );
+    const rupees = Number(ctEntry?.price || 0);
+    return Number.isFinite(rupees) && rupees > 0 ? rupees : 0;
+  }
+
   private isCampaignDeletedForRecipient(campaign: any): boolean {
     if (!campaign || typeof campaign !== "object") return true;
     const status = String(campaign?.status || "").trim().toLowerCase();
@@ -1020,22 +1068,14 @@ export class CampaignInvitesService {
 
   // ── Fulfillment / brand-action helpers ─────────────────────────
 
-  /** Internal: load an invite and assert that the caller (brandId) owns it. */
-  private async assertBrandOwnsInvite(inviteId: string, brandId: string) {
+  /** Internal: load an invite and assert that the caller owns it (brand/influencer/photographer). */
+  private async assertBrandOwnsInvite(inviteId: string, ownerId: string) {
     const invite: any = await this.inviteModel.findById(inviteId);
     if (!invite) throw new NotFoundException("Invite not found");
-    if (String(invite.brandId) !== brandId) {
-      const brand = await this.brandModel
-        .findById(brandId)
-        .select("brandUsername")
-        .lean();
-      const brandUsername =
-        brand && typeof brand === "object" && "brandUsername" in brand
-          ? (brand as any).brandUsername
-          : undefined;
-      if (!brandUsername || String(invite.brandId) !== brandUsername) {
-        throw new BadRequestException("Not your invite");
-      }
+    const inviteOwner = String(invite.brandId || "").trim();
+    const possibleOwnerIds = await this.resolveOwnerIdentifiers(String(ownerId || "").trim());
+    if (!possibleOwnerIds.includes(inviteOwner)) {
+      throw new BadRequestException("Not your invite");
     }
     return invite;
   }
@@ -1323,10 +1363,12 @@ export class CampaignInvitesService {
   async respond(
     inviteId: string,
     influencerId: string,
-    status: "accepted" | "declined",
+    status: "accepted" | "declined" | "counter_sent",
     selectedPostDate?: string,
     selectedPlatform?: string,
     selectedContentType?: string,
+    counterAmount?: number,
+    counterMessage?: string,
     payout?: {
       upiId?: string;
       mobile?: string;
@@ -1349,8 +1391,30 @@ export class CampaignInvitesService {
     if (String(invite.influencerId) !== influencerId) {
       throw new BadRequestException("Not your invite");
     }
-    if (invite.status !== "pending") {
+    const inviteStatus = String(invite.status || "").toLowerCase();
+    const counterState = String((invite as any)?.counterOffer?.status || "").toLowerCase();
+    const isRecipientResolvingBrandCounter =
+      inviteStatus === "counter_sent" &&
+      counterState === "brand_sent" &&
+      (status === "accepted" || status === "declined");
+    const canRespondFromOpenInvite = inviteStatus === "pending" || inviteStatus === "invited";
+
+    if (!canRespondFromOpenInvite && !isRecipientResolvingBrandCounter) {
       throw new BadRequestException("Invite already responded to");
+    }
+
+    if (status === "counter_sent") {
+      const priorCounterStatus = String((invite as any)?.counterOffer?.status || "").toLowerCase();
+      const hasPriorCounter =
+        priorCounterStatus === "sent" ||
+        priorCounterStatus === "brand_sent" ||
+        priorCounterStatus === "accepted" ||
+        priorCounterStatus === "declined";
+      if (hasPriorCounter) {
+        throw new BadRequestException(
+          "Only one counter offer is allowed per invite. Please accept or decline the invite.",
+        );
+      }
     }
 
     let recipientRole = this.normalizeRecipientRole(invite?.recipientRole);
@@ -1374,9 +1438,9 @@ export class CampaignInvitesService {
       );
     }
 
-    if (status === "accepted") {
+    if (status === "accepted" || status === "counter_sent") {
       if (!selectedPostDate) {
-        throw new BadRequestException("selectedPostDate is required to accept");
+        throw new BadRequestException("selectedPostDate is required to respond");
       }
       const campaign: any = await this.campaignModel
         .findById(invite.campaignId)
@@ -1577,26 +1641,70 @@ export class CampaignInvitesService {
         }
       }
 
-      // Store chosen platform/content type and resolve agreed amount
+      // Store chosen platform/content type and resolve offered amount.
       if (effectivePlatform) invite.selectedPlatform = effectivePlatform;
       if (selectedContentType) invite.selectedContentType = selectedContentType;
-      if (
-        recipientCanUsePlatformRules &&
-        effectivePlatform &&
-        selectedContentType &&
-        campaign.socialMedia?.length
-      ) {
-        const smEntry = campaign.socialMedia.find(
-          (sm: any) =>
-            (sm.platform || "").toLowerCase() ===
-            effectivePlatform.toLowerCase(),
+      const isDeliverablePricing = this.isDeliverableBasedPricing(campaign, recipientRole);
+      const offeredRupees = isDeliverablePricing
+        ? this.resolveDeliverableOfferRupees(campaign, effectivePlatform, selectedContentType)
+        : this.toRupeesFromPaise(Number(campaign?.pricePerInfluencer || 0));
+      const offeredPaise = isDeliverablePricing
+        ? this.toPaiseFromMaybeRupees(offeredRupees)
+        : Number(campaign?.pricePerInfluencer || 0);
+
+      if (isDeliverablePricing && campaign?.socialMedia?.length && !selectedContentType) {
+        throw new BadRequestException(
+          "Please select the content type you will create before responding.",
         );
-        const ctEntry = smEntry?.contentTypes?.find(
-          (ct: any) =>
-            (ct.name || "").toLowerCase() ===
-              selectedContentType.toLowerCase() && ct.enabled,
-        );
-        if (ctEntry?.price) invite.agreedAmount = Number(ctEntry.price);
+      }
+      if (!offeredPaise || offeredPaise <= 0) {
+        throw new BadRequestException("Offered payout is not configured for this invite.");
+      }
+
+      if (isRecipientResolvingBrandCounter) {
+        const brandCounterRupees = Number((invite as any)?.counterOffer?.requestedAmount || 0);
+        const brandCounterPaise = Number((invite as any)?.counterOffer?.requestedAmountPaise || 0);
+        if (!Number.isFinite(brandCounterPaise) || brandCounterPaise <= 0) {
+          throw new BadRequestException("Invalid revised counter amount.");
+        }
+        invite.agreedAmount = brandCounterRupees;
+        invite.agreedAmountPaise = brandCounterPaise;
+      } else {
+        invite.agreedAmount = offeredRupees;
+        invite.agreedAmountPaise = offeredPaise;
+      }
+
+      if (status === "counter_sent") {
+        const requestedRupees = Number(counterAmount || 0);
+        if (!Number.isFinite(requestedRupees) || requestedRupees <= 0) {
+          throw new BadRequestException("counterAmount must be greater than 0 (rupees).");
+        }
+        const requestedPaise = this.toPaiseFromMaybeRupees(requestedRupees);
+        invite.counterOffer = {
+          status: "sent",
+          pricingMode: isDeliverablePricing ? "deliverable_based" : "flat",
+          selectedPlatform: effectivePlatform || undefined,
+          selectedContentType: selectedContentType || undefined,
+          offeredAmount: offeredRupees,
+          offeredAmountPaise: offeredPaise,
+          requestedAmount: requestedRupees,
+          requestedAmountPaise: requestedPaise,
+          message: String(counterMessage || "").trim() || undefined,
+          sentAt: new Date(),
+          responderId: String(influencerId || ""),
+        };
+      } else if (isRecipientResolvingBrandCounter) {
+        invite.counterOffer = {
+          ...invite.counterOffer,
+          status: "accepted",
+          resolvedAt: new Date(),
+        };
+      } else {
+        invite.counterOffer = {
+          status: "none",
+          sentAt: undefined,
+          resolvedAt: undefined,
+        };
       }
 
       // Persist confirmed payout details on the influencer profile so admin
@@ -1621,6 +1729,14 @@ export class CampaignInvitesService {
 
       // Location/map visibility is payment-confirmation gated. Keep unlock state
       // unchanged on plain acceptance; unlock continues through explicit brand flow.
+    }
+
+    if (status === "declined" && isRecipientResolvingBrandCounter) {
+      invite.counterOffer = {
+        ...invite.counterOffer,
+        status: "declined",
+        resolvedAt: new Date(),
+      };
     }
 
     invite.status = status;
@@ -1688,6 +1804,155 @@ export class CampaignInvitesService {
         console.error("Failed to send acceptance email:", e);
       }
     }
+
+    if (status === "counter_sent") {
+      try {
+        const sender = await this.resolveSenderProfile(String(invite.brandId));
+        const requested = Number(invite?.counterOffer?.requestedAmount || 0);
+        const selectedLabel = invite?.counterOffer?.selectedContentType
+          ? `${invite.counterOffer.selectedPlatform || ""} ${invite.counterOffer.selectedContentType}`.trim()
+          : "this collaboration";
+        this.pushService.sendToUser(String(invite.brandId), {
+          title: "Counter offer received",
+          body: `Recipient requested ₹${requested.toLocaleString("en-IN")} for ${selectedLabel}.`,
+          url: "/campaign-management",
+        }).catch(() => {
+          /* non-critical */
+        });
+        this.notificationsService
+          .createForUser({
+            userId: String(invite.brandId),
+            userRole: sender.role,
+            title: "Counter offer received",
+            body: `Recipient requested ₹${requested.toLocaleString("en-IN")} for ${selectedLabel}.`,
+            url: "/campaign-management",
+          })
+          .catch(() => {
+            /* non-critical */
+          });
+      } catch {
+        /* non-critical */
+      }
+    }
+
+    return updated;
+  }
+
+  async respondToCounter(
+    inviteId: string,
+    requesterId: string,
+    action: "accept" | "decline" | "counter",
+    note?: string,
+    counterAmount?: number,
+  ) {
+    const invite: any = await this.assertBrandOwnsInvite(inviteId, requesterId);
+    if (String(invite?.status || "") !== "counter_sent") {
+      throw new BadRequestException("No pending counter offer for this invite.");
+    }
+    const counter = invite?.counterOffer || {};
+    const counterStatus = String(counter?.status || "");
+    if (action === "counter") {
+      if (counterStatus !== "sent") {
+        throw new BadRequestException("A revised counter can only be sent for a newly received counter offer.");
+      }
+      const revisedRupees = Number(counterAmount || 0);
+      if (!Number.isFinite(revisedRupees) || revisedRupees <= 0) {
+        throw new BadRequestException("counterAmount must be greater than 0 (rupees).");
+      }
+      const revisedPaise = this.toPaiseFromMaybeRupees(revisedRupees);
+      invite.status = "counter_sent";
+      invite.counterOffer = {
+        ...counter,
+        status: "brand_sent",
+        offeredAmount: Number(counter?.requestedAmount || counter?.offeredAmount || 0),
+        offeredAmountPaise: Number(counter?.requestedAmountPaise || counter?.offeredAmountPaise || 0),
+        requestedAmount: revisedRupees,
+        requestedAmountPaise: revisedPaise,
+        message: String(note || "").trim() || undefined,
+        sentAt: new Date(),
+        responderId: String(requesterId || ""),
+      };
+      const updatedCounter = await invite.save();
+
+      const recipientRole = this.normalizeRecipientRole(invite?.recipientRole);
+      const recipientId = String(invite?.influencerId || invite?.photographerId || "");
+      const msg = `Creator sent a revised offer of ₹${revisedRupees.toLocaleString("en-IN")}. You can accept or decline.`;
+      this.pushService.sendToUser(recipientId, {
+        title: "Revised offer received",
+        body: msg,
+        url: recipientRole === "photographer" ? "/campaign-management" : "/influencer-dashboard",
+      }).catch(() => {
+        /* non-critical */
+      });
+      this.notificationsService
+        .createForUser({
+          userId: recipientId,
+          userRole: recipientRole,
+          title: "Revised offer received",
+          body: msg,
+          url: recipientRole === "photographer" ? "/campaign-management" : "/influencer-dashboard",
+        })
+        .catch(() => {
+          /* non-critical */
+        });
+
+      return updatedCounter;
+    }
+
+    if (counterStatus !== "sent") {
+      throw new BadRequestException("Counter offer is already resolved.");
+    }
+
+    if (action === "accept") {
+      const requestedAmount = Number(counter?.requestedAmount || 0);
+      const requestedAmountPaise = Number(counter?.requestedAmountPaise || 0);
+      if (!requestedAmountPaise || requestedAmountPaise <= 0) {
+        throw new BadRequestException("Invalid counter amount.");
+      }
+      invite.agreedAmount = requestedAmount;
+      invite.agreedAmountPaise = requestedAmountPaise;
+      invite.status = "accepted";
+      invite.acceptedAt = invite.acceptedAt || new Date();
+      invite.counterOffer = {
+        ...counter,
+        status: "accepted",
+        resolvedAt: new Date(),
+        message: String(note || counter?.message || "").trim() || undefined,
+      };
+    } else {
+      invite.status = "pending";
+      invite.counterOffer = {
+        ...counter,
+        status: "declined",
+        resolvedAt: new Date(),
+        message: String(note || counter?.message || "").trim() || undefined,
+      };
+    }
+
+    const updated = await invite.save();
+    const recipientRole = this.normalizeRecipientRole(invite?.recipientRole);
+    const recipientId = String(invite?.influencerId || invite?.photographerId || "");
+    const body = action === "accept"
+      ? "Your counter offer was accepted. Collaboration is now confirmed for payment flow."
+      : "Your counter offer was declined. You can accept the original offer from your invite.";
+    this.pushService.sendToUser(recipientId, {
+      title: action === "accept" ? "Counter accepted" : "Counter declined",
+      body,
+      url: recipientRole === "photographer" ? "/campaign-management" : "/influencer-dashboard",
+    }).catch(() => {
+      /* non-critical */
+    });
+    this.notificationsService
+      .createForUser({
+        userId: recipientId,
+        userRole: recipientRole,
+        title: action === "accept" ? "Counter accepted" : "Counter declined",
+        body,
+        url: recipientRole === "photographer" ? "/campaign-management" : "/influencer-dashboard",
+      })
+      .catch(() => {
+        /* non-critical */
+      });
 
     return updated;
   }
@@ -1827,7 +2092,8 @@ export class CampaignInvitesService {
       brandId: campaign.brandId,
       status: "pending",
       selectedPlatform: chosenPlatform ?? null,
-      agreedAmount: campaign.pricePerInfluencer ?? 0,
+      agreedAmount: this.toRupeesFromPaise(campaign.pricePerInfluencer ?? 0),
+      agreedAmountPaise: Number(campaign.pricePerInfluencer || 0),
     });
 
     // Notify brand

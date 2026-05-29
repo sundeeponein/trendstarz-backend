@@ -12,6 +12,8 @@ export const CampaignInviteSchema = new Schema({
     type: String,
     enum: [
       "pending",
+      "invited",
+      "counter_sent",
       "accepted",
       "declined",
       "payment_confirmed",
@@ -35,6 +37,30 @@ export const CampaignInviteSchema = new Schema({
   selectedPlatform: { type: String },
   selectedContentType: { type: String },
   agreedAmount: { type: Number },
+  // Canonical payout amount for payment calculations (paise).
+  agreedAmountPaise: { type: Number },
+  // Counter-offer requested by recipient during acceptance.
+  counterOffer: {
+    status: {
+      type: String,
+      enum: ["none", "sent", "brand_sent", "accepted", "declined"],
+      default: "none",
+    },
+    pricingMode: {
+      type: String,
+      enum: ["flat", "deliverable_based"],
+    },
+    selectedPlatform: { type: String },
+    selectedContentType: { type: String },
+    offeredAmount: { type: Number },
+    offeredAmountPaise: { type: Number },
+    requestedAmount: { type: Number },
+    requestedAmountPaise: { type: Number },
+    message: { type: String },
+    sentAt: { type: Date },
+    resolvedAt: { type: Date },
+    responderId: { type: String },
+  },
   acceptedAt: { type: Date },
   // Contact preference snapshot at acceptance time.
   // This keeps existing accepted invites stable even if profile preferences change later.

@@ -158,10 +158,12 @@ export class CampaignInvitesController {
     @Req() req: any,
     @Body()
     body: {
-      status: "accepted" | "declined";
+      status: "accepted" | "declined" | "counter_sent";
       selectedPostDate?: string;
       selectedPlatform?: string;
       selectedContentType?: string;
+      counterAmount?: number;
+      counterMessage?: string;
       payout?: {
         upiId?: string;
         mobile?: string;
@@ -187,8 +189,26 @@ export class CampaignInvitesController {
       body.selectedPostDate,
       body.selectedPlatform,
       body.selectedContentType,
+      body.counterAmount,
+      body.counterMessage,
       body.payout,
       body.shippingAddress,
+    );
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Patch(":id/counter/respond")
+  async respondToCounter(
+    @Param("id") id: string,
+    @Req() req: any,
+    @Body() body: { action: "accept" | "decline" | "counter"; note?: string; counterAmount?: number },
+  ) {
+    return this.invitesService.respondToCounter(
+      id,
+      this.requesterId(req),
+      body?.action,
+      body?.note,
+      body?.counterAmount,
     );
   }
 

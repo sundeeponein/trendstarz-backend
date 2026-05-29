@@ -124,9 +124,6 @@ export class PaymentsPayoutsService {
     await this.assertCampaignOwner(campaign, payerId);
 
     const pricePerInfluencer = Number(campaign.pricePerInfluencer || 0);
-    if (!pricePerInfluencer || pricePerInfluencer <= 0) {
-      throw new BadRequestException("pricePerInfluencer must be set in paise");
-    }
 
     const acceptedInvites = await this.inviteModel
       .find({
@@ -158,7 +155,19 @@ export class PaymentsPayoutsService {
       };
     }
 
-    const agreedAmount = pricePerInfluencer * acceptedCount;
+    const inviteAgreedAmounts = acceptedInvites.map((invite: any) => {
+      const fromInvite = Number(invite?.agreedAmountPaise || 0);
+      if (Number.isFinite(fromInvite) && fromInvite > 0) return fromInvite;
+      const fallback = Number(pricePerInfluencer || 0);
+      if (Number.isFinite(fallback) && fallback > 0) return fallback;
+      return 0;
+    });
+    const agreedAmount = inviteAgreedAmounts.reduce((sum, value) => sum + value, 0);
+    if (!agreedAmount || agreedAmount <= 0) {
+      throw new BadRequestException(
+        "No valid accepted payout amounts found. Set campaign payout or invite agreed amount.",
+      );
+    }
     const { platformFeeEnabled, platformFeePercent } =
       await this.getFeeSettings();
 
@@ -190,6 +199,7 @@ export class PaymentsPayoutsService {
       campaignType,
       acceptedCount,
       acceptedInviteIds: acceptedInvites.map((i: any) => String(i._id)),
+      acceptedInviteAgreedAmounts: inviteAgreedAmounts,
       pricePerInfluencer,
       agreedAmount,
       platformFee: fee,
@@ -230,25 +240,27 @@ export class PaymentsPayoutsService {
       .find({ _id: { $in: calc.acceptedInviteIds } })
       .lean();
 
-    const agreedSplit = this.splitEvenly(
-      calc.agreedAmount,
-      acceptedInvites.length,
-    );
-    const feeSplit = this.splitEvenly(calc.platformFee, acceptedInvites.length);
-    const payerSplit = this.splitEvenly(
-      calc.payerTotal,
-      acceptedInvites.length,
-    );
-    const payoutSplit = this.splitEvenly(
-      calc.recipientPayoutTotal,
-      acceptedInvites.length,
-    );
     const paymentBatchId = `batch_${campaignId}_${Date.now()}`;
 
     const saved: any[] = [];
 
     for (let i = 0; i < acceptedInvites.length; i++) {
       const invite = acceptedInvites[i];
+      const inviteAgreedAmount = Number(invite?.agreedAmountPaise || calc.pricePerInfluencer || 0);
+      if (!inviteAgreedAmount || inviteAgreedAmount <= 0) {
+        throw new BadRequestException(
+          `Invite ${String(invite?._id || '')} has no valid agreed payout amount.`,
+        );
+      }
+      const inviteFee = calc.platformFeeEnabled
+        ? this.roundPercent(inviteAgreedAmount, Number(calc.platformFeePercent || 0))
+        : 0;
+      const invitePayerTotal = calc.campaignType === "pay_to_join"
+        ? inviteAgreedAmount
+        : inviteAgreedAmount + inviteFee;
+      const inviteRecipientPayout = calc.campaignType === "pay_to_join"
+        ? Math.max(inviteAgreedAmount - inviteFee, 0)
+        : inviteAgreedAmount;
       const influencerId = String(invite.influencerId);
       const inviteRecipientRole =
         String(invite?.recipientRole || "").trim().toLowerCase() ===
@@ -281,10 +293,10 @@ export class PaymentsPayoutsService {
         recipientId,
         recipientRole:
           calc.campaignType === "pay_to_join" ? "brand" : inviteRecipientRole,
-        agreedAmount: agreedSplit[i],
-        platformFee: feeSplit[i],
-        payerTotal: payerSplit[i],
-        recipientPayout: payoutSplit[i],
+        agreedAmount: inviteAgreedAmount,
+        platformFee: inviteFee,
+        payerTotal: invitePayerTotal,
+        recipientPayout: inviteRecipientPayout,
         paymentBatchId,
         utrNumber,
         paymentProofUrl: body.paymentProofUrl || undefined,

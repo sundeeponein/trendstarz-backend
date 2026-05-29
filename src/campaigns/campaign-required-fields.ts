@@ -25,11 +25,19 @@ export function getRequiredFields(ctx: CampaignRequiredFieldsCtx): string[] {
   const isProduct = t === "product";
   const isLocation = t === "invite_location";
   const isPayToJoin = t === "pay_to_join";
+  const isCreativeProject = t === "creative_project";
 
   const required: string[] = [];
 
-  // Price per influencer required for paid_collab, pay_to_join, and invite_location.
-  if (isPaid || isPayToJoin || isLocation) required.push('pricePerInfluencer');
+  // Flat payout requirement is role/type aware:
+  // - paid_collab: flat only when photographer is involved
+  // - invite_location + pay_to_join: always flat
+  // - creative_project: flat for photographer-led collaborations
+  const paidNeedsFlat = isPaid && (isPhotographerCreator || isInvitingPhotographers);
+  const creativeNeedsFlat = isCreativeProject && isPhotographerCreator;
+  if (paidNeedsFlat || isPayToJoin || isLocation || creativeNeedsFlat) {
+    required.push("pricePerInfluencer");
+  }
 
   // Location event fields.
   if (isLocation) {
