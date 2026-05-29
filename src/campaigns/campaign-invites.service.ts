@@ -258,40 +258,111 @@ export class CampaignInvitesService {
   }
 
   private isInviteContactVisible(invite: any): boolean {
-    // Contact visibility should follow explicit unlock state across all campaign types.
-    return !!invite?.unlocked;
+    // Contact visibility requires both explicit unlock and payment confirmation.
+    return !!invite?.unlocked && this.isLocationDetailsPaymentConfirmed(invite);
+  }
+
+  private isLocationDetailsPaymentConfirmed(invite: any): boolean {
+    const status = String(invite?.status || "").trim().toLowerCase();
+    return new Set([
+      "payment_confirmed",
+      "working",
+      "submitted",
+      "completed",
+      "approved",
+      "disputed",
+    ]).has(status);
+  }
+
+  private redactExactLocationDetails(campaign: any): any {
+    if (!campaign || typeof campaign !== "object") return campaign;
+    const redacted = { ...campaign };
+    delete redacted.venueName;
+    delete redacted.venueAddress;
+    delete redacted.venueGoogleMapUrl;
+    delete redacted.venueMapUrl;
+    delete redacted.shootLocationAddress;
+    delete redacted.shootLocationMapUrl;
+    delete redacted.shootLocationNotes;
+    return redacted;
+  }
+
+  private applyRecipientLocationVisibility(invite: any): any {
+    if (this.isLocationDetailsPaymentConfirmed(invite)) {
+      return invite;
+    }
+
+    const campaign = invite?.campaignId;
+    if (!campaign || typeof campaign !== "object") {
+      return invite;
+    }
+
+    const redactedCampaign = this.redactExactLocationDetails(campaign);
+    return {
+      ...invite,
+      campaignId: redactedCampaign,
+      ...(invite?.campaign && typeof invite.campaign === "object"
+        ? { campaign: redactedCampaign }
+        : {}),
+    };
   }
 
   private async attachRecipientProfile(invite: any) {
-    if (!invite?.influencerId) {
+    const role = this.normalizeRecipientRole(
+      invite?.recipientRole || invite?.role || (invite?.photographerId && !invite?.influencerId ? "photographer" : "influencer"),
+    );
+    const recipientId = String(
+      invite?.influencerId?._id ||
+        invite?.influencerId ||
+        invite?.photographerId?._id ||
+        invite?.photographerId ||
+        invite?.recipientId ||
+        "",
+    ).trim();
+    if (!recipientId) {
       return invite;
     }
-    const role = this.normalizeRecipientRole(invite?.recipientRole);
+
     const recipient = await this.loadRecipientProfile(
       role,
-      String(invite.influencerId),
+      recipientId,
     );
     if (!recipient) {
       return invite;
     }
+
     if (!this.isInviteContactVisible(invite)) {
       const safeRecipient = recipient as Record<string, any>;
       const { email: _e, phoneNumber: _p, ...redactedRecipient } = safeRecipient;
-      return { ...invite, recipientRole: role, influencerId: redactedRecipient };
+      return {
+        ...invite,
+        recipientRole: role,
+        influencerId: redactedRecipient,
+        ...(role === "photographer" ? { photographerId: redactedRecipient } : {}),
+      };
     }
+
     const recipientDoc: any = recipient as any;
+    const hydratedRecipient = {
+      ...recipientDoc,
+      email:
+        role === "photographer"
+          ? recipientDoc?.email
+          : recipientDoc?.isEmailVerified
+            ? recipientDoc?.email
+            : undefined,
+      phoneNumber:
+        role === "photographer"
+          ? recipientDoc?.phoneNumber
+          : recipientDoc?.isMobileVerified
+            ? recipientDoc?.phoneNumber
+            : undefined,
+    };
     return {
       ...invite,
       recipientRole: role,
-      influencerId: {
-        ...recipientDoc,
-        email: recipientDoc?.isEmailVerified
-          ? recipientDoc?.email
-          : undefined,
-        phoneNumber: recipientDoc?.isMobileVerified
-          ? recipientDoc?.phoneNumber
-          : undefined,
-      },
+      influencerId: hydratedRecipient,
+      ...(role === "photographer" ? { photographerId: hydratedRecipient } : {}),
     };
   }
 
@@ -531,10 +602,37 @@ export class CampaignInvitesService {
         )?.value ?? -1;
       if (recipientMonthlyCap !== -1) {
         const recipientCycleStart = this.computePlanCycleStart(recipientDoc);
+        const now = new Date();
         const recipientMonthCount = await this.inviteModel.countDocuments({
           influencerId: recipientId,
           recipientRole,
           createdAt: { $gte: recipientCycleStart },
+          $or: [
+            {
+              status: {
+                $in: [
+                  "accepted",
+                  "payment_confirmed",
+                  "working",
+                  "submitted",
+                  "approved",
+                  "completed",
+                ],
+              },
+            },
+            {
+              $and: [
+                { status: { $in: ["pending", "invited"] } },
+                { overdueFlaggedAt: { $in: [null, undefined] } },
+                {
+                  $or: [
+                    { dueDate: { $in: [null, undefined] } },
+                    { dueDate: { $gte: now } },
+                  ],
+                },
+              ],
+            },
+          ],
         });
         if (recipientMonthCount >= recipientMonthlyCap) {
           throw new BadRequestException(
@@ -543,11 +641,27 @@ export class CampaignInvitesService {
         }
       }
     }
+
+    let normalizedDueDate: Date | null = null;
+    if (data?.dueDate) {
+      const parsedDueDate = new Date(data.dueDate);
+      if (!Number.isNaN(parsedDueDate.getTime())) {
+        normalizedDueDate = parsedDueDate;
+      }
+    }
+    if (!normalizedDueDate && campaign?.acceptanceDeadline) {
+      const parsedDeadline = new Date(campaign.acceptanceDeadline);
+      if (!Number.isNaN(parsedDeadline.getTime())) {
+        normalizedDueDate = parsedDeadline;
+      }
+    }
+
     const invite = new this.inviteModel({
       ...data,
       brandId,
       influencerId: recipientId,
       recipientRole,
+      dueDate: normalizedDueDate,
     });
     const saved = await invite.save();
 
@@ -652,6 +766,12 @@ export class CampaignInvitesService {
     return status === "active" || status === "completed";
   }
 
+  private isCampaignDeletedForRecipient(campaign: any): boolean {
+    if (!campaign || typeof campaign !== "object") return true;
+    const status = String(campaign?.status || "").trim().toLowerCase();
+    return campaign?.isDeleted === true || !!campaign?.deletedAt || status === "deleted";
+  }
+
   private isCollaborationInvite(invite: any, photographerOwnerIds?: Set<string>): boolean {
     const campaign = invite?.campaignId || {};
     const ownerType = String(
@@ -712,13 +832,15 @@ export class CampaignInvitesService {
     const visible = scoped.filter((inv: any) => {
       const campaign = inv?.campaignId;
       if (!campaign) return false;
+      if (this.isCampaignDeletedForRecipient(campaign)) return false;
       const isCollab = this.isCollaborationInvite(inv, photographerOwnerIds);
       if (!isCollab) return true;
       return this.isCampaignLiveForRecipient(campaign);
     });
 
     // Strip brand contact details from invites that haven't been unlocked yet
-    return visible.map((inv: any) => {
+    return visible.map((rawInv: any) => {
+      const inv = this.applyRecipientLocationVisibility(rawInv);
       if (inv.brandId) {
         const shouldShowContact = this.isInviteContactVisible(inv);
         if (!shouldShowContact) {
@@ -741,7 +863,11 @@ export class CampaignInvitesService {
     const invites: any[] = await this.inviteModel
       .find({
         influencerId: photographerId,
-        recipientRole: "photographer",
+        $or: [
+          { recipientRole: "photographer" },
+          { recipientRole: { $exists: false } },
+          { recipientRole: "influencer" },
+        ],
       })
       .populate(
         "campaignId",
@@ -753,7 +879,15 @@ export class CampaignInvitesService {
       )
       .lean();
 
-    return invites.map((inv: any) => {
+    const visible = (invites || []).filter((inv: any) => {
+      const campaign = inv?.campaignId;
+      if (!campaign) return false;
+      if (this.isCampaignDeletedForRecipient(campaign)) return false;
+      return true;
+    });
+
+    return visible.map((rawInv: any) => {
+      const inv = this.applyRecipientLocationVisibility(rawInv);
       if (inv.brandId) {
         const shouldShowContact = this.isInviteContactVisible(inv);
         if (!shouldShowContact) {
@@ -813,12 +947,8 @@ export class CampaignInvitesService {
   }
 
   /**
-   * Brand-initiated contact unlock. Single rule: brand pays/premium → both sides see contact.
-   * Eligible paths:
-   *  - Brand has active premium → unlocked instantly.
-   *  - Campaign is `paid_collab` AND invite status is `payment_confirmed` (or beyond) → unlocked.
-   *  - Brand has not used their 1 free unlock yet → unlocked + freeUnlocksUsed += 1.
-   *  - Otherwise → 402-style BadRequest with upgrade message.
+   * Brand-initiated contact unlock.
+   * Policy: unlock can only happen after payment-confirmed workflow states.
    */
   async unlockContact(inviteId: string, brandId: string) {
     const invite: any = await this.inviteModel.findById(inviteId);
@@ -849,17 +979,18 @@ export class CampaignInvitesService {
       };
     }
 
-    // Must have at least accepted before unlocking
+    // Unlock is allowed only after payment confirmation states.
     const unlockableStatuses = new Set([
-      "accepted",
       "payment_confirmed",
       "working",
       "submitted",
       "completed",
+      "approved",
+      "disputed",
     ]);
     if (!unlockableStatuses.has(invite.status)) {
       throw new BadRequestException(
-        "Invite must be accepted by the influencer before contact can be unlocked.",
+        "Payment confirmation is required before contact can be unlocked.",
       );
     }
 
@@ -871,26 +1002,8 @@ export class CampaignInvitesService {
     const isPaidCollab =
       campaign && String(campaign.campaignType) === "paid_collab";
 
-    // For paid_collab campaigns, contact unlock requires payment confirmation
-    if (isPaidCollab && invite.status === "accepted") {
-      throw new BadRequestException(
-        "Payment must be confirmed before unlocking contact for paid collaboration campaigns.",
-      );
-    }
-
-    // Determine unlock type for record-keeping
-    const caps = await this.plansService.getUserPlanCapabilities(brandId);
-    const hasPremium = !!caps.hasPremium;
-
-    let unlockType: "premium" | "paid_collab_payment" | "free_unlock" =
-      "free_unlock";
-
-    // Paid collaborations must be explicitly payment-gated for contact visibility.
-    if (isPaidCollab) {
-      unlockType = "paid_collab_payment";
-    } else if (hasPremium) {
-      unlockType = "premium";
-    }
+    // Payment-confirmed path is now the single unlock type for contact visibility.
+    const unlockType: "paid_collab_payment" = "paid_collab_payment";
 
     invite.unlocked = true;
     invite.unlockedAt = new Date();
@@ -1240,8 +1353,21 @@ export class CampaignInvitesService {
       throw new BadRequestException("Invite already responded to");
     }
 
-    const recipientRole = this.normalizeRecipientRole(invite?.recipientRole);
-    const recipient = await this.loadRecipientProfile(recipientRole, influencerId);
+    let recipientRole = this.normalizeRecipientRole(invite?.recipientRole);
+    let recipient = await this.loadRecipientProfile(recipientRole, influencerId);
+    if (!recipient) {
+      const fallbackRole = recipientRole === "photographer" ? "influencer" : "photographer";
+      const fallbackRecipient = await this.loadRecipientProfile(fallbackRole, influencerId);
+      if (fallbackRecipient) {
+        recipientRole = fallbackRole;
+        recipient = fallbackRecipient;
+        // Self-heal legacy rows where recipientRole was saved incorrectly.
+        (invite as any).recipientRole = fallbackRole;
+        if (fallbackRole === "photographer") {
+          (invite as any).photographerId = invite.influencerId;
+        }
+      }
+    }
     if (!recipient) {
       throw new NotFoundException(
         recipientRole === "photographer" ? "Photographer not found" : "Influencer not found",
@@ -1493,13 +1619,8 @@ export class CampaignInvitesService {
         }
       }
 
-      // Location collaborations should unlock coordination details as soon as both
-      // sides are aligned (invite accepted), without a separate unlock-payment step.
-      if (String(campaign?.campaignType || "") === "invite_location") {
-        invite.unlocked = true;
-        invite.unlockedAt = new Date();
-        invite.unlockType = "free_unlock";
-      }
+      // Location/map visibility is payment-confirmation gated. Keep unlock state
+      // unchanged on plain acceptance; unlock continues through explicit brand flow.
     }
 
     invite.status = status;

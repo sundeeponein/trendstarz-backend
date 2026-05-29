@@ -418,6 +418,57 @@ describe("CampaignInvitesService – create() gating", () => {
       service.create("brand1", { campaignId: "camp1", influencerId: "inf1" }),
     ).rejects.toThrow(BadRequestException);
   });
+
+  it("enforces recipient cap based on accepted + active pending only", async () => {
+    mockCampaignLean({ acceptanceDeadline: new Date(Date.now() + 60 * 60 * 1000) });
+    plansService.getUserPlanCapabilities.mockImplementation(async (userId: string) => {
+      if (userId === "inf1") {
+        return { limits: [{ key: "maxInvitesPerCampaign", value: 1 }] };
+      }
+      return {
+        hasPremium: false,
+        features: [{ key: "canInviteUsers", value: true }],
+        limits: [{ key: "maxInvitesPerCampaign", value: -1 }],
+      };
+    });
+
+    inviteModel.countDocuments.mockImplementation(async (query: any) => {
+      if (query?.influencerId === "inf1") return 1;
+      return 0;
+    });
+
+    await expect(
+      service.create("brand1", { campaignId: "camp1", influencerId: "inf1" }),
+    ).rejects.toThrow(BadRequestException);
+
+    const recipientQuery = inviteModel.countDocuments.mock.calls
+      .map((call: any[]) => call[0])
+      .find((q: any) => q?.influencerId === "inf1");
+
+    expect(recipientQuery).toBeDefined();
+    const serialized = JSON.stringify(recipientQuery);
+    expect(serialized).toContain("accepted");
+    expect(serialized).toContain("pending");
+    expect(serialized).toContain("overdueFlaggedAt");
+    expect(serialized).toContain("dueDate");
+    expect(serialized).not.toContain("declined");
+    expect(serialized).not.toContain("withdrawn");
+  });
+
+  it("defaults invite dueDate to campaign acceptanceDeadline", async () => {
+    const acceptanceDeadline = new Date(Date.now() + 24 * 60 * 60 * 1000);
+    mockCampaignLean({ acceptanceDeadline });
+
+    inviteModel.countDocuments.mockResolvedValue(0);
+
+    await expect(
+      service.create("brand1", { campaignId: "camp1", influencerId: "inf1" }),
+    ).resolves.toBeDefined();
+
+    expect(inviteModel).toHaveBeenCalledWith(
+      expect.objectContaining({ dueDate: acceptanceDeadline }),
+    );
+  });
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -574,7 +625,7 @@ describe("CampaignInvitesService – respond()", () => {
     expect(invite.acceptedAt).toBeInstanceOf(Date);
   });
 
-  it("auto-unlocks coordination details for invite_location on acceptance", async () => {
+  it("does not auto-unlock coordination details for invite_location on acceptance", async () => {
     const invite = pendingInvite();
     inviteModel.findById.mockResolvedValue(invite);
     campaignModel.findById.mockReturnValue(
@@ -584,9 +635,9 @@ describe("CampaignInvitesService – respond()", () => {
 
     await service.respond("inv1", "inf1", "accepted", "2026-07-15");
 
-    expect(invite.unlocked).toBe(true);
-    expect(invite.unlockType).toBe("free_unlock");
-    expect(invite.unlockedAt).toBeInstanceOf(Date);
+    expect(invite.unlocked).toBeFalsy();
+    expect(invite.unlockType).toBeUndefined();
+    expect(invite.unlockedAt).toBeUndefined();
   });
 
   it("rejects acceptance when selectedPlatform does not match locked invite platform", async () => {
@@ -893,6 +944,7 @@ describe("CampaignInvitesService contact visibility in invite lists", () => {
               _id: "inv-1",
               influencerId: "inf-1",
               unlocked: true,
+              status: "payment_confirmed",
               unlockType: "paid_collab_payment",
               campaignId: { _id: "camp-1", brandId: "brand-1" },
               brandId: {
@@ -914,7 +966,7 @@ describe("CampaignInvitesService contact visibility in invite lists", () => {
     expect(result[0].brandId.phoneNumber).toBe("9999999999");
   });
 
-  it("redacts brand contact fields when unlock is not paid", async () => {
+  it("redacts brand contact fields before payment confirmation", async () => {
     inviteModel.find.mockReturnValue({
       populate: jest.fn().mockReturnValue({
         populate: jest.fn().mockReturnValue({
@@ -923,7 +975,8 @@ describe("CampaignInvitesService contact visibility in invite lists", () => {
               _id: "inv-1",
               influencerId: "inf-1",
               unlocked: true,
-              unlockType: "free_unlock",
+              status: "accepted",
+              unlockType: "paid_collab_payment",
               campaignId: { _id: "camp-1", brandId: "brand-1" },
               brandId: {
                 brandName: "Brand One",
@@ -940,8 +993,232 @@ describe("CampaignInvitesService contact visibility in invite lists", () => {
 
     const result = await service.findByInfluencer("inf-1");
 
-    expect(result[0].brandId.email).toBe("brand@example.com");
-    expect(result[0].brandId.phoneNumber).toBe("9999999999");
+    expect(result[0].brandId.email).toBeUndefined();
+    expect(result[0].brandId.phoneNumber).toBeUndefined();
+  });
+
+  it("hides invites when linked campaign is deleted", async () => {
+    inviteModel.find.mockReturnValue({
+      populate: jest.fn().mockReturnValue({
+        populate: jest.fn().mockReturnValue({
+          lean: jest.fn().mockResolvedValue([
+            {
+              _id: "inv-live",
+              influencerId: "inf-1",
+              campaignId: { _id: "camp-live", status: "active", brandId: "brand-1" },
+              brandId: { brandName: "Brand One" },
+            },
+            {
+              _id: "inv-deleted",
+              influencerId: "inf-1",
+              campaignId: { _id: "camp-del", status: "deleted", brandId: "brand-1" },
+              brandId: { brandName: "Brand One" },
+            },
+            {
+              _id: "inv-soft",
+              influencerId: "inf-1",
+              campaignId: {
+                _id: "camp-soft",
+                status: "active",
+                isDeleted: true,
+                deletedAt: new Date().toISOString(),
+                brandId: "brand-1",
+              },
+              brandId: { brandName: "Brand One" },
+            },
+          ]),
+        }),
+      }),
+    });
+
+    const result = await service.findByInfluencer("inf-1");
+
+    expect(result).toHaveLength(1);
+    expect(result[0]._id).toBe("inv-live");
+  });
+
+  it("hides pending invites when linked campaign document is missing", async () => {
+    inviteModel.find.mockReturnValue({
+      populate: jest.fn().mockReturnValue({
+        populate: jest.fn().mockReturnValue({
+          lean: jest.fn().mockResolvedValue([
+            {
+              _id: "inv-missing-campaign",
+              influencerId: "inf-1",
+              status: "pending",
+              campaignId: null,
+              brandId: { brandName: "Brand One" },
+            },
+            {
+              _id: "inv-live",
+              influencerId: "inf-1",
+              status: "pending",
+              campaignId: { _id: "camp-live", status: "active", brandId: "brand-1" },
+              brandId: { brandName: "Brand One" },
+            },
+          ]),
+        }),
+      }),
+    });
+
+    const result = await service.findByInfluencer("inf-1");
+
+    expect(result).toHaveLength(1);
+    expect(result[0]._id).toBe("inv-live");
+  });
+
+  it("hides photographer invites when linked campaign is missing/deleted", async () => {
+    inviteModel.find.mockReturnValue({
+      populate: jest.fn().mockReturnValue({
+        populate: jest.fn().mockReturnValue({
+          lean: jest.fn().mockResolvedValue([
+            {
+              _id: "ph-missing",
+              influencerId: "photo-1",
+              recipientRole: "photographer",
+              status: "pending",
+              campaignId: null,
+              brandId: { brandName: "Brand One" },
+            },
+            {
+              _id: "ph-deleted",
+              influencerId: "photo-1",
+              recipientRole: "photographer",
+              status: "accepted",
+              campaignId: { _id: "camp-deleted", status: "deleted", brandId: "brand-1" },
+              brandId: { brandName: "Brand One" },
+            },
+            {
+              _id: "ph-live",
+              influencerId: "photo-1",
+              recipientRole: "photographer",
+              status: "pending",
+              campaignId: { _id: "camp-live", status: "active", brandId: "brand-1" },
+              brandId: { brandName: "Brand One" },
+            },
+          ]),
+        }),
+      }),
+    });
+
+    const result = await service.findByPhotographer("photo-1");
+
+    expect(result).toHaveLength(1);
+    expect(result[0]._id).toBe("ph-live");
+  });
+
+  it("redacts exact venue and shoot location details before payment confirmation (influencer feed)", async () => {
+    inviteModel.find.mockReturnValue({
+      populate: jest.fn().mockReturnValue({
+        populate: jest.fn().mockReturnValue({
+          lean: jest.fn().mockResolvedValue([
+            {
+              _id: "inv-1",
+              influencerId: "inf-1",
+              unlocked: true,
+              status: "accepted",
+              campaignId: {
+                _id: "camp-1",
+                status: "active",
+                brandId: "brand-1",
+                venueName: "Studio 44",
+                venueAddress: "Road 1",
+                venueGoogleMapUrl: "https://maps.example.com/v/1",
+                shootLocationAddress: "Shoot Lane",
+                shootLocationMapUrl: "https://maps.example.com/s/1",
+                shootLocationNotes: "Bring lights",
+              },
+              brandId: { brandName: "Brand One" },
+            },
+          ]),
+        }),
+      }),
+    });
+
+    const result = await service.findByInfluencer("inf-1");
+
+    expect(result[0].campaignId.venueName).toBeUndefined();
+    expect(result[0].campaignId.venueAddress).toBeUndefined();
+    expect(result[0].campaignId.venueGoogleMapUrl).toBeUndefined();
+    expect(result[0].campaignId.shootLocationAddress).toBeUndefined();
+    expect(result[0].campaignId.shootLocationMapUrl).toBeUndefined();
+    expect(result[0].campaignId.shootLocationNotes).toBeUndefined();
+  });
+
+  it("keeps exact venue and shoot location details after payment confirmation (photographer feed)", async () => {
+    inviteModel.find.mockReturnValue({
+      populate: jest.fn().mockReturnValue({
+        populate: jest.fn().mockReturnValue({
+          lean: jest.fn().mockResolvedValue([
+            {
+              _id: "ph-1",
+              influencerId: "photo-1",
+              recipientRole: "photographer",
+              unlocked: true,
+              status: "payment_confirmed",
+              campaignId: {
+                _id: "camp-1",
+                status: "active",
+                brandId: "brand-1",
+                venueName: "Studio 44",
+                venueAddress: "Road 1",
+                venueGoogleMapUrl: "https://maps.example.com/v/1",
+                shootLocationAddress: "Shoot Lane",
+                shootLocationMapUrl: "https://maps.example.com/s/1",
+                shootLocationNotes: "Bring lights",
+              },
+              brandId: { brandName: "Brand One" },
+            },
+          ]),
+        }),
+      }),
+    });
+
+    const result = await service.findByPhotographer("photo-1");
+
+    expect(result[0].campaignId.venueName).toBe("Studio 44");
+    expect(result[0].campaignId.venueAddress).toBe("Road 1");
+    expect(result[0].campaignId.venueGoogleMapUrl).toBe(
+      "https://maps.example.com/v/1",
+    );
+    expect(result[0].campaignId.shootLocationAddress).toBe("Shoot Lane");
+    expect(result[0].campaignId.shootLocationMapUrl).toBe(
+      "https://maps.example.com/s/1",
+    );
+    expect(result[0].campaignId.shootLocationNotes).toBe("Bring lights");
+  });
+
+  it("redacts photographer-feed contact before payment confirmation even when unlocked", async () => {
+    inviteModel.find.mockReturnValue({
+      populate: jest.fn().mockReturnValue({
+        populate: jest.fn().mockReturnValue({
+          lean: jest.fn().mockResolvedValue([
+            {
+              _id: "ph-contact-1",
+              influencerId: "photo-1",
+              recipientRole: "photographer",
+              unlocked: true,
+              status: "accepted",
+              campaignId: {
+                _id: "camp-1",
+                status: "active",
+                brandId: "brand-1",
+              },
+              brandId: {
+                brandName: "Brand One",
+                email: "brand@example.com",
+                phoneNumber: "9999999999",
+              },
+            },
+          ]),
+        }),
+      }),
+    });
+
+    const result = await service.findByPhotographer("photo-1");
+
+    expect(result[0].brandId.email).toBeUndefined();
+    expect(result[0].brandId.phoneNumber).toBeUndefined();
   });
 });
 

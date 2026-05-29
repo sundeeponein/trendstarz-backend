@@ -372,7 +372,9 @@ export class AdminListsController {
               $in: [...campaignIds, ...campaignIdKeys],
             },
           })
-          .select("campaignId status")
+          .select(
+            "_id campaignId influencerId recipientRole status selectedPostDate updatedAt acceptedAt",
+          )
           .lean()
       : [];
 
@@ -388,6 +390,9 @@ export class AdminListsController {
       string,
       { inviteCount: number; hasInfluencerProgress: boolean }
     >();
+    const inviteProgressByCampaign = new Map<string, any[]>();
+    const influencerRecipientIds = new Set<string>();
+    const photographerRecipientIds = new Set<string>();
     for (const invite of inviteRows) {
       const key = String(invite?.campaignId || "");
       if (!key) continue;
@@ -400,7 +405,49 @@ export class AdminListsController {
         prev.hasInfluencerProgress = true;
       }
       inviteStatsByCampaign.set(key, prev);
+
+      const recipientId = String(invite?.influencerId || "").trim();
+      if (!recipientId) continue;
+      const recipientRole = String(invite?.recipientRole || "influencer")
+        .trim()
+        .toLowerCase();
+      if (recipientRole === "photographer") {
+        photographerRecipientIds.add(recipientId);
+      } else {
+        influencerRecipientIds.add(recipientId);
+      }
+
+      const progressRows = inviteProgressByCampaign.get(key) || [];
+      progressRows.push({
+        inviteId: String(invite?._id || ""),
+        participantId: recipientId,
+        participantRole: recipientRole === "photographer" ? "photographer" : "influencer",
+        status: String(invite?.status || "pending").toLowerCase(),
+        selectedPostDate: invite?.selectedPostDate || null,
+        acceptedAt: invite?.acceptedAt || null,
+        updatedAt: invite?.updatedAt || null,
+      });
+      inviteProgressByCampaign.set(key, progressRows);
     }
+
+    const inviteInfluencers = influencerRecipientIds.size
+      ? await this.influencerModel
+          .find({ _id: { $in: Array.from(influencerRecipientIds) } })
+          .select("name username email profileImage profileImages")
+          .lean()
+      : [];
+    const invitePhotographers = photographerRecipientIds.size
+      ? await this.photographerModel
+          .find({ _id: { $in: Array.from(photographerRecipientIds) } })
+          .select("name username email profileImage profileImages")
+          .lean()
+      : [];
+    const inviteInfluencerMap = new Map(
+      inviteInfluencers.map((row: any) => [String(row?._id || ""), row]),
+    );
+    const invitePhotographerMap = new Map(
+      invitePhotographers.map((row: any) => [String(row?._id || ""), row]),
+    );
 
     const brandIds = Array.from(
       new Set(
@@ -447,11 +494,35 @@ export class AdminListsController {
         inviteCount: 0,
         hasInfluencerProgress: false,
       };
+      const rawInviteProgress =
+        inviteProgressByCampaign.get(String(campaign._id)) || [];
+      const inviteProgress = rawInviteProgress
+        .map((row: any) => {
+          const isPhotographer = row?.participantRole === "photographer";
+          const profile = isPhotographer
+            ? invitePhotographerMap.get(String(row?.participantId || ""))
+            : inviteInfluencerMap.get(String(row?.participantId || ""));
+          return {
+            ...row,
+            participantName:
+              String(
+                profile?.name || profile?.username || "",
+              ).trim() ||
+              (isPhotographer ? "Photographer" : "Influencer"),
+            participantEmail: String(profile?.email || "").trim() || null,
+          };
+        })
+        .sort((a: any, b: any) => {
+          const ta = new Date(a?.updatedAt || 0).getTime();
+          const tb = new Date(b?.updatedAt || 0).getTime();
+          return tb - ta;
+        });
       return {
         ...campaign,
         ownerType: isPhotographerOwner ? "photographer" : "brand",
         inviteCount: stats.inviteCount,
         hasInfluencerProgress: stats.hasInfluencerProgress,
+        inviteProgress,
         brand: isPhotographerOwner
           ? photographer
             ? {

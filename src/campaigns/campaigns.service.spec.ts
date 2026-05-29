@@ -7,6 +7,7 @@ import { PlansService } from "../plans/plans.service";
 describe("CampaignsService", () => {
   let service: CampaignsService;
   let campaignModel: any;
+  let campaignInviteModel: any;
   let brandModel: any;
   let plansService: any;
 
@@ -15,6 +16,8 @@ describe("CampaignsService", () => {
     brandId: "507f1f77bcf86cd799439012",
     title: "Test Campaign",
     status: "draft",
+    minInfluencers: 1,
+    maxInfluencers: 1,
     save: jest.fn(),
   };
 
@@ -76,10 +79,15 @@ describe("CampaignsService", () => {
       }),
     };
 
+    const mockCampaignInviteModel: any = {
+      deleteMany: jest.fn().mockResolvedValue({ deletedCount: 0 }),
+    };
+
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         CampaignsService,
         { provide: getModelToken("Campaign"), useValue: mockCampaignModel },
+        { provide: getModelToken("CampaignInvite"), useValue: mockCampaignInviteModel },
         { provide: getModelToken("Brand"), useValue: mockBrandModel },
         { provide: getModelToken("Influencer"), useValue: mockInfluencerModel },
         { provide: getModelToken("Photographer"), useValue: mockPhotographerModel },
@@ -90,13 +98,14 @@ describe("CampaignsService", () => {
 
     service = module.get<CampaignsService>(CampaignsService);
     campaignModel = module.get(getModelToken("Campaign"));
+    campaignInviteModel = module.get(getModelToken("CampaignInvite"));
     brandModel = module.get(getModelToken("Brand"));
     plansService = module.get(PlansService);
   });
 
   describe("create", () => {
     it("should create a campaign within plan limits", async () => {
-      const data = { title: "New Campaign", description: "Test" };
+      const data = { title: "New Campaign", description: "Test", minInfluencers: 1, maxInfluencers: 1 };
       const result = await service.create(mockBrand._id, data);
       expect(result).toBeDefined();
       expect(result._id).toBe("new-id");
@@ -105,7 +114,7 @@ describe("CampaignsService", () => {
     it("should throw when campaign limit exceeded", async () => {
       campaignModel.countDocuments.mockResolvedValue(5);
       await expect(
-        service.create(mockBrand._id, { title: "Over limit" }),
+        service.create(mockBrand._id, { title: "Over limit", minInfluencers: 1, maxInfluencers: 1 }),
       ).rejects.toThrow(BadRequestException);
     });
 
@@ -116,8 +125,32 @@ describe("CampaignsService", () => {
       campaignModel.countDocuments.mockResolvedValue(100);
       const result = await service.create(mockBrand._id, {
         title: "Unlimited",
+        minInfluencers: 1,
+        maxInfluencers: 1,
       });
       expect(result).toBeDefined();
+    });
+
+    it("should classify influencer to photographer requests as collaboration", async () => {
+      const result = await service.create(
+        mockBrand._id,
+        {
+          title: "Influencer collaboration",
+          minInfluencers: 1,
+          maxInfluencers: 1,
+          inviteRecipientRole: "photographer",
+        },
+        "influencer",
+      );
+
+      expect(result).toBeDefined();
+      expect(campaignModel).toHaveBeenCalledWith(
+        expect.objectContaining({
+          ownerType: "brand",
+          inviteRecipientRole: "photographer",
+          requestKind: "photographer_collaboration",
+        }),
+      );
     });
   });
 
@@ -202,6 +235,7 @@ describe("CampaignsService", () => {
   describe("remove", () => {
     it("should delete campaign owned by brand", async () => {
       const result = await service.remove(mockCampaign._id, mockBrand._id);
+      expect(campaignInviteModel.deleteMany).toHaveBeenCalled();
       expect(campaignModel.findByIdAndDelete).toHaveBeenCalledWith(
         mockCampaign._id,
       );

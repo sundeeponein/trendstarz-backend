@@ -28,8 +28,8 @@ export function getRequiredFields(ctx: CampaignRequiredFieldsCtx): string[] {
 
   const required: string[] = [];
 
-  // Price per influencer required for paid_collab and pay_to_join.
-  if (isPaid || isPayToJoin) required.push("pricePerInfluencer");
+  // Price per influencer required for paid_collab, pay_to_join, and invite_location.
+  if (isPaid || isPayToJoin || isLocation) required.push('pricePerInfluencer');
 
   // Location event fields.
   if (isLocation) {

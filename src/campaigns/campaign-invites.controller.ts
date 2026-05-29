@@ -28,6 +28,12 @@ export class CampaignInvitesController {
     private readonly cloudinaryService: CloudinaryService,
   ) {}
 
+  private requesterId(req: any): string {
+    return String(
+      req?.user?.userId || req?.user?.sub || req?.user?._id || req?.user?.id || "",
+    ).trim();
+  }
+
   @UseGuards(JwtAuthGuard)
   @Post(":id/upload-image")
   @UseInterceptors(FileInterceptor('file', {
@@ -68,7 +74,7 @@ export class CampaignInvitesController {
   @UseGuards(JwtAuthGuard)
   @Post()
   async create(@Req() req: any, @Body() body: any) {
-    const brandId = req.user?.userId;
+    const brandId = this.requesterId(req);
     return this.invitesService.create(brandId, body);
   }
 
@@ -77,7 +83,7 @@ export class CampaignInvitesController {
   async findByCampaign(@Param("campaignId") campaignId: string, @Req() req: any) {
     return this.invitesService.findByCampaign(
       campaignId,
-      req.user?.userId,
+      this.requesterId(req),
       req.user?.role,
     );
   }
@@ -85,21 +91,21 @@ export class CampaignInvitesController {
   @UseGuards(JwtAuthGuard)
   @Get("influencer")
   async findByInfluencer(@Req() req: any, @Query("scope") scope?: string) {
-    const influencerId = req.user?.userId;
+    const influencerId = this.requesterId(req);
     return this.invitesService.findByInfluencer(influencerId, scope);
   }
 
   @UseGuards(JwtAuthGuard)
   @Get("photographer")
   async findByPhotographer(@Req() req: any) {
-    const photographerId = req.user?.userId;
+    const photographerId = this.requesterId(req);
     return this.invitesService.findByPhotographer(photographerId);
   }
 
   @UseGuards(JwtAuthGuard)
   @Post("campaign/:campaignId/apply")
   async applyToCampaign(@Param("campaignId") campaignId: string, @Req() req: any, @Body() body: any) {
-    const influencerId = req.user?.userId;
+    const influencerId = this.requesterId(req);
     return this.invitesService.applyToCampaign(influencerId, campaignId, body?.selectedPlatform);
   }
 
@@ -121,7 +127,7 @@ export class CampaignInvitesController {
     @Param("influencerId") influencerId: string,
     @Req() req: any,
   ) {
-    const brandId = req.user?.userId;
+    const brandId = this.requesterId(req);
     const invite = await this.invitesService.findCompletedByBrandAndInfluencer(
       brandId,
       influencerId,
@@ -133,7 +139,7 @@ export class CampaignInvitesController {
   @UseGuards(JwtAuthGuard)
   @Get("brand/attention-counts")
   async brandAttentionCounts(@Req() req: any) {
-    const brandId = req.user?.userId;
+    const brandId = this.requesterId(req);
     return this.invitesService.getBrandAttentionCounts(brandId);
   }
 
@@ -141,7 +147,7 @@ export class CampaignInvitesController {
   @UseGuards(JwtAuthGuard)
   @Get("influencer/attention-counts")
   async influencerAttentionCounts(@Req() req: any) {
-    const influencerId = req.user?.userId;
+    const influencerId = this.requesterId(req);
     return this.invitesService.getInfluencerAttentionCounts(influencerId);
   }
 
@@ -173,7 +179,7 @@ export class CampaignInvitesController {
       };
     },
   ) {
-    const influencerId = req.user?.userId;
+    const influencerId = this.requesterId(req);
     return this.invitesService.respond(
       id,
       influencerId,
@@ -189,7 +195,7 @@ export class CampaignInvitesController {
   @UseGuards(JwtAuthGuard)
   @Post(":id/unlock")
   async unlockContact(@Param("id") id: string, @Req() req: any) {
-    const brandId = req.user?.userId;
+    const brandId = this.requesterId(req);
     return this.invitesService.unlockContact(id, brandId);
   }
 
@@ -213,7 +219,7 @@ export class CampaignInvitesController {
   ) {
     return this.invitesService.updateProductFulfillment(
       id,
-      req.user?.userId,
+      this.requesterId(req),
       body,
     );
   }
@@ -233,7 +239,7 @@ export class CampaignInvitesController {
   ) {
     return this.invitesService.updateLocationCheckIn(
       id,
-      req.user?.userId,
+      this.requesterId(req),
       body,
     );
   }
@@ -247,7 +253,7 @@ export class CampaignInvitesController {
   ) {
     return this.invitesService.setInviteDueDate(
       id,
-      req.user?.userId,
+      this.requesterId(req),
       body?.dueDate ?? null,
     );
   }
@@ -255,7 +261,7 @@ export class CampaignInvitesController {
   @UseGuards(JwtAuthGuard)
   @Post(":id/remind")
   async remindInvite(@Param("id") id: string, @Req() req: any) {
-    return this.invitesService.remindInvite(id, req.user?.userId);
+    return this.invitesService.remindInvite(id, this.requesterId(req));
   }
 
   @UseGuards(JwtAuthGuard)
@@ -267,7 +273,7 @@ export class CampaignInvitesController {
   ) {
     return this.invitesService.withdrawInvite(
       id,
-      req.user?.userId,
+      this.requesterId(req),
       body?.reason,
     );
   }
@@ -281,7 +287,7 @@ export class CampaignInvitesController {
   ) {
     return this.invitesService.reportInviteIssue(
       id,
-      req.user?.userId,
+      this.requesterId(req),
       body?.reason,
     );
   }
@@ -293,7 +299,7 @@ export class CampaignInvitesController {
     @Req() req: any,
     @Body() body: { reach?: number; engagement?: number; clicks?: number },
   ) {
-    const influencerId = req.user?.userId;
+    const influencerId = this.requesterId(req);
     return this.invitesService.submitAnalytics(id, influencerId, body);
   }
 
@@ -335,7 +341,7 @@ export class CampaignInvitesController {
     @Param("campaignId") campaignId: string,
     @Req() req: any,
   ) {
-    const brandId = req.user?.userId;
+    const brandId = this.requesterId(req);
     return this.invitesService.getSubmissionsByCampaign(campaignId, brandId);
   }
 
@@ -351,7 +357,7 @@ export class CampaignInvitesController {
       disputeReason?: string;
     },
   ) {
-    const brandId = req.user?.userId;
+    const brandId = this.requesterId(req);
     return this.invitesService.reviewSubmission(
       id,
       brandId,
@@ -376,7 +382,7 @@ export class CampaignInvitesController {
       insightsScreenshotUrl?: string;
     },
   ) {
-    const influencerId = req.user?.userId;
+    const influencerId = this.requesterId(req);
     return this.invitesService.updateSubmissionStats(id, influencerId, body);
   }
 

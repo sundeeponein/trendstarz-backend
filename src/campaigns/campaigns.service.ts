@@ -4,7 +4,7 @@ import {
   NotFoundException,
 } from "@nestjs/common";
 import { InjectModel } from "@nestjs/mongoose";
-import { Model } from "mongoose";
+import { Model, Types } from "mongoose";
 import { PlansService } from "../plans/plans.service";
 import {
   CampaignTypeConfigItem,
@@ -37,6 +37,7 @@ type InfluencerFeedScope = "campaign" | "collaboration";
 export class CampaignsService {
   constructor(
     @InjectModel("Campaign") private readonly campaignModel: Model<any>,
+    @InjectModel("CampaignInvite") private readonly campaignInviteModel: Model<any>,
     @InjectModel("Brand") private readonly brandModel: Model<any>,
     @InjectModel("Photographer") private readonly photographerModel: Model<any>,
     @InjectModel("Influencer") private readonly influencerModel: Model<any>,
@@ -370,11 +371,24 @@ export class CampaignsService {
   private resolveRequestKind(
     ownerType: CampaignOwnerType,
     inviteRecipientRole: InviteRecipientRole,
+    currentRequestKind?: string,
   ): RequestKind {
     if (ownerType === "photographer") {
       return "photographer_collaboration";
     }
+    if (ownerType === "influencer" && inviteRecipientRole === "photographer") {
+      return "photographer_collaboration";
+    }
     if (inviteRecipientRole === "photographer") {
+      const normalizedCurrent = String(currentRequestKind || "")
+        .trim()
+        .toLowerCase();
+      if (
+        normalizedCurrent === "photographer_collaboration" ||
+        normalizedCurrent === "videographer_collaboration"
+      ) {
+        return "photographer_collaboration";
+      }
       return "creative_requirement";
     }
     return "brand_campaign";
@@ -553,7 +567,7 @@ export class CampaignsService {
     normalized.ownerType = persistedOwnerType;
     normalized.inviteRecipientRole = inviteRecipientRole;
     normalized.requestKind = this.resolveRequestKind(
-      persistedOwnerType,
+      ownerType,
       inviteRecipientRole,
     );
     normalized.status = await this.resolveInitialCampaignStatus(
@@ -872,6 +886,7 @@ export class CampaignsService {
     normalized.requestKind = this.resolveRequestKind(
       campaignOwnerType,
       inviteRecipientRole,
+      campaign?.requestKind,
     );
     // Validate the merged (existing + incoming) document so partial updates
     // don't bypass type-specific required-field rules.
@@ -902,6 +917,11 @@ export class CampaignsService {
     if (String(campaign.brandId) !== brandId) {
       throw new BadRequestException("Not your campaign");
     }
+    const inviteQueries: any[] = [{ campaignId: id }];
+    if (/^[a-fA-F0-9]{24}$/.test(id)) {
+      inviteQueries.push({ campaignId: new Types.ObjectId(id) });
+    }
+    await this.campaignInviteModel.deleteMany({ $or: inviteQueries });
     return this.campaignModel.findByIdAndDelete(id);
   }
 }

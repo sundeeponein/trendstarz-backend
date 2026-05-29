@@ -21,7 +21,11 @@
     "smoke:collab-invites": "node smoke-collab-invites.js",
     "seeder": "node dist/run-seeder.js",
     "backfill:campaign-scope": "node cron/backfillCampaignScopeFields.js",
-    "normalize:nonlive-collab-invites": "node cron/normalizeNonLiveCollaborationInvites.js"
+    "backfill:invite-due-dates": "node cron/backfillInviteDueDatesFromCampaignDeadline.js",
+    "backfill:invite-due-dates:apply": "node cron/backfillInviteDueDatesFromCampaignDeadline.js --apply",
+    "normalize:nonlive-collab-invites": "node cron/normalizeNonLiveCollaborationInvites.js",
+    "cleanup:orphan-campaign-invites": "node cron/cleanupOrphanCampaignInvites.js",
+    "cleanup:orphan-campaign-invites:apply": "node cron/cleanupOrphanCampaignInvites.js --apply"
   },
   "dependencies": {
     "@nestjs/cli": "^11.0.16",
