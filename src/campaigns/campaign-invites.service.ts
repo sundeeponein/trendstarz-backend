@@ -1027,30 +1027,28 @@ export class CampaignInvitesService {
       };
     }
 
-    // Unlock is allowed only after payment confirmation states.
-    const unlockableStatuses = new Set([
-      "payment_confirmed",
-      "working",
-      "submitted",
-      "completed",
-      "approved",
-      "disputed",
-    ]);
-    if (!unlockableStatuses.has(invite.status)) {
-      throw new BadRequestException(
-        "Payment confirmation is required before contact can be unlocked.",
-      );
-    }
-
-    // Fetch campaign to check type (used for gate + unlock label)
+    // Fetch campaign to check type (gate differs by campaign type)
     const campaign: any = await this.campaignModel
       .findById(invite.campaignId)
       .select("campaignType")
       .lean();
-    const isPaidCollab =
-      campaign && String(campaign.campaignType) === "paid_collab";
+    const campaignType = String(campaign?.campaignType || "").toLowerCase();
+    const isLocationCampaign = campaignType === "invite_location" || campaignType === "product";
 
-    // Payment-confirmed path is now the single unlock type for contact visibility.
+    // For location/event campaigns unlock is allowed once accepted.
+    // For paid collabs, payment confirmation is required first.
+    const unlockableStatuses = isLocationCampaign
+      ? new Set(["accepted", "payment_confirmed", "working", "submitted", "completed", "approved", "disputed"])
+      : new Set(["payment_confirmed", "working", "submitted", "completed", "approved", "disputed"]);
+
+    if (!unlockableStatuses.has(invite.status)) {
+      const msg = isLocationCampaign
+        ? "Invite must be accepted before contact can be unlocked."
+        : "Payment confirmation is required before contact can be unlocked.";
+      throw new BadRequestException(msg);
+    }
+
+    // Unlock type label
     const unlockType: "paid_collab_payment" = "paid_collab_payment";
 
     invite.unlocked = true;
