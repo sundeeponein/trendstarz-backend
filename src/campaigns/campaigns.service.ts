@@ -6,6 +6,7 @@ import {
 import { InjectModel } from "@nestjs/mongoose";
 import { Model, Types } from "mongoose";
 import { PlansService } from "../plans/plans.service";
+import { CloudinaryService } from "../cloudinary.service";
 import {
   CampaignTypeConfigItem,
   resolveCampaignTypeConfigs,
@@ -43,6 +44,7 @@ export class CampaignsService {
     @InjectModel("Influencer") private readonly influencerModel: Model<any>,
     @InjectModel("AppSettings") private readonly appSettingsModel: Model<any>,
     private readonly plansService: PlansService,
+    private readonly cloudinaryService: CloudinaryService,
   ) {}
 
   private async resolveInitialCampaignStatus(
@@ -922,6 +924,12 @@ export class CampaignsService {
       inviteQueries.push({ campaignId: new Types.ObjectId(id) });
     }
     await this.campaignInviteModel.deleteMany({ $or: inviteQueries });
+    const publicId = campaign.image?.public_id;
+    if (publicId) {
+      await this.cloudinaryService.deleteImage(publicId).catch((err) =>
+        console.error('[CampaignsService] Failed to delete campaign image:', publicId, err),
+      );
+    }
     return this.campaignModel.findByIdAndDelete(id);
   }
 }
