@@ -174,12 +174,17 @@ export class AuthService {
           autoApproved = true;
         }
       } else if (photographer && !adminUser) {
-        // Photographers auto-approve on email verification if preApproveInfluencers is enabled
-        // (reuse the influencer approval setting as a shared "creator" toggle)
         const settings = (await this.appSettingsModel
           .findOne({})
           .lean()) as any;
-        if (settings?.preApproveInfluencers && photographer.status === "pending") {
+        const mobileOk =
+          !settings?.photographerRequireMobileVerified ||
+          !!photographer.isMobileVerified;
+        if (
+          settings?.preApprovePhotographers &&
+          mobileOk &&
+          photographer.status === "pending"
+        ) {
           photographer.status = "accepted";
           autoApproved = true;
         }
@@ -201,32 +206,45 @@ export class AuthService {
   }
 
   async forgotPassword(email: string) {
-    // Try to find user in all collections
-    const user =
-      (await this.userModel.findOne({ email })) ||
-      (await this.influencerModel.findOne({ email })) ||
-      (await this.brandModel.findOne({ email })) ||
-      (await this.photographerModel.findOne({ email }));
+    const normalizedEmail = (email || "").trim().toLowerCase();
+    if (!normalizedEmail) {
+      throw new BadRequestException("Email is required.");
+    }
+    // Parallel lookup across all collections — normalized email prevents case-mismatch misses
+    const [adminUser, influencer, brand, photographer] = await Promise.all([
+      this.userModel.findOne({ email: normalizedEmail }),
+      this.influencerModel.findOne({ email: normalizedEmail }),
+      this.brandModel.findOne({ email: normalizedEmail }),
+      this.photographerModel.findOne({ email: normalizedEmail }),
+    ]);
+    const user = adminUser || influencer || brand || photographer;
     if (!user) {
       throw new Error("Email not found. Please enter a registered email.");
     }
     // Generate a cryptographically secure reset token
     const resetToken = crypto.randomBytes(32).toString("hex");
     const resetTokenHash = crypto.createHash("sha256").update(resetToken).digest("hex");
-    // Save token to user (or a real token store in production)
     user.resetToken = resetTokenHash;
     user.resetTokenExpires = Date.now() + 1000 * 60 * 60; // 1 hour expiry
     await user.save();
-    // Send email (use your email util)
     const frontendBase = (
       process.env.FRONTEND_URL || "https://www.trendstarz.in"
     ).replace(/\/$/, "");
     const resetUrl = `${frontendBase}/reset-password?token=${resetToken}`;
-    const text = `Reset your Trendstarz password: ${resetUrl}`;
+    const html = `
+      <p>Hi,</p>
+      <p>We received a request to reset your Trendstarz password.</p>
+      <p><a href="${resetUrl}" style="background:#6c63ff;color:#fff;padding:10px 20px;border-radius:6px;text-decoration:none;display:inline-block;">Reset Password</a></p>
+      <p>Or copy this link into your browser:</p>
+      <p><a href="${resetUrl}">${resetUrl}</a></p>
+      <p>This link expires in 1 hour. If you did not request this, you can safely ignore this email.</p>
+    `;
+    const text = `Reset your Trendstarz password: ${resetUrl}\n\nThis link expires in 1 hour.`;
     await sendAppEmail({
       to: user.email,
-      subject: "Reset your password",
+      subject: "Reset your Trendstarz password",
       text,
+      html,
     });
   }
 
@@ -636,6 +654,8 @@ export class AuthService {
           email: photographer.email,
           role: "photographer",
           profileImage: profileImageUrl,
+          isPremium: !!photographer.isPremium,
+          premiumEnd: photographer.premiumEnd || null,
         },
       };
     }

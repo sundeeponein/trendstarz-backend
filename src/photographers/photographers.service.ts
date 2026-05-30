@@ -181,7 +181,7 @@ export class PhotographersService {
     let docs = await this.photographerModel
       .find(filter)
       .select(
-        "name username email phoneNumber profileImage profileImages location skills pricing equipment socialMedia contact gender portfolio status adminTags isPremium verifiedByTrendStarz verificationStatus",
+        "name username email phoneNumber profileImage profileImages location skills pricing equipment socialMedia contact gender portfolio status adminTags isPremium commissionBadge commissionOverride verifiedByTrendStarz verificationStatus",
       )
       .limit(limit)
       .lean();
@@ -256,7 +256,7 @@ export class PhotographersService {
     const rawDoc: any = await this.photographerModel
       .findOne({ _id: id, isDeleted: { $ne: true } })
       .select(
-        "name username email phoneNumber profileImage profileImages location skills pricing equipment socialMedia contact gender portfolio status adminTags isPremium verifiedByTrendStarz verificationStatus isEmailVerified isMobileVerified",
+        "name username email phoneNumber profileImage profileImages location skills pricing equipment socialMedia contact gender portfolio status adminTags isPremium commissionBadge commissionOverride verifiedByTrendStarz verificationStatus isEmailVerified isMobileVerified",
       )
       .lean();
     if (!rawDoc || Array.isArray(rawDoc)) {
@@ -283,7 +283,7 @@ export class PhotographersService {
     const rawDoc: any = await this.photographerModel
       .findOne({ username, isDeleted: { $ne: true } })
       .select(
-        "name username email phoneNumber profileImage profileImages location skills pricing equipment socialMedia contact gender portfolio status adminTags isPremium verifiedByTrendStarz verificationStatus isEmailVerified isMobileVerified",
+        "name username email phoneNumber profileImage profileImages location skills pricing equipment socialMedia contact gender portfolio status adminTags isPremium commissionBadge commissionOverride verifiedByTrendStarz verificationStatus isEmailVerified isMobileVerified",
       )
       .lean();
     if (!rawDoc || Array.isArray(rawDoc)) {

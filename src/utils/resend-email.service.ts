@@ -5,7 +5,7 @@ export async function sendEmailResend({ to, subject, text, html }: { to: string;
   if (!apiKey) throw new Error('RESEND_API_KEY not set');
 
   const payload = {
-    from: 'onboarding@resend.dev',
+     from: process.env.FROM_EMAIL || process.env.RESEND_FROM || 'noreply@trendstarz.in',
     to,
     subject,
     text,

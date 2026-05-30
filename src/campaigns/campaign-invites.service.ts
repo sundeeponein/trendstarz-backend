@@ -381,18 +381,12 @@ export class CampaignInvitesService {
     const recipientDoc: any = recipient as any;
     const hydratedRecipient = {
       ...recipientDoc,
-      email:
-        role === "photographer"
-          ? recipientDoc?.email
-          : recipientDoc?.isEmailVerified
-            ? recipientDoc?.email
-            : undefined,
-      phoneNumber:
-        role === "photographer"
-          ? recipientDoc?.phoneNumber
-          : recipientDoc?.isMobileVerified
-            ? recipientDoc?.phoneNumber
-            : undefined,
+      email: recipientDoc?.isEmailVerified
+        ? recipientDoc?.email
+        : undefined,
+      phoneNumber: recipientDoc?.isMobileVerified
+        ? recipientDoc?.phoneNumber
+        : undefined,
     };
     return {
       ...invite,
