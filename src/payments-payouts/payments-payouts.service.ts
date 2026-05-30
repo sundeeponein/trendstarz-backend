@@ -6,6 +6,13 @@ import {
 import { InjectModel } from "@nestjs/mongoose";
 import { Model } from "mongoose";
 import { sendAppEmail } from "../utils/app-email.service";
+import {
+  paymentProofAdminTemplate,
+  paymentVerifiedInfluencerTemplate,
+  paymentVerifiedBrandTemplate,
+  paymentRejectedTemplate,
+  payoutSentTemplate,
+} from "../email/templates/payment.templates";
 import { PushService } from "../push/push.service";
 import { NotificationsService } from "../notifications/notifications.service";
 
@@ -89,7 +96,10 @@ export class PaymentsPayoutsService {
           return 0; // No commission
         case "discount":
           // discount is a percentage (e.g., 40% off means 40% reduction)
-          return Math.max(0, globalPercent - (globalPercent * override.value) / 100);
+          return Math.max(
+            0,
+            globalPercent - (globalPercent * override.value) / 100,
+          );
         case "fixed":
           // fixed is the actual commission percentage to apply
           return Math.max(0, override.value);
@@ -162,7 +172,10 @@ export class PaymentsPayoutsService {
       if (Number.isFinite(fallback) && fallback > 0) return fallback;
       return 0;
     });
-    const agreedAmount = inviteAgreedAmounts.reduce((sum, value) => sum + value, 0);
+    const agreedAmount = inviteAgreedAmounts.reduce(
+      (sum, value) => sum + value,
+      0,
+    );
     if (!agreedAmount || agreedAmount <= 0) {
       throw new BadRequestException(
         "No valid accepted payout amounts found. Set campaign payout or invite agreed amount.",
@@ -231,9 +244,7 @@ export class PaymentsPayoutsService {
 
     const calc = await this.calculatePayment(campaignId, payerId);
     if (!calc.acceptedCount) {
-      throw new BadRequestException(
-        "No accepted recipients found for payment",
-      );
+      throw new BadRequestException("No accepted recipients found for payment");
     }
 
     const acceptedInvites = await this.inviteModel
@@ -246,25 +257,33 @@ export class PaymentsPayoutsService {
 
     for (let i = 0; i < acceptedInvites.length; i++) {
       const invite = acceptedInvites[i];
-      const inviteAgreedAmount = Number(invite?.agreedAmountPaise || calc.pricePerInfluencer || 0);
+      const inviteAgreedAmount = Number(
+        invite?.agreedAmountPaise || calc.pricePerInfluencer || 0,
+      );
       if (!inviteAgreedAmount || inviteAgreedAmount <= 0) {
         throw new BadRequestException(
-          `Invite ${String(invite?._id || '')} has no valid agreed payout amount.`,
+          `Invite ${String(invite?._id?.toString() ?? "")} has no valid agreed payout amount.`,
         );
       }
       const inviteFee = calc.platformFeeEnabled
-        ? this.roundPercent(inviteAgreedAmount, Number(calc.platformFeePercent || 0))
+        ? this.roundPercent(
+            inviteAgreedAmount,
+            Number(calc.platformFeePercent || 0),
+          )
         : 0;
-      const invitePayerTotal = calc.campaignType === "pay_to_join"
-        ? inviteAgreedAmount
-        : inviteAgreedAmount + inviteFee;
-      const inviteRecipientPayout = calc.campaignType === "pay_to_join"
-        ? Math.max(inviteAgreedAmount - inviteFee, 0)
-        : inviteAgreedAmount;
+      const invitePayerTotal =
+        calc.campaignType === "pay_to_join"
+          ? inviteAgreedAmount
+          : inviteAgreedAmount + inviteFee;
+      const inviteRecipientPayout =
+        calc.campaignType === "pay_to_join"
+          ? Math.max(inviteAgreedAmount - inviteFee, 0)
+          : inviteAgreedAmount;
       const influencerId = String(invite.influencerId);
       const inviteRecipientRole =
-        String(invite?.recipientRole || "").trim().toLowerCase() ===
-        "photographer"
+        String(invite?.recipientRole || "")
+          .trim()
+          .toLowerCase() === "photographer"
           ? "photographer"
           : "influencer";
       const recipientId =
@@ -319,9 +338,12 @@ export class PaymentsPayoutsService {
       "/admin/payments";
     sendAppEmail({
       to: adminEmail,
-      subject: `[TrendStarZ] New payment proof — ${campaign.title || campaignId}`,
-      text: `A brand has submitted a UTR reference for campaign "${campaign.title || campaignId}".\n\nUTR: ${utrNumber}\nRecipients: ${saved.length}\n\nReview: ${adminUrl}`,
-      html: `<p>A brand has submitted a UTR reference for campaign <strong>${campaign.title || campaignId}</strong>.</p><p><strong>UTR:</strong> ${utrNumber}<br/><strong>Recipients:</strong> ${saved.length}</p><p><a href="${adminUrl}">Review in admin panel</a></p>`,
+      ...paymentProofAdminTemplate({
+        campaignTitle: campaign.title || campaignId,
+        utrNumber,
+        recipientCount: saved.length,
+        adminUrl,
+      }),
     }).catch((err: unknown) => {
       console.error(
         "[PaymentsPayoutsService] Failed to send admin UTR alert:",
@@ -551,8 +573,9 @@ export class PaymentsPayoutsService {
         update.status = "payment_confirmed";
         paymentConfirmedRecipientId = String(invite.influencerId || "");
         paymentConfirmedRecipientRole =
-          String(invite?.recipientRole || "").trim().toLowerCase() ===
-          "photographer"
+          String(invite?.recipientRole || "")
+            .trim()
+            .toLowerCase() === "photographer"
             ? "photographer"
             : "influencer";
         paymentConfirmedCampaignId = String(invite.campaignId || "");
@@ -565,7 +588,8 @@ export class PaymentsPayoutsService {
       Promise.all([
         (paymentConfirmedRecipientRole === "photographer"
           ? this.photographerModel
-          : this.influencerModel)
+          : this.influencerModel
+        )
           .findById(paymentConfirmedRecipientId)
           .select("email name username")
           .lean(),
@@ -587,9 +611,11 @@ export class PaymentsPayoutsService {
               : "/influencer-dashboard");
           return sendAppEmail({
             to: inf.email,
-            subject: "[TrendStarZ] Verified - you can start posting",
-            text: `Hi ${name},\n\nGood news! Brand payment has been verified for "${campaignTitle}".\nYou can now start creating and posting your content.\n\nOpen dashboard: ${dashboardUrl}`,
-            html: `<p>Hi <strong>${name}</strong>,</p><p>Good news! Brand payment has been verified for <strong>"${campaignTitle}"</strong>.</p><p>You can now start creating and posting your content.</p><p><a href="${dashboardUrl}">Open your dashboard</a></p>`,
+            ...paymentVerifiedInfluencerTemplate({
+              recipientName: name,
+              campaignTitle,
+              dashboardUrl,
+            }),
           });
         })
         .catch((err: unknown) => {
@@ -600,14 +626,18 @@ export class PaymentsPayoutsService {
         });
 
       // Web push
-      this.pushService.sendToUser(paymentConfirmedRecipientId, {
-        title: "Payment verified ✅",
-        body: `You can now start posting for your campaign.`,
-        url:
-          paymentConfirmedRecipientRole === "photographer"
-            ? "/photographer-dashboard"
-            : "/influencer-dashboard",
-      }).catch(() => { /* non-critical */ });
+      this.pushService
+        .sendToUser(paymentConfirmedRecipientId, {
+          title: "Payment verified ✅",
+          body: `You can now start posting for your campaign.`,
+          url:
+            paymentConfirmedRecipientRole === "photographer"
+              ? "/photographer-dashboard"
+              : "/influencer-dashboard",
+        })
+        .catch(() => {
+          /* non-critical */
+        });
       this.notificationsService
         .createForUser({
           userId: paymentConfirmedRecipientId,
@@ -638,10 +668,10 @@ export class PaymentsPayoutsService {
             "/campaigns";
           sendAppEmail({
             to: brand.email,
-            subject:
-              "[TrendStarZ] Payment verified — influencers can now begin work",
-            text: `Hi ${name},\n\nYour campaign payment has been verified. Influencers have been notified and can now begin creating content.\n\nMonitor progress: ${adminUrl}`,
-            html: `<p>Hi <strong>${name}</strong>,</p><p>Your campaign payment has been verified! Influencers have been notified and can now begin creating content.</p><p><a href="${adminUrl}">Monitor campaign progress</a></p>`,
+            ...paymentVerifiedBrandTemplate({
+              brandName: name,
+              dashboardUrl: adminUrl,
+            }),
           }).catch((err: unknown) => {
             console.error(
               "[PaymentsPayoutsService] Failed to send verification email to brand:",
@@ -690,10 +720,11 @@ export class PaymentsPayoutsService {
             "/campaigns";
           sendAppEmail({
             to: brand.email,
-            subject:
-              "[TrendStarZ] Action required — payment proof could not be verified",
-            text: `Hi ${name},\n\nUnfortunately, your payment proof could not be verified.\n\nReason: ${reason || "No reason provided."}\n\nPlease resubmit with a valid UTR reference: ${payUrl}`,
-            html: `<p>Hi <strong>${name}</strong>,</p><p>Unfortunately, your payment proof could not be verified.</p><p><strong>Reason:</strong> ${reason || "No reason provided."}</p><p>Please <a href="${payUrl}">log in and resubmit</a> with a valid UTR reference.</p>`,
+            ...paymentRejectedTemplate({
+              brandName: name,
+              reason,
+              resubmitUrl: payUrl,
+            }),
           }).catch((err: unknown) => {
             console.error(
               "[PaymentsPayoutsService] Failed to send rejection email to brand:",
@@ -745,7 +776,8 @@ export class PaymentsPayoutsService {
     ) {
       (tx.recipientRole === "photographer"
         ? this.photographerModel
-        : this.influencerModel)
+        : this.influencerModel
+      )
         .findById(tx.recipientId)
         .select("email name username")
         .lean()
@@ -758,9 +790,12 @@ export class PaymentsPayoutsService {
               : "your payout";
           sendAppEmail({
             to: inf.email,
-            subject: "[TrendStarZ] Your payout has been sent!",
-            text: `Hi ${name},\n\nGreat news! ${amount} has been sent to your UPI account (${tx.payoutUpiId || "on file"}).\n\nUTR Reference: ${tx.payoutUtr}\n\nThank you for collaborating with TrendStarZ!`,
-            html: `<p>Hi <strong>${name}</strong>,</p><p>Great news! <strong>${amount}</strong> has been sent to your UPI account (<strong>${tx.payoutUpiId || "on file"}</strong>).</p><p><strong>UTR Reference:</strong> ${tx.payoutUtr}</p><p>Thank you for collaborating with TrendStarZ!</p>`,
+            ...payoutSentTemplate({
+              recipientName: name,
+              amount,
+              upiId: tx.payoutUpiId || null,
+              payoutUtr: tx.payoutUtr,
+            }),
           }).catch((err: unknown) => {
             console.error(
               "[PaymentsPayoutsService] Failed to send payout email:",
@@ -846,8 +881,7 @@ export class PaymentsPayoutsService {
     const getPartyName = (role: string, id: any): string => {
       const sid = String(id);
       if (role === "influencer") return inflMap.get(sid)?.name || "";
-      if (role === "photographer")
-        return photographerMap.get(sid)?.name || "";
+      if (role === "photographer") return photographerMap.get(sid)?.name || "";
       if (role === "brand")
         return brandMap.get(sid)?.name || brandMap.get(sid)?.brandName || "";
       return "";

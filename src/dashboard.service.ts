@@ -112,8 +112,6 @@ export class DashboardService {
     const campaigns = await this.campaignModel.find({
       $or: brandMatchers,
     });
-    // Debug: log all campaign brandId values
-    const allCampaigns = await this.campaignModel.find({}).lean();
     let totalInvites = 0;
     let accepted = 0;
     let completed = 0;

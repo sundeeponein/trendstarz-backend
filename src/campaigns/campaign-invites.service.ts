@@ -8,6 +8,14 @@ import { Cron, CronExpression } from "@nestjs/schedule";
 import { InjectModel } from "@nestjs/mongoose";
 import { Model } from "mongoose";
 import { sendAppEmail } from "../utils/app-email.service";
+import {
+  newCampaignInviteTemplate,
+  inviteReminderTemplate,
+  inviteAcceptedTemplate,
+  postSubmittedTemplate,
+  postApprovedTemplate,
+  autoApprovedTemplate,
+} from "../email/templates/campaign.templates";
 import { PlansService } from "../plans/plans.service";
 import { PushService } from "../push/push.service";
 import { NotificationsService } from "../notifications/notifications.service";
@@ -476,11 +484,13 @@ export class CampaignInvitesService {
           .select("email name")
           .lean();
         if (influencer?.email) {
-          await sendAppEmail({
-            to: influencer.email,
-            subject: "Campaign auto-approved after 48h",
-            text: `Hi ${influencer.name || ""},\n\nYour submission for \\"${campaign?.title || "campaign"}\\" was auto-approved after 48 hours with no brand review. Payout is now queued for processing.`,
+          const frontendBase = (process.env.FRONTEND_URL || "https://trendstarz.com").replace(/\/$/, "");
+          const autoTpl = autoApprovedTemplate({
+            influencerName: influencer.name || "",
+            campaignTitle: campaign?.title || "campaign",
+            dashboardUrl: `${frontendBase}/influencer-dashboard`,
           });
+          await sendAppEmail({ to: influencer.email, ...autoTpl });
         }
       } catch (e) {
         console.error("Failed to send auto-approval email:", e);
@@ -705,12 +715,15 @@ export class CampaignInvitesService {
       );
       const sender = await this.resolveSenderProfile(brandId);
       if (recipient?.email) {
-        const text = `Hi ${recipient.name || ""},\n\nYou have a new campaign invite from ${sender.name || "a creator"} for "${campaign.title}".\nLog in to TrendStarz to respond.\n`;
-        await sendAppEmail({
-          to: recipient.email,
-          subject: "New Campaign Invite",
-          text,
+        const frontendBase = (process.env.FRONTEND_URL || "https://trendstarz.com").replace(/\/$/, "");
+        const inviteDashboardUrl = frontendBase + (recipientRole === "photographer" ? "/photographer-dashboard" : "/influencer-dashboard/invites");
+        const inviteTpl = newCampaignInviteTemplate({
+          recipientName: recipient.name || "",
+          senderName: sender.name || "a creator",
+          campaignTitle: campaign.title,
+          dashboardUrl: inviteDashboardUrl,
         });
+        await sendAppEmail({ to: recipient.email, ...inviteTpl });
       }
       // Push notification to recipient
       this.pushService.sendToUser(String(recipientId), {
@@ -1266,50 +1279,17 @@ export class CampaignInvitesService {
       if (influencer?.email) {
         const campaignTitle = campaign?.title || "a campaign";
         const brandName = brand?.name || "A brand";
-        const dueLine = invite.dueDate
-          ? `\nDeliverable due: ${new Date(invite.dueDate).toDateString()}.`
-          : "";
-        const dueLineHtml = invite.dueDate
-          ? `<p style="margin:8px 0;color:#475467;"><strong>Deliverable due:</strong> ${new Date(invite.dueDate).toDateString()}</p>`
-          : "";
         const inviteUrl =
-          (process.env.FRONTEND_URL || "https://trendstarz.com") +
+          (process.env.FRONTEND_URL || "https://trendstarz.com").replace(/\/$/, "") +
           "/influencer-dashboard/invites";
-        const html = `
-<!doctype html>
-<html><body style="margin:0;padding:0;background:#f5f7fb;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;color:#1f2937;">
-  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="padding:24px 0;">
-    <tr><td align="center">
-      <table role="presentation" width="560" cellpadding="0" cellspacing="0" style="background:#ffffff;border-radius:12px;box-shadow:0 1px 3px rgba(0,0,0,0.06);overflow:hidden;">
-        <tr><td style="background:#0d6efd;padding:18px 24px;color:#ffffff;font-size:18px;font-weight:600;">TrendStarz</td></tr>
-        <tr><td style="padding:24px;">
-          <h2 style="margin:0 0 12px 0;font-size:20px;color:#111827;">Friendly reminder</h2>
-          <p style="margin:0 0 12px 0;line-height:1.5;">Hi ${influencer.name || "there"},</p>
-          <p style="margin:0 0 12px 0;line-height:1.5;">
-            <strong>${brandName}</strong> is waiting on your response for the campaign
-            <strong>"${campaignTitle}"</strong>.
-          </p>
-          ${dueLineHtml}
-          <p style="margin:20px 0;">
-            <a href="${inviteUrl}" style="display:inline-block;background:#0d6efd;color:#ffffff;padding:10px 18px;border-radius:8px;text-decoration:none;font-weight:600;">Open my invites</a>
-          </p>
-          <p style="margin:0;color:#6b7280;font-size:13px;line-height:1.5;">
-            If you've already responded, you can safely ignore this message.
-          </p>
-        </td></tr>
-        <tr><td style="padding:14px 24px;background:#f9fafb;color:#9ca3af;font-size:12px;text-align:center;">
-          — TrendStarz
-        </td></tr>
-      </table>
-    </td></tr>
-  </table>
-</body></html>`;
-        await sendAppEmail({
-          to: influencer.email,
-          subject: `Reminder: ${brandName} is waiting on \"${campaignTitle}\"`,
-          text: `Hi ${influencer.name || ""},\n\n${brandName} sent you a reminder about the invite for \"${campaignTitle}\".${dueLine}\n\nPlease open TrendStarz and respond at your earliest convenience.\n\n— TrendStarz`,
-          html,
+        const reminderTpl = inviteReminderTemplate({
+          recipientName: influencer.name || "",
+          brandName,
+          campaignTitle,
+          dueDate: invite.dueDate ?? null,
+          inviteUrl,
         });
+        await sendAppEmail({ to: influencer.email, ...reminderTpl });
       }
     } catch (e) {
       console.error("Failed to send reminder email:", e);
@@ -1818,12 +1798,14 @@ export class CampaignInvitesService {
           .select("title")
           .lean();
         if (sender?.email) {
-          const text = `Hi ${sender.name || ""},\n\n${recipient?.name || `A ${recipientRole}`} has accepted your campaign invite for "${campaign?.title || ""}".\n`;
-          await sendAppEmail({
-            to: sender.email,
-            subject: "Campaign Invite Accepted",
-            text,
+          const frontendBase = (process.env.FRONTEND_URL || "https://trendstarz.com").replace(/\/$/, "");
+          const acceptedTpl = inviteAcceptedTemplate({
+            brandName: sender.name || "",
+            recipientName: recipient?.name || `A ${recipientRole}`,
+            campaignTitle: campaign?.title || "",
+            dashboardUrl: `${frontendBase}/campaign-management`,
           });
+          await sendAppEmail({ to: sender.email, ...acceptedTpl });
         }
         // Push notification to brand
         this.pushService.sendToUser(String(invite.brandId), {
@@ -2285,11 +2267,14 @@ export class CampaignInvitesService {
         .select("title")
         .lean();
       if (sender?.email) {
-        await sendAppEmail({
-          to: sender.email,
-          subject: "Post Submitted for Review",
-          text: `Hi ${sender.name || ""},\n\n${influencer?.name || "An influencer"} has submitted their post for campaign "${campaign?.title || ""}". Please review it in your dashboard.\n`,
+        const frontendBase = (process.env.FRONTEND_URL || "https://trendstarz.com").replace(/\/$/, "");
+        const submittedTpl = postSubmittedTemplate({
+          brandName: sender.name || "",
+          influencerName: influencer?.name || "An influencer",
+          campaignTitle: campaign?.title || "",
+          dashboardUrl: `${frontendBase}/campaign-management`,
         });
+        await sendAppEmail({ to: sender.email, ...submittedTpl });
       }
     } catch (e) {
       console.error("Failed to send submission email:", e);
@@ -2420,11 +2405,13 @@ export class CampaignInvitesService {
           .select("email name")
           .lean();
         if (influencer?.email) {
-          await sendAppEmail({
-            to: influencer.email,
-            subject: "Brand approved your post!",
-            text: `Hi ${influencer.name || ""},\n\nThe brand has approved your post for campaign "${campaign.title || ""}". Your payout is being processed.\n`,
+          const frontendBase = (process.env.FRONTEND_URL || "https://trendstarz.com").replace(/\/$/, "");
+          const approvedTpl = postApprovedTemplate({
+            influencerName: influencer.name || "",
+            campaignTitle: campaign.title || "",
+            dashboardUrl: `${frontendBase}/influencer-dashboard`,
           });
+          await sendAppEmail({ to: influencer.email, ...approvedTpl });
         }
         // Push notification — payout now processing
         this.pushService.sendToUser(String(invite.influencerId), {

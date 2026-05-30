@@ -9,6 +9,10 @@ import * as jwt from "jsonwebtoken";
 import { InjectModel } from "@nestjs/mongoose";
 import { Model } from "mongoose";
 import { sendAppEmail } from "../utils/app-email.service";
+import {
+  verifyEmailTemplate,
+  resetPasswordTemplate,
+} from "../email/templates/auth.templates";
 import { getJwtSecret } from "./jwt-secret";
 
 type AnyUserDoc = {
@@ -86,22 +90,9 @@ export class AuthService {
       process.env.BACKEND_URL || "https://api.trendstarz.in"
     ).replace(/\/$/, "");
     const verifyUrl = `${backendUrl}/api/auth/verify-email?token=${encodeURIComponent(token)}`;
-    const html = `
-      <p>Hi,</p>
-      <p>Please verify your Trendstarz email address by clicking the link below:</p>
-      <p><a href="${verifyUrl}">Verify Email</a></p>
-      <p>If you did not request this, you can ignore this email.</p>
-    `;
-    const text = `Please verify your Trendstarz email address: ${verifyUrl}`;
+    const { subject, html, text } = verifyEmailTemplate(verifyUrl);
 
-    await sendAppEmail({
-      to: normalizedEmail,
-      subject: "Verify your Trendstarz email",
-      text,
-      html,
-    });
-    // Keep html for future providers that support rich templates.
-    void html;
+    await sendAppEmail({ to: normalizedEmail, subject, html, text });
 
     return { success: true, message: "Verification email sent." };
   }
@@ -224,7 +215,10 @@ export class AuthService {
     }
     // Generate a cryptographically secure reset token
     const resetToken = crypto.randomBytes(32).toString("hex");
-    const resetTokenHash = crypto.createHash("sha256").update(resetToken).digest("hex");
+    const resetTokenHash = crypto
+      .createHash("sha256")
+      .update(resetToken)
+      .digest("hex");
     user.resetToken = resetTokenHash;
     user.resetTokenExpires = Date.now() + 1000 * 60 * 60; // 1 hour expiry
     await user.save();
@@ -232,21 +226,8 @@ export class AuthService {
       process.env.FRONTEND_URL || "https://www.trendstarz.in"
     ).replace(/\/$/, "");
     const resetUrl = `${frontendBase}/reset-password?token=${resetToken}`;
-    const html = `
-      <p>Hi,</p>
-      <p>We received a request to reset your Trendstarz password.</p>
-      <p><a href="${resetUrl}" style="background:#6c63ff;color:#fff;padding:10px 20px;border-radius:6px;text-decoration:none;display:inline-block;">Reset Password</a></p>
-      <p>Or copy this link into your browser:</p>
-      <p><a href="${resetUrl}">${resetUrl}</a></p>
-      <p>This link expires in 1 hour. If you did not request this, you can safely ignore this email.</p>
-    `;
-    const text = `Reset your Trendstarz password: ${resetUrl}\n\nThis link expires in 1 hour.`;
-    await sendAppEmail({
-      to: user.email,
-      subject: "Reset your Trendstarz password",
-      text,
-      html,
-    }).catch((err) => {
+    const { subject, html, text } = resetPasswordTemplate(resetUrl);
+    await sendAppEmail({ to: user.email, subject, html, text }).catch((err) => {
       console.error("[forgotPassword] Email send failed:", err?.message || err);
     });
   }
@@ -582,7 +563,8 @@ export class AuthService {
         {
           $set: {
             lastLoginAt: now,
-            firstRegisteredAt: brand.firstRegisteredAt || brand.createdAt || now,
+            firstRegisteredAt:
+              brand.firstRegisteredAt || brand.createdAt || now,
           },
         },
       );
@@ -615,7 +597,10 @@ export class AuthService {
     if (photographer) {
       const isMatch = await bcrypt.compare(password, photographer.password);
       if (!isMatch) throw new UnauthorizedException("Invalid credentials");
-      if (photographer.isDeleted === true || photographer.isDeleted === "true") {
+      if (
+        photographer.isDeleted === true ||
+        photographer.isDeleted === "true"
+      ) {
         throw new UnauthorizedException(
           "Your account has been deleted. Please contact support.",
         );
@@ -644,7 +629,11 @@ export class AuthService {
           : null;
 
       const token = jwt.sign(
-        { userId: photographer._id, email: photographer.email, role: "photographer" },
+        {
+          userId: photographer._id,
+          email: photographer.email,
+          role: "photographer",
+        },
         getJwtSecret(),
         { expiresIn: "7d" },
       );
@@ -1096,13 +1085,19 @@ export class AuthService {
 
     try {
       const saved = await photographer.save();
-      void this.sendEmailVerificationLink(saved.email).catch((verifyMailErr) => {
-        console.error(
-          "Failed to send photographer verification email:",
-          verifyMailErr,
-        );
-      });
-      return { success: true, message: "Photographer registered", photographer: saved };
+      void this.sendEmailVerificationLink(saved.email).catch(
+        (verifyMailErr) => {
+          console.error(
+            "Failed to send photographer verification email:",
+            verifyMailErr,
+          );
+        },
+      );
+      return {
+        success: true,
+        message: "Photographer registered",
+        photographer: saved,
+      };
     } catch (err) {
       const error = err instanceof Error ? err : new Error(String(err));
       console.error("Photographer save error:", err);
@@ -1132,7 +1127,8 @@ export class AuthService {
       // Campaign payment UPI shown to brands on the payment screen
       paymentUpiId: settings?.paymentUpiId || "trendstarzin@kotak",
       showSearchLink: settings?.showSearchLink !== false,
-      showRegisterInfluencerLink: settings?.showRegisterInfluencerLink !== false,
+      showRegisterInfluencerLink:
+        settings?.showRegisterInfluencerLink !== false,
       showRegisterBrandLink: settings?.showRegisterBrandLink !== false,
       showRegisterPhotographerLink:
         settings?.showRegisterPhotographerLink !== false,
