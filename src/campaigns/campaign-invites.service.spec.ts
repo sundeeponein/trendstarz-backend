@@ -491,6 +491,7 @@ describe("CampaignInvitesService – respond()", () => {
       endDate: CAMPAIGN_END,
       timelineStart: CAMPAIGN_START,
       timelineEnd: CAMPAIGN_END,
+      pricePerInfluencer: 500000,
       socialMedia: [],
       minInfluencers: 0,
       maxInfluencers: 0,
@@ -966,7 +967,7 @@ describe("CampaignInvitesService contact visibility in invite lists", () => {
     expect(result[0].brandId.phoneNumber).toBe("9999999999");
   });
 
-  it("redacts brand contact fields before payment confirmation", async () => {
+  it("shows brand contact fields after accepted + unlock", async () => {
     inviteModel.find.mockReturnValue({
       populate: jest.fn().mockReturnValue({
         populate: jest.fn().mockReturnValue({
@@ -993,8 +994,8 @@ describe("CampaignInvitesService contact visibility in invite lists", () => {
 
     const result = await service.findByInfluencer("inf-1");
 
-    expect(result[0].brandId.email).toBeUndefined();
-    expect(result[0].brandId.phoneNumber).toBeUndefined();
+    expect(result[0].brandId.email).toBe("brand@example.com");
+    expect(result[0].brandId.phoneNumber).toBe("9999999999");
   });
 
   it("hides invites when linked campaign is deleted", async () => {
@@ -1107,7 +1108,7 @@ describe("CampaignInvitesService contact visibility in invite lists", () => {
     expect(result[0]._id).toBe("ph-live");
   });
 
-  it("redacts exact venue and shoot location details before payment confirmation (influencer feed)", async () => {
+  it("shows exact venue and shoot location details after accepted + unlock (influencer feed)", async () => {
     inviteModel.find.mockReturnValue({
       populate: jest.fn().mockReturnValue({
         populate: jest.fn().mockReturnValue({
@@ -1137,12 +1138,12 @@ describe("CampaignInvitesService contact visibility in invite lists", () => {
 
     const result = await service.findByInfluencer("inf-1");
 
-    expect(result[0].campaignId.venueName).toBeUndefined();
-    expect(result[0].campaignId.venueAddress).toBeUndefined();
-    expect(result[0].campaignId.venueGoogleMapUrl).toBeUndefined();
-    expect(result[0].campaignId.shootLocationAddress).toBeUndefined();
-    expect(result[0].campaignId.shootLocationMapUrl).toBeUndefined();
-    expect(result[0].campaignId.shootLocationNotes).toBeUndefined();
+    expect(result[0].campaignId.venueName).toBe("Studio 44");
+    expect(result[0].campaignId.venueAddress).toBe("Road 1");
+    expect(result[0].campaignId.venueGoogleMapUrl).toBe("https://maps.example.com/v/1");
+    expect(result[0].campaignId.shootLocationAddress).toBe("Shoot Lane");
+    expect(result[0].campaignId.shootLocationMapUrl).toBe("https://maps.example.com/s/1");
+    expect(result[0].campaignId.shootLocationNotes).toBe("Bring lights");
   });
 
   it("keeps exact venue and shoot location details after payment confirmation (photographer feed)", async () => {
@@ -1188,7 +1189,7 @@ describe("CampaignInvitesService contact visibility in invite lists", () => {
     expect(result[0].campaignId.shootLocationNotes).toBe("Bring lights");
   });
 
-  it("redacts photographer-feed contact before payment confirmation even when unlocked", async () => {
+  it("shows photographer-feed contact after accepted + unlock", async () => {
     inviteModel.find.mockReturnValue({
       populate: jest.fn().mockReturnValue({
         populate: jest.fn().mockReturnValue({
@@ -1217,8 +1218,136 @@ describe("CampaignInvitesService contact visibility in invite lists", () => {
 
     const result = await service.findByPhotographer("photo-1");
 
-    expect(result[0].brandId.email).toBeUndefined();
-    expect(result[0].brandId.phoneNumber).toBeUndefined();
+    expect(result[0].brandId.email).toBe("brand@example.com");
+    expect(result[0].brandId.phoneNumber).toBe("9999999999");
+  });
+
+  it("applies universal unlock rule across collaboration types", async () => {
+    inviteModel.find.mockReturnValue({
+      populate: jest.fn().mockReturnValue({
+        populate: jest.fn().mockReturnValue({
+          lean: jest.fn().mockResolvedValue([
+            {
+              _id: "paid-accepted-unlocked",
+              influencerId: "inf-1",
+              unlocked: true,
+              status: "accepted",
+              campaignId: {
+                _id: "camp-paid",
+                status: "active",
+                campaignType: "paid_collab",
+                brandId: "brand-1",
+                venueAddress: "Road A",
+                venueGoogleMapUrl: "https://maps.example.com/a",
+              },
+              brandId: {
+                brandName: "Brand One",
+                email: "paid@example.com",
+                phoneNumber: "9000000001",
+              },
+            },
+            {
+              _id: "product-accepted-locked",
+              influencerId: "inf-1",
+              unlocked: false,
+              status: "accepted",
+              campaignId: {
+                _id: "camp-product",
+                status: "active",
+                campaignType: "product",
+                brandId: "brand-1",
+                venueAddress: "Road B",
+                venueGoogleMapUrl: "https://maps.example.com/b",
+              },
+              brandId: {
+                brandName: "Brand One",
+                email: "product@example.com",
+                phoneNumber: "9000000002",
+              },
+            },
+            {
+              _id: "invite-location-payment-confirmed",
+              influencerId: "inf-1",
+              unlocked: false,
+              status: "payment_confirmed",
+              campaignId: {
+                _id: "camp-location",
+                status: "active",
+                campaignType: "invite_location",
+                brandId: "brand-1",
+                venueAddress: "Road C",
+                venueGoogleMapUrl: "https://maps.example.com/c",
+              },
+              brandId: {
+                brandName: "Brand One",
+                email: "location@example.com",
+                phoneNumber: "9000000003",
+              },
+            },
+            {
+              _id: "studio-accepted-unlocked",
+              influencerId: "inf-1",
+              unlocked: true,
+              status: "accepted",
+              campaignId: {
+                _id: "camp-studio",
+                status: "active",
+                campaignType: "studio_collab",
+                brandId: "brand-1",
+                venueAddress: "Road D",
+                venueGoogleMapUrl: "https://maps.example.com/d",
+              },
+              brandId: {
+                brandName: "Brand One",
+                email: "studio@example.com",
+                phoneNumber: "9000000004",
+              },
+            },
+            {
+              _id: "event-accepted-locked",
+              influencerId: "inf-1",
+              unlocked: false,
+              status: "accepted",
+              campaignId: {
+                _id: "camp-event",
+                status: "active",
+                campaignType: "event_coverage",
+                brandId: "brand-1",
+                venueAddress: "Road E",
+                venueGoogleMapUrl: "https://maps.example.com/e",
+              },
+              brandId: {
+                brandName: "Brand One",
+                email: "event@example.com",
+                phoneNumber: "9000000005",
+              },
+            },
+          ]),
+        }),
+      }),
+    });
+
+    const result = await service.findByInfluencer("inf-1");
+    const byId = new Map(result.map((row: any) => [row._id, row]));
+
+    // accepted + unlocked => details visible
+    expect(byId.get("paid-accepted-unlocked")?.brandId?.email).toBe("paid@example.com");
+    expect(byId.get("paid-accepted-unlocked")?.campaignId?.venueAddress).toBe("Road A");
+
+    // accepted + locked => details hidden
+    expect(byId.get("product-accepted-locked")?.brandId?.email).toBeUndefined();
+    expect(byId.get("product-accepted-locked")?.campaignId?.venueAddress).toBeUndefined();
+
+    // payment_confirmed+ => details visible even if unlocked=false
+    expect(byId.get("invite-location-payment-confirmed")?.brandId?.email).toBe("location@example.com");
+    expect(byId.get("invite-location-payment-confirmed")?.campaignId?.venueAddress).toBe("Road C");
+
+    // same rule for additional collaboration types
+    expect(byId.get("studio-accepted-unlocked")?.brandId?.email).toBe("studio@example.com");
+    expect(byId.get("studio-accepted-unlocked")?.campaignId?.venueAddress).toBe("Road D");
+
+    expect(byId.get("event-accepted-locked")?.brandId?.email).toBeUndefined();
+    expect(byId.get("event-accepted-locked")?.campaignId?.venueAddress).toBeUndefined();
   });
 });
 

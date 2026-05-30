@@ -258,13 +258,49 @@ export class CampaignInvitesService {
   }
 
   private isInviteContactVisible(invite: any): boolean {
-    // Contact visibility requires both explicit unlock and payment confirmation.
-    return !!invite?.unlocked && this.isLocationDetailsPaymentConfirmed(invite);
+    const status = String(invite?.status || "").trim().toLowerCase();
+    const paymentConfirmedOrLater = new Set([
+      "payment_confirmed",
+      "working",
+      "submitted",
+      "completed",
+      "approved",
+      "disputed",
+    ]).has(status);
+    if (paymentConfirmedOrLater) return true;
+
+    // Universal rule across all plans/types:
+    // accepted + sender-unlocked OR payment_confirmed+
+    return !!invite?.unlocked && new Set([
+      "accepted",
+      "payment_confirmed",
+      "working",
+      "submitted",
+      "completed",
+      "approved",
+      "disputed",
+    ]).has(status);
   }
 
   private isLocationDetailsPaymentConfirmed(invite: any): boolean {
     const status = String(invite?.status || "").trim().toLowerCase();
+    const paymentConfirmedOrLater = new Set([
+      "payment_confirmed",
+      "working",
+      "submitted",
+      "completed",
+      "approved",
+      "disputed",
+    ]).has(status);
+
+    if (paymentConfirmedOrLater) return true;
+
+    // Universal rule across all plans/types:
+    // accepted + sender-unlocked OR payment_confirmed+
+    // to reveal exact venue/map details.
+    if (!invite?.unlocked) return false;
     return new Set([
+      "accepted",
       "payment_confirmed",
       "working",
       "submitted",
@@ -511,17 +547,19 @@ export class CampaignInvitesService {
     const caps = await this.plansService.getUserPlanCapabilities(brandId);
     const capFeatures = Array.isArray(caps?.features) ? caps.features : [];
     const capLimits = Array.isArray(caps?.limits) ? caps.limits : [];
+    const maxInvitesPerCampaign =
+      capLimits.find((l: any) => l.key === "maxInvitesPerCampaign")?.value ??
+      5;
     const canInviteUsers = capFeatures.some(
       (f: any) => String(f?.key || "") === "canInviteUsers" && !!f?.value,
     );
-    if (!canInviteUsers) {
+    const canInviteByLimit =
+      Number(maxInvitesPerCampaign) === -1 || Number(maxInvitesPerCampaign) > 0;
+    if (!canInviteUsers && !canInviteByLimit) {
       throw new BadRequestException(
         "Upgrade to Premium to send collaboration invites.",
       );
     }
-    const maxInvitesPerCampaign =
-      capLimits.find((l: any) => l.key === "maxInvitesPerCampaign")?.value ??
-      5;
     const maxInvitesPerMonthEntry = capLimits.find(
       (l: any) => l.key === "maxInvitesPerMonth",
     );
@@ -788,7 +826,16 @@ export class CampaignInvitesService {
       .trim()
       .toLowerCase();
     if (t === "reel_collab") return true;
-    return t === "paid_collab" && ownerType !== "photographer" && recipientRole === "influencer";
+    if (t === "paid_collab" && ownerType !== "photographer" && recipientRole === "influencer") return true;
+    // invite_location campaigns can configure per-content-type pricing in socialMedia.
+    if (t === "invite_location" && Array.isArray(campaign?.socialMedia)) {
+      return campaign.socialMedia.some(
+        (sm: any) =>
+          Array.isArray(sm?.contentTypes) &&
+          sm.contentTypes.some((ct: any) => ct?.enabled && Number(ct?.price || 0) > 0),
+      );
+    }
+    return false;
   }
 
   private resolveDeliverableOfferRupees(
@@ -1643,6 +1690,14 @@ export class CampaignInvitesService {
       if (effectivePlatform) invite.selectedPlatform = effectivePlatform;
       if (selectedContentType) invite.selectedContentType = selectedContentType;
       const isDeliverablePricing = this.isDeliverableBasedPricing(campaign, recipientRole);
+
+      // Validate content type BEFORE computing payout so the right error fires.
+      if (isDeliverablePricing && campaign?.socialMedia?.length && !selectedContentType) {
+        throw new BadRequestException(
+          "Please select the content type you will create before responding.",
+        );
+      }
+
       const offeredRupees = isDeliverablePricing
         ? this.resolveDeliverableOfferRupees(campaign, effectivePlatform, selectedContentType)
         : this.toRupeesFromPaise(Number(campaign?.pricePerInfluencer || 0));
@@ -1650,11 +1705,6 @@ export class CampaignInvitesService {
         ? this.toPaiseFromMaybeRupees(offeredRupees)
         : Number(campaign?.pricePerInfluencer || 0);
 
-      if (isDeliverablePricing && campaign?.socialMedia?.length && !selectedContentType) {
-        throw new BadRequestException(
-          "Please select the content type you will create before responding.",
-        );
-      }
       if (!offeredPaise || offeredPaise <= 0) {
         throw new BadRequestException("Offered payout is not configured for this invite.");
       }
