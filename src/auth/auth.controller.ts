@@ -260,15 +260,14 @@ export class AuthController {
   async forgotPassword(@Body() body: ForgotPasswordDto, @Res() res: Response) {
     try {
       await this.authService.forgotPassword(body.email);
-      // Always return the same response — never reveal whether the email exists.
-      return res.status(200).json({
-        message: "If that email is registered, a reset link has been sent.",
-      });
     } catch (err: any) {
-      return res
-        .status(400)
-        .json({ message: err.message || "Failed to send reset email." });
+      // Log server-side but never expose the reason to the client (OWASP)
+      console.error("[forgotPassword] Unhandled error:", err?.message || err);
     }
+    // Always return the same 200 — never reveal whether the email exists or send succeeded
+    return res.status(200).json({
+      message: "If that email is registered, a reset link has been sent.",
+    });
   }
 
   @Post("reset-password")

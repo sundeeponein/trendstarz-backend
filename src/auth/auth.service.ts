@@ -219,7 +219,8 @@ export class AuthService {
     ]);
     const user = adminUser || influencer || brand || photographer;
     if (!user) {
-      throw new Error("Email not found. Please enter a registered email.");
+      // Silently return — never reveal whether the email is registered (OWASP)
+      return;
     }
     // Generate a cryptographically secure reset token
     const resetToken = crypto.randomBytes(32).toString("hex");
@@ -245,6 +246,8 @@ export class AuthService {
       subject: "Reset your Trendstarz password",
       text,
       html,
+    }).catch((err) => {
+      console.error("[forgotPassword] Email send failed:", err?.message || err);
     });
   }
 
