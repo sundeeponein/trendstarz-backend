@@ -13,6 +13,7 @@ import { PaymentsPayoutsController } from "./payments-payouts.controller";
 import { PaymentsPayoutsService } from "./payments-payouts.service";
 import { PushModule } from "../push/push.module";
 import { NotificationsModule } from "../notifications/notifications.module";
+import { RazorpayService } from "../payment/razorpay.service";
 
 @Module({
   imports: [
@@ -45,7 +46,7 @@ import { NotificationsModule } from "../notifications/notifications.module";
     NotificationsModule,
   ],
   controllers: [PaymentsPayoutsController],
-  providers: [PaymentsPayoutsService],
+  providers: [PaymentsPayoutsService, RazorpayService],
   exports: [PaymentsPayoutsService],
 })
 export class PaymentsPayoutsModule {}

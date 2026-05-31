@@ -1,6 +1,7 @@
 import { Module } from "@nestjs/common";
 import { APP_GUARD } from "@nestjs/core";
 import { ThrottlerModule, ThrottlerGuard } from "@nestjs/throttler";
+import { ScheduleModule } from "@nestjs/schedule";
 import { DashboardController } from "./dashboard.controller";
 import { DashboardService } from "./dashboard.service";
 import { OtpModule } from "./otp/otp.module";
@@ -73,6 +74,7 @@ import { MonetizationModule } from "./monetization/monetization.module";
         limit: 60,  // 60 requests per minute (general)
       },
     ]),
+    ScheduleModule.forRoot(),
     MongooseModule.forRoot(process.env.MONGODB_URI as string),
     MongooseModule.forFeature([
       { name: "Category", schema: CategorySchema, collection: "categories" },

@@ -26,6 +26,11 @@ async function bootstrap() {
   }
 
   const server = express();
+  // Keep exact payload bytes for webhook signature verification.
+  server.use(
+    "/api/campaign-transactions/webhooks/razorpayx",
+    express.raw({ type: "application/json" }),
+  );
   const app = await NestFactory.create(AppModule, new ExpressAdapter(server));
   logMemory("after NestFactory.create");
 

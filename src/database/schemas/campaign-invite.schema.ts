@@ -62,6 +62,7 @@ export const CampaignInviteSchema = new Schema({
     responderId: { type: String },
   },
   acceptedAt: { type: Date },
+  completedAt: { type: Date },
   // Contact preference snapshot at acceptance time.
   // This keeps existing accepted invites stable even if profile preferences change later.
   acceptedContact: {

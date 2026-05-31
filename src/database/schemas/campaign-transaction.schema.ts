@@ -43,16 +43,20 @@ export const CampaignTransactionSchema = new Schema(
     recipientPayout: { type: Number, required: true },
 
     // ── Payment gateway (swap field value to switch provider; no schema change needed) ──
-    // MVP: manual_upi. Future: razorpay (auto-capture + escrow), stripe (international).
+    // MVP: manual_upi. Future: razorpay (auto-capture + escrow).
     gateway: {
       type: String,
-      enum: ["manual_upi", "razorpay", "stripe"],
+      enum: ["manual_upi", "razorpay"],
       default: "manual_upi",
       index: true,
     },
 
     // ── Brand collection (Phase 2: brand pays via UPI / QR) ──────────────────
     paymentBatchId: { type: String, index: true },
+    gatewayOrderId: { type: String, index: true },
+    gatewayPaymentId: { type: String, index: true },
+    gatewaySignature: { type: String },
+    gatewayVerifiedAt: { type: Date },
     utrNumber: { type: String },
     paymentProofUrl: { type: String },
     collectionStatus: {
@@ -67,6 +71,19 @@ export const CampaignTransactionSchema = new Schema(
     payoutUpiId: { type: String },
     payoutUtr: { type: String },
     payoutProofUrl: { type: String },
+    payoutGatewayProvider: {
+      type: String,
+      enum: ["manual_upi", "razorpayx"],
+      default: "manual_upi",
+      index: true,
+    },
+    payoutTransferId: { type: String, index: true },
+    payoutTransferStatus: { type: String, index: true },
+    payoutFailureReason: { type: String },
+    payoutRetryCount: { type: Number, default: 0 },
+    payoutLastRetryAt: { type: Date },
+    payoutInitiatedAt: { type: Date },
+    payoutSettledAt: { type: Date },
     payoutStatus: {
       type: String,
       // frozen = payment confirmed but dispute raised; admin must resolve before releasing
@@ -122,8 +139,20 @@ export interface CampaignTransaction extends Document {
   platformFee: number;
   payerTotal: number;
   recipientPayout: number;
-  gateway: "manual_upi" | "razorpay" | "stripe";
+  gateway: "manual_upi" | "razorpay";
   paymentBatchId?: string;
+  gatewayOrderId?: string;
+  gatewayPaymentId?: string;
+  gatewaySignature?: string;
+  gatewayVerifiedAt?: Date;
+  payoutGatewayProvider?: "manual_upi" | "razorpayx";
+  payoutTransferId?: string;
+  payoutTransferStatus?: string;
+  payoutFailureReason?: string;
+  payoutRetryCount?: number;
+  payoutLastRetryAt?: Date;
+  payoutInitiatedAt?: Date;
+  payoutSettledAt?: Date;
   collectionStatus: "awaiting_payment" | "proof_submitted" | "verified" | "failed";
   payoutStatus: "pending" | "processing" | "paid" | "skipped" | "frozen";
   workStatus: "pending" | "submitted" | "approved" | "disputed";

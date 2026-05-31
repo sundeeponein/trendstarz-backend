@@ -1,10 +1,12 @@
 import {
   BadRequestException,
   Injectable,
+  Logger,
   NotFoundException,
 } from "@nestjs/common";
 import { InjectModel } from "@nestjs/mongoose";
 import { Model } from "mongoose";
+import { Cron } from "@nestjs/schedule";
 import { sendAppEmail } from "../utils/app-email.service";
 import {
   paymentProofAdminTemplate,
@@ -15,6 +17,7 @@ import {
 } from "../email/templates/payment.templates";
 import { PushService } from "../push/push.service";
 import { NotificationsService } from "../notifications/notifications.service";
+import { RazorpayService } from "../payment/razorpay.service";
 
 type FeeSettings = {
   platformFeeEnabled: boolean;
@@ -23,6 +26,23 @@ type FeeSettings = {
 
 @Injectable()
 export class PaymentsPayoutsService {
+  private readonly logger = new Logger(PaymentsPayoutsService.name);
+  private static readonly PAYOUT_RELEASE_MIN_HOURS = Math.max(
+    Number(process.env.PAYOUT_RELEASE_MIN_HOURS || 24),
+    0,
+  );
+  private static readonly AUTO_PAYOUT_ENABLED =
+    String(process.env.AUTO_PAYOUT_ENABLED || "false").toLowerCase() ===
+    "true";
+  private static readonly AUTO_PAYOUT_RETRY_LIMIT = Math.max(
+    Number(process.env.AUTO_PAYOUT_RETRY_LIMIT || 3),
+    0,
+  );
+  private static readonly AUTO_PAYOUT_RETRY_BACKOFF_MINUTES = Math.max(
+    Number(process.env.AUTO_PAYOUT_RETRY_BACKOFF_MINUTES || 20),
+    1,
+  );
+
   constructor(
     @InjectModel("Campaign") private readonly campaignModel: Model<any>,
     @InjectModel("CampaignInvite") private readonly inviteModel: Model<any>,
@@ -32,6 +52,7 @@ export class PaymentsPayoutsService {
     @InjectModel("Brand") private readonly brandModel: Model<any>,
     @InjectModel("Influencer") private readonly influencerModel: Model<any>,
     @InjectModel("Photographer") private readonly photographerModel: Model<any>,
+    private readonly razorpayService: RazorpayService,
     private readonly pushService: PushService,
     private readonly notificationsService: NotificationsService,
   ) {}
@@ -125,6 +146,329 @@ export class PaymentsPayoutsService {
     if (!brandUsername || String(campaign.brandId) !== brandUsername) {
       throw new BadRequestException("Not your campaign");
     }
+  }
+
+  private resolveCompletionTimestamp(invite: any): Date | null {
+    const raw = invite?.completedAt || invite?.updatedAt;
+    if (!raw) return null;
+    const dt = new Date(raw);
+    if (Number.isNaN(dt.getTime())) return null;
+    return dt;
+  }
+
+  private async getRecipientPayoutContact(tx: any): Promise<{
+    name: string;
+    upiId: string;
+    role: "brand" | "influencer" | "photographer";
+  } | null> {
+    const role = String(tx?.recipientRole || "").toLowerCase();
+    const recipientId = String(tx?.recipientId || "");
+    if (!recipientId) return null;
+
+    if (role === "brand") {
+      const brand: any = await this.brandModel
+        .findById(recipientId)
+        .select("brandName payout")
+        .lean();
+      if (!brand) return null;
+      return {
+        name: String(brand?.brandName || "Brand Recipient"),
+        upiId: String(brand?.payout?.upiId || "").trim(),
+        role: "brand",
+      };
+    }
+
+    if (role === "photographer") {
+      const photographer: any = await this.photographerModel
+        .findById(recipientId)
+        .select("name payout")
+        .lean();
+      if (!photographer) return null;
+      return {
+        name: String(photographer?.name || "Photographer"),
+        upiId: String(photographer?.payout?.upiId || "").trim(),
+        role: "photographer",
+      };
+    }
+
+    const influencer: any = await this.influencerModel
+      .findById(recipientId)
+      .select("name payout")
+      .lean();
+    if (!influencer) return null;
+    return {
+      name: String(influencer?.name || "Influencer"),
+      upiId: String(influencer?.payout?.upiId || "").trim(),
+      role: "influencer",
+    };
+  }
+
+  private async getInvitePayoutEligibility(
+    tx: any,
+  ): Promise<{ eligible: boolean; reason?: string }> {
+    if (!tx?.inviteId) {
+      return { eligible: true };
+    }
+
+    const invite: any = await this.inviteModel
+      .findById(tx.inviteId)
+      .select("status completedAt updatedAt")
+      .lean();
+    const inviteStatus = String(invite?.status || "").toLowerCase();
+    if (!new Set(["completed", "approved"]).has(inviteStatus)) {
+      return {
+        eligible: false,
+        reason: "Invite not completed yet",
+      };
+    }
+
+    const completedAt = this.resolveCompletionTimestamp(invite);
+    if (!completedAt) {
+      return {
+        eligible: false,
+        reason: "Invite completion timestamp missing",
+      };
+    }
+
+    const minMs =
+      completedAt.getTime() +
+      PaymentsPayoutsService.PAYOUT_RELEASE_MIN_HOURS * 60 * 60 * 1000;
+    if (Date.now() < minMs) {
+      return {
+        eligible: false,
+        reason: `Payout lock active until ${new Date(minMs).toUTCString()}`,
+      };
+    }
+
+    return { eligible: true };
+  }
+
+  private shouldRetryGatewayPayout(tx: any): {
+    allow: boolean;
+    reason?: string;
+  } {
+    const retries = Math.max(Number(tx?.payoutRetryCount || 0), 0);
+    if (retries >= PaymentsPayoutsService.AUTO_PAYOUT_RETRY_LIMIT) {
+      return {
+        allow: false,
+        reason: `Retry limit reached (${PaymentsPayoutsService.AUTO_PAYOUT_RETRY_LIMIT})`,
+      };
+    }
+
+    const lastRetry = tx?.payoutLastRetryAt ? new Date(tx.payoutLastRetryAt) : null;
+    if (lastRetry && !Number.isNaN(lastRetry.getTime())) {
+      const nextAllowedMs =
+        lastRetry.getTime() +
+        PaymentsPayoutsService.AUTO_PAYOUT_RETRY_BACKOFF_MINUTES * 60 * 1000;
+      if (Date.now() < nextAllowedMs) {
+        return {
+          allow: false,
+          reason: `Retry backoff active until ${new Date(nextAllowedMs).toUTCString()}`,
+        };
+      }
+    }
+
+    return { allow: true };
+  }
+
+  private extractRazorpayXPayoutEntity(payload: any): any | null {
+    return (
+      payload?.payload?.payout?.entity ||
+      payload?.payload?.payout?.item ||
+      payload?.payload?.payout ||
+      null
+    );
+  }
+
+  private mapGatewayPayoutState(statusRaw: string):
+    | "processed"
+    | "failed"
+    | "in_progress"
+    | "ignored" {
+    const status = String(statusRaw || "").toLowerCase();
+    if (status === "processed") return "processed";
+    if (["failed", "reversed", "rejected", "cancelled"].includes(status)) {
+      return "failed";
+    }
+    if (["pending", "queued", "processing"].includes(status)) {
+      return "in_progress";
+    }
+    return "ignored";
+  }
+
+  async handleRazorpayXWebhook(rawBody: Buffer, signature: string) {
+    const valid = this.razorpayService.verifyWebhookSignature(rawBody, signature);
+    if (!valid) {
+      throw new BadRequestException("Invalid RazorpayX webhook signature");
+    }
+
+    let payload: any = null;
+    try {
+      payload = JSON.parse(rawBody.toString("utf8") || "{}");
+    } catch {
+      throw new BadRequestException("Malformed RazorpayX webhook payload");
+    }
+
+    const event = String(payload?.event || "");
+    const entity = this.extractRazorpayXPayoutEntity(payload);
+    const payoutId = String(entity?.id || "").trim();
+    if (!payoutId) {
+      return {
+        success: true,
+        message: "Webhook accepted (no payout id)",
+        ignored: true,
+      };
+    }
+
+    const tx = await this.transactionModel.findOne({ payoutTransferId: payoutId });
+    if (!tx) {
+      return {
+        success: true,
+        message: `Webhook accepted (transaction not found for payout ${payoutId})`,
+        ignored: true,
+      };
+    }
+
+    const gatewayStatus = String(entity?.status || "").toLowerCase();
+    const state = this.mapGatewayPayoutState(gatewayStatus);
+
+    tx.payoutGatewayProvider = "razorpayx";
+    tx.payoutTransferStatus = gatewayStatus || event || "unknown";
+    tx.payoutLastRetryAt = new Date();
+    if (entity?.utr) tx.payoutUtr = String(entity.utr);
+
+    if (state === "processed") {
+      tx.payoutStatus = "paid";
+      tx.paidOutAt = tx.paidOutAt || new Date();
+      tx.payoutSettledAt = new Date();
+      tx.payoutFailureReason = "";
+      tx.payoutRetryCount = 0;
+    } else if (state === "failed") {
+      tx.payoutStatus = "pending";
+      tx.payoutFailureReason =
+        String(entity?.status_details?.description || "").trim() ||
+        String(entity?.failure_reason || "").trim() ||
+        `Gateway event: ${event || gatewayStatus || "failed"}`;
+      tx.payoutRetryCount = Math.max(Number(tx.payoutRetryCount || 0), 0) + 1;
+    } else if (state === "in_progress") {
+      tx.payoutStatus = "processing";
+      tx.payoutFailureReason = "";
+    }
+
+    await tx.save();
+    return {
+      success: true,
+      message: "Webhook processed",
+      payoutId,
+      event,
+      transactionId: String(tx._id),
+      payoutStatus: tx.payoutStatus,
+      payoutTransferStatus: tx.payoutTransferStatus,
+    };
+  }
+
+  private async upsertCampaignPaymentTransactions(
+    campaign: any,
+    payerId: string,
+    calc: any,
+    paymentBatchId: string,
+    mode: "manual_proof" | "gateway_order",
+    payload?: {
+      gateway?: "manual_upi" | "razorpay";
+      gatewayOrderId?: string;
+      utrNumber?: string;
+      paymentProofUrl?: string;
+    },
+  ): Promise<any[]> {
+    const acceptedInvites = await this.inviteModel
+      .find({ _id: { $in: calc.acceptedInviteIds } })
+      .lean();
+
+    const saved: any[] = [];
+    for (const invite of acceptedInvites) {
+      const inviteAgreedAmount = Number(
+        invite?.agreedAmountPaise || calc.pricePerInfluencer || 0,
+      );
+      if (!inviteAgreedAmount || inviteAgreedAmount <= 0) {
+        throw new BadRequestException(
+          `Invite ${String(invite?._id?.toString() ?? "")} has no valid agreed payout amount.`,
+        );
+      }
+      const inviteFee = calc.platformFeeEnabled
+        ? this.roundPercent(
+            inviteAgreedAmount,
+            Number(calc.platformFeePercent || 0),
+          )
+        : 0;
+      const invitePayerTotal =
+        calc.campaignType === "pay_to_join"
+          ? inviteAgreedAmount
+          : inviteAgreedAmount + inviteFee;
+      const inviteRecipientPayout =
+        calc.campaignType === "pay_to_join"
+          ? Math.max(inviteAgreedAmount - inviteFee, 0)
+          : inviteAgreedAmount;
+      const influencerId = String(invite.influencerId);
+      const inviteRecipientRole =
+        String(invite?.recipientRole || "")
+          .trim()
+          .toLowerCase() === "photographer"
+          ? "photographer"
+          : "influencer";
+      const recipientId =
+        calc.campaignType === "pay_to_join"
+          ? String(campaign.brandId)
+          : influencerId;
+
+      const existing = await this.transactionModel.findOne({
+        campaignId: String(campaign._id || ""),
+        inviteId: invite._id,
+        payerId,
+      });
+
+      const txData: any = {
+        transactionType:
+          calc.campaignType === "pay_to_join" ? "pay_to_join" : "paid_collab",
+        direction:
+          calc.campaignType === "pay_to_join"
+            ? "influencer_to_brand"
+            : "brand_to_influencer",
+        campaignId: String(campaign._id || ""),
+        inviteId: invite._id,
+        payerId,
+        payerRole:
+          calc.campaignType === "pay_to_join" ? inviteRecipientRole : "brand",
+        recipientId,
+        recipientRole:
+          calc.campaignType === "pay_to_join" ? "brand" : inviteRecipientRole,
+        agreedAmount: inviteAgreedAmount,
+        platformFee: inviteFee,
+        payerTotal: invitePayerTotal,
+        recipientPayout: inviteRecipientPayout,
+        paymentBatchId,
+        gateway: payload?.gateway || "manual_upi",
+      };
+
+      if (mode === "manual_proof") {
+        txData.utrNumber = payload?.utrNumber || "";
+        txData.paymentProofUrl = payload?.paymentProofUrl || undefined;
+        txData.collectionStatus = "proof_submitted";
+      } else {
+        txData.gatewayOrderId = payload?.gatewayOrderId || paymentBatchId;
+        txData.utrNumber = undefined;
+        txData.paymentProofUrl = undefined;
+        txData.collectionStatus = "awaiting_payment";
+      }
+
+      if (existing) {
+        Object.assign(existing, txData);
+        saved.push(await existing.save());
+      } else {
+        saved.push(await this.transactionModel.create(txData));
+      }
+    }
+
+    return saved;
   }
 
   async calculatePayment(campaignId: string, payerId: string) {
@@ -246,90 +590,20 @@ export class PaymentsPayoutsService {
     if (!calc.acceptedCount) {
       throw new BadRequestException("No accepted recipients found for payment");
     }
-
-    const acceptedInvites = await this.inviteModel
-      .find({ _id: { $in: calc.acceptedInviteIds } })
-      .lean();
-
     const paymentBatchId = `batch_${campaignId}_${Date.now()}`;
 
-    const saved: any[] = [];
-
-    for (let i = 0; i < acceptedInvites.length; i++) {
-      const invite = acceptedInvites[i];
-      const inviteAgreedAmount = Number(
-        invite?.agreedAmountPaise || calc.pricePerInfluencer || 0,
-      );
-      if (!inviteAgreedAmount || inviteAgreedAmount <= 0) {
-        throw new BadRequestException(
-          `Invite ${String(invite?._id?.toString() ?? "")} has no valid agreed payout amount.`,
-        );
-      }
-      const inviteFee = calc.platformFeeEnabled
-        ? this.roundPercent(
-            inviteAgreedAmount,
-            Number(calc.platformFeePercent || 0),
-          )
-        : 0;
-      const invitePayerTotal =
-        calc.campaignType === "pay_to_join"
-          ? inviteAgreedAmount
-          : inviteAgreedAmount + inviteFee;
-      const inviteRecipientPayout =
-        calc.campaignType === "pay_to_join"
-          ? Math.max(inviteAgreedAmount - inviteFee, 0)
-          : inviteAgreedAmount;
-      const influencerId = String(invite.influencerId);
-      const inviteRecipientRole =
-        String(invite?.recipientRole || "")
-          .trim()
-          .toLowerCase() === "photographer"
-          ? "photographer"
-          : "influencer";
-      const recipientId =
-        calc.campaignType === "pay_to_join"
-          ? String(campaign.brandId)
-          : influencerId;
-
-      const existing = await this.transactionModel.findOne({
-        campaignId,
-        inviteId: invite._id,
-        payerId,
-      });
-
-      const txData = {
-        transactionType:
-          calc.campaignType === "pay_to_join" ? "pay_to_join" : "paid_collab",
-        direction:
-          calc.campaignType === "pay_to_join"
-            ? "influencer_to_brand"
-            : "brand_to_influencer",
-        campaignId,
-        inviteId: invite._id,
-        payerId,
-        payerRole:
-          calc.campaignType === "pay_to_join" ? inviteRecipientRole : "brand",
-        recipientId,
-        recipientRole:
-          calc.campaignType === "pay_to_join" ? "brand" : inviteRecipientRole,
-        agreedAmount: inviteAgreedAmount,
-        platformFee: inviteFee,
-        payerTotal: invitePayerTotal,
-        recipientPayout: inviteRecipientPayout,
-        paymentBatchId,
+    const saved = await this.upsertCampaignPaymentTransactions(
+      campaign,
+      payerId,
+      calc,
+      paymentBatchId,
+      "manual_proof",
+      {
+        gateway: "manual_upi",
         utrNumber,
-        paymentProofUrl: body.paymentProofUrl || undefined,
-        collectionStatus: "proof_submitted",
-      };
-
-      if (existing) {
-        Object.assign(existing, txData);
-        saved.push(await existing.save());
-      } else {
-        const created = await this.transactionModel.create(txData);
-        saved.push(created);
-      }
-    }
+        paymentProofUrl: body.paymentProofUrl,
+      },
+    );
 
     // Fire-and-forget admin alert
     const adminEmail = process.env.ADMIN_EMAIL || "support@trendstarz.in";
@@ -359,6 +633,101 @@ export class PaymentsPayoutsService {
     };
   }
 
+  async createRazorpayOrderForCampaign(campaignId: string, payerId: string) {
+    const campaign: any = await this.campaignModel.findById(campaignId).lean();
+    if (!campaign) throw new NotFoundException("Campaign not found");
+    await this.assertCampaignOwner(campaign, payerId);
+
+    const calc = await this.calculatePayment(campaignId, payerId);
+    if (!calc.acceptedCount) {
+      throw new BadRequestException("No accepted recipients found for payment");
+    }
+
+    const amountPaise = Number(calc.payerTotal || 0);
+    if (!Number.isFinite(amountPaise) || amountPaise <= 0) {
+      throw new BadRequestException("Invalid campaign payable amount");
+    }
+
+    const order = await this.razorpayService.createOrder(amountPaise, {
+      userId: payerId,
+      premiumDuration: "1m",
+    });
+
+    const saved = await this.upsertCampaignPaymentTransactions(
+      campaign,
+      payerId,
+      calc,
+      order.orderId,
+      "gateway_order",
+      {
+        gateway: "razorpay",
+        gatewayOrderId: order.orderId,
+      },
+    );
+
+    return {
+      success: true,
+      order,
+      count: saved.length,
+      transactions: saved,
+    };
+  }
+
+  async verifyRazorpayCampaignPayment(
+    campaignId: string,
+    payerId: string,
+    body: { orderId: string; paymentId: string; signature: string },
+  ) {
+    const orderId = String(body?.orderId || "").trim();
+    const paymentId = String(body?.paymentId || "").trim();
+    const signature = String(body?.signature || "").trim();
+    if (!orderId || !paymentId || !signature) {
+      throw new BadRequestException("orderId, paymentId and signature are required");
+    }
+
+    const campaign: any = await this.campaignModel.findById(campaignId).lean();
+    if (!campaign) throw new NotFoundException("Campaign not found");
+    await this.assertCampaignOwner(campaign, payerId);
+
+    const valid = this.razorpayService.verifySignature(
+      orderId,
+      paymentId,
+      signature,
+    );
+    if (!valid) {
+      throw new BadRequestException("Invalid Razorpay payment signature");
+    }
+
+    const txs = await this.transactionModel.find({
+      campaignId,
+      payerId,
+      paymentBatchId: orderId,
+      gateway: "razorpay",
+    });
+    if (!Array.isArray(txs) || !txs.length) {
+      throw new NotFoundException("No Razorpay campaign transactions found for this order");
+    }
+
+    const results: any[] = [];
+    for (const tx of txs) {
+      tx.gatewayOrderId = orderId;
+      tx.gatewayPaymentId = paymentId;
+      tx.gatewaySignature = signature;
+      tx.gatewayVerifiedAt = new Date();
+      await tx.save();
+
+      const verified = await this.verifyCollectionById(String(tx._id), "Razorpay auto-verified", true);
+      results.push(verified?.transaction || tx);
+    }
+
+    return {
+      success: true,
+      message: "Razorpay payment verified and campaign collection marked as verified.",
+      count: results.length,
+      transactions: results,
+    };
+  }
+
   async listForAdmin(status?: string) {
     const filter: any = {};
     if (status === "awaiting") filter.collectionStatus = "awaiting_payment";
@@ -380,7 +749,7 @@ export class PaymentsPayoutsService {
       ? await this.inviteModel
           .find({ _id: { $in: Array.from(inviteIds) } })
           .select(
-            "status unlocked unlockType agreedAmount agreedAmountPaise counterOffer acceptedAt",
+            "status unlocked unlockType agreedAmount agreedAmountPaise counterOffer acceptedAt completedAt updatedAt",
           )
           .lean()
       : [];
@@ -534,6 +903,8 @@ export class PaymentsPayoutsService {
               ),
               counterResolvedAt: inv?.counterOffer?.resolvedAt || null,
               acceptedAt: inv?.acceptedAt || null,
+              completedAt: inv?.completedAt || null,
+              updatedAt: inv?.updatedAt || null,
             };
           })()
         : null,
@@ -577,11 +948,109 @@ export class PaymentsPayoutsService {
     };
   }
 
+  getGatewayReadiness() {
+    const hasRazorpayKeys = !!(
+      process.env.RAZORPAY_KEY_ID && process.env.RAZORPAY_KEY_SECRET
+    );
+    const hasRazorpayX = this.razorpayService.isPayoutsConfigured();
+    const autoPayoutEnabled =
+      String(process.env.AUTO_PAYOUT_ENABLED || "false").toLowerCase() ===
+      "true";
+
+    const missing: string[] = [];
+    if (!process.env.RAZORPAY_KEY_ID) missing.push("RAZORPAY_KEY_ID");
+    if (!process.env.RAZORPAY_KEY_SECRET) missing.push("RAZORPAY_KEY_SECRET");
+    if (!process.env.RAZORPAYX_KEY_ID && !process.env.RAZORPAY_KEY_ID) {
+      missing.push("RAZORPAYX_KEY_ID or RAZORPAY_KEY_ID");
+    }
+    if (!process.env.RAZORPAYX_KEY_SECRET && !process.env.RAZORPAY_KEY_SECRET) {
+      missing.push("RAZORPAYX_KEY_SECRET or RAZORPAY_KEY_SECRET");
+    }
+    if (!process.env.RAZORPAYX_ACCOUNT_NUMBER) {
+      missing.push("RAZORPAYX_ACCOUNT_NUMBER");
+    }
+
+    return {
+      success: true,
+      data: {
+        requiredAccounts: {
+          razorpayPaymentGateway:
+            "Required for subscription and campaign collection checkout",
+          razorpayX:
+            "Required for automated payout transfer to creator bank/UPI",
+        },
+        registrationSubscriptions: {
+          manual: {
+            enabled: true,
+            path: "/api/payment",
+            verification: "Admin approval in /admin/payments premium tab",
+          },
+          razorpay: {
+            enabled: hasRazorpayKeys,
+            path: "/api/monetization/subscriptions/order + /api/monetization/razorpay/verify",
+            requires: ["RAZORPAY_KEY_ID", "RAZORPAY_KEY_SECRET"],
+          },
+        },
+        collaborationCampaignPayments: {
+          collectionPayIn: {
+            manual: {
+              enabled: true,
+              path: "/api/campaign-transactions/:campaignId/submit-proof",
+            },
+            razorpay: {
+              enabled: hasRazorpayKeys,
+              path: "/api/campaign-transactions/:campaignId/razorpay/order + /api/campaign-transactions/:campaignId/razorpay/verify",
+              requires: ["RAZORPAY_KEY_ID", "RAZORPAY_KEY_SECRET"],
+            },
+          },
+          payoutTransferOut: {
+            manual: {
+              enabled: true,
+              path: "/api/campaign-transactions/:id/mark-paid",
+            },
+            razorpayAuto: {
+              enabled: autoPayoutEnabled && hasRazorpayX,
+              path: "/api/campaign-transactions/admin/auto-payout/run + cron + /api/campaign-transactions/webhooks/razorpayx",
+              requires: [
+                "AUTO_PAYOUT_ENABLED=true",
+                "RAZORPAYX_KEY_ID",
+                "RAZORPAYX_KEY_SECRET",
+                "RAZORPAYX_ACCOUNT_NUMBER",
+                "RAZORPAYX_WEBHOOK_SECRET",
+              ],
+            },
+          },
+        },
+        autoPayout: {
+          enabled: autoPayoutEnabled,
+          gatewayConfigured: hasRazorpayX,
+          cron: process.env.AUTO_PAYOUT_CRON || "0 */10 * * * *",
+          retryLimit: Number(process.env.AUTO_PAYOUT_RETRY_LIMIT || 3),
+          retryBackoffMinutes: Number(
+            process.env.AUTO_PAYOUT_RETRY_BACKOFF_MINUTES || 20,
+          ),
+        },
+        missingConfig: missing,
+      },
+    };
+  }
+
   async verifyCollection(transactionId: string, notes?: string) {
+    return this.verifyCollectionById(transactionId, notes, false);
+  }
+
+  private async verifyCollectionById(
+    transactionId: string,
+    notes?: string,
+    allowGatewayVerification = false,
+  ) {
     const tx = await this.transactionModel.findById(transactionId);
     if (!tx) throw new NotFoundException("Transaction not found");
 
-    if (String(tx.gateway || "manual_upi") !== "manual_upi") {
+    if (
+      !allowGatewayVerification &&
+      String(tx.gateway || "manual_upi") !== "manual_upi"
+    ) {
       throw new BadRequestException(
         "This transaction is configured for auto settlement via payment gateway. Manual mark-paid is disabled.",
       );
@@ -801,25 +1270,12 @@ export class PaymentsPayoutsService {
     const tx = await this.transactionModel.findById(transactionId);
     if (!tx) throw new NotFoundException("Transaction not found");
 
-    if (tx.inviteId) {
-      const invite: any = await this.inviteModel
-        .findById(tx.inviteId)
-        .select("status")
-        .lean();
-      const inviteStatus = String(invite?.status || "").toLowerCase();
-      const payoutEligibleStatuses = new Set([
-        "accepted",
-        "payment_confirmed",
-        "working",
-        "submitted",
-        "completed",
-        "approved",
-      ]);
-      if (!payoutEligibleStatuses.has(inviteStatus)) {
-        throw new BadRequestException(
-          "Invite must be accepted or progressed before payout release.",
-        );
-      }
+    const eligibility = await this.getInvitePayoutEligibility(tx);
+    if (!eligibility.eligible) {
+      throw new BadRequestException(
+        eligibility.reason ||
+          "Payout can be released only after campaign/collaboration is marked completed.",
+      );
     }
 
     if (tx.collectionStatus !== "verified") {
@@ -834,10 +1290,15 @@ export class PaymentsPayoutsService {
     }
     tx.payoutStatus = "paid";
     tx.paidOutAt = new Date();
+    tx.payoutSettledAt = tx.paidOutAt;
     tx.payoutUtr = body.payoutUtr;
     if (body.payoutProofUrl) tx.payoutProofUrl = body.payoutProofUrl;
     if (body.payoutUpiId) tx.payoutUpiId = body.payoutUpiId;
     if (body.notes) tx.adminNotes = body.notes;
+    tx.payoutGatewayProvider = "manual_upi";
+    tx.payoutTransferStatus = "processed";
+    tx.payoutInitiatedAt = tx.payoutInitiatedAt || new Date();
+    tx.payoutFailureReason = "";
     await tx.save();
 
     // Fire-and-forget: notify influencer their payout has been sent
@@ -880,6 +1341,204 @@ export class PaymentsPayoutsService {
     }
 
     return { success: true, transaction: tx };
+  }
+
+  async runAutoPayoutSweep(triggeredByUserId: string) {
+    if (!PaymentsPayoutsService.AUTO_PAYOUT_ENABLED) {
+      return {
+        success: false,
+        message:
+          "Auto payout is disabled. Set AUTO_PAYOUT_ENABLED=true to enable gateway transfers.",
+        processed: 0,
+        queued: 0,
+        skipped: 0,
+        failed: 0,
+      };
+    }
+
+    if (!this.razorpayService.isPayoutsConfigured()) {
+      throw new BadRequestException(
+        "RazorpayX payout credentials are missing. Configure RAZORPAYX_KEY_ID, RAZORPAYX_KEY_SECRET, and RAZORPAYX_ACCOUNT_NUMBER.",
+      );
+    }
+
+    const candidates = await this.transactionModel
+      .find({
+        collectionStatus: "verified",
+        payoutStatus: { $in: ["pending", "processing"] },
+        disputeStatus: { $ne: "open" },
+        gateway: "razorpay",
+      })
+      .sort({ createdAt: 1 })
+      .limit(200);
+
+    let processed = 0;
+    let queued = 0;
+    let skipped = 0;
+    let failed = 0;
+    const details: Array<{ txId: string; status: string; message: string }> = [];
+
+    for (const tx of candidates) {
+      const txId = String(tx._id);
+
+      const transferStatus = String(tx?.payoutTransferStatus || "").toLowerCase();
+      if (["queued", "pending", "processing"].includes(transferStatus)) {
+        skipped += 1;
+        details.push({
+          txId,
+          status: "skipped",
+          message: "Existing gateway payout is already in progress",
+        });
+        continue;
+      }
+
+      if (transferStatus === "failed") {
+        const retry = this.shouldRetryGatewayPayout(tx);
+        if (!retry.allow) {
+          skipped += 1;
+          details.push({
+            txId,
+            status: "skipped",
+            message: retry.reason || "Retry blocked",
+          });
+          continue;
+        }
+      }
+
+      const eligibility = await this.getInvitePayoutEligibility(tx);
+      if (!eligibility.eligible) {
+        skipped += 1;
+        details.push({
+          txId,
+          status: "skipped",
+          message: eligibility.reason || "Not eligible for payout yet",
+        });
+        continue;
+      }
+
+      if (Number(tx.recipientPayout || 0) <= 0) {
+        skipped += 1;
+        details.push({
+          txId,
+          status: "skipped",
+          message: "Recipient payout amount is zero",
+        });
+        continue;
+      }
+
+      const recipient = await this.getRecipientPayoutContact(tx);
+      if (!recipient?.upiId) {
+        skipped += 1;
+        details.push({
+          txId,
+          status: "skipped",
+          message: "Recipient UPI ID is missing",
+        });
+        continue;
+      }
+
+      try {
+        const referenceId = `tsz_${txId.slice(-8)}_${Date.now()}`;
+        const payout = await this.razorpayService.createPayoutByUpi({
+          amountPaise: Number(tx.recipientPayout || 0),
+          recipientName: recipient.name,
+          recipientUpiId: recipient.upiId,
+          referenceId,
+          narration: "TrendStarz payout",
+          notes: {
+            txId,
+            recipientRole: recipient.role,
+            initiatedBy: String(triggeredByUserId || "system"),
+          },
+        });
+
+        tx.payoutGatewayProvider = "razorpayx";
+        tx.payoutTransferId = payout.payoutId;
+        tx.payoutTransferStatus = payout.status;
+        tx.payoutInitiatedAt = new Date();
+        tx.payoutUpiId = tx.payoutUpiId || recipient.upiId;
+        tx.payoutFailureReason = "";
+        tx.payoutRetryCount = 0;
+        tx.payoutLastRetryAt = new Date();
+
+        const status = String(payout.status || "").toLowerCase();
+        if (status === "processed") {
+          tx.payoutStatus = "paid";
+          tx.paidOutAt = new Date();
+          tx.payoutSettledAt = tx.paidOutAt;
+          if (payout.utr) tx.payoutUtr = payout.utr;
+          processed += 1;
+          details.push({
+            txId,
+            status: "processed",
+            message: `Gateway payout processed (${payout.payoutId})`,
+          });
+        } else if (["queued", "pending", "processing"].includes(status)) {
+          tx.payoutStatus = "processing";
+          queued += 1;
+          details.push({
+            txId,
+            status: "queued",
+            message: `Gateway payout queued (${payout.payoutId})`,
+          });
+        } else {
+          tx.payoutStatus = "pending";
+          tx.payoutFailureReason = `Gateway status: ${payout.status || "unknown"}`;
+          failed += 1;
+          details.push({
+            txId,
+            status: "failed",
+            message: tx.payoutFailureReason,
+          });
+        }
+
+        await tx.save();
+      } catch (error: any) {
+        tx.payoutStatus = "pending";
+        tx.payoutGatewayProvider = "razorpayx";
+        tx.payoutFailureReason =
+          error?.response?.data?.error?.description ||
+          error?.message ||
+          "Gateway payout failed";
+        tx.payoutTransferStatus = "failed";
+        tx.payoutRetryCount = Math.max(Number(tx.payoutRetryCount || 0), 0) + 1;
+        tx.payoutLastRetryAt = new Date();
+        await tx.save();
+
+        failed += 1;
+        details.push({
+          txId,
+          status: "failed",
+          message: tx.payoutFailureReason,
+        });
+      }
+    }
+
+    return {
+      success: true,
+      message: "Auto payout sweep completed",
+      processed,
+      queued,
+      skipped,
+      failed,
+      totalCandidates: candidates.length,
+      details,
+    };
+  }
+
+  @Cron(process.env.AUTO_PAYOUT_CRON || "0 */10 * * * *")
+  async runAutoPayoutSweepCron() {
+    if (!PaymentsPayoutsService.AUTO_PAYOUT_ENABLED) return;
+    try {
+      const res = await this.runAutoPayoutSweep("system-cron");
+      this.logger.log(
+        `Auto payout cron completed: processed=${res?.processed || 0}, queued=${res?.queued || 0}, skipped=${res?.skipped || 0}, failed=${res?.failed || 0}`,
+      );
+    } catch (error: any) {
+      this.logger.error(
+        `Auto payout cron failed: ${error?.message || error}`,
+      );
+    }
   }
 
   async listMine(userId: string, role: string) {

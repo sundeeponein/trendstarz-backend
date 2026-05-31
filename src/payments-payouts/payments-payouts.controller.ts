@@ -2,6 +2,7 @@ import {
   Body,
   Controller,
   Get,
+  Headers,
   Param,
   Post,
   Query,
@@ -18,6 +19,20 @@ export class PaymentsPayoutsController {
   constructor(
     private readonly paymentsPayoutsService: PaymentsPayoutsService,
   ) {}
+
+  @Post("webhooks/razorpayx")
+  async handleRazorpayXWebhook(
+    @Req() req: any,
+    @Headers("x-razorpay-signature") signature: string,
+  ) {
+    const rawBody: Buffer = Buffer.isBuffer(req.body)
+      ? req.body
+      : Buffer.from(JSON.stringify(req.body || {}));
+    return this.paymentsPayoutsService.handleRazorpayXWebhook(
+      rawBody,
+      String(signature || ""),
+    );
+  }
 
   @UseGuards(JwtAuthGuard)
   @Post(":campaignId/calculate")
@@ -42,6 +57,34 @@ export class PaymentsPayoutsController {
     );
   }
 
+  @UseGuards(JwtAuthGuard)
+  @Post(":campaignId/razorpay/order")
+  async createRazorpayOrder(
+    @Param("campaignId") campaignId: string,
+    @Req() req: any,
+  ) {
+    const payerId = req.user?.userId;
+    return this.paymentsPayoutsService.createRazorpayOrderForCampaign(
+      campaignId,
+      payerId,
+    );
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Post(":campaignId/razorpay/verify")
+  async verifyRazorpayPayment(
+    @Param("campaignId") campaignId: string,
+    @Req() req: any,
+    @Body() body: { orderId: string; paymentId: string; signature: string },
+  ) {
+    const payerId = req.user?.userId;
+    return this.paymentsPayoutsService.verifyRazorpayCampaignPayment(
+      campaignId,
+      payerId,
+      body,
+    );
+  }
+
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Get()
   async list(@Query("status") status?: string) {
@@ -52,6 +95,12 @@ export class PaymentsPayoutsController {
   @Get("summary")
   async summary() {
     return this.paymentsPayoutsService.getAdminSummary();
+  }
+
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Get("admin/gateway-readiness")
+  async gatewayReadiness() {
+    return this.paymentsPayoutsService.getGatewayReadiness();
   }
 
   @UseGuards(JwtAuthGuard, RolesGuard)
@@ -79,6 +128,12 @@ export class PaymentsPayoutsController {
     },
   ) {
     return this.paymentsPayoutsService.markPayoutPaid(id, body);
+  }
+
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Post("admin/auto-payout/run")
+  async runAutoPayout(@Req() req: any) {
+    return this.paymentsPayoutsService.runAutoPayoutSweep(req.user?.userId);
   }
 
   @UseGuards(JwtAuthGuard)

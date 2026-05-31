@@ -112,6 +112,46 @@ DELETED_USER_MEDIA_RETENTION_DAYS=45
 - Stored media is purged according to retention settings to control storage usage.
 - Avoid running hard-delete scripts for deleted users unless you have a legal/compliance requirement.
 
+## Campaign payout automation (RazorpayX)
+
+Use these environment variables to enable automated payout transfers and webhook reconciliation.
+
+### Razorpay subscriptions and campaign pay-in
+
+- `RAZORPAY_KEY_ID`
+- `RAZORPAY_KEY_SECRET`
+
+Use `RAZORPAY_KEY_ID` in the frontend build as the public `razorpayKeyId` value.
+
+### RazorpayX automatic payouts
+
+- `AUTO_PAYOUT_ENABLED=true`
+- `AUTO_PAYOUT_CRON` (optional, default every 10 minutes)
+- `AUTO_PAYOUT_RETRY_LIMIT` (optional, default `3`)
+- `AUTO_PAYOUT_RETRY_BACKOFF_MINUTES` (optional, default `20`)
+- `RAZORPAYX_KEY_ID`
+- `RAZORPAYX_KEY_SECRET`
+- `RAZORPAYX_ACCOUNT_NUMBER`
+- `RAZORPAYX_WEBHOOK_SECRET` (or fallback `RAZORPAY_WEBHOOK_SECRET`)
+
+Webhook endpoint:
+
+- `POST /api/campaign-transactions/webhooks/razorpayx`
+
+Local webhook simulation helper:
+
+```bash
+WEBHOOK_SECRET=<your_webhook_secret> BASE_URL=http://localhost:3000 \
+npm run simulate:razorpayx:webhook -- --payoutId pout_test_001 --status processed
+```
+
+You can test failure/retry path too:
+
+```bash
+WEBHOOK_SECRET=<your_webhook_secret> BASE_URL=http://localhost:3000 \
+npm run simulate:razorpayx:webhook -- --payoutId pout_test_001 --status failed --failureReason "UPI handle invalid"
+```
+
 ### Admin cleanup preview (dry run)
 
 Use this admin-only endpoint to inspect eligibility before nightly cleanup runs.

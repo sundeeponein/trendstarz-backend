@@ -16,12 +16,19 @@ export class PaymentService {
     private readonly notificationsService: NotificationsService,
   ) {}
 
+  private subscriptionPurposeFilter() {
+    // Keep legacy rows (created before `purpose` existed) visible as subscription history.
+    return {
+      $or: [{ purpose: "subscription" }, { purpose: { $exists: false } }],
+    };
+  }
+
   /**
    * Get recent payments for a user (all statuses)
    */
   async getPaymentsByUser(userId: string, limit = 5) {
     const payments = await this.paymentModel
-      .find({ userId })
+      .find({ userId, ...this.subscriptionPurposeFilter() })
       .sort({ createdAt: -1 })
       .limit(limit)
       .lean();
@@ -176,7 +183,7 @@ export class PaymentService {
   async getPendingPayments(page = 1, limit = 10) {
     const skip = (page - 1) * limit;
     const payments = await this.paymentModel
-      .find({ status: "pending" })
+      .find({ status: "pending", ...this.subscriptionPurposeFilter() })
       .sort({ createdAt: -1 })
       .skip(skip)
       .limit(limit)
@@ -187,6 +194,7 @@ export class PaymentService {
 
     const total = await this.paymentModel.countDocuments({
       status: "pending",
+      ...this.subscriptionPurposeFilter(),
     });
 
     return {
@@ -221,7 +229,7 @@ export class PaymentService {
   ) {
     const skip = (page - 1) * limit;
     const payments = await this.paymentModel
-      .find({ status })
+      .find({ status, ...this.subscriptionPurposeFilter() })
       .sort({ createdAt: -1 })
       .skip(skip)
       .limit(limit)

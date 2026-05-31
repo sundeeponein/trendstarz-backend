@@ -19,6 +19,8 @@
     "test": "jest",
     "test:e2e": "jest --config ./test/jest-e2e.json",
     "smoke:collab-invites": "node smoke-collab-invites.js",
+    "simulate:razorpayx:webhook": "node scripts/simulate-razorpayx-webhook.js",
+    "check:gateway-readiness": "node scripts/check-gateway-readiness.js",
     "seeder": "node dist/run-seeder.js",
     "backfill:campaign-scope": "node cron/backfillCampaignScopeFields.js",
     "backfill:invite-due-dates": "node cron/backfillInviteDueDatesFromCampaignDeadline.js",

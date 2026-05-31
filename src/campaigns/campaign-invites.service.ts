@@ -497,6 +497,7 @@ export class CampaignInvitesService {
       await submission.save();
 
       invite.status = "completed";
+      invite.completedAt = new Date();
       await invite.save();
 
       const txs = await this.campaignTransactionModel.find({
@@ -2706,7 +2707,7 @@ export class CampaignInvitesService {
         now.getTime() < unlockAt.getTime()
       ) {
         throw new BadRequestException(
-          `Review period active. Completion confirmation unlocks in after 24 hours from submission. Unlocks at: ${unlockAt.toUTCString()}`,
+          `Review period active. Completion confirmation unlocks 24 hours after submission. Unlocks at: ${unlockAt.toUTCString()}`,
         );
       }
     }
@@ -2718,6 +2719,7 @@ export class CampaignInvitesService {
       await submission.save();
 
       invite.status = "completed";
+      invite.completedAt = new Date();
       await invite.save();
 
       const txs = await this.campaignTransactionModel.find({ inviteId });
@@ -2947,6 +2949,9 @@ export class CampaignInvitesService {
       ["completed", "withdrawn", "disputed"].includes(body.outcome)
     ) {
       invite.status = body.outcome;
+      if (body.outcome === "completed") {
+        invite.completedAt = new Date();
+      }
       if (body.outcome === "withdrawn" && !invite.withdrawnAt) {
         invite.withdrawnAt = new Date();
       }
