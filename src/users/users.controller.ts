@@ -178,8 +178,6 @@ export class UsersController {
   }
 
   @Get("influencers/username/:username")
-  @UseGuards(JwtAuthGuard, DailyUsageGuard)
-  @UsageLimit("profile_view", "dailyProfileViewLimit")
   async getInfluencerByUsername(
     @Param("username") username: string,
     @Req() req: Request,
