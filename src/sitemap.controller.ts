@@ -35,13 +35,14 @@ export class SitemapController {
   constructor(
     @InjectModel("Influencer") private influencerModel: Model<any>,
     @InjectModel("Brand") private brandModel: Model<any>,
+    @InjectModel("Photographer") private photographerModel: Model<any>,
   ) {}
 
   @Get("sitemap.xml")
   async getSitemap(@Res() res: Response) {
     const today = toDateStr(new Date());
 
-    const [influencers, brands] = await Promise.all([
+    const [influencers, brands, photographers] = await Promise.all([
       this.influencerModel
         .find({ status: "accepted" })
         .select("username updatedAt")
@@ -49,6 +50,10 @@ export class SitemapController {
       this.brandModel
         .find({})
         .select("brandUsername brandName updatedAt")
+        .lean(),
+      this.photographerModel
+        .find({ status: "accepted" })
+        .select("username updatedAt")
         .lean(),
     ]);
 
@@ -58,9 +63,12 @@ export class SitemapController {
       { loc: `${BASE_URL}/how-it-works`, priority: "0.8", changefreq: "monthly", lastmod: today },
       { loc: `${BASE_URL}/how-it-works/influencers`, priority: "0.8", changefreq: "monthly", lastmod: today },
       { loc: `${BASE_URL}/how-it-works/brands`, priority: "0.8", changefreq: "monthly", lastmod: today },
+      { loc: `${BASE_URL}/how-it-works/photographers`, priority: "0.8", changefreq: "monthly", lastmod: today },
       { loc: `${BASE_URL}/features`, priority: "0.8", changefreq: "monthly", lastmod: today },
+      { loc: `${BASE_URL}/features/photographers`, priority: "0.8", changefreq: "monthly", lastmod: today },
       { loc: `${BASE_URL}/register-influencer`, priority: "0.7", changefreq: "monthly", lastmod: today },
       { loc: `${BASE_URL}/register-brand`, priority: "0.7", changefreq: "monthly", lastmod: today },
+      { loc: `${BASE_URL}/register-photographer`, priority: "0.7", changefreq: "monthly", lastmod: today },
       { loc: `${BASE_URL}/contact`, priority: "0.5", changefreq: "monthly", lastmod: today },
       { loc: `${BASE_URL}/privacy-policy`, priority: "0.4", changefreq: "yearly", lastmod: today },
       { loc: `${BASE_URL}/terms-and-conditions`, priority: "0.4", changefreq: "yearly", lastmod: today },
@@ -88,7 +96,16 @@ export class SitemapController {
         };
       });
 
-    const allUrls = [...staticUrls, ...influencerUrls, ...brandUrls];
+    const photographerUrls = (photographers as any[])
+      .filter((p) => p.username)
+      .map((p) => ({
+        loc: `${BASE_URL}/photographer/${escapeXml(String(p.username))}`,
+        lastmod: toDateStr(p.updatedAt),
+        priority: "0.8",
+        changefreq: "weekly",
+      }));
+
+    const allUrls = [...staticUrls, ...influencerUrls, ...brandUrls, ...photographerUrls];
 
     const urlEntries = allUrls
       .map(
