@@ -12,6 +12,8 @@ import {
   resolveCampaignTypeConfigs,
 } from "../campaign-type-configs";
 import { getRequiredFields } from "./campaign-required-fields";
+import { sendAppEmail } from "../utils/app-email.service";
+import { openCampaignLiveTemplate } from "../email/templates/campaign.templates";
 
 const VALID_TRANSITIONS: Record<string, string[]> = {
   draft: ["pending", "pending_review", "active", "needs_changes"],
@@ -336,6 +338,7 @@ export class CampaignsService {
   private assertRequiredFieldsForCampaign(payload: any): void {
     const required = getRequiredFields({
       campaignType: String(payload?.campaignType || ""),
+      campaignMode: String(payload?.campaignMode || ""),
       ownerType: payload?.ownerType,
       inviteRecipientRole: payload?.inviteRecipientRole,
       productPaymentMode: payload?.productPaymentMode,
@@ -909,8 +912,157 @@ export class CampaignsService {
     // discriminator consistent across partial updates.
     normalized.logisticsType = this.deriveLogisticsType(mergedForValidation);
     this.assertRequiredFieldsForCampaign(mergedForValidation);
+    const previousStatus = campaign.status;
     Object.assign(campaign, normalized);
-    return campaign.save();
+    const saved = await campaign.save();
+
+    if (
+      previousStatus !== "active" &&
+      saved.status === "active" &&
+      saved.campaignMode === "tier_filtered_open"
+    ) {
+      this.notifyMatchingInfluencers(saved).catch(() => {});
+    }
+
+    return saved;
+  }
+
+  private async notifyMatchingInfluencers(campaign: any): Promise<void> {
+    const TIER_ORDER = [
+      "Starter", "Nano", "Micro", "Mid-Tier", "Macro", "Mega / Celebrity",
+    ];
+
+    const {
+      targetState,
+      targetDistrict,
+      venueState,
+      venueDistrict,
+      targetTiers,
+      minInfluencerTier,
+      platforms,
+      categories,
+      inviteRecipientRole,
+      title,
+      brandId,
+    } = campaign;
+
+    const isPhotographer = String(inviteRecipientRole || "influencer") === "photographer";
+    const campaignPlatforms: string[] = Array.isArray(platforms) ? platforms : [];
+    const campaignCategories: string[] = Array.isArray(categories) ? categories : [];
+    const allowedTiers: string[] = Array.isArray(targetTiers) ? targetTiers : [];
+
+    // Photographer campaigns use shoot venue location; influencer campaigns use targetState/District
+    const locationState: string = isPhotographer
+      ? (venueState || targetState || "")
+      : (targetState || "");
+    const locationDistrict: string = isPhotographer
+      ? (venueDistrict || targetDistrict || "")
+      : (targetDistrict || "");
+
+    // Skip only if there is truly nothing to filter on
+    const hasAnyFilter =
+      locationState ||
+      locationDistrict ||
+      allowedTiers.length ||
+      minInfluencerTier ||
+      campaignCategories.length ||
+      campaignPlatforms.length;
+    if (!hasAnyFilter) return;
+
+    // ── 1. Build DB-level query ──────────────────────────────────────────────
+    const baseQuery: Record<string, any> = {
+      isDeleted: { $ne: true },
+      email: { $exists: true, $ne: "" },
+    };
+
+    // Location filters (both optional)
+    if (locationState) baseQuery["location.state"] = locationState;
+    if (locationDistrict) baseQuery["location.district"] = locationDistrict;
+
+    if (isPhotographer) {
+      // Photographer campaigns: match on skills (e.g. "Fashion Photography")
+      if (campaignCategories.length) {
+        baseQuery.skills = { $in: campaignCategories };
+      }
+    } else {
+      // Influencer campaigns: match on content categories AND platform
+      if (campaignCategories.length) {
+        baseQuery.categories = { $in: campaignCategories };
+      }
+      if (campaignPlatforms.length) {
+        baseQuery.socialMedia = {
+          $elemMatch: { platform: { $in: campaignPlatforms } },
+        };
+      }
+    }
+
+    // ── 2. Query the right model ─────────────────────────────────────────────
+    const recipientModel = isPhotographer ? this.photographerModel : this.influencerModel;
+    const dashboardPath = isPhotographer
+      ? "/photographer-dashboard"
+      : "/influencer-dashboard/campaigns";
+
+    const candidates: any[] = await recipientModel
+      .find(baseQuery)
+      .select("name email socialMedia")
+      .limit(500)
+      .lean();
+
+    if (!candidates.length) return;
+
+    // ── 3. In-memory tier filter ─────────────────────────────────────────────
+    const minTierIdx = minInfluencerTier ? TIER_ORDER.indexOf(String(minInfluencerTier)) : -1;
+    const hasTierFilter = allowedTiers.length > 0 || minTierIdx >= 0;
+
+    const matched = hasTierFilter
+      ? candidates.filter((c) => {
+          const sm: any[] = c.socialMedia || [];
+          // For influencers: only check tiers on campaign-targeted platforms
+          // For photographers: check any social account (they're not platform-specific)
+          const relevant = (!isPhotographer && campaignPlatforms.length)
+            ? sm.filter((s) => campaignPlatforms.includes(s.platform))
+            : sm;
+
+          return relevant.some((s) => {
+            const tierIdx = TIER_ORDER.indexOf(s.tier);
+            if (allowedTiers.length && !allowedTiers.includes(s.tier)) return false;
+            if (minTierIdx >= 0 && tierIdx < minTierIdx) return false;
+            return true;
+          });
+        })
+      : candidates;
+
+    if (!matched.length) return;
+
+    // ── 4. Resolve sender name and send emails ───────────────────────────────
+    const brand = await this.brandModel
+      .findById(brandId)
+      .select("brandName name")
+      .lean() as any;
+    // Sender could also be a photographer (photographer-created open campaign)
+    const ownerPhotographer = !brand
+      ? await this.photographerModel.findById(brandId).select("name").lean() as any
+      : null;
+    const brandName = brand?.brandName || brand?.name || ownerPhotographer?.name || "A creator";
+    const frontendBase = (process.env.FRONTEND_URL || "https://trendstarz.com").replace(/\/$/, "");
+    const campaignUrl = `${frontendBase}${dashboardPath}`;
+    // For photographers use venue location label; for influencers use target location label.
+    const locationLabel = [locationDistrict, locationState].filter(Boolean).join(", ");
+
+    const emailPromises = matched
+      .filter((r: any) => !!r.email)
+      .map((recipient: any) => {
+        const tpl = openCampaignLiveTemplate({
+          influencerName: recipient.name || "Creator",
+          campaignTitle: title,
+          brandName,
+          location: locationLabel,
+          campaignUrl,
+        });
+        return sendAppEmail({ to: recipient.email, ...tpl }).catch(() => {});
+      });
+
+    await Promise.allSettled(emailPromises);
   }
 
   async remove(id: string, brandId: string) {

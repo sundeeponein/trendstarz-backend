@@ -376,7 +376,7 @@ export class AdminListsController {
             },
           })
           .select(
-            "_id campaignId influencerId recipientRole status selectedPostDate updatedAt acceptedAt",
+            "_id campaignId influencerId recipientRole status selectedPostDate updatedAt acceptedAt agreedAmount agreedAmountPaise counterOffer",
           )
           .lean()
       : [];
@@ -421,6 +421,7 @@ export class AdminListsController {
       }
 
       const progressRows = inviteProgressByCampaign.get(key) || [];
+      const counter = (invite as any)?.counterOffer || {};
       progressRows.push({
         inviteId: String(invite?._id || ""),
         participantId: recipientId,
@@ -428,6 +429,13 @@ export class AdminListsController {
         status: String(invite?.status || "pending").toLowerCase(),
         selectedPostDate: invite?.selectedPostDate || null,
         acceptedAt: invite?.acceptedAt || null,
+        agreedAmount: Number((invite as any)?.agreedAmount || 0),
+        agreedAmountPaise: Number((invite as any)?.agreedAmountPaise || 0),
+        counterOfferStatus: String(counter?.status || "").toLowerCase(),
+        counterOfferedAmount: Number(counter?.offeredAmount || 0),
+        counterOfferedAmountPaise: Number(counter?.offeredAmountPaise || 0),
+        counterRequestedAmount: Number(counter?.requestedAmount || 0),
+        counterRequestedAmountPaise: Number(counter?.requestedAmountPaise || 0),
         updatedAt: invite?.updatedAt || null,
       });
       inviteProgressByCampaign.set(key, progressRows);
@@ -507,6 +515,9 @@ export class AdminListsController {
             : inviteInfluencerMap.get(String(row?.participantId || ""));
           return {
             ...row,
+            campaignAmountPaise: Number(
+              campaign?.pricePerInfluencer || campaign?.amount || 0,
+            ),
             participantName:
               String(
                 profile?.name || profile?.username || "",

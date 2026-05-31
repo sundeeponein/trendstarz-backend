@@ -10,6 +10,7 @@
 
 export type CampaignRequiredFieldsCtx = {
   campaignType: string;
+  campaignMode?: string;
   ownerType?: "brand" | "photographer";
   inviteRecipientRole?: "influencer" | "photographer";
   productPaymentMode?: string;

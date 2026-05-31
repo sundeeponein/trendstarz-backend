@@ -207,3 +207,51 @@ export function autoApprovedTemplate(data: AutoApprovedData): EmailTemplate {
 
   return { subject, html, text };
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 7. Open Campaign Now Live (broadcast to matching influencers)
+// ─────────────────────────────────────────────────────────────────────────────
+
+export interface OpenCampaignLiveData {
+  influencerName: string;
+  campaignTitle: string;
+  brandName: string;
+  location: string;
+  campaignUrl: string;
+}
+
+export function openCampaignLiveTemplate(
+  data: OpenCampaignLiveData,
+): EmailTemplate {
+  const { influencerName, campaignTitle, brandName, location, campaignUrl } =
+    data;
+  const hasLocation = !!location;
+  const subject = hasLocation
+    ? `New campaign opportunity in ${location} 🎯`
+    : `New open campaign — apply now! 🎯`;
+
+  const locationLine = hasLocation
+    ? p(`<strong>${brandName}</strong> has launched a new open campaign that matches your location (<strong>${location}</strong>):`)
+    : p(`<strong>${brandName}</strong> has launched a new open campaign — open to creators across India:`);
+
+  const footerNote = hasLocation
+    ? `You are receiving this because your profile location matches the campaign's target area.`
+    : `You are receiving this because your profile matches this campaign's platform requirements.`;
+
+  const html = wrapEmail(
+    h2(hasLocation ? "A new campaign is live near you!" : "A new campaign is live!") +
+      p(`Hi <strong>${influencerName}</strong>,`) +
+      locationLine +
+      `<p style="margin:12px 0;padding:12px 16px;background:#fff7ed;border-left:4px solid #f97316;border-radius:4px;font-weight:600;">"${campaignTitle}"</p>` +
+      p(
+        "This is an open campaign — you can apply directly from your dashboard. Spots are limited, so apply early!",
+      ) +
+      btn("View & apply now", campaignUrl) +
+      p(footerNote, `color:${TEXT_MUTED};font-size:13px;`),
+  );
+
+  const locationCtx = hasLocation ? ` in ${location}` : ` (India-wide)`;
+  const text = `Hi ${influencerName},\n\n${brandName} has launched an open campaign: "${campaignTitle}"${locationCtx}.\n\nApply here: ${campaignUrl}\n\n— TrendStarz`;
+
+  return { subject, html, text };
+}

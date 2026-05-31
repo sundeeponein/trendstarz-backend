@@ -325,6 +325,13 @@ export class CampaignInvitesController {
 
   // ── Submission endpoints ───────────────────────────────────────
   @UseGuards(JwtAuthGuard)
+  @Patch(":id/start-work")
+  async startWork(@Param("id") id: string, @Req() req: any) {
+    const influencerId = req.user?.userId;
+    return this.invitesService.startWork(id, influencerId);
+  }
+
+  @UseGuards(JwtAuthGuard)
   @Post(":id/submit")
   async submitPost(
     @Param("id") id: string,

@@ -371,6 +371,24 @@ export class PaymentsPayoutsService {
       .sort({ createdAt: -1 })
       .lean();
 
+    const inviteIds = new Set<string>();
+    for (const r of rows as any[]) {
+      if (r.inviteId) inviteIds.add(String(r.inviteId));
+    }
+
+    const invites = inviteIds.size
+      ? await this.inviteModel
+          .find({ _id: { $in: Array.from(inviteIds) } })
+          .select(
+            "status unlocked unlockType agreedAmount agreedAmountPaise counterOffer acceptedAt",
+          )
+          .lean()
+      : [];
+    const inviteMap = new Map<string, any>();
+    for (const inv of invites as any[]) {
+      inviteMap.set(String(inv._id), inv);
+    }
+
     // Enrich rows with recipient + payer profile info so the admin UI can
     // prefill the "Mark Payout Paid" popup (name, UPI ID, mobile) without
     // an extra round-trip per row.
@@ -494,6 +512,31 @@ export class PaymentsPayoutsService {
       ...r,
       recipient: buildContact(r.recipientRole, r.recipientId),
       payer: buildContact(r.payerRole, r.payerId),
+      inviteSnapshot: r.inviteId
+        ? (() => {
+            const inv = inviteMap.get(String(r.inviteId));
+            if (!inv) return null;
+            return {
+              id: String(inv._id),
+              status: String(inv.status || ""),
+              unlocked: !!inv.unlocked,
+              unlockType: String(inv.unlockType || ""),
+              agreedAmount: Number(inv.agreedAmount || 0),
+              agreedAmountPaise: Number(inv.agreedAmountPaise || 0),
+              counterOfferStatus: String(inv?.counterOffer?.status || ""),
+              counterOfferedAmount: Number(inv?.counterOffer?.offeredAmount || 0),
+              counterOfferedAmountPaise: Number(
+                inv?.counterOffer?.offeredAmountPaise || 0,
+              ),
+              counterRequestedAmount: Number(inv?.counterOffer?.requestedAmount || 0),
+              counterRequestedAmountPaise: Number(
+                inv?.counterOffer?.requestedAmountPaise || 0,
+              ),
+              counterResolvedAt: inv?.counterOffer?.resolvedAt || null,
+              acceptedAt: inv?.acceptedAt || null,
+            };
+          })()
+        : null,
     }));
 
     return { success: true, data: enriched };
@@ -537,6 +580,12 @@ export class PaymentsPayoutsService {
   async verifyCollection(transactionId: string, notes?: string) {
     const tx = await this.transactionModel.findById(transactionId);
     if (!tx) throw new NotFoundException("Transaction not found");
+
+    if (String(tx.gateway || "manual_upi") !== "manual_upi") {
+      throw new BadRequestException(
+        "This transaction is configured for auto settlement via payment gateway. Manual mark-paid is disabled.",
+      );
+    }
     tx.collectionStatus = "verified";
     tx.collectedAt = new Date();
     if (notes) tx.adminNotes = notes;
@@ -751,6 +800,28 @@ export class PaymentsPayoutsService {
   ) {
     const tx = await this.transactionModel.findById(transactionId);
     if (!tx) throw new NotFoundException("Transaction not found");
+
+    if (tx.inviteId) {
+      const invite: any = await this.inviteModel
+        .findById(tx.inviteId)
+        .select("status")
+        .lean();
+      const inviteStatus = String(invite?.status || "").toLowerCase();
+      const payoutEligibleStatuses = new Set([
+        "accepted",
+        "payment_confirmed",
+        "working",
+        "submitted",
+        "completed",
+        "approved",
+      ]);
+      if (!payoutEligibleStatuses.has(inviteStatus)) {
+        throw new BadRequestException(
+          "Invite must be accepted or progressed before payout release.",
+        );
+      }
+    }
+
     if (tx.collectionStatus !== "verified") {
       throw new BadRequestException(
         "Collection must be verified before payout",
