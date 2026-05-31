@@ -116,8 +116,9 @@ export class SitemapController {
 
     const xml = `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${urlEntries}\n</urlset>`;
 
-    res.setHeader("Content-Type", "text/xml; charset=utf-8");
-    res.setHeader("Cache-Control", "public, max-age=3600");
+    res.type("application/xml; charset=utf-8");
+    res.setHeader("Cache-Control", "public, max-age=3600, must-revalidate");
+    res.setHeader("X-Content-Type-Options", "nosniff");
     res.send(xml);
   }
 }
