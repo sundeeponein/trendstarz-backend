@@ -13,7 +13,10 @@ import {
 } from "../campaign-type-configs";
 import { getRequiredFields } from "./campaign-required-fields";
 import { sendAppEmail } from "../utils/app-email.service";
-import { openCampaignLiveTemplate, inviteCampaignLiveTemplate } from "../email/templates/campaign.templates";
+import {
+  openCampaignLiveTemplate,
+  inviteCampaignLiveTemplate,
+} from "../email/templates/campaign.templates";
 
 const VALID_TRANSITIONS: Record<string, string[]> = {
   draft: ["pending", "pending_review", "active", "needs_changes"],
@@ -40,7 +43,8 @@ type InfluencerFeedScope = "campaign" | "collaboration";
 export class CampaignsService {
   constructor(
     @InjectModel("Campaign") private readonly campaignModel: Model<any>,
-    @InjectModel("CampaignInvite") private readonly campaignInviteModel: Model<any>,
+    @InjectModel("CampaignInvite")
+    private readonly campaignInviteModel: Model<any>,
     @InjectModel("Brand") private readonly brandModel: Model<any>,
     @InjectModel("Photographer") private readonly photographerModel: Model<any>,
     @InjectModel("Influencer") private readonly influencerModel: Model<any>,
@@ -53,7 +57,9 @@ export class CampaignsService {
     status: unknown,
     ownerType: CampaignOwnerType = "brand",
   ): Promise<string> {
-    const requested = String(status || "").trim().toLowerCase();
+    const requested = String(status || "")
+      .trim()
+      .toLowerCase();
     const settings = await this.appSettingsModel.findOne({}).lean().exec();
     const settingsDoc = Array.isArray(settings) ? settings[0] : settings;
     const modeField =
@@ -70,7 +76,11 @@ export class CampaignsService {
     }
 
     // Auto-live mode keeps drafts as drafts and publishes directly.
-    if (["active", "pending_review", "pending", "needs_changes"].includes(requested)) {
+    if (
+      ["active", "pending_review", "pending", "needs_changes"].includes(
+        requested,
+      )
+    ) {
       return "active";
     }
     return "active";
@@ -191,10 +201,14 @@ export class CampaignsService {
         .filter(Boolean);
     }
     if (data.targetState !== undefined) {
-      normalized.targetState = data.targetState ? String(data.targetState) : undefined;
+      normalized.targetState = data.targetState
+        ? String(data.targetState)
+        : undefined;
     }
     if (data.targetDistrict !== undefined) {
-      normalized.targetDistrict = data.targetDistrict ? String(data.targetDistrict) : undefined;
+      normalized.targetDistrict = data.targetDistrict
+        ? String(data.targetDistrict)
+        : undefined;
     }
     if (Array.isArray(data.targetCities)) {
       normalized.targetCities = data.targetCities
@@ -223,7 +237,9 @@ export class CampaignsService {
       const allowedRoles = new Set(["influencer", "photographer"]);
       normalized.inviteSlots = data.inviteSlots
         .map((slot: any) => {
-          const role = String(slot?.role || "").trim().toLowerCase();
+          const role = String(slot?.role || "")
+            .trim()
+            .toLowerCase();
           const count = Number(slot?.count);
           if (!allowedRoles.has(role)) return null;
           if (!Number.isFinite(count) || count <= 0) return null;
@@ -368,7 +384,9 @@ export class CampaignsService {
     if (ownerType === "photographer") {
       return "influencer";
     }
-    return String(value || "influencer").trim().toLowerCase() === "photographer"
+    return String(value || "influencer")
+      .trim()
+      .toLowerCase() === "photographer"
       ? "photographer"
       : "influencer";
   }
@@ -490,19 +508,20 @@ export class CampaignsService {
       const byId = await this.safeFindById(this.influencerModel, id, "_id");
       if (byId) return byId;
     }
-    return this.safeFindOne(
-      this.influencerModel,
-      { username: id },
-      "_id",
-    );
+    return this.safeFindOne(this.influencerModel, { username: id }, "_id");
   }
 
   private async resolveOwnerTypeByProfile(
     ownerId: string,
     requesterRole?: string,
   ): Promise<CampaignOwnerType> {
-    const normalizedRole = String(requesterRole || "").trim().toLowerCase();
-    if (normalizedRole === "photographer" || normalizedRole === "videographer") {
+    const normalizedRole = String(requesterRole || "")
+      .trim()
+      .toLowerCase();
+    if (
+      normalizedRole === "photographer" ||
+      normalizedRole === "videographer"
+    ) {
       return "photographer";
     }
     if (normalizedRole === "influencer") {
@@ -556,10 +575,18 @@ export class CampaignsService {
     const persistedOwnerType: CampaignOwnerType =
       ownerType === "influencer" ? "brand" : ownerType;
     const normalized = this.normalizeCampaignPayload(data);
-    if (!Number.isFinite(Number(normalized.maxInfluencers)) || Number(normalized.maxInfluencers) <= 0) {
-      throw new BadRequestException("maxInfluencers is required and must be greater than 0");
+    if (
+      !Number.isFinite(Number(normalized.maxInfluencers)) ||
+      Number(normalized.maxInfluencers) <= 0
+    ) {
+      throw new BadRequestException(
+        "maxInfluencers is required and must be greater than 0",
+      );
     }
-    if (!Number.isFinite(Number(normalized.minInfluencers)) || Number(normalized.minInfluencers) <= 0) {
+    if (
+      !Number.isFinite(Number(normalized.minInfluencers)) ||
+      Number(normalized.minInfluencers) <= 0
+    ) {
       normalized.minInfluencers = 1;
     }
     const inviteRecipientRole = this.normalizeInviteRecipientRole(
@@ -583,7 +610,10 @@ export class CampaignsService {
     // (additive discriminator — see deriveLogisticsType).
     normalized.logisticsType = this.deriveLogisticsType(normalized);
     this.assertRequiredFieldsForCampaign(normalized);
-    const campaign = new this.campaignModel({ ...normalized, brandId: ownerId });
+    const campaign = new this.campaignModel({
+      ...normalized,
+      brandId: ownerId,
+    });
     return await campaign.save();
   }
 
@@ -618,23 +648,34 @@ export class CampaignsService {
             username: null,
             logo: photographer.profileImages?.[0]?.url || null,
           }
-      : null;
+        : null;
 
     return results.map((c: any) => ({ ...c, brand: brandInfo }));
   }
 
-  private normalizeInfluencerFeedScope(scope?: string): InfluencerFeedScope | null {
-    const normalized = String(scope || "").trim().toLowerCase();
+  private normalizeInfluencerFeedScope(
+    scope?: string,
+  ): InfluencerFeedScope | null {
+    const normalized = String(scope || "")
+      .trim()
+      .toLowerCase();
     if (normalized === "campaign") return "campaign";
     if (normalized === "collaboration") return "collaboration";
     return null;
   }
 
-  private isCollaborationCampaign(campaign: any, photographerOwnerIds?: Set<string>): boolean {
-    const ownerType = String(campaign?.ownerType || campaign?.createdByRole || "")
+  private isCollaborationCampaign(
+    campaign: any,
+    photographerOwnerIds?: Set<string>,
+  ): boolean {
+    const ownerType = String(
+      campaign?.ownerType || campaign?.createdByRole || "",
+    )
       .trim()
       .toLowerCase();
-    const requestKind = String(campaign?.requestKind || "").trim().toLowerCase();
+    const requestKind = String(campaign?.requestKind || "")
+      .trim()
+      .toLowerCase();
     if (
       ownerType === "photographer" ||
       ownerType === "videographer" ||
@@ -649,12 +690,20 @@ export class CampaignsService {
     return false;
   }
 
-  async findPublic(status: string = "active", influencerId?: string, scope?: string) {
-    const TIER_ORDER = ["Starter", "Nano", "Micro", "Mid-Tier", "Macro", "Mega / Celebrity"];
-    const allowedStatuses = new Set([
-      "active",
-      "completed",
-    ]);
+  async findPublic(
+    status: string = "active",
+    influencerId?: string,
+    scope?: string,
+  ) {
+    const TIER_ORDER = [
+      "Starter",
+      "Nano",
+      "Micro",
+      "Mid-Tier",
+      "Macro",
+      "Mega / Celebrity",
+    ];
+    const allowedStatuses = new Set(["active", "completed"]);
     const query: any = {};
     if (status && allowedStatuses.has(status)) {
       query.status = status;
@@ -686,13 +735,19 @@ export class CampaignsService {
       if (requiredIdx === -1) return true;
       const normalized = (s: string) => (s || "").toLowerCase().trim();
       if (!campaignPlatforms || campaignPlatforms.length === 0) {
-        return sm.some((entry: any) => TIER_ORDER.indexOf(entry.tier ?? "") === requiredIdx);
+        return sm.some(
+          (entry: any) => TIER_ORDER.indexOf(entry.tier ?? "") === requiredIdx,
+        );
       }
       const matching = sm.filter((entry: any) =>
-        campaignPlatforms.some((p) => normalized(p) === normalized(entry.platform)),
+        campaignPlatforms.some(
+          (p) => normalized(p) === normalized(entry.platform),
+        ),
       );
       if (matching.length === 0) return false;
-      return matching.some((entry: any) => TIER_ORDER.indexOf(entry.tier ?? "") === requiredIdx);
+      return matching.some(
+        (entry: any) => TIER_ORDER.indexOf(entry.tier ?? "") === requiredIdx,
+      );
     };
 
     const feedScope = influencerId
@@ -700,7 +755,9 @@ export class CampaignsService {
       : null;
 
     const campaignOwnerIds = [
-      ...new Set(campaigns.map((c: any) => String(c?.brandId || "")).filter(Boolean)),
+      ...new Set(
+        campaigns.map((c: any) => String(c?.brandId || "")).filter(Boolean),
+      ),
     ];
     const photographerOwnerRows: any[] = campaignOwnerIds.length
       ? await this.photographerModel
@@ -709,15 +766,23 @@ export class CampaignsService {
           .lean()
       : [];
     const photographerOwnerIds = new Set(
-      (photographerOwnerRows || []).map((p: any) => String(p?._id || "")).filter(Boolean),
+      (photographerOwnerRows || [])
+        .map((p: any) => String(p?._id || ""))
+        .filter(Boolean),
     );
 
     // Filter: scope + tier/location eligibility for influencer discovery.
     const visible = campaigns.filter((c) => {
-      if (feedScope === "campaign" && this.isCollaborationCampaign(c, photographerOwnerIds)) {
+      if (
+        feedScope === "campaign" &&
+        this.isCollaborationCampaign(c, photographerOwnerIds)
+      ) {
         return false;
       }
-      if (feedScope === "collaboration" && !this.isCollaborationCampaign(c, photographerOwnerIds)) {
+      if (
+        feedScope === "collaboration" &&
+        !this.isCollaborationCampaign(c, photographerOwnerIds)
+      ) {
         return false;
       }
 
@@ -787,7 +852,7 @@ export class CampaignsService {
                 logo: photographer.profileImages?.[0]?.url || null,
                 role: "photographer",
               }
-          : null,
+            : null,
       };
     });
   }
@@ -842,9 +907,13 @@ export class CampaignsService {
     // Enforce status transitions
     if (data.status && data.status !== campaign.status) {
       if (
-        ["active", "pending", "pending_review", "needs_changes", "rejected"].includes(
-          String(data.status),
-        )
+        [
+          "active",
+          "pending",
+          "pending_review",
+          "needs_changes",
+          "rejected",
+        ].includes(String(data.status))
       ) {
         data.status = await this.resolveInitialCampaignStatus(data.status);
       }
@@ -899,14 +968,16 @@ export class CampaignsService {
       ...(campaign.toObject ? campaign.toObject() : campaign),
       ...normalized,
     };
-    const mergedMax = Number((mergedForValidation as any)?.maxInfluencers || 0);
+    const mergedMax = Number(mergedForValidation?.maxInfluencers || 0);
     if (!Number.isFinite(mergedMax) || mergedMax <= 0) {
-      throw new BadRequestException("maxInfluencers is required and must be greater than 0");
+      throw new BadRequestException(
+        "maxInfluencers is required and must be greater than 0",
+      );
     }
-    const mergedMin = Number((mergedForValidation as any)?.minInfluencers || 0);
+    const mergedMin = Number(mergedForValidation?.minInfluencers || 0);
     if (!Number.isFinite(mergedMin) || mergedMin <= 0) {
       normalized.minInfluencers = 1;
-      (mergedForValidation as any).minInfluencers = 1;
+      mergedForValidation.minInfluencers = 1;
     }
     // Re-derive logisticsType from the merged document to keep the
     // discriminator consistent across partial updates.
@@ -929,7 +1000,12 @@ export class CampaignsService {
 
   private async notifyMatchingInfluencers(campaign: any): Promise<void> {
     const TIER_ORDER = [
-      "Starter", "Nano", "Micro", "Mid-Tier", "Macro", "Mega / Celebrity",
+      "Starter",
+      "Nano",
+      "Micro",
+      "Mid-Tier",
+      "Macro",
+      "Mega / Celebrity",
     ];
 
     const {
@@ -946,18 +1022,25 @@ export class CampaignsService {
       brandId,
     } = campaign;
 
-    const isPhotographer = String(inviteRecipientRole || "influencer") === "photographer";
-    const campaignPlatforms: string[] = Array.isArray(platforms) ? platforms : [];
-    const campaignCategories: string[] = Array.isArray(categories) ? categories : [];
-    const allowedTiers: string[] = Array.isArray(targetTiers) ? targetTiers : [];
+    const isPhotographer =
+      String(inviteRecipientRole || "influencer") === "photographer";
+    const campaignPlatforms: string[] = Array.isArray(platforms)
+      ? platforms
+      : [];
+    const campaignCategories: string[] = Array.isArray(categories)
+      ? categories
+      : [];
+    const allowedTiers: string[] = Array.isArray(targetTiers)
+      ? targetTiers
+      : [];
 
     // Photographer campaigns use shoot venue location; influencer campaigns use targetState/District
     const locationState: string = isPhotographer
-      ? (venueState || targetState || "")
-      : (targetState || "");
+      ? venueState || targetState || ""
+      : targetState || "";
     const locationDistrict: string = isPhotographer
-      ? (venueDistrict || targetDistrict || "")
-      : (targetDistrict || "");
+      ? venueDistrict || targetDistrict || ""
+      : targetDistrict || "";
 
     // Skip only if there is truly nothing to filter on
     const hasAnyFilter =
@@ -997,7 +1080,9 @@ export class CampaignsService {
     }
 
     // ── 2. Query the right model ─────────────────────────────────────────────
-    const recipientModel = isPhotographer ? this.photographerModel : this.influencerModel;
+    const recipientModel = isPhotographer
+      ? this.photographerModel
+      : this.influencerModel;
     const dashboardPath = isPhotographer
       ? "/photographer-dashboard"
       : "/influencer-dashboard/campaigns";
@@ -1011,7 +1096,9 @@ export class CampaignsService {
     if (!candidates.length) return;
 
     // ── 3. In-memory tier filter ─────────────────────────────────────────────
-    const minTierIdx = minInfluencerTier ? TIER_ORDER.indexOf(String(minInfluencerTier)) : -1;
+    const minTierIdx = minInfluencerTier
+      ? TIER_ORDER.indexOf(String(minInfluencerTier))
+      : -1;
     const hasTierFilter = allowedTiers.length > 0 || minTierIdx >= 0;
 
     const matched = hasTierFilter
@@ -1019,13 +1106,15 @@ export class CampaignsService {
           const sm: any[] = c.socialMedia || [];
           // For influencers: only check tiers on campaign-targeted platforms
           // For photographers: check any social account (they're not platform-specific)
-          const relevant = (!isPhotographer && campaignPlatforms.length)
-            ? sm.filter((s) => campaignPlatforms.includes(s.platform))
-            : sm;
+          const relevant =
+            !isPhotographer && campaignPlatforms.length
+              ? sm.filter((s) => campaignPlatforms.includes(s.platform))
+              : sm;
 
           return relevant.some((s) => {
             const tierIdx = TIER_ORDER.indexOf(s.tier);
-            if (allowedTiers.length && !allowedTiers.includes(s.tier)) return false;
+            if (allowedTiers.length && !allowedTiers.includes(s.tier))
+              return false;
             if (minTierIdx >= 0 && tierIdx < minTierIdx) return false;
             return true;
           });
@@ -1035,19 +1124,27 @@ export class CampaignsService {
     if (!matched.length) return;
 
     // ── 4. Resolve sender name and send emails ───────────────────────────────
-    const brand = await this.brandModel
+    const brand = (await this.brandModel
       .findById(brandId)
       .select("brandName name")
-      .lean() as any;
+      .lean()) as any;
     // Sender could also be a photographer (photographer-created open campaign)
     const ownerPhotographer = !brand
-      ? await this.photographerModel.findById(brandId).select("name").lean() as any
+      ? ((await this.photographerModel
+          .findById(brandId)
+          .select("name")
+          .lean()) as any)
       : null;
-    const brandName = brand?.brandName || brand?.name || ownerPhotographer?.name || "A creator";
-    const frontendBase = (process.env.FRONTEND_URL || "https://trendstarz.com").replace(/\/$/, "");
+    const brandName =
+      brand?.brandName || brand?.name || ownerPhotographer?.name || "A creator";
+    const frontendBase = (
+      process.env.FRONTEND_URL || "https://trendstarz.in"
+    ).replace(/\/$/, "");
     const campaignUrl = `${frontendBase}${dashboardPath}`;
     // For photographers use venue location label; for influencers use target location label.
-    const locationLabel = [locationDistrict, locationState].filter(Boolean).join(", ");
+    const locationLabel = [locationDistrict, locationState]
+      .filter(Boolean)
+      .join(", ");
 
     const emailPromises = matched
       .filter((r: any) => !!r.email)
@@ -1082,44 +1179,47 @@ export class CampaignsService {
     if (!invites.length) return;
 
     // Get brand name
-    const brand = await this.brandModel
+    const brand = (await this.brandModel
       .findById(brandId)
       .select("brandName name")
-      .lean() as any;
+      .lean()) as any;
     const brandName = brand?.brandName || brand?.name || "A brand";
-    const frontendBase = (process.env.FRONTEND_URL || "https://trendstarz.com").replace(/\/$/, "");
-    const dashboardPath = String(inviteRecipientRole || "influencer") === "photographer"
-      ? "/photographer-dashboard"
-      : "/influencer-dashboard/invites";
+    const frontendBase = (
+      process.env.FRONTEND_URL || "https://trendstarz.in"
+    ).replace(/\/$/, "");
+    const dashboardPath =
+      String(inviteRecipientRole || "influencer") === "photographer"
+        ? "/photographer-dashboard"
+        : "/influencer-dashboard/invites";
     const campaignUrl = `${frontendBase}${dashboardPath}`;
 
     // Load recipient profiles and send emails
-    const emailPromises = invites
-      .map(async (invite: any) => {
-        try {
-          const recipientModel = String(invite.recipientRole || "influencer") === "photographer"
+    const emailPromises = invites.map(async (invite: any) => {
+      try {
+        const recipientModel =
+          String(invite.recipientRole || "influencer") === "photographer"
             ? this.photographerModel
             : this.influencerModel;
 
-          const recipient = await recipientModel
-            .findById(invite.influencerId)
-            .select("name email")
-            .lean() as any;
+        const recipient = (await recipientModel
+          .findById(invite.influencerId)
+          .select("name email")
+          .lean()) as any;
 
-          if (!recipient?.email) return;
+        if (!recipient?.email) return;
 
-          const tpl = inviteCampaignLiveTemplate({
-            recipientName: recipient.name || "Creator",
-            campaignTitle: title,
-            brandName,
-            campaignUrl,
-          });
+        const tpl = inviteCampaignLiveTemplate({
+          recipientName: recipient.name || "Creator",
+          campaignTitle: title,
+          brandName,
+          campaignUrl,
+        });
 
-          return sendAppEmail({ to: recipient.email, ...tpl }).catch(() => {});
-        } catch (err) {
-          console.error("Failed to notify invited user:", err);
-        }
-      });
+        return sendAppEmail({ to: recipient.email, ...tpl }).catch(() => {});
+      } catch (err) {
+        console.error("Failed to notify invited user:", err);
+      }
+    });
 
     await Promise.allSettled(emailPromises);
   }
@@ -1137,9 +1237,15 @@ export class CampaignsService {
     await this.campaignInviteModel.deleteMany({ $or: inviteQueries });
     const publicId = campaign.image?.public_id;
     if (publicId) {
-      await this.cloudinaryService.deleteImage(publicId).catch((err) =>
-        console.error('[CampaignsService] Failed to delete campaign image:', publicId, err),
-      );
+      await this.cloudinaryService
+        .deleteImage(publicId)
+        .catch((err) =>
+          console.error(
+            "[CampaignsService] Failed to delete campaign image:",
+            publicId,
+            err,
+          ),
+        );
     }
     return this.campaignModel.findByIdAndDelete(id);
   }

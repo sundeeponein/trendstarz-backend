@@ -517,7 +517,7 @@ export class CampaignInvitesService {
           .lean();
         if (influencer?.email) {
           const frontendBase = (
-            process.env.FRONTEND_URL || "https://trendstarz.com"
+            process.env.FRONTEND_URL || "https://trendstarz.in"
           ).replace(/\/$/, "");
           const autoTpl = autoApprovedTemplate({
             influencerName: influencer.name || "",
@@ -755,7 +755,7 @@ export class CampaignInvitesService {
       const sender = await this.resolveSenderProfile(brandId);
       if (recipient?.email) {
         const frontendBase = (
-          process.env.FRONTEND_URL || "https://trendstarz.com"
+          process.env.FRONTEND_URL || "https://trendstarz.in"
         ).replace(/\/$/, "");
         const inviteDashboardUrl =
           frontendBase +
@@ -1395,7 +1395,7 @@ export class CampaignInvitesService {
         const campaignTitle = campaign?.title || "a campaign";
         const brandName = brand?.name || "A brand";
         const inviteUrl =
-          (process.env.FRONTEND_URL || "https://trendstarz.com").replace(
+          (process.env.FRONTEND_URL || "https://trendstarz.in").replace(
             /\/$/,
             "",
           ) + "/influencer-dashboard/invites";
@@ -1995,7 +1995,7 @@ export class CampaignInvitesService {
           .lean();
         if (sender?.email) {
           const frontendBase = (
-            process.env.FRONTEND_URL || "https://trendstarz.com"
+            process.env.FRONTEND_URL || "https://trendstarz.in"
           ).replace(/\/$/, "");
           const acceptedTpl = inviteAcceptedTemplate({
             brandName: sender.name || "",
@@ -2586,7 +2586,7 @@ export class CampaignInvitesService {
         .lean();
       if (sender?.email) {
         const frontendBase = (
-          process.env.FRONTEND_URL || "https://trendstarz.com"
+          process.env.FRONTEND_URL || "https://trendstarz.in"
         ).replace(/\/$/, "");
         const submittedTpl = postSubmittedTemplate({
           brandName: sender.name || "",
@@ -2738,7 +2738,7 @@ export class CampaignInvitesService {
           .lean();
         if (influencer?.email) {
           const frontendBase = (
-            process.env.FRONTEND_URL || "https://trendstarz.com"
+            process.env.FRONTEND_URL || "https://trendstarz.in"
           ).replace(/\/$/, "");
           const approvedTpl = postApprovedTemplate({
             influencerName: influencer.name || "",

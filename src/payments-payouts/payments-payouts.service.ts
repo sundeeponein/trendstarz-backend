@@ -629,7 +629,7 @@ export class PaymentsPayoutsService {
     // Fire-and-forget admin alert
     const adminEmail = process.env.ADMIN_EMAIL || "support@trendstarz.in";
     const adminUrl =
-      (process.env.FRONTEND_URL || "https://trendstarz.com") +
+      (process.env.FRONTEND_URL || "https://trendstarz.in") +
       "/admin/payments";
     sendAppEmail({
       to: adminEmail,
@@ -1144,7 +1144,7 @@ export class PaymentsPayoutsService {
           const name = inf.name || inf.username || "Creator";
           const campaignTitle = campaign?.title || "your campaign";
           const dashboardUrl =
-            (process.env.FRONTEND_URL || "https://trendstarz.com") +
+            (process.env.FRONTEND_URL || "https://trendstarz.in") +
             (paymentConfirmedRecipientRole === "photographer"
               ? "/photographer-dashboard"
               : "/influencer-dashboard");
@@ -1203,7 +1203,7 @@ export class PaymentsPayoutsService {
           if (!brand?.email) return;
           const name = brand.brandName || "Brand";
           const adminUrl =
-            (process.env.FRONTEND_URL || "https://trendstarz.com") +
+            (process.env.FRONTEND_URL || "https://trendstarz.in") +
             "/campaigns";
           sendAppEmail({
             to: brand.email,
@@ -1255,7 +1255,7 @@ export class PaymentsPayoutsService {
           if (!brand?.email) return;
           const name = brand.brandName || "Brand";
           const payUrl =
-            (process.env.FRONTEND_URL || "https://trendstarz.com") +
+            (process.env.FRONTEND_URL || "https://trendstarz.in") +
             "/campaigns";
           sendAppEmail({
             to: brand.email,
