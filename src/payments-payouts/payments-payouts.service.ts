@@ -479,7 +479,8 @@ export class PaymentsPayoutsService {
 
     const pricePerInfluencer = Number(campaign.pricePerInfluencer || 0);
 
-    const acceptedInvites = await this.inviteModel
+    // Fetch all accepted invites
+    const allAcceptedInvites = await this.inviteModel
       .find({
         campaignId,
         status: {
@@ -494,6 +495,26 @@ export class PaymentsPayoutsService {
         },
       })
       .lean();
+
+    // Fetch transactions with verified collection to identify already-paid invites
+    const verifiedTransactions = await this.transactionModel
+      .find({
+        campaignId,
+        collectionStatus: "verified",
+      })
+      .select("inviteId")
+      .lean();
+
+    const paidInviteIds = new Set(
+      verifiedTransactions
+        .map((tx: any) => String(tx.inviteId || ""))
+        .filter((id: string) => id.length > 0),
+    );
+
+    // Filter to only unpaid invites
+    const acceptedInvites = allAcceptedInvites.filter(
+      (inv: any) => !paidInviteIds.has(String(inv._id)),
+    );
 
     const acceptedCount = acceptedInvites.length;
     if (acceptedCount === 0) {
