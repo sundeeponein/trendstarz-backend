@@ -255,3 +255,42 @@ export function openCampaignLiveTemplate(
 
   return { subject, html, text };
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 8. Invited Campaign Now Live (notification to invited participants)
+// ─────────────────────────────────────────────────────────────────────────────
+
+export interface InviteCampaignLiveData {
+  recipientName: string;
+  campaignTitle: string;
+  brandName: string;
+  campaignUrl: string;
+}
+
+export function inviteCampaignLiveTemplate(
+  data: InviteCampaignLiveData,
+): EmailTemplate {
+  const { recipientName, campaignTitle, brandName, campaignUrl } = data;
+  const subject = `Your invited campaign is live! 🚀`;
+
+  const html = wrapEmail(
+    h2("Your campaign is live!") +
+      p(`Hi <strong>${recipientName}</strong>,`) +
+      p(
+        `Great news! The campaign <strong>"${campaignTitle}"</strong> from <strong>${brandName}</strong> is now live and ready for you to respond to.`,
+      ) +
+      `<p style="margin:12px 0;padding:12px 16px;background:#f0fdf4;border-left:4px solid #16a34a;border-radius:4px;font-weight:600;"><i class="bi bi-lightning-charge"></i> Campaign is now active</p>` +
+      p(
+        "Log in to your dashboard to review the details, select your content platforms, and accept the opportunity.",
+      ) +
+      btn("View campaign details", campaignUrl) +
+      p(
+        "Don't wait too long—the sooner you respond, the better!",
+        `color:${TEXT_MUTED};font-size:13px;`,
+      ),
+  );
+
+  const text = `Hi ${recipientName},\n\nThe campaign "${campaignTitle}" from ${brandName} is now live and ready for your response.\n\nView campaign: ${campaignUrl}\n\n— TrendStarz`;
+
+  return { subject, html, text };
+}

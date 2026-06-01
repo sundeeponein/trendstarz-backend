@@ -13,7 +13,7 @@ import {
 } from "../campaign-type-configs";
 import { getRequiredFields } from "./campaign-required-fields";
 import { sendAppEmail } from "../utils/app-email.service";
-import { openCampaignLiveTemplate } from "../email/templates/campaign.templates";
+import { openCampaignLiveTemplate, inviteCampaignLiveTemplate } from "../email/templates/campaign.templates";
 
 const VALID_TRANSITIONS: Record<string, string[]> = {
   draft: ["pending", "pending_review", "active", "needs_changes"],
@@ -916,12 +916,12 @@ export class CampaignsService {
     Object.assign(campaign, normalized);
     const saved = await campaign.save();
 
-    if (
-      previousStatus !== "active" &&
-      saved.status === "active" &&
-      saved.campaignMode === "tier_filtered_open"
-    ) {
-      this.notifyMatchingInfluencers(saved).catch(() => {});
+    if (previousStatus !== "active" && saved.status === "active") {
+      if (saved.campaignMode === "tier_filtered_open") {
+        this.notifyMatchingInfluencers(saved).catch(() => {});
+      } else if (saved.campaignMode === "invite_only") {
+        this.notifyInvitedUsers(saved).catch(() => {});
+      }
     }
 
     return saved;
@@ -1060,6 +1060,65 @@ export class CampaignsService {
           campaignUrl,
         });
         return sendAppEmail({ to: recipient.email, ...tpl }).catch(() => {});
+      });
+
+    await Promise.allSettled(emailPromises);
+  }
+
+  private async notifyInvitedUsers(campaign: any): Promise<void> {
+    const { _id: campaignId, title, brandId, inviteRecipientRole } = campaign;
+
+    // Get all active invites for this campaign
+    const inviteQueries: any[] = [{ campaignId }];
+    if (/^[a-fA-F0-9]{24}$/.test(String(campaignId))) {
+      inviteQueries.push({ campaignId: new Types.ObjectId(campaignId) });
+    }
+
+    const invites = await this.campaignInviteModel
+      .find({ $or: inviteQueries, status: { $in: ["pending", "invited"] } })
+      .select("influencerId recipientRole")
+      .lean();
+
+    if (!invites.length) return;
+
+    // Get brand name
+    const brand = await this.brandModel
+      .findById(brandId)
+      .select("brandName name")
+      .lean() as any;
+    const brandName = brand?.brandName || brand?.name || "A brand";
+    const frontendBase = (process.env.FRONTEND_URL || "https://trendstarz.com").replace(/\/$/, "");
+    const dashboardPath = String(inviteRecipientRole || "influencer") === "photographer"
+      ? "/photographer-dashboard"
+      : "/influencer-dashboard/invites";
+    const campaignUrl = `${frontendBase}${dashboardPath}`;
+
+    // Load recipient profiles and send emails
+    const emailPromises = invites
+      .map(async (invite: any) => {
+        try {
+          const recipientModel = String(invite.recipientRole || "influencer") === "photographer"
+            ? this.photographerModel
+            : this.influencerModel;
+
+          const recipient = await recipientModel
+            .findById(invite.influencerId)
+            .select("name email")
+            .lean() as any;
+
+          if (!recipient?.email) return;
+
+          const tpl = inviteCampaignLiveTemplate({
+            recipientName: recipient.name || "Creator",
+            campaignTitle: title,
+            brandName,
+            campaignUrl,
+          });
+
+          return sendAppEmail({ to: recipient.email, ...tpl }).catch(() => {});
+        } catch (err) {
+          console.error("Failed to notify invited user:", err);
+        }
       });
 
     await Promise.allSettled(emailPromises);
