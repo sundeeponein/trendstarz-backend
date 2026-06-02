@@ -411,6 +411,148 @@
       "visible": true
     }
   ],
+  "collaborationAvailability": {
+    "influencer": {
+      "collaborationTypes": [
+        {
+          "name": "Photoshoots",
+          "visible": true
+        },
+        {
+          "name": "Video Shoots",
+          "visible": true
+        },
+        {
+          "name": "Travel Shoots",
+          "visible": true
+        },
+        {
+          "name": "Brand Campaign Shoots",
+          "visible": true
+        },
+        {
+          "name": "Portfolio Collaborations",
+          "visible": true
+        }
+      ],
+      "preferences": [
+        {
+          "name": "Paid Only",
+          "visible": true
+        },
+        {
+          "name": "Paid + Selective TFP",
+          "visible": true
+        },
+        {
+          "name": "Open to TFP/Portfolio",
+          "visible": true
+        }
+      ],
+      "availableFor": [
+        {
+          "name": "Photo/Videographers",
+          "visible": true
+        },
+        {
+          "name": "Brands",
+          "visible": true
+        },
+        {
+          "name": "Agencies",
+          "visible": true
+        }
+      ],
+      "locations": [
+        {
+          "name": "Hyderabad",
+          "visible": true
+        },
+        {
+          "name": "Bangalore",
+          "visible": true
+        },
+        {
+          "name": "Chennai",
+          "visible": true
+        }
+      ]
+    },
+    "photographer": {
+      "preferences": [
+        {
+          "name": "Paid Only",
+          "visible": true
+        },
+        {
+          "name": "Paid + Selective TFP",
+          "visible": true
+        },
+        {
+          "name": "Open to TFP/Portfolio",
+          "visible": true
+        }
+      ],
+      "availableFor": [
+        {
+          "name": "Influencers",
+          "visible": true
+        },
+        {
+          "name": "Brands",
+          "visible": true
+        },
+        {
+          "name": "Agencies",
+          "visible": true
+        }
+      ],
+      "locations": [
+        {
+          "name": "Hyderabad",
+          "visible": true
+        },
+        {
+          "name": "Bangalore",
+          "visible": true
+        },
+        {
+          "name": "Chennai",
+          "visible": true
+        }
+      ]
+    }
+  },
+  "creatorTypeOptions": [
+    {
+      "name": "UGC Creator",
+      "visible": true
+    },
+    {
+      "name": "Model",
+      "visible": true
+    },
+    {
+      "name": "Actor",
+      "visible": true
+    },
+    {
+      "name": "Host/Presenter",
+      "visible": true
+    },
+    {
+      "name": "Content Creator",
+      "visible": true
+    },
+    {
+      "name": "Lifestyle Creator",
+      "visible": true
+    },
+    {
+      "name": "Fashion Creator",
+      "visible": true
+    }
+  ],
   "languages": [
     {
       "name": "English",

@@ -259,6 +259,7 @@ export class UsersController {
   async searchInfluencers(
     @Query("q") q?: string,
     @Query("category") category?: string,
+    @Query("creatorType") creatorType?: string,
     @Query("state") state?: string,
     @Query("page") page?: string,
     @Query("limit") limit?: string,
@@ -266,6 +267,7 @@ export class UsersController {
     return this.usersService.searchInfluencers({
       q,
       category,
+      creatorType,
       state,
       page: page ? parseInt(page, 10) : undefined,
       limit: limit ? parseInt(limit, 10) : undefined,
@@ -289,6 +291,7 @@ export class UsersController {
     @Query("lite") lite?: string,
     @Query("state") state?: string,
     @Query("district") district?: string,
+    @Query("creatorType") creatorType?: string,
     @Query("viewerState") viewerState?: string,
     @Query("viewerDistrict") viewerDistrict?: string,
     @Query("smartLocationPriority") smartLocationPriority?: string,
@@ -318,6 +321,7 @@ export class UsersController {
       {
         state,
         district,
+        creatorType,
         viewerState,
         viewerDistrict,
         smartLocationPriority: smartPriority,

@@ -25,6 +25,10 @@ import {
   resolveCampaignTypeConfigs,
 } from "./campaign-type-configs";
 import { seedMissingLocationsFromConfig } from "./utils/location-seed.util";
+import {
+  normalizeCollaborationOptionConfig,
+  normalizeCreatorTypeConfig,
+} from "./utils/collaboration-options.util";
 
 interface VisibilityItem {
   _id: string;
@@ -40,12 +44,14 @@ interface BatchVisibilityBody {
   districts?: VisibilityItem[];
   equipmentOptions?: Array<{ name?: string; visible?: boolean }>;
   pricingOptions?: Array<{ key?: string; label?: string; visible?: boolean }>;
+  creatorTypeOptions?: Array<{ name?: string; visible?: boolean }>;
   userTags?: {
     influencer?: Array<{ name: string; visible: boolean }>;
     brand?: Array<{ name: string; visible: boolean }>;
     photographer?: Array<{ name: string; visible: boolean }>;
     commission?: Array<{ name: string; visible: boolean }>;
   };
+  collaborationAvailability?: any;
 }
 
 @Controller("admin")
@@ -1079,7 +1085,11 @@ export class AdminListsController {
         }
       }
       const needsConfigUpdate =
-        !!body.userTags || !!body.equipmentOptions || !!body.pricingOptions;
+        !!body.userTags ||
+        !!body.equipmentOptions ||
+        !!body.pricingOptions ||
+        !!body.creatorTypeOptions ||
+        !!body.collaborationAvailability;
 
       if (needsConfigUpdate) {
         const currentConfig = this.readAdminConfig();
@@ -1115,6 +1125,17 @@ export class AdminListsController {
           );
         }
 
+        if (body.creatorTypeOptions) {
+          nextConfig.creatorTypeOptions = normalizeCreatorTypeConfig(
+            body.creatorTypeOptions,
+          );
+        }
+
+        if (body.collaborationAvailability) {
+          nextConfig.collaborationAvailability =
+            normalizeCollaborationOptionConfig(body.collaborationAvailability);
+        }
+
         this.writeAdminConfig(nextConfig);
       }
       return { message: "Visibility updated" };
@@ -1135,6 +1156,18 @@ export class AdminListsController {
       photographer: this.normalizeUserTagList(userTags.photographer),
       commission: this.normalizeUserTagList(userTags.commission),
     };
+  }
+
+  @Get("collaboration-availability-config")
+  async getCollaborationAvailabilityConfig() {
+    const config = this.readAdminConfig();
+    return normalizeCollaborationOptionConfig(config?.collaborationAvailability);
+  }
+
+  @Get("creator-type-options-config")
+  async getCreatorTypeOptionsConfig() {
+    const config = this.readAdminConfig();
+    return normalizeCreatorTypeConfig(config?.creatorTypeOptions);
   }
 
   // ============ Commission Override Management ============

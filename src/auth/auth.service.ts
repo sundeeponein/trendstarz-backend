@@ -14,6 +14,7 @@ import {
   resetPasswordTemplate,
 } from "../email/templates/auth.templates";
 import { getJwtSecret } from "./jwt-secret";
+import { normalizeCollaborationAvailability } from "../utils/collaboration-availability.util";
 
 type AnyUserDoc = {
   email: string;
@@ -786,6 +787,10 @@ export class AuthService {
       location: { state: stateName, district: districtName },
       languages: languageNames,
       socialMedia: socialMediaMapped,
+      collaborationAvailability: normalizeCollaborationAvailability(
+        data?.collaborationAvailability,
+        "influencer",
+      ),
       profileImages: normalizedProfileImages,
       signupAttribution,
       verificationDocuments: verificationDocs,
@@ -1079,6 +1084,10 @@ export class AuthService {
       password: hashedPassword,
       firstRegisteredAt: new Date(),
       location: { state: stateName, district: districtName },
+      collaborationAvailability: normalizeCollaborationAvailability(
+        data?.collaborationAvailability,
+        "photographer",
+      ),
       profileImages: normalizedProfileImages,
       signupAttribution,
     });

@@ -610,25 +610,7 @@ export class CampaignInvitesService {
         await tx.save();
       }
 
-      try {
-        const influencer: any = await this.influencerModel
-          .findById(invite.influencerId)
-          .select("email name")
-          .lean();
-        if (influencer?.email) {
-          const frontendBase = (
-            process.env.FRONTEND_URL || "https://trendstarz.in"
-          ).replace(/\/$/, "");
-          const autoTpl = autoApprovedTemplate({
-            influencerName: influencer.name || "",
-            campaignTitle: campaign?.title || "campaign",
-            dashboardUrl: `${frontendBase}/influencer-dashboard`,
-          });
-          await sendAppEmail({ to: influencer.email, ...autoTpl });
-        }
-      } catch (e) {
-        console.error("Failed to send auto-approval email:", e);
-      }
+      // Auto-approved post emails are disabled by product request.
 
       autoApprovedCount++;
     }
@@ -848,23 +830,7 @@ export class CampaignInvitesService {
         recipientId,
       );
       const sender = await this.resolveSenderProfile(brandId);
-      if (recipient?.email) {
-        const frontendBase = (
-          process.env.FRONTEND_URL || "https://trendstarz.in"
-        ).replace(/\/$/, "");
-        const inviteDashboardUrl =
-          frontendBase +
-          (recipientRole === "photographer"
-            ? "/photographer-dashboard"
-            : "/influencer-dashboard/invites");
-        const inviteTpl = newCampaignInviteTemplate({
-          recipientName: recipient.name || "",
-          senderName: sender.name || "a creator",
-          campaignTitle: campaign.title,
-          dashboardUrl: inviteDashboardUrl,
-        });
-        await sendAppEmail({ to: recipient.email, ...inviteTpl });
-      }
+      // New campaign invite emails are disabled by product request.
       // Push notification to recipient
       this.pushService
         .sendToUser(String(recipientId), {
@@ -893,7 +859,7 @@ export class CampaignInvitesService {
           /* non-critical */
         });
     } catch (err) {
-      console.error("Failed to send invite email:", err);
+      console.error("Failed to send invite notification:", err);
     }
 
     return saved;
@@ -2102,18 +2068,7 @@ export class CampaignInvitesService {
           .findById(invite.campaignId)
           .select("title")
           .lean();
-        if (sender?.email) {
-          const frontendBase = (
-            process.env.FRONTEND_URL || "https://trendstarz.in"
-          ).replace(/\/$/, "");
-          const acceptedTpl = inviteAcceptedTemplate({
-            brandName: sender.name || "",
-            recipientName: recipient?.name || `A ${recipientRole}`,
-            campaignTitle: campaign?.title || "",
-            dashboardUrl: `${frontendBase}/campaign-management`,
-          });
-          await sendAppEmail({ to: sender.email, ...acceptedTpl });
-        }
+        // Invite accepted emails are disabled by product request.
         // Push notification to brand
         this.pushService
           .sendToUser(String(invite.brandId), {
@@ -2136,7 +2091,7 @@ export class CampaignInvitesService {
             /* non-critical */
           });
       } catch (e) {
-        console.error("Failed to send acceptance email:", e);
+        console.error("Failed to send acceptance notification:", e);
       }
     }
 
@@ -2687,31 +2642,7 @@ export class CampaignInvitesService {
     );
 
     // Notify brand
-    try {
-      const sender = await this.resolveSenderProfile(String(invite.brandId));
-      const influencer: any = await this.influencerModel
-        .findById(influencerId)
-        .select("name")
-        .lean();
-      const campaign: any = await this.campaignModel
-        .findById(invite.campaignId)
-        .select("title")
-        .lean();
-      if (sender?.email) {
-        const frontendBase = (
-          process.env.FRONTEND_URL || "https://trendstarz.in"
-        ).replace(/\/$/, "");
-        const submittedTpl = postSubmittedTemplate({
-          brandName: sender.name || "",
-          influencerName: influencer?.name || "An influencer",
-          campaignTitle: campaign?.title || "",
-          dashboardUrl: `${frontendBase}/campaign-management`,
-        });
-        await sendAppEmail({ to: sender.email, ...submittedTpl });
-      }
-    } catch (e) {
-      console.error("Failed to send submission email:", e);
-    }
+    // Post submitted emails are disabled by product request.
 
     const submissionOwner = await this.resolveSenderProfile(
       String(invite.brandId),
@@ -2849,17 +2780,7 @@ export class CampaignInvitesService {
           .findById(invite.influencerId)
           .select("email name")
           .lean();
-        if (influencer?.email) {
-          const frontendBase = (
-            process.env.FRONTEND_URL || "https://trendstarz.in"
-          ).replace(/\/$/, "");
-          const approvedTpl = postApprovedTemplate({
-            influencerName: influencer.name || "",
-            campaignTitle: campaign.title || "",
-            dashboardUrl: `${frontendBase}/influencer-dashboard`,
-          });
-          await sendAppEmail({ to: influencer.email, ...approvedTpl });
-        }
+        // Post approved emails are disabled by product request.
         // Push notification — payout now processing
         this.pushService
           .sendToUser(String(invite.influencerId), {
@@ -2882,7 +2803,7 @@ export class CampaignInvitesService {
             /* non-critical */
           });
       } catch (e) {
-        console.error("Failed to send approval email:", e);
+        console.error("Failed to send approval notification:", e);
       }
     } else {
       submission.status = "disputed";

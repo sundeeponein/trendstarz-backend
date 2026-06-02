@@ -20,6 +20,8 @@ import {
   EquipmentOptionsController,
   PricingOptionsController,
   UserTagOptionsController,
+  CollaborationAvailabilityOptionsController,
+  CreatorTypeOptionsController,
 } from "./public-lists.controller";
 import { MongooseModule } from "@nestjs/mongoose";
 import { ConfigModule } from "@nestjs/config";
@@ -147,6 +149,8 @@ import { MonetizationModule } from "./monetization/monetization.module";
     EquipmentOptionsController,
     PricingOptionsController,
     UserTagOptionsController,
+    CollaborationAvailabilityOptionsController,
+    CreatorTypeOptionsController,
     AuthController,
     HealthController,
     AdminUserTableController,

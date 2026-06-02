@@ -29,6 +29,7 @@ const VALID_TRANSITIONS: Record<string, string[]> = {
 };
 
 const TIER_FILTERED_OPEN_ROLLOUT_AT = new Date("2026-05-05T00:00:00.000Z"); // Rolled out May 2026
+const ENABLE_CAMPAIGN_LIVE_EMAILS = false; // comment this if need to send campaign notification emails
 
 type CampaignOwnerType = "brand" | "photographer" | "influencer";
 type InviteRecipientRole = "influencer" | "photographer";
@@ -999,6 +1000,7 @@ export class CampaignsService {
   }
 
   private async notifyMatchingInfluencers(campaign: any): Promise<void> {
+    if (!ENABLE_CAMPAIGN_LIVE_EMAILS) return; // comment this if need to send campaign notification emails
     const TIER_ORDER = [
       "Starter",
       "Nano",
@@ -1163,6 +1165,7 @@ export class CampaignsService {
   }
 
   private async notifyInvitedUsers(campaign: any): Promise<void> {
+    if (!ENABLE_CAMPAIGN_LIVE_EMAILS) return; // comment this if need to send campaign notification emails
     const { _id: campaignId, title, brandId, inviteRecipientRole } = campaign;
 
     // Get all active invites for this campaign

@@ -2,6 +2,7 @@ import { Injectable, BadRequestException, NotFoundException } from "@nestjs/comm
 import { InjectModel } from "@nestjs/mongoose";
 import { Model, Types } from "mongoose";
 import { CloudinaryService } from "../cloudinary.service";
+import { normalizeCollaborationAvailability } from "../utils/collaboration-availability.util";
 
 @Injectable()
 export class PhotographersService {
@@ -95,6 +96,7 @@ export class PhotographersService {
       "pricing",
       "equipment",
       "socialMedia",
+      "collaborationAvailability",
       "contact",
       "payout",
       "profileImage",
@@ -124,6 +126,15 @@ export class PhotographersService {
 
     for (const key of allowedFields) {
       if (key === "location") continue;
+      if (key === "collaborationAvailability") {
+        if (data[key] !== undefined) {
+          update.collaborationAvailability = normalizeCollaborationAvailability(
+            data[key],
+            "photographer",
+          );
+        }
+        continue;
+      }
       if (data[key] !== undefined) {
         update[key] = data[key];
       }
@@ -181,7 +192,7 @@ export class PhotographersService {
     let docs = await this.photographerModel
       .find(filter)
       .select(
-        "name username email phoneNumber profileImage profileImages location skills pricing equipment socialMedia contact gender portfolio status adminTags isPremium commissionBadge commissionOverride verifiedByTrendStarz verificationStatus",
+        "name username email phoneNumber profileImage profileImages location skills pricing equipment socialMedia collaborationAvailability contact gender portfolio status adminTags isPremium commissionBadge commissionOverride verifiedByTrendStarz verificationStatus",
       )
       .limit(limit)
       .lean();
@@ -256,7 +267,7 @@ export class PhotographersService {
     const rawDoc: any = await this.photographerModel
       .findOne({ _id: id, isDeleted: { $ne: true } })
       .select(
-        "name username email phoneNumber profileImage profileImages location skills pricing equipment socialMedia contact gender portfolio status adminTags isPremium commissionBadge commissionOverride verifiedByTrendStarz verificationStatus isEmailVerified isMobileVerified",
+        "name username email phoneNumber profileImage profileImages location skills pricing equipment socialMedia collaborationAvailability contact gender portfolio status adminTags isPremium commissionBadge commissionOverride verifiedByTrendStarz verificationStatus isEmailVerified isMobileVerified",
       )
       .lean();
     if (!rawDoc || Array.isArray(rawDoc)) {
@@ -283,7 +294,7 @@ export class PhotographersService {
     const rawDoc: any = await this.photographerModel
       .findOne({ username, isDeleted: { $ne: true } })
       .select(
-        "name username email phoneNumber profileImage profileImages location skills pricing equipment socialMedia contact gender portfolio status adminTags isPremium commissionBadge commissionOverride verifiedByTrendStarz verificationStatus isEmailVerified isMobileVerified",
+        "name username email phoneNumber profileImage profileImages location skills pricing equipment socialMedia collaborationAvailability contact gender portfolio status adminTags isPremium commissionBadge commissionOverride verifiedByTrendStarz verificationStatus isEmailVerified isMobileVerified",
       )
       .lean();
     if (!rawDoc || Array.isArray(rawDoc)) {

@@ -5,6 +5,11 @@ import {
   resolveCampaignTypeConfigs,
 } from "./campaign-type-configs";
 import { seedMissingLocationsFromConfig } from "./utils/location-seed.util";
+import {
+  readAdminConfigFile,
+  visibleCollaborationOptionConfig,
+  visibleCreatorTypeConfig,
+} from "./utils/collaboration-options.util";
 
 @Controller("tiers")
 export class TiersController {
@@ -85,6 +90,15 @@ export class CategoriesController {
       .lean()
       .limit(200);
     return categories.length ? categories : [];
+  }
+}
+
+@Controller("creator-type-options")
+export class CreatorTypeOptionsController {
+  @Get()
+  getAll() {
+    const config = readAdminConfigFile();
+    return visibleCreatorTypeConfig(config?.creatorTypeOptions);
   }
 }
 
@@ -174,6 +188,15 @@ export class SocialMediaController {
       .lean()
       .limit(100);
     return socials.length ? socials : [];
+  }
+}
+
+@Controller("collaboration-availability-options")
+export class CollaborationAvailabilityOptionsController {
+  @Get()
+  async getAll() {
+    const config = readAdminConfigFile();
+    return visibleCollaborationOptionConfig(config?.collaborationAvailability);
   }
 }
 

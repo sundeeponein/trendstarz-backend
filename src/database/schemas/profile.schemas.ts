@@ -73,6 +73,7 @@ export const InfluencerSchema = new Schema(
     premiumEnd: { type: Date, default: null },
     categories: [{ type: String }],
     influencerCategory: { type: String, default: "" },
+    creatorTypes: [{ type: String }],
     professionalStatus: { type: Boolean, default: false },
     expertiseArea: { type: String, default: "" },
     verificationDocuments: [
@@ -140,6 +141,14 @@ export const InfluencerSchema = new Schema(
         ],
       },
     ],
+    collaborationAvailability: {
+      enabled: { type: Boolean, default: false },
+      collaborationTypes: [{ type: String }],
+      preference: { type: String, default: "" },
+      availableFor: [{ type: String }],
+      locations: [{ type: String }],
+      openToTravel: { type: Boolean, default: false },
+    },
     contact: {
       whatsapp: { type: Boolean, default: false },
       email: { type: Boolean, default: false },
@@ -411,6 +420,13 @@ export const PhotographerSchema = new Schema(
         followersCount: { type: Number },
       },
     ],
+    collaborationAvailability: {
+      enabled: { type: Boolean, default: false },
+      availableFor: [{ type: String }],
+      preference: { type: String, default: "" },
+      locations: [{ type: String }],
+      openToTravel: { type: Boolean, default: false },
+    },
     contact: {
       whatsapp: { type: Boolean, default: false },
       email: { type: Boolean, default: false },

@@ -8,6 +8,7 @@ import * as bcrypt from "bcryptjs";
 import { InjectModel } from "@nestjs/mongoose";
 import { Model } from "mongoose";
 import { PlansService } from "../plans/plans.service";
+import { normalizeCollaborationAvailability } from "../utils/collaboration-availability.util";
 
 const USE_LOCAL_IMAGES = process.env.USE_LOCAL_IMAGES === "true";
 const LOCAL_IMAGE_DIR = path.resolve(__dirname, "../../assets/local-images");
@@ -911,6 +912,7 @@ export class UsersService {
     options?: {
       state?: string;
       district?: string;
+      creatorType?: string;
       viewerState?: string;
       viewerDistrict?: string;
       smartLocationPriority?: boolean;
@@ -919,6 +921,7 @@ export class UsersService {
     const skip = (page - 1) * limit;
     const stateFilter = String(options?.state || "").trim();
     const districtFilter = String(options?.district || "").trim();
+    const creatorTypeFilter = String(options?.creatorType || "").trim();
     const viewerState = String(options?.viewerState || "").trim();
     const viewerDistrict = String(options?.viewerDistrict || "").trim();
     const hasManualLocationFilter = !!stateFilter || !!districtFilter;
@@ -947,10 +950,16 @@ export class UsersService {
         "i",
       );
     }
+    if (creatorTypeFilter) {
+      baseFilter.creatorTypes = new RegExp(
+        `^${this.escapeRegex(creatorTypeFilter)}$`,
+        "i",
+      );
+    }
 
     if (lite) {
       const selection =
-        "name username profileImage profileImages categories influencerCategory verificationStatus verifiedByTrendStarz location socialMedia adminTags isPremium premiumEnd promotionalPrice dateOfBirth";
+        "name username profileImage profileImages categories influencerCategory creatorTypes verificationStatus verifiedByTrendStarz location socialMedia collaborationAvailability adminTags isPremium premiumEnd promotionalPrice dateOfBirth";
       const [rows, total] = useSmartLocationPriority
         ? await Promise.all([
             this.influencerModel.find(baseFilter).select(selection).lean(),
@@ -1167,6 +1176,7 @@ export class UsersService {
   async searchInfluencers(query: {
     q?: string;
     category?: string;
+    creatorType?: string;
     state?: string;
     page?: number;
     limit?: number;
@@ -1181,6 +1191,12 @@ export class UsersService {
     }
     if (query.category) {
       filter.categories = query.category;
+    }
+    if (query.creatorType) {
+      filter.creatorTypes = new RegExp(
+        `^${this.escapeRegex(query.creatorType)}$`,
+        "i",
+      );
     }
     if (query.state) {
       filter["location.state"] = new RegExp(
@@ -1225,12 +1241,14 @@ export class UsersService {
       website,
       categories,
       influencerCategory,
+      creatorTypes,
       professionalStatus,
       expertiseArea,
       verificationStatus,
       verifiedByTrendStarz,
       location,
       socialMedia,
+      collaborationAvailability,
       promotionalPrice,
       profileTraffic,
     } = user;
@@ -1246,6 +1264,7 @@ export class UsersService {
       contactRestricted: !allowContact,
       categories,
       influencerCategory: influencerCategory || "",
+      creatorTypes: Array.isArray(creatorTypes) ? creatorTypes : [],
       professionalStatus: !!professionalStatus,
       expertiseArea: expertiseArea || "",
       verificationStatus: verificationStatus || "not_submitted",
@@ -1253,6 +1272,7 @@ export class UsersService {
       location: location || { state: "" },
       socialMedia: allowSocial ? socialMedia : [],
       socialMediaRestricted: !allowSocial,
+      collaborationAvailability: collaborationAvailability || null,
       isPremium,
       gender: allowGender ? user.gender || undefined : undefined,
       promotionalPrice,
@@ -1285,12 +1305,14 @@ export class UsersService {
       promotionalPrice,
       categories,
       influencerCategory,
+      creatorTypes,
       professionalStatus,
       expertiseArea,
       verificationStatus,
       verifiedByTrendStarz,
       location,
       socialMedia,
+      collaborationAvailability,
       profileTraffic,
     } = user;
     return {
@@ -1305,6 +1327,7 @@ export class UsersService {
       contactRestricted: !allowContact,
       categories,
       influencerCategory: influencerCategory || "",
+      creatorTypes: Array.isArray(creatorTypes) ? creatorTypes : [],
       professionalStatus: !!professionalStatus,
       expertiseArea: expertiseArea || "",
       verificationStatus: verificationStatus || "not_submitted",
@@ -1312,6 +1335,7 @@ export class UsersService {
       location: location || { state: "" },
       socialMedia: allowSocial ? socialMedia : [],
       socialMediaRestricted: !allowSocial,
+      collaborationAvailability: collaborationAvailability || null,
       isPremium,
       gender: allowGender ? user.gender || undefined : undefined,
       promotionalPrice,
@@ -1677,6 +1701,7 @@ export class UsersService {
       location: user.location || { state: "" },
       languages: user.languages || [],
       categories: user.categories || [],
+      creatorTypes: user.creatorTypes || [],
       influencerCategory: user.influencerCategory || "",
       professionalStatus: !!user.professionalStatus,
       expertiseArea: user.expertiseArea || "",
@@ -1693,6 +1718,7 @@ export class UsersService {
       googleMapAddress: user.googleMapAddress || "",
       profileImages: user.profileImages || [],
       socialMedia: user.socialMedia || [],
+      collaborationAvailability: user.collaborationAvailability || null,
       contact: user.contact || { whatsapp: false, email: false, call: false },
       isPremium,
       premiumDuration: user.premiumDuration || null,
@@ -1815,17 +1841,26 @@ export class UsersService {
       "languages",
       "categories",
       "influencerCategory",
+      "creatorTypes",
       "professionalStatus",
       "expertiseArea",
       "verificationDocuments",
       "verificationDisclaimerAccepted",
       "profileImages",
       "socialMedia",
+      "collaborationAvailability",
       "contact",
       "promotionalPrice",
     ];
     const updateData: any = {};
     for (const key of allowedFields) {
+      if (key === "collaborationAvailability") {
+        if (update[key] !== undefined) {
+          updateData.collaborationAvailability =
+            normalizeCollaborationAvailability(update[key], "influencer");
+        }
+        continue;
+      }
       if (update[key] !== undefined) updateData[key] = update[key];
     }
     if (update.payout !== undefined) {
