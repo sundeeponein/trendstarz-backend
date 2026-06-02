@@ -24,6 +24,7 @@ import {
   getCampaignTypeConfigDefaults,
   resolveCampaignTypeConfigs,
 } from "./campaign-type-configs";
+import { seedMissingLocationsFromConfig } from "./utils/location-seed.util";
 
 interface VisibilityItem {
   _id: string;
@@ -843,6 +844,10 @@ export class AdminListsController {
   // States
   @Get("states")
   async getStates() {
+    const totalStates = await this.stateModel.countDocuments();
+    if (totalStates === 0) {
+      await seedMissingLocationsFromConfig(this.stateModel, this.districtModel);
+    }
     return this.stateModel.find().lean().limit(100);
   }
   @Post("states")
@@ -867,6 +872,14 @@ export class AdminListsController {
     @Query("state") state?: string,
     @Query("stateId") stateId?: string,
   ) {
+    const [totalStates, totalDistricts] = await Promise.all([
+      this.stateModel.countDocuments(),
+      this.districtModel.countDocuments(),
+    ]);
+    if (totalStates === 0 || totalDistricts === 0) {
+      await seedMissingLocationsFromConfig(this.stateModel, this.districtModel);
+    }
+
     let resolvedState = (state || "").trim();
 
     if (!resolvedState && stateId) {
@@ -1026,14 +1039,20 @@ export class AdminListsController {
           }
         }
       }
+      const hiddenStateNames = new Set<string>();
       if (body.states) {
         for (const s of body.states) {
-          const result = await this.stateModel.findByIdAndUpdate(s._id, {
-            showInFrontend: s.showInFrontend,
-          });
+          const result: any = await this.stateModel.findByIdAndUpdate(
+            s._id,
+            { showInFrontend: s.showInFrontend },
+            { new: true },
+          );
           if (!result) {
             console.error(`[BatchUpdate][ERROR] State not found:`, s);
             throw new BadRequestException(`State not found: ${s._id}`);
+          }
+          if (s.showInFrontend === false) {
+            hiddenStateNames.add(String(result.name || "").trim().toLowerCase());
           }
         }
       }
@@ -1046,6 +1065,17 @@ export class AdminListsController {
             console.error(`[BatchUpdate][ERROR] District not found:`, d);
             throw new BadRequestException(`District not found: ${d._id}`);
           }
+        }
+      }
+      if (hiddenStateNames.size) {
+        const hiddenStateRegexes = Array.from(hiddenStateNames)
+          .filter(Boolean)
+          .map((state) => new RegExp(`^${state.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`, "i"));
+        if (hiddenStateRegexes.length) {
+          await this.districtModel.updateMany(
+            { state: { $in: hiddenStateRegexes } },
+            { $set: { showInFrontend: false } },
+          );
         }
       }
       const needsConfigUpdate =

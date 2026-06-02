@@ -4,6 +4,7 @@ import { Model } from "mongoose";
 import {
   resolveCampaignTypeConfigs,
 } from "./campaign-type-configs";
+import { seedMissingLocationsFromConfig } from "./utils/location-seed.util";
 
 @Controller("tiers")
 export class TiersController {
@@ -89,10 +90,18 @@ export class CategoriesController {
 
 @Controller("states")
 export class StatesController {
-  constructor(@InjectModel("State") private readonly stateModel: Model<any>) {}
+  constructor(
+    @InjectModel("State") private readonly stateModel: Model<any>,
+    @InjectModel("District") private readonly districtModel: Model<any>,
+  ) {}
 
   @Get()
   async getAll() {
+    const totalStates = await this.stateModel.countDocuments();
+    if (totalStates === 0) {
+      await seedMissingLocationsFromConfig(this.stateModel, this.districtModel);
+    }
+
     const states = await this.stateModel
       .find({ showInFrontend: { $ne: false } })
       .lean()
@@ -113,6 +122,14 @@ export class DistrictsController {
     @Query("state") state?: string,
     @Query("stateId") stateId?: string,
   ) {
+    const [totalStates, totalDistricts] = await Promise.all([
+      this.stateModel.countDocuments(),
+      this.districtModel.countDocuments(),
+    ]);
+    if (totalStates === 0 || totalDistricts === 0) {
+      await seedMissingLocationsFromConfig(this.stateModel, this.districtModel);
+    }
+
     let resolvedState = (state || "").trim();
 
     if (!resolvedState && stateId) {
