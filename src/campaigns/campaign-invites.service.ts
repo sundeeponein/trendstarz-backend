@@ -96,6 +96,106 @@ export class CampaignInvitesService {
       : "influencer";
   }
 
+  private getAcceptedSlotStatuses(): string[] {
+    return [
+      "accepted",
+      "payment_confirmed",
+      "working",
+      "submitted",
+      "completed",
+      "approved",
+    ];
+  }
+
+  private getRoleAcceptanceCloseAt(
+    campaign: any,
+    role: "influencer" | "photographer",
+  ): number {
+    const slots = Array.isArray(campaign?.inviteSlots)
+      ? campaign.inviteSlots
+      : [];
+    const slotTotal = slots.reduce((sum: number, slot: any) => {
+      const slotRole = this.normalizeRecipientRole(slot?.role);
+      const count = Number(slot?.count || 0);
+      return slotRole === role && Number.isFinite(count) && count > 0
+        ? sum + Math.round(count)
+        : sum;
+    }, 0);
+    if (slotTotal > 0) return slotTotal;
+
+    if (role === "photographer") {
+      const photographerLimit = Number(
+        campaign?.maxPhotographers ||
+          campaign?.maxPhotoVideoGraphers ||
+          campaign?.maxPhotovideographers ||
+          campaign?.maxPhotoVideographers ||
+          0,
+      );
+      if (Number.isFinite(photographerLimit) && photographerLimit > 0) {
+        return Math.round(photographerLimit);
+      }
+    }
+
+    const legacyLimit = Number(campaign?.maxInfluencers || 0);
+    return Number.isFinite(legacyLimit) && legacyLimit > 0
+      ? Math.round(legacyLimit)
+      : 0;
+  }
+
+  private async countAcceptedForRole(
+    campaignId: any,
+    role: "influencer" | "photographer",
+  ): Promise<number> {
+    return this.inviteModel.countDocuments({
+      campaignId,
+      status: { $in: this.getAcceptedSlotStatuses() },
+      $or: this.getRoleInviteQuery(role),
+    });
+  }
+
+  private getRoleInviteQuery(role: "influencer" | "photographer"): any[] {
+    return role === "photographer"
+      ? [
+          { recipientRole: "photographer" },
+          { photographerId: { $exists: true, $ne: null } },
+        ]
+      : [
+          { recipientRole: "influencer" },
+          { recipientRole: { $exists: false } },
+          { recipientRole: null },
+          { recipientRole: "" },
+          { influencerId: { $exists: true, $ne: null } },
+        ];
+  }
+
+  private async withdrawRemainingPendingInvitesForClosedRole(
+    campaignId: any,
+    acceptedInviteId: any,
+    role: "influencer" | "photographer",
+    closeAt: number,
+  ): Promise<void> {
+    if (!closeAt || closeAt <= 0) return;
+    const acceptedCount = await this.countAcceptedForRole(campaignId, role);
+    if (acceptedCount < closeAt) return;
+
+    await this.inviteModel.updateMany(
+      {
+        _id: { $ne: acceptedInviteId },
+        campaignId,
+        status: { $in: ["pending", "invited", "counter_sent"] },
+        $or: this.getRoleInviteQuery(role),
+      },
+      {
+        $set: {
+          status: "withdrawn",
+          withdrawnAt: new Date(),
+          withdrawnReason: `Auto-closed after ${closeAt} ${role} acceptance${closeAt === 1 ? "" : "s"}.`,
+          updatedAt: new Date(),
+        },
+      },
+    );
+  }
+
   private async safeFindById(
     model: any,
     id: string,
@@ -592,8 +692,15 @@ export class CampaignInvitesService {
     const caps = await this.plansService.getUserPlanCapabilities(brandId);
     const capFeatures = Array.isArray(caps?.features) ? caps.features : [];
     const capLimits = Array.isArray(caps?.limits) ? caps.limits : [];
+    const configuredMaxInvitesPerCampaign = capLimits.find(
+      (l: any) => l.key === "maxInvitesPerCampaign",
+    )?.value;
     const maxInvitesPerCampaign =
-      capLimits.find((l: any) => l.key === "maxInvitesPerCampaign")?.value ?? 5;
+      configuredMaxInvitesPerCampaign !== undefined
+        ? Number(configuredMaxInvitesPerCampaign)
+        : caps?.hasPremium
+          ? 10
+          : 1;
     const canInviteUsers = capFeatures.some(
       (f: any) => String(f?.key || "") === "canInviteUsers" && !!f?.value,
     );
@@ -607,18 +714,15 @@ export class CampaignInvitesService {
     const maxInvitesPerMonthEntry = capLimits.find(
       (l: any) => l.key === "maxInvitesPerMonth",
     );
-    // Count invites for this campaign
+    // Count invites for this campaign. Invite volume is controlled by the
+    // sender's plan; campaign.maxInfluencers is the accepted-slot close target.
     const inviteCount = await this.inviteModel.countDocuments({
       campaignId: data.campaignId,
     });
-    const maxInfluencers = Number(campaign?.maxInfluencers || 0);
-    if (maxInfluencers > 0 && inviteCount >= maxInfluencers) {
-      throw new BadRequestException(
-        `Campaign limit reached: max ${maxInfluencers} influencers can be invited.`,
-      );
-    }
-
-    const acceptanceCloseAt = Number(campaign?.maxInfluencers || 0);
+    const acceptanceCloseAt = this.getRoleAcceptanceCloseAt(
+      campaign,
+      recipientRole,
+    );
     if (
       campaign?.acceptanceDeadline &&
       Date.now() > new Date(campaign.acceptanceDeadline).getTime()
@@ -629,22 +733,13 @@ export class CampaignInvitesService {
     }
     if (acceptanceCloseAt > 0) {
       // 'disputed' excluded so no-show slots can be re-filled
-      const acceptedCount = await this.inviteModel.countDocuments({
-        campaignId: data.campaignId,
-        status: {
-          $in: [
-            "accepted",
-            "payment_confirmed",
-            "working",
-            "submitted",
-            "completed",
-            "approved",
-          ],
-        },
-      });
+      const acceptedCount = await this.countAcceptedForRole(
+        data.campaignId,
+        recipientRole,
+      );
       if (acceptedCount >= acceptanceCloseAt) {
         throw new BadRequestException(
-          `Campaign acceptance is closed (${acceptedCount}/${acceptanceCloseAt} reached).`,
+          `Campaign acceptance is closed for ${recipientRole}s (${acceptedCount}/${acceptanceCloseAt} reached).`,
         );
       }
     }
@@ -1604,7 +1699,7 @@ export class CampaignInvitesService {
       const campaign: any = await this.campaignModel
         .findById(invite.campaignId)
         .select(
-          "status ownerType createdByRole requestKind startDate endDate timelineStart timelineEnd socialMedia platforms campaignMode minInfluencerTier minInfluencers maxInfluencers acceptanceDeadline campaignType productShippingRequired",
+          "status ownerType createdByRole requestKind startDate endDate timelineStart timelineEnd socialMedia platforms campaignMode minInfluencerTier minInfluencers maxInfluencers maxPhotographers maxPhotoVideoGraphers maxPhotovideographers maxPhotoVideographers inviteSlots acceptanceDeadline campaignType productShippingRequired",
         )
         .lean();
       if (!campaign) throw new NotFoundException("Campaign not found");
@@ -1690,25 +1785,19 @@ export class CampaignInvitesService {
         );
       }
 
-      const acceptanceCloseAt = Number(campaign?.maxInfluencers || 0);
+      const acceptanceCloseAt = this.getRoleAcceptanceCloseAt(
+        campaign,
+        recipientRole,
+      );
       if (acceptanceCloseAt > 0) {
         // 'disputed' (no-show) is excluded so the slot re-opens for a replacement
-        const acceptedCount = await this.inviteModel.countDocuments({
-          campaignId: invite.campaignId,
-          status: {
-            $in: [
-              "accepted",
-              "payment_confirmed",
-              "working",
-              "submitted",
-              "completed",
-              "approved",
-            ],
-          },
-        });
+        const acceptedCount = await this.countAcceptedForRole(
+          invite.campaignId,
+          recipientRole,
+        );
         if (acceptedCount >= acceptanceCloseAt) {
           throw new BadRequestException(
-            `Campaign is closed: required recipient count reached (${acceptanceCloseAt}).`,
+            `Campaign is closed: required ${recipientRole} count reached (${acceptanceCloseAt}).`,
           );
         }
       }
@@ -1979,6 +2068,26 @@ export class CampaignInvitesService {
         // Non-fatal — don't block the acceptance flow on logging errors
         console.error("Logging failure for invite accept:", e);
       }
+    }
+
+    if (status === "accepted") {
+      const acceptedRole = this.normalizeRecipientRole(invite?.recipientRole);
+      const campaignForClose: any = await this.campaignModel
+        .findById(invite.campaignId)
+        .select(
+          "maxInfluencers maxPhotographers maxPhotoVideoGraphers maxPhotovideographers maxPhotoVideographers inviteSlots",
+        )
+        .lean();
+      const closeAt = this.getRoleAcceptanceCloseAt(
+        campaignForClose,
+        acceptedRole,
+      );
+      await this.withdrawRemainingPendingInvitesForClosedRole(
+        invite.campaignId,
+        invite._id,
+        acceptedRole,
+        closeAt,
+      );
     }
 
     // Send notification email to brand on acceptance
@@ -2359,11 +2468,15 @@ export class CampaignInvitesService {
     }
 
     // Check max slots not exceeded
-    const acceptedCount = await this.inviteModel.countDocuments({
+    const influencerCloseAt = this.getRoleAcceptanceCloseAt(
+      campaign,
+      "influencer",
+    );
+    const acceptedCount = await this.countAcceptedForRole(
       campaignId,
-      status: { $in: ["accepted", "completed"] },
-    });
-    if (campaign.maxInfluencers && acceptedCount >= campaign.maxInfluencers) {
+      "influencer",
+    );
+    if (influencerCloseAt && acceptedCount >= influencerCloseAt) {
       throw new BadRequestException(
         "This campaign has reached its maximum number of influencers.",
       );

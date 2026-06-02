@@ -317,6 +317,7 @@ describe("CampaignInvitesService – create() gating", () => {
     inviteModel.findById = jest.fn();
     inviteModel.countDocuments = jest.fn().mockResolvedValue(0);
     inviteModel.find = jest.fn();
+    inviteModel.updateMany = jest.fn().mockResolvedValue({ modifiedCount: 0 });
 
     brandModel = jest.fn();
     brandModel.findById = jest.fn().mockReturnValue({
@@ -411,12 +412,14 @@ describe("CampaignInvitesService – create() gating", () => {
     ).resolves.toBeDefined();
   });
 
-  it("throws when total invited >= maxInfluencers cap", async () => {
+  it("allows extra invites until the plan cap even when maxInfluencers is the accepted close target", async () => {
     mockCampaignLean({ maxInfluencers: 2 });
-    inviteModel.countDocuments.mockResolvedValue(2); // 2 already invited
+    inviteModel.countDocuments
+      .mockResolvedValueOnce(2) // already invited; no longer capped by maxInfluencers
+      .mockResolvedValueOnce(1); // acceptedCount remains below close target
     await expect(
       service.create("brand1", { campaignId: "camp1", influencerId: "inf1" }),
-    ).rejects.toThrow(BadRequestException);
+    ).resolves.toBeDefined();
   });
 
   it("enforces recipient cap based on accepted + active pending only", async () => {
@@ -507,6 +510,7 @@ describe("CampaignInvitesService – respond()", () => {
     inviteModel.findById = jest.fn();
     inviteModel.countDocuments = jest.fn().mockResolvedValue(0);
     inviteModel.find = jest.fn();
+    inviteModel.updateMany = jest.fn().mockResolvedValue({ modifiedCount: 0 });
 
     brandModel = jest.fn();
     brandModel.findById = jest.fn().mockReturnValue({
@@ -624,6 +628,31 @@ describe("CampaignInvitesService – respond()", () => {
 
     await service.respond("inv1", "inf1", "accepted", "2026-07-15");
     expect(invite.acceptedAt).toBeInstanceOf(Date);
+  });
+
+  it("withdraws remaining pending invites for the role when accepted target is reached", async () => {
+    const invite = pendingInvite({ recipientRole: "influencer" });
+    inviteModel.findById.mockResolvedValue(invite);
+    campaignModel.findById.mockReturnValue(mockCampaignSelect({ maxInfluencers: 1 }));
+    inviteModel.countDocuments
+      .mockResolvedValueOnce(0) // pre-accept threshold check
+      .mockResolvedValueOnce(1); // post-save close check
+
+    await service.respond("inv1", "inf1", "accepted", "2026-07-15");
+
+    expect(inviteModel.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        _id: { $ne: "inv1" },
+        campaignId: "camp1",
+        status: { $in: ["pending", "invited", "counter_sent"] },
+      }),
+      expect.objectContaining({
+        $set: expect.objectContaining({
+          status: "withdrawn",
+          withdrawnReason: expect.stringContaining("Auto-closed"),
+        }),
+      }),
+    );
   });
 
   it("does not auto-unlock coordination details for invite_location on acceptance", async () => {

@@ -376,7 +376,7 @@ export class AdminListsController {
             },
           })
           .select(
-            "_id campaignId influencerId recipientRole status selectedPostDate updatedAt acceptedAt agreedAmount agreedAmountPaise counterOffer",
+            "_id campaignId influencerId photographerId recipientRole status selectedPostDate updatedAt acceptedAt agreedAmount agreedAmountPaise counterOffer",
           )
           .lean()
       : [];
@@ -409,7 +409,9 @@ export class AdminListsController {
       }
       inviteStatsByCampaign.set(key, prev);
 
-      const recipientId = String(invite?.influencerId || "").trim();
+      const recipientId = String(
+        (invite as any)?.influencerId || (invite as any)?.photographerId || "",
+      ).trim();
       if (!recipientId) continue;
       const recipientRole = String(invite?.recipientRole || "influencer")
         .trim()
