@@ -20,6 +20,7 @@ import { FirebaseAdminService } from "../utils/firebase-admin.service";
 type AnyUserDoc = {
   email: string;
   name?: string;
+  password?: string;
   isEmailVerified?: boolean;
   resetToken?: string;
   resetTokenExpires?: number;
@@ -28,6 +29,7 @@ type AnyUserDoc = {
 };
 
 type FirebaseContactType = "email" | "phone";
+type TrendstarzRole = "admin" | "influencer" | "brand" | "photographer";
 
 @Injectable()
 export class AuthService {
@@ -63,6 +65,22 @@ export class AuthService {
       this.photographerModel.findOne({ email }),
     ]);
     return adminUser || influencer || brand || photographer || null;
+  }
+
+  private async findAnyUserWithRole(
+    email: string,
+  ): Promise<{ user: any; role: TrendstarzRole } | null> {
+    const [adminUser, influencer, brand, photographer] = await Promise.all([
+      this.userModel.findOne({ email }),
+      this.influencerModel.findOne({ email }),
+      this.brandModel.findOne({ email }),
+      this.photographerModel.findOne({ email }),
+    ]);
+    if (adminUser) return { user: adminUser, role: "admin" };
+    if (influencer) return { user: influencer, role: "influencer" };
+    if (brand) return { user: brand, role: "brand" };
+    if (photographer) return { user: photographer, role: "photographer" };
+    return null;
   }
 
   async sendEmailVerificationLink(email: string) {
@@ -327,6 +345,71 @@ export class AuthService {
     user.resetTokenExpires = null;
     await user.save();
     return { success: true, message: "Password reset successfully." };
+  }
+
+  async ensureFirebasePasswordResetUser(email: string) {
+    const normalizedEmail = String(email || "").trim().toLowerCase();
+    if (!normalizedEmail) {
+      throw new BadRequestException("Email is required.");
+    }
+
+    const match = await this.findAnyUserWithRole(normalizedEmail);
+    if (!match) {
+      return {
+        success: true,
+        canSendFirebaseReset: false,
+        message: "If that email is registered, a reset link has been sent.",
+      };
+    }
+
+    if (this.firebaseAdminService.isConfigured()) {
+      await this.firebaseAdminService.ensureEmailUser(normalizedEmail);
+    }
+
+    return {
+      success: true,
+      canSendFirebaseReset: true,
+      message: "If that email is registered, a reset link has been sent.",
+    };
+  }
+
+  async completeFirebasePasswordReset(idToken: string, newPassword: string) {
+    if (!idToken || !newPassword) {
+      throw new BadRequestException(
+        "Firebase token and new password are required.",
+      );
+    }
+    this.validatePasswordStrength(newPassword);
+
+    const decoded = await this.firebaseAdminService.verifyIdToken(idToken);
+    const email = String(decoded.email || "").trim().toLowerCase();
+    if (!email) {
+      throw new BadRequestException("Firebase token does not include an email.");
+    }
+
+    const match = await this.findAnyUserWithRole(email);
+    if (!match) {
+      throw new BadRequestException("User not found.");
+    }
+
+    match.user.password = await bcrypt.hash(newPassword, 10);
+    match.user.isEmailVerified = true;
+    match.user.resetToken = null;
+    match.user.resetTokenExpires = null;
+    const autoApproved =
+      match.role !== "admin"
+        ? await this.maybeAutoApproveAfterContactVerification(
+            match.user,
+            match.role,
+          )
+        : false;
+    await match.user.save();
+
+    return {
+      success: true,
+      autoApproved,
+      message: "Password reset successfully.",
+    };
   }
 
   async changePassword(

@@ -248,6 +248,23 @@ export class AuthController {
     return this.authService.syncFirebaseEmailVerification(body?.email);
   }
 
+  @Post("firebase/ensure-password-reset-user")
+  @Throttle({ default: { ttl: 60000, limit: 5 } })
+  @HttpCode(200)
+  async ensureFirebasePasswordResetUser(@Body() body: any) {
+    return this.authService.ensureFirebasePasswordResetUser(body?.email);
+  }
+
+  @Post("firebase/complete-password-reset")
+  @Throttle({ default: { ttl: 60000, limit: 5 } })
+  @HttpCode(200)
+  async completeFirebasePasswordReset(@Body() body: any) {
+    return this.authService.completeFirebasePasswordReset(
+      body?.idToken,
+      body?.newPassword,
+    );
+  }
+
   @Get("verify-email")
   async verifyEmail(
     @Query("token") token: string,
