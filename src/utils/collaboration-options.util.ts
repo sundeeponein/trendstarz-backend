@@ -24,12 +24,10 @@ const DEFAULT_CONFIG = {
     ],
     preferences: ["Paid Only", "Paid + Selective TFP", "Open to TFP/Portfolio"],
     availableFor: ["Photo/Videographers", "Brands", "Agencies"],
-    locations: ["Hyderabad", "Bangalore", "Chennai"],
   },
   photographer: {
     preferences: ["Paid Only", "Paid + Selective TFP", "Open to TFP/Portfolio"],
     availableFor: ["Influencers", "Brands", "Agencies"],
-    locations: ["Hyderabad", "Bangalore", "Chennai"],
   },
 };
 
@@ -102,10 +100,6 @@ export function normalizeCollaborationOptionConfig(raw: any) {
           DEFAULT_CONFIG.influencer.availableFor,
         ),
       ),
-      locations: normalizeList(
-        cfg?.influencer?.locations,
-        DEFAULT_CONFIG.influencer.locations,
-      ),
     },
     photographer: {
       preferences: normalizeList(
@@ -115,10 +109,6 @@ export function normalizeCollaborationOptionConfig(raw: any) {
       availableFor: normalizeList(
         cfg?.photographer?.availableFor,
         DEFAULT_CONFIG.photographer.availableFor,
-      ),
-      locations: normalizeList(
-        cfg?.photographer?.locations,
-        DEFAULT_CONFIG.photographer.locations,
       ),
     },
   };
@@ -132,12 +122,10 @@ export function visibleCollaborationOptionConfig(raw: any) {
       collaborationTypes: visible(normalized.influencer.collaborationTypes),
       preferences: visible(normalized.influencer.preferences),
       availableFor: visible(normalized.influencer.availableFor),
-      locations: visible(normalized.influencer.locations),
     },
     photographer: {
       preferences: visible(normalized.photographer.preferences),
       availableFor: visible(normalized.photographer.availableFor),
-      locations: visible(normalized.photographer.locations),
     },
   };
 }

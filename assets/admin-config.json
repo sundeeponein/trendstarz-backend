@@ -462,20 +462,6 @@
           "name": "Agencies",
           "visible": true
         }
-      ],
-      "locations": [
-        {
-          "name": "Hyderabad",
-          "visible": true
-        },
-        {
-          "name": "Bangalore",
-          "visible": true
-        },
-        {
-          "name": "Chennai",
-          "visible": true
-        }
       ]
     },
     "photographer": {
@@ -502,22 +488,8 @@
           "name": "Brands",
           "visible": true
         },
-        {
+      {
           "name": "Agencies",
-          "visible": true
-        }
-      ],
-      "locations": [
-        {
-          "name": "Hyderabad",
-          "visible": true
-        },
-        {
-          "name": "Bangalore",
-          "visible": true
-        },
-        {
-          "name": "Chennai",
           "visible": true
         }
       ]

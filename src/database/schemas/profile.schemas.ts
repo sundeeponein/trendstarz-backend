@@ -146,7 +146,6 @@ export const InfluencerSchema = new Schema(
       collaborationTypes: [{ type: String }],
       preference: { type: String, default: "" },
       availableFor: [{ type: String }],
-      locations: [{ type: String }],
       openToTravel: { type: Boolean, default: false },
     },
     contact: {
@@ -424,7 +423,6 @@ export const PhotographerSchema = new Schema(
       enabled: { type: Boolean, default: false },
       availableFor: [{ type: String }],
       preference: { type: String, default: "" },
-      locations: [{ type: String }],
       openToTravel: { type: Boolean, default: false },
     },
     contact: {

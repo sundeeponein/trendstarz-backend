@@ -24,7 +24,6 @@ export function normalizeCollaborationAvailability(
     enabled,
     availableFor: enabled ? cleanList(value?.availableFor) : [],
     preference: enabled ? String(value?.preference || "").trim() : "",
-    locations: enabled ? cleanList(value?.locations, 12) : [],
     openToTravel: enabled ? value?.openToTravel === true : false,
   };
 
