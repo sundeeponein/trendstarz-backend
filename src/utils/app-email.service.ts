@@ -27,11 +27,28 @@ function logMissingKeyOnce(provider: EmailProvider, envKey: string) {
 }
 
 function resolveEmailProvider(): EmailProvider {
-  const configured = (process.env.EMAIL_PROVIDER || 'brevo').trim().toLowerCase();
+  const configured = (process.env.EMAIL_PROVIDER || 'resend').trim().toLowerCase();
   if (configured === 'brevo' || configured === 'resend' || configured === 'ses') {
     return configured;
   }
   throw new Error(`Unknown EMAIL_PROVIDER: ${configured}`);
+}
+
+function isEmailProvider(value: string): value is EmailProvider {
+  return value === 'brevo' || value === 'resend' || value === 'ses';
+}
+
+function resolveFallbackProviders(): EmailProvider[] {
+  const raw = process.env.EMAIL_FALLBACK_PROVIDERS || 'ses';
+  return raw
+    .split(',')
+    .map((value) => value.trim().toLowerCase())
+    .filter(isEmailProvider);
+}
+
+function resolveProviderOrder(): EmailProvider[] {
+  const order: EmailProvider[] = [resolveEmailProvider(), ...resolveFallbackProviders()];
+  return order.filter((provider, index) => order.indexOf(provider) === index);
 }
 
 function hasSesConfig(): boolean {
@@ -42,28 +59,63 @@ function hasSesConfig(): boolean {
   );
 }
 
-export async function sendAppEmail(options: AppEmailOptions) {
-  const provider = resolveEmailProvider();
-
+function hasProviderConfig(provider: EmailProvider): boolean {
   if (provider === 'brevo') {
-    if (!process.env.BREVO_API_KEY && !isProductionEnv()) {
-      logMissingKeyOnce('brevo', 'BREVO_API_KEY');
-      return { skipped: true, provider, reason: 'BREVO_API_KEY missing in non-production' };
-    }
-    return sendEmailBrevo(options);
+    return !!process.env.BREVO_API_KEY;
   }
-
   if (provider === 'resend') {
-    if (!process.env.RESEND_API_KEY && !isProductionEnv()) {
-      logMissingKeyOnce('resend', 'RESEND_API_KEY');
-      return { skipped: true, provider, reason: 'RESEND_API_KEY missing in non-production' };
+    return !!process.env.RESEND_API_KEY;
+  }
+  return hasSesConfig();
+}
+
+function missingConfigReason(provider: EmailProvider): string {
+  if (provider === 'brevo') return 'BREVO_API_KEY missing';
+  if (provider === 'resend') return 'RESEND_API_KEY missing';
+  return 'AWS SES config missing';
+}
+
+async function sendWithProvider(provider: EmailProvider, options: AppEmailOptions) {
+  if (provider === 'brevo') return sendEmailBrevo(options);
+  if (provider === 'resend') return sendEmailResend(options);
+  return sendEmailSes(options);
+}
+
+export async function sendAppEmail(options: AppEmailOptions) {
+  const failures: string[] = [];
+
+  for (const provider of resolveProviderOrder()) {
+    if (!hasProviderConfig(provider)) {
+      const reason = missingConfigReason(provider);
+      failures.push(`${provider}: ${reason}`);
+      if (!isProductionEnv()) {
+        logMissingKeyOnce(
+          provider,
+          provider === 'ses'
+            ? 'AWS_SES_ACCESS_KEY_ID/AWS_SES_SECRET_ACCESS_KEY/AWS_SES_FROM'
+            : provider === 'brevo'
+              ? 'BREVO_API_KEY'
+              : 'RESEND_API_KEY',
+        );
+      }
+      continue;
     }
-    return sendEmailResend(options);
+
+    try {
+      return await sendWithProvider(provider, options);
+    } catch (error: any) {
+      failures.push(`${provider}: ${error?.message || 'delivery failed'}`);
+      console.warn(`[sendAppEmail] ${provider} delivery failed; checking fallback providers.`);
+    }
   }
 
-  if (!hasSesConfig() && !isProductionEnv()) {
-    logMissingKeyOnce('ses', 'AWS_SES_ACCESS_KEY_ID/AWS_SES_SECRET_ACCESS_KEY/AWS_SES_FROM');
-    return { skipped: true, provider, reason: 'AWS SES config missing in non-production' };
+  if (!isProductionEnv()) {
+    return {
+      skipped: true,
+      provider: resolveEmailProvider(),
+      reason: failures.join('; ') || 'No email provider configured',
+    };
   }
-  return sendEmailSes(options);
+
+  throw new Error(`Email delivery failed: ${failures.join('; ') || 'No email provider configured'}`);
 }

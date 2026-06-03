@@ -15,6 +15,7 @@ import {
 } from "../email/templates/auth.templates";
 import { getJwtSecret } from "./jwt-secret";
 import { normalizeCollaborationAvailability } from "../utils/collaboration-availability.util";
+import { FirebaseAdminService } from "../utils/firebase-admin.service";
 
 type AnyUserDoc = {
   email: string;
@@ -25,6 +26,8 @@ type AnyUserDoc = {
   save: () => Promise<unknown>;
   [key: string]: unknown;
 };
+
+type FirebaseContactType = "email" | "phone";
 
 @Injectable()
 export class AuthService {
@@ -351,7 +354,113 @@ export class AuthService {
     @InjectModel("Language") private readonly languageModel: Model<any>,
     @InjectModel("SocialMedia") private readonly socialMediaModel: Model<any>,
     @InjectModel("AppSettings") private readonly appSettingsModel: Model<any>,
+    private readonly firebaseAdminService: FirebaseAdminService,
   ) {}
+
+  private normalizePhone(value: unknown): string {
+    return String(value || "").replace(/\D/g, "");
+  }
+
+  private phoneLookupValues(value: unknown): string[] {
+    const digits = this.normalizePhone(value);
+    if (!digits) return [];
+    const values = new Set<string>([digits]);
+    if (digits.length > 10) values.add(digits.slice(-10));
+    if (digits.length === 10) {
+      values.add(`91${digits}`);
+      values.add(`+91${digits}`);
+    }
+    return Array.from(values);
+  }
+
+  private async maybeAutoApproveAfterContactVerification(
+    user: any,
+    role: "influencer" | "brand" | "photographer",
+  ): Promise<boolean> {
+    const settings = (await this.appSettingsModel.findOne({}).lean()) as any;
+    if (!user?.isEmailVerified) return false;
+
+    const mobileRequired =
+      role === "influencer"
+        ? !!settings?.influencerRequireMobileVerified
+        : role === "brand"
+          ? !!settings?.brandRequireMobileVerified
+          : !!settings?.photographerRequireMobileVerified;
+
+    if (mobileRequired && !user?.isMobileVerified) return false;
+
+    const preApproveEnabled =
+      role === "influencer"
+        ? !!settings?.preApproveInfluencers
+        : role === "brand"
+          ? !!settings?.preApproveBrands
+          : !!settings?.preApprovePhotographers;
+
+    if (!preApproveEnabled || user.status !== "pending") return false;
+    user.status = "accepted";
+    return true;
+  }
+
+  async verifyFirebaseContact(idToken: string, type: FirebaseContactType) {
+    if (type !== "email" && type !== "phone") {
+      throw new BadRequestException("Verification type must be email or phone.");
+    }
+
+    const decoded = await this.firebaseAdminService.verifyIdToken(idToken);
+    let user: any = null;
+    let role: "influencer" | "brand" | "photographer" | "admin" | null = null;
+
+    if (type === "email") {
+      const email = String(decoded.email || "").trim().toLowerCase();
+      if (!email || !decoded.email_verified) {
+        throw new BadRequestException("Firebase email is not verified.");
+      }
+      const [adminUser, influencer, brand, photographer] = await Promise.all([
+        this.userModel.findOne({ email }),
+        this.influencerModel.findOne({ email }),
+        this.brandModel.findOne({ email }),
+        this.photographerModel.findOne({ email }),
+      ]);
+      user = adminUser || influencer || brand || photographer;
+      role = adminUser
+        ? "admin"
+        : influencer
+          ? "influencer"
+          : brand
+            ? "brand"
+            : photographer
+              ? "photographer"
+              : null;
+      if (!user) throw new BadRequestException("No TrendStarz user matches this Firebase email.");
+      user.isEmailVerified = true;
+    } else {
+      const phoneValues = this.phoneLookupValues(decoded.phone_number);
+      if (!phoneValues.length) {
+        throw new BadRequestException("Firebase phone number is not verified.");
+      }
+      const [influencer, brand, photographer] = await Promise.all([
+        this.influencerModel.findOne({ phoneNumber: { $in: phoneValues } }),
+        this.brandModel.findOne({ phoneNumber: { $in: phoneValues } }),
+        this.photographerModel.findOne({ phoneNumber: { $in: phoneValues } }),
+      ]);
+      user = influencer || brand || photographer;
+      role = influencer ? "influencer" : brand ? "brand" : photographer ? "photographer" : null;
+      if (!user) throw new BadRequestException("No TrendStarz user matches this Firebase phone.");
+      user.isMobileVerified = true;
+    }
+
+    const autoApproved =
+      role && role !== "admin"
+        ? await this.maybeAutoApproveAfterContactVerification(user, role)
+        : false;
+    await user.save();
+
+    return {
+      success: true,
+      autoApproved,
+      message: type === "email" ? "Email verified successfully." : "Mobile verified successfully.",
+    };
+  }
 
   private isObjectId(val: string): boolean {
     return typeof val === "string" && /^[a-fA-F0-9]{24}$/.test(val);

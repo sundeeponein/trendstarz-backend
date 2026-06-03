@@ -4,10 +4,12 @@ import {
   Body,
   HttpException,
   HttpStatus,
+  Inject,
 } from "@nestjs/common";
 import { randomInt, randomBytes, createHash, timingSafeEqual } from "crypto";
-import { DevEmailService } from "../utils/dev-email.service";
-import { SesEmailService } from "../utils/ses-email.service";
+import { otpTemplate } from "../email/templates/otp.templates";
+import { sendAppEmail } from "../utils/app-email.service";
+import type { SmsProvider } from "../services/smsProvider.service";
 
 /**
  * OTP record stored in-memory.
@@ -48,8 +50,7 @@ function safeEqualHex(a: string, b: string): boolean {
 @Controller("otp")
 export class OtpController {
   constructor(
-    private readonly devEmailService: DevEmailService,
-    private readonly sesEmailService: SesEmailService,
+    @Inject("SMS_PROVIDER") private readonly smsProvider: SmsProvider,
   ) {}
 
   @Post("send")
@@ -91,13 +92,18 @@ export class OtpController {
       sendHistory: history,
     });
     if (type === "email") {
-      const subject = "Your TrendStarz OTP";
-      const text = `Your OTP is: ${otp}`;
-      if (process.env.NODE_ENV === "production") {
-        await this.sesEmailService.sendMail(value, subject, text);
-      } else {
-        await this.devEmailService.sendMail(value, subject, text);
-      }
+      const template = otpTemplate({ otp, expiryMinutes: OTP_TTL / 60 / 1000 });
+      await sendAppEmail({
+        to: value,
+        subject: template.subject,
+        text: template.text,
+        html: template.html,
+      });
+    } else if (type === "phone") {
+      await this.smsProvider.send(
+        value,
+        `Your TrendStarz OTP is ${otp}. It expires in ${OTP_TTL / 60 / 1000} minutes.`,
+      );
     }
     return { message: `OTP sent to ${type}: ${value}` };
   }
@@ -141,4 +147,3 @@ export class OtpController {
     return { message: "OTP verified successfully" };
   }
 }
-

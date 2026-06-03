@@ -47,6 +47,7 @@ import { CampaignSubmissionSchema } from "./database/schemas/campaign-submission
 
 import { AuthService } from "./auth/auth.service";
 import { AuthController } from "./auth/auth.controller";
+import { FirebaseAdminService } from "./utils/firebase-admin.service";
 import { AdminUserTableController } from "./admin/admin-user-table.controller";
 import { EarlyAccessAssignmentService } from "./admin/early-access-assignment.service";
 import { PendingUserCleanupService } from "./admin/pending-user-cleanup.service";
@@ -165,6 +166,7 @@ import { MonetizationModule } from "./monetization/monetization.module";
     PendingUserCleanupService,
     MongoLogger,
     CloudinaryService,
+    FirebaseAdminService,
     DashboardService,
     {
       provide: APP_GUARD,
