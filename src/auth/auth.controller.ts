@@ -241,6 +241,13 @@ export class AuthController {
     return this.authService.verifyFirebaseContact(body?.idToken, body?.type);
   }
 
+  @Post("firebase/sync-email-verification")
+  @Throttle({ default: { ttl: 60000, limit: 10 } })
+  @HttpCode(200)
+  async syncFirebaseEmailVerification(@Body() body: any) {
+    return this.authService.syncFirebaseEmailVerification(body?.email);
+  }
+
   @Get("verify-email")
   async verifyEmail(
     @Query("token") token: string,

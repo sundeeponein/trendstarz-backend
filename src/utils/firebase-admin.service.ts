@@ -5,6 +5,15 @@ import * as admin from "firebase-admin";
 export class FirebaseAdminService {
   private app: admin.app.App | null = null;
 
+  isConfigured(): boolean {
+    return !!(
+      (process.env.FIREBASE_PROJECT_ID &&
+        process.env.FIREBASE_CLIENT_EMAIL &&
+        process.env.FIREBASE_PRIVATE_KEY) ||
+      process.env.GOOGLE_APPLICATION_CREDENTIALS
+    );
+  }
+
   private getApp(): admin.app.App {
     if (this.app) return this.app;
     if (admin.apps.length) {
@@ -45,6 +54,34 @@ export class FirebaseAdminService {
       return await this.getApp().auth().verifyIdToken(idToken);
     } catch {
       throw new BadRequestException("Invalid Firebase ID token.");
+    }
+  }
+
+  async ensureEmailUser(email: string): Promise<admin.auth.UserRecord> {
+    const auth = this.getApp().auth();
+    try {
+      return await auth.getUserByEmail(email);
+    } catch (error: any) {
+      if (error?.code !== "auth/user-not-found") throw error;
+      return auth.createUser({ email });
+    }
+  }
+
+  async generateEmailVerificationLink(email: string): Promise<string> {
+    await this.ensureEmailUser(email);
+    const frontendBase = (process.env.FRONTEND_URL || "https://www.trendstarz.in").replace(/\/$/, "");
+    return this.getApp().auth().generateEmailVerificationLink(email, {
+      url: `${frontendBase}/verify-email?firebaseEmail=${encodeURIComponent(email)}`,
+      handleCodeInApp: false,
+    });
+  }
+
+  async isFirebaseEmailVerified(email: string): Promise<boolean> {
+    try {
+      const user = await this.getApp().auth().getUserByEmail(email);
+      return !!user.emailVerified;
+    } catch {
+      return false;
     }
   }
 }

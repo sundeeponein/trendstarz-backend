@@ -84,16 +84,24 @@ export class AuthService {
       return { success: true, message: "Email is already verified." };
     }
 
-    const token = jwt.sign(
-      { email: normalizedEmail, purpose: "email_verification" },
-      getJwtSecret(),
-      { expiresIn: "1h" },
-    );
+    let verifyUrl = "";
+    if (this.firebaseAdminService.isConfigured()) {
+      verifyUrl =
+        await this.firebaseAdminService.generateEmailVerificationLink(
+          normalizedEmail,
+        );
+    } else {
+      const token = jwt.sign(
+        { email: normalizedEmail, purpose: "email_verification" },
+        getJwtSecret(),
+        { expiresIn: "1h" },
+      );
 
-    const backendUrl = (
-      process.env.BACKEND_URL || "https://api.trendstarz.in"
-    ).replace(/\/$/, "");
-    const verifyUrl = `${backendUrl}/api/auth/verify-email?token=${encodeURIComponent(token)}`;
+      const backendUrl = (
+        process.env.BACKEND_URL || "https://api.trendstarz.in"
+      ).replace(/\/$/, "");
+      verifyUrl = `${backendUrl}/api/auth/verify-email?token=${encodeURIComponent(token)}`;
+    }
     const { subject, html, text } = verifyEmailTemplate(verifyUrl);
 
     await sendAppEmail({ to: normalizedEmail, subject, html, text });
@@ -198,6 +206,48 @@ export class AuthService {
       autoApproved: false,
       message: "Email already verified.",
     };
+  }
+
+  async syncFirebaseEmailVerification(email: string) {
+    const normalizedEmail = String(email || "").trim().toLowerCase();
+    if (!normalizedEmail) {
+      throw new BadRequestException("Email is required.");
+    }
+    if (!this.firebaseAdminService.isConfigured()) {
+      throw new BadRequestException("Firebase Admin is not configured.");
+    }
+    const isVerified =
+      await this.firebaseAdminService.isFirebaseEmailVerified(normalizedEmail);
+    if (!isVerified) {
+      throw new BadRequestException("Firebase email is not verified yet.");
+    }
+
+    const [adminUser, influencer, brand, photographer] = await Promise.all([
+      this.userModel.findOne({ email: normalizedEmail }),
+      this.influencerModel.findOne({ email: normalizedEmail }),
+      this.brandModel.findOne({ email: normalizedEmail }),
+      this.photographerModel.findOne({ email: normalizedEmail }),
+    ]);
+    const user = adminUser || influencer || brand || photographer;
+    const role = adminUser
+      ? "admin"
+      : influencer
+        ? "influencer"
+        : brand
+          ? "brand"
+          : photographer
+            ? "photographer"
+            : null;
+    if (!user) throw new BadRequestException("User not found.");
+
+    user.isEmailVerified = true;
+    const autoApproved =
+      role && role !== "admin"
+        ? await this.maybeAutoApproveAfterContactVerification(user, role)
+        : false;
+    await user.save();
+
+    return { success: true, autoApproved, message: "Email verified successfully." };
   }
 
   async forgotPassword(email: string) {
