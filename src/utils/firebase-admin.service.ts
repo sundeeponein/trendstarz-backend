@@ -69,11 +69,15 @@ export class FirebaseAdminService {
 
   async generateEmailVerificationLink(email: string): Promise<string> {
     await this.ensureEmailUser(email);
-    const frontendBase = (process.env.FRONTEND_URL || "https://www.trendstarz.in").replace(/\/$/, "");
-    return this.getApp().auth().generateEmailVerificationLink(email, {
-      url: `${frontendBase}/verify-email?firebaseEmail=${encodeURIComponent(email)}`,
-      handleCodeInApp: false,
-    });
+    const frontendBase = (
+      process.env.FRONTEND_URL || "https://www.trendstarz.in"
+    ).replace(/\/$/, "");
+    return this.getApp()
+      .auth()
+      .generateEmailVerificationLink(email, {
+        url: `${frontendBase}/verify-email?firebaseEmail=${encodeURIComponent(email)}`,
+        handleCodeInApp: false,
+      });
   }
 
   async isFirebaseEmailVerified(email: string): Promise<boolean> {

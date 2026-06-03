@@ -961,15 +961,7 @@ export class AuthService {
     });
     // Status stays "pending" until email is verified — auto-approve (if enabled) is applied in verifyEmailByToken.
     try {
-      const saved = await influencer.save();
-      try {
-        await this.sendEmailVerificationLink(saved.email);
-      } catch (verifyMailErr) {
-        console.error(
-          "Failed to send influencer verification email:",
-          verifyMailErr,
-        );
-      }
+      await influencer.save();
     } catch (err) {
       const error = err instanceof Error ? err : new Error(String(err));
       const mongoErr = err as { name?: string; errors?: unknown };
@@ -1094,11 +1086,6 @@ export class AuthService {
     });
     // Status stays "pending" until email is verified — auto-approve (if enabled) is applied in verifyEmailByToken.
     const savedBrand = await brand.save();
-    try {
-      await this.sendEmailVerificationLink(savedBrand.email);
-    } catch (verifyMailErr) {
-      console.error("Failed to send brand verification email:", verifyMailErr);
-    }
     return { success: true, message: "Brand registered", brand: savedBrand };
   }
 
@@ -1253,14 +1240,6 @@ export class AuthService {
 
     try {
       const saved = await photographer.save();
-      void this.sendEmailVerificationLink(saved.email).catch(
-        (verifyMailErr) => {
-          console.error(
-            "Failed to send photographer verification email:",
-            verifyMailErr,
-          );
-        },
-      );
       return {
         success: true,
         message: "Photographer registered",
