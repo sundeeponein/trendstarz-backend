@@ -9,6 +9,10 @@ import { InjectModel } from "@nestjs/mongoose";
 import { Model } from "mongoose";
 import { PlansService } from "../plans/plans.service";
 import { normalizeCollaborationAvailability } from "../utils/collaboration-availability.util";
+import {
+  PROFILE_SELECTION_LIMITS,
+  normalizeSelectionList,
+} from "../utils/profile-selection-limits.util";
 
 const USE_LOCAL_IMAGES = process.env.USE_LOCAL_IMAGES === "true";
 const LOCAL_IMAGE_DIR = path.resolve(__dirname, "../../assets/local-images");
@@ -1858,6 +1862,24 @@ export class UsersService {
         if (update[key] !== undefined) {
           updateData.collaborationAvailability =
             normalizeCollaborationAvailability(update[key], "influencer");
+        }
+        continue;
+      }
+      if (key === "categories") {
+        if (update[key] !== undefined) {
+          updateData.categories = normalizeSelectionList(
+            update[key],
+            PROFILE_SELECTION_LIMITS.influencer.categories,
+          );
+        }
+        continue;
+      }
+      if (key === "creatorTypes") {
+        if (update[key] !== undefined) {
+          updateData.creatorTypes = normalizeSelectionList(
+            update[key],
+            PROFILE_SELECTION_LIMITS.influencer.creatorTypes,
+          );
         }
         continue;
       }

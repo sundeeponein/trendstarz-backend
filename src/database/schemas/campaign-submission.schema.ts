@@ -24,7 +24,7 @@ export const CampaignSubmissionSchema = new Schema(
 
     postScreenshotUrl: {
       type: String,
-      required: process.env.NODE_ENV === "production",
+      default: "",
     },
     insightsScreenshotUrl: { type: String },
 

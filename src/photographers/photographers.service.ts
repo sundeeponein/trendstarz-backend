@@ -3,6 +3,10 @@ import { InjectModel } from "@nestjs/mongoose";
 import { Model, Types } from "mongoose";
 import { CloudinaryService } from "../cloudinary.service";
 import { normalizeCollaborationAvailability } from "../utils/collaboration-availability.util";
+import {
+  PROFILE_SELECTION_LIMITS,
+  normalizeSelectionList,
+} from "../utils/profile-selection-limits.util";
 
 @Injectable()
 export class PhotographersService {
@@ -131,6 +135,15 @@ export class PhotographersService {
           update.collaborationAvailability = normalizeCollaborationAvailability(
             data[key],
             "photographer",
+          );
+        }
+        continue;
+      }
+      if (key === "skills") {
+        if (data[key] !== undefined) {
+          update.skills = normalizeSelectionList(
+            data[key],
+            PROFILE_SELECTION_LIMITS.photographer.skills,
           );
         }
         continue;

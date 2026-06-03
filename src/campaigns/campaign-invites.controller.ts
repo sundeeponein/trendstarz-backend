@@ -13,13 +13,13 @@ import { JwtAuthGuard } from "../auth/jwt-auth.guard";
 import { RolesGuard } from "../auth/roles.guard";
 import { CampaignInvitesService } from "./campaign-invites.service";
 
-import { UseInterceptors, UploadedFile } from '@nestjs/common';
-import { FileInterceptor } from '@nestjs/platform-express';
-import { diskStorage } from 'multer';
-import * as path from 'path';
-import * as fs from 'fs';
-import { randomUUID } from 'crypto';
-import { CloudinaryService } from '../cloudinary.service';
+import { UseInterceptors, UploadedFile } from "@nestjs/common";
+import { FileInterceptor } from "@nestjs/platform-express";
+import { diskStorage } from "multer";
+import * as path from "path";
+import * as fs from "fs";
+import { randomUUID } from "crypto";
+import { CloudinaryService } from "../cloudinary.service";
 
 @Controller("campaign-invites")
 export class CampaignInvitesController {
@@ -30,35 +30,44 @@ export class CampaignInvitesController {
 
   private requesterId(req: any): string {
     return String(
-      req?.user?.userId || req?.user?.sub || req?.user?._id || req?.user?.id || "",
+      req?.user?.userId ||
+        req?.user?.sub ||
+        req?.user?._id ||
+        req?.user?.id ||
+        "",
     ).trim();
   }
 
   @UseGuards(JwtAuthGuard)
   @Post(":id/upload-image")
-  @UseInterceptors(FileInterceptor('file', {
-    storage: diskStorage({
-      destination: (req: any, file: any, cb: any) => {
-        const dest = path.resolve(process.cwd(), 'assets/local-images/campaign_proofs');
-        if (!fs.existsSync(dest)) {
-          fs.mkdirSync(dest, { recursive: true });
-        }
-        cb(null, dest);
-      },
-      filename: (req: any, file: any, cb: any) => {
-        const ext = path.extname(file.originalname);
-        cb(null, randomUUID() + ext);
-      },
+  @UseInterceptors(
+    FileInterceptor("file", {
+      storage: diskStorage({
+        destination: (req: any, file: any, cb: any) => {
+          const dest = path.resolve(
+            process.cwd(),
+            "assets/local-images/campaign_proofs",
+          );
+          if (!fs.existsSync(dest)) {
+            fs.mkdirSync(dest, { recursive: true });
+          }
+          cb(null, dest);
+        },
+        filename: (req: any, file: any, cb: any) => {
+          const ext = path.extname(file.originalname);
+          cb(null, randomUUID() + ext);
+        },
+      }),
     }),
-  }))
+  )
   async uploadCampaignProof(
-    @Param('id') id: string,
+    @Param("id") id: string,
     @UploadedFile() file: Express.Multer.File,
-    @Req() req: any
+    @Req() req: any,
   ) {
     const uploaded = await this.cloudinaryService.uploadImage(
       file.path,
-      'campaign_proofs',
+      "campaign_proofs",
     );
 
     if (file?.path && fs.existsSync(file.path)) {
@@ -80,7 +89,10 @@ export class CampaignInvitesController {
 
   @UseGuards(JwtAuthGuard)
   @Get("campaign/:campaignId")
-  async findByCampaign(@Param("campaignId") campaignId: string, @Req() req: any) {
+  async findByCampaign(
+    @Param("campaignId") campaignId: string,
+    @Req() req: any,
+  ) {
     return this.invitesService.findByCampaign(
       campaignId,
       this.requesterId(req),
@@ -104,9 +116,17 @@ export class CampaignInvitesController {
 
   @UseGuards(JwtAuthGuard)
   @Post("campaign/:campaignId/apply")
-  async applyToCampaign(@Param("campaignId") campaignId: string, @Req() req: any, @Body() body: any) {
+  async applyToCampaign(
+    @Param("campaignId") campaignId: string,
+    @Req() req: any,
+    @Body() body: any,
+  ) {
     const influencerId = this.requesterId(req);
-    return this.invitesService.applyToCampaign(influencerId, campaignId, body?.selectedPlatform);
+    return this.invitesService.applyToCampaign(
+      influencerId,
+      campaignId,
+      body?.selectedPlatform,
+    );
   }
 
   /** GET /campaign-invites/:id — get a single invite with campaign platform/deliverable info */
@@ -201,7 +221,12 @@ export class CampaignInvitesController {
   async respondToCounter(
     @Param("id") id: string,
     @Req() req: any,
-    @Body() body: { action: "accept" | "decline" | "counter"; note?: string; counterAmount?: number },
+    @Body()
+    body: {
+      action: "accept" | "decline" | "counter";
+      note?: string;
+      counterAmount?: number;
+    },
   ) {
     return this.invitesService.respondToCounter(
       id,
@@ -457,9 +482,9 @@ export class CampaignInvitesController {
       note?: string;
     },
   ) {
-    return this.invitesService.adminBulkResolveDisputes(
-      body?.inviteIds || [],
-      { outcome: body?.outcome, note: body?.note },
-    );
+    return this.invitesService.adminBulkResolveDisputes(body?.inviteIds || [], {
+      outcome: body?.outcome,
+      note: body?.note,
+    });
   }
 }

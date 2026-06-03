@@ -8,14 +8,7 @@ import { Cron, CronExpression } from "@nestjs/schedule";
 import { InjectModel } from "@nestjs/mongoose";
 import { Model, Types } from "mongoose";
 import { sendAppEmail } from "../utils/app-email.service";
-import {
-  newCampaignInviteTemplate,
-  inviteReminderTemplate,
-  inviteAcceptedTemplate,
-  postSubmittedTemplate,
-  postApprovedTemplate,
-  autoApprovedTemplate,
-} from "../email/templates/campaign.templates";
+import { inviteReminderTemplate } from "../email/templates/campaign.templates";
 import { PlansService } from "../plans/plans.service";
 import { PushService } from "../push/push.service";
 import { NotificationsService } from "../notifications/notifications.service";
@@ -200,7 +193,7 @@ export class CampaignInvitesService {
     model: any,
     id: string,
     selectFields: string,
-  ): Promise<any | null> {
+  ): Promise<Record<string, any> | null> {
     try {
       const query = model?.findById?.(id);
       if (!query) return null;
@@ -224,7 +217,7 @@ export class CampaignInvitesService {
     model: any,
     filter: any,
     selectFields: string,
-  ): Promise<any | null> {
+  ): Promise<Record<string, any> | null> {
     try {
       const query = model?.findOne?.(filter);
       if (!query) return null;
@@ -477,6 +470,15 @@ export class CampaignInvitesService {
     };
   }
 
+  private omitContactFields<T extends Record<string, any>>(
+    value: T,
+  ): Omit<T, "email" | "phoneNumber"> {
+    const clone = { ...(value || {}) };
+    delete clone.email;
+    delete clone.phoneNumber;
+    return clone;
+  }
+
   private async attachRecipientProfile(invite: any) {
     const role = this.normalizeRecipientRole(
       invite?.recipientRole ||
@@ -503,12 +505,9 @@ export class CampaignInvitesService {
     }
 
     if (!this.isInviteContactVisible(invite)) {
-      const safeRecipient = recipient as Record<string, any>;
-      const {
-        email: _e,
-        phoneNumber: _p,
-        ...redactedRecipient
-      } = safeRecipient;
+      const redactedRecipient = this.omitContactFields(
+        recipient as Record<string, any>,
+      );
       return {
         ...invite,
         recipientRole: role,
@@ -583,11 +582,6 @@ export class CampaignInvitesService {
 
       const invite = await this.inviteModel.findById(submission.inviteId);
       if (!invite) continue;
-
-      const campaign: any = await this.campaignModel
-        .findById(invite.campaignId)
-        .select("title")
-        .lean();
 
       submission.status = "approved";
       submission.brandFeedback =
@@ -825,10 +819,6 @@ export class CampaignInvitesService {
 
     // Send notification email to recipient
     try {
-      const recipient: any = await this.loadRecipientProfile(
-        recipientRole,
-        recipientId,
-      );
       const sender = await this.resolveSenderProfile(brandId);
       // New campaign invite emails are disabled by product request.
       // Push notification to recipient
@@ -1102,7 +1092,7 @@ export class CampaignInvitesService {
       if (inv.brandId) {
         const shouldShowContact = this.isInviteContactVisible(inv);
         if (!shouldShowContact) {
-          const { email: _e, phoneNumber: _p, ...safeB } = inv.brandId;
+          const safeB = this.omitContactFields(inv.brandId);
           return { ...inv, brandId: safeB };
         }
         const safeBrand = {
@@ -1149,7 +1139,7 @@ export class CampaignInvitesService {
       if (inv.brandId) {
         const shouldShowContact = this.isInviteContactVisible(inv);
         if (!shouldShowContact) {
-          const { email: _e, phoneNumber: _p, ...safeB } = inv.brandId;
+          const safeB = this.omitContactFields(inv.brandId);
           return { ...inv, brandId: safeB };
         }
         const safeBrand = {
@@ -1277,7 +1267,7 @@ export class CampaignInvitesService {
     }
 
     // Unlock type label
-    const unlockType: "paid_collab_payment" = "paid_collab_payment";
+    const unlockType = "paid_collab_payment" as const;
 
     invite.unlocked = true;
     invite.unlockedAt = new Date();
@@ -2621,11 +2611,16 @@ export class CampaignInvitesService {
     }
 
     // Create one submission record per invite
+    const normalizedSubmissionData = {
+      ...data,
+      postScreenshotUrl: String(data.postScreenshotUrl || "").trim(),
+      insightsScreenshotUrl: String(data.insightsScreenshotUrl || "").trim(),
+    };
     const submission = await this.submissionModel.create({
       campaignId: String(invite.campaignId),
       influencerId,
       inviteId,
-      ...data,
+      ...normalizedSubmissionData,
       postPlatform,
       engagementRate,
       submittedAt: new Date(),
@@ -2776,10 +2771,6 @@ export class CampaignInvitesService {
 
       // Notify influencer
       try {
-        const influencer: any = await this.influencerModel
-          .findById(invite.influencerId)
-          .select("email name")
-          .lean();
         // Post approved emails are disabled by product request.
         // Push notification — payout now processing
         this.pushService

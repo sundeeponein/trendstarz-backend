@@ -15,6 +15,10 @@ import {
 } from "../email/templates/auth.templates";
 import { getJwtSecret } from "./jwt-secret";
 import { normalizeCollaborationAvailability } from "../utils/collaboration-availability.util";
+import {
+  PROFILE_SELECTION_LIMITS,
+  normalizeSelectionList,
+} from "../utils/profile-selection-limits.util";
 import { FirebaseAdminService } from "../utils/firebase-admin.service";
 
 type AnyUserDoc = {
@@ -968,6 +972,14 @@ export class AuthService {
       districtName,
       socialMediaMapped,
     } = await this.resolveIdsToNames(data);
+    const normalizedCategoryNames = normalizeSelectionList(
+      categoryNames,
+      PROFILE_SELECTION_LIMITS.influencer.categories,
+    );
+    const normalizedCreatorTypes = normalizeSelectionList(
+      data?.creatorTypes,
+      PROFILE_SELECTION_LIMITS.influencer.creatorTypes,
+    );
     // Hash password
     const hashedPassword = await bcrypt.hash(data.password, 10);
     const normalizedProfileImages = Array.isArray(data.profileImages)
@@ -1025,7 +1037,8 @@ export class AuthService {
       phoneNumber: normalizedPhone || data.phoneNumber,
       password: hashedPassword,
       firstRegisteredAt: new Date(),
-      categories: categoryNames,
+      categories: normalizedCategoryNames,
+      creatorTypes: normalizedCreatorTypes,
       location: { state: stateName, district: districtName },
       languages: languageNames,
       socialMedia: socialMediaMapped,
@@ -1313,6 +1326,10 @@ export class AuthService {
       password: hashedPassword,
       firstRegisteredAt: new Date(),
       location: { state: stateName, district: districtName },
+      skills: normalizeSelectionList(
+        data?.skills,
+        PROFILE_SELECTION_LIMITS.photographer.skills,
+      ),
       collaborationAvailability: normalizeCollaborationAvailability(
         data?.collaborationAvailability,
         "photographer",

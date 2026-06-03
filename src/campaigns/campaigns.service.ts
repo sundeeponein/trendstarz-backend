@@ -17,6 +17,10 @@ import {
   openCampaignLiveTemplate,
   inviteCampaignLiveTemplate,
 } from "../email/templates/campaign.templates";
+import {
+  PROFILE_SELECTION_LIMITS,
+  normalizeSelectionList,
+} from "../utils/profile-selection-limits.util";
 
 const VALID_TRANSITIONS: Record<string, string[]> = {
   draft: ["pending", "pending_review", "active", "needs_changes"],
@@ -276,6 +280,18 @@ export class CampaignsService {
       : this.deriveLogisticsType(normalized);
 
     return normalized;
+  }
+
+  private applyCampaignTargetCategoryLimit(
+    payload: any,
+    inviteRecipientRole: InviteRecipientRole,
+  ): void {
+    if (payload?.categories === undefined) return;
+    const limit =
+      inviteRecipientRole === "photographer"
+        ? PROFILE_SELECTION_LIMITS.photographer.skills
+        : PROFILE_SELECTION_LIMITS.influencer.categories;
+    payload.categories = normalizeSelectionList(payload.categories, limit);
   }
 
   /**
@@ -594,6 +610,7 @@ export class CampaignsService {
       data?.inviteRecipientRole,
       persistedOwnerType,
     );
+    this.applyCampaignTargetCategoryLimit(normalized, inviteRecipientRole);
     if (ownerType === "photographer") {
       normalized.campaignMode = "invite_only";
     }
@@ -953,6 +970,7 @@ export class CampaignsService {
       data?.inviteRecipientRole ?? campaign.inviteRecipientRole,
       campaignOwnerType,
     );
+    this.applyCampaignTargetCategoryLimit(normalized, inviteRecipientRole);
     if (campaignOwnerType === "photographer") {
       normalized.campaignMode = "invite_only";
     }
