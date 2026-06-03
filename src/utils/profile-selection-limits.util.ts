@@ -11,7 +11,10 @@ export const PROFILE_SELECTION_LIMITS = {
   },
 } as const;
 
-export function normalizeSelectionList(value: unknown, limit: number): string[] {
+export function normalizeSelectionList(
+  value: unknown,
+  limit: number,
+): string[] {
   if (!Array.isArray(value)) return [];
   const out: string[] = [];
   const seen = new Set<string>();

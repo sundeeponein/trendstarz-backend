@@ -13,6 +13,7 @@ import {
   PROFILE_SELECTION_LIMITS,
   normalizeSelectionList,
 } from "../utils/profile-selection-limits.util";
+import { normalizeSocialMediaList } from "../utils/social-handle.util";
 
 const USE_LOCAL_IMAGES = process.env.USE_LOCAL_IMAGES === "true";
 const LOCAL_IMAGE_DIR = path.resolve(__dirname, "../../assets/local-images");
@@ -1883,6 +1884,12 @@ export class UsersService {
         }
         continue;
       }
+      if (key === "socialMedia") {
+        if (update[key] !== undefined) {
+          updateData.socialMedia = normalizeSocialMediaList(update[key]);
+        }
+        continue;
+      }
       if (update[key] !== undefined) updateData[key] = update[key];
     }
     if (update.payout !== undefined) {
@@ -2050,6 +2057,12 @@ export class UsersService {
     ];
     const updateData: any = {};
     for (const key of allowedFields) {
+      if (key === "socialMedia") {
+        if (update[key] !== undefined) {
+          updateData.socialMedia = normalizeSocialMediaList(update[key]);
+        }
+        continue;
+      }
       if (update[key] !== undefined) updateData[key] = update[key];
     }
 

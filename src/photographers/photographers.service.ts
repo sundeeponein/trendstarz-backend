@@ -7,6 +7,7 @@ import {
   PROFILE_SELECTION_LIMITS,
   normalizeSelectionList,
 } from "../utils/profile-selection-limits.util";
+import { normalizeSocialMediaList } from "../utils/social-handle.util";
 
 @Injectable()
 export class PhotographersService {
@@ -145,6 +146,12 @@ export class PhotographersService {
             data[key],
             PROFILE_SELECTION_LIMITS.photographer.skills,
           );
+        }
+        continue;
+      }
+      if (key === "socialMedia") {
+        if (data[key] !== undefined) {
+          update.socialMedia = normalizeSocialMediaList(data[key]);
         }
         continue;
       }

@@ -20,6 +20,7 @@ import {
   normalizeSelectionList,
 } from "../utils/profile-selection-limits.util";
 import { FirebaseAdminService } from "../utils/firebase-admin.service";
+import { normalizeSocialHandle } from "../utils/social-handle.util";
 
 type AnyUserDoc = {
   email: string;
@@ -657,6 +658,7 @@ export class AuthService {
     const socialMediaMapped = socialMedia.map((sm: any) => ({
       ...sm,
       platform: smMap.get(sm.platform) || sm.platform,
+      handle: normalizeSocialHandle(sm.handle, smMap.get(sm.platform) || sm.platform),
     }));
 
     return {
