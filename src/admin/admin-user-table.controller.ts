@@ -42,7 +42,7 @@ export class AdminUserTableController {
 
   private getPaging(pageRaw?: string, limitRaw?: string) {
     const page = Math.max(1, Number(pageRaw) || 1);
-    const limit = Math.min(500, Math.max(1, Number(limitRaw) || 100));
+    const limit = Math.min(1000, Math.max(1, Number(limitRaw) || 100));
     return {
       page,
       limit,
@@ -162,15 +162,147 @@ export class AdminUserTableController {
       .slice(0, 40) || "firebase-user";
   }
 
-  private async buildUniqueInfluencerUsername(baseValue: string): Promise<string> {
+  private async buildUniqueUsername(
+    model: Model<any>,
+    field: string,
+    baseValue: string,
+  ): Promise<string> {
     const base = this.slugifyUsername(baseValue);
     let candidate = base;
     for (let i = 1; i <= 50; i += 1) {
-      const exists = await this.influencerModel.findOne({ username: candidate }).lean();
+      const exists = await model.findOne({ [field]: candidate }).lean();
       if (!exists) return candidate;
       candidate = `${base}-${i}`;
     }
     return `${base}-${crypto.randomBytes(3).toString("hex")}`;
+  }
+
+  private resolveFirebaseUserType(
+    firebaseUser: any,
+    fallback: "influencer" | "brand" | "photographer" = "influencer",
+  ): "influencer" | "brand" | "photographer" {
+    const claims = firebaseUser?.customClaims || {};
+    const raw = String(
+      claims.role ||
+        claims.userType ||
+        claims.type ||
+        claims.trendstarzRole ||
+        "",
+    ).toLowerCase();
+    if (raw === "brand") return "brand";
+    if (raw === "photographer" || raw === "photo" || raw === "videographer") {
+      return "photographer";
+    }
+    if (raw === "influencer" || raw === "creator") return "influencer";
+    return fallback;
+  }
+
+  private async createImportedFirebaseUser(
+    userType: "influencer" | "brand" | "photographer",
+    firebaseUser: any,
+    email: string,
+  ) {
+    const createdAt = firebaseUser.metadata?.creationTime
+      ? new Date(firebaseUser.metadata.creationTime)
+      : new Date();
+    const displayName =
+      String(firebaseUser.displayName || "").trim() ||
+      email.split("@")[0] ||
+      "Firebase User";
+    const placeholderPassword = await bcrypt.hash(
+      crypto.randomBytes(32).toString("hex"),
+      10,
+    );
+    const phoneNumber =
+      String(firebaseUser.phoneNumber || "").trim() ||
+      `firebase:${firebaseUser.uid.slice(0, 24)}`;
+    const common = {
+      email,
+      password: placeholderPassword,
+      phoneNumber,
+      isEmailVerified: !!firebaseUser.emailVerified,
+      isMobileVerified: !!firebaseUser.phoneNumber,
+      firstRegisteredAt: createdAt,
+      status: "pending",
+      contact: { whatsapp: false, email: true, call: false },
+      signupAttribution: {
+        source: "firebase_import",
+        audience: userType,
+        referrerPath: "firebase_auth_console",
+        capturedAt: new Date(),
+      },
+    };
+
+    if (userType === "brand") {
+      const brandUsername = await this.buildUniqueUsername(
+        this.brandModel,
+        "brandUsername",
+        email,
+      );
+      return new this.brandModel({
+        ...common,
+        brandName: displayName,
+        contactPersonName: displayName,
+        brandUsername,
+        categories: [],
+        languages: [],
+        brandLogo: [],
+        products: [],
+        location: { state: "", district: "", googleMapLink: "" },
+      }).save();
+    }
+
+    if (userType === "photographer") {
+      const username = await this.buildUniqueUsername(
+        this.photographerModel,
+        "username",
+        email,
+      );
+      return new this.photographerModel({
+        ...common,
+        name: displayName,
+        username,
+        skills: [],
+        equipment: [],
+        pricing: [],
+        socialMedia: [],
+        profileImages: [],
+        location: { state: "", district: "" },
+        collaborationAvailability: {
+          enabled: false,
+          availableFor: [],
+          preference: "",
+          openToTravel: false,
+        },
+      }).save();
+    }
+
+    const username = await this.buildUniqueUsername(
+      this.influencerModel,
+      "username",
+      email,
+    );
+    return new this.influencerModel({
+      ...common,
+      name: displayName,
+      username,
+      categories: [],
+      creatorTypes: [],
+      languages: [],
+      socialMedia: [],
+      profileImages: [],
+      collaborationAvailability: {
+        enabled: false,
+        collaborationTypes: [],
+        preference: "",
+        availableFor: [],
+        openToTravel: false,
+      },
+      verificationStatus: "not_submitted",
+      verifiedByTrendStarz: false,
+      verificationAdminNotes:
+        "Imported from Firebase Auth because no MongoDB profile existed.",
+    }).save();
   }
 
   private buildEarlyAccessOverride(
@@ -213,19 +345,27 @@ export class AdminUserTableController {
     return this.earlyAccessAssignmentService.normalizeExistingCommissionTags();
   }
 
-  @Post("firebase/import-missing-influencers")
-  async importMissingFirebaseInfluencers() {
+  @Post("firebase/import-missing-users")
+  async importMissingFirebaseUsers(
+    @Body() body?: { fallbackType?: "influencer" | "brand" | "photographer" },
+  ) {
     if (!this.firebaseAdminService.isConfigured()) {
       return {
         success: false,
         imported: 0,
         skipped: 0,
+        byType: { influencer: 0, brand: 0, photographer: 0 },
         message: "Firebase Admin is not configured.",
       };
     }
 
+    const fallbackType =
+      body?.fallbackType === "brand" || body?.fallbackType === "photographer"
+        ? body.fallbackType
+        : "influencer";
     const firebaseUsers = await this.firebaseAdminService.listEmailUsers();
     const imported: any[] = [];
+    const byType = { influencer: 0, brand: 0, photographer: 0 };
     let skipped = 0;
 
     for (const firebaseUser of firebaseUsers) {
@@ -251,54 +391,18 @@ export class AdminUserTableController {
         continue;
       }
 
-      const username = await this.buildUniqueInfluencerUsername(email);
-      const createdAt = firebaseUser.metadata?.creationTime
-        ? new Date(firebaseUser.metadata.creationTime)
-        : new Date();
-      const displayName =
-        String(firebaseUser.displayName || "").trim() ||
-        email.split("@")[0] ||
-        "Firebase User";
-      const placeholderPassword = await bcrypt.hash(
-        crypto.randomBytes(32).toString("hex"),
-        10,
-      );
-
-      const doc = new this.influencerModel({
-        name: displayName,
+      const userType = this.resolveFirebaseUserType(firebaseUser, fallbackType);
+      const doc = await this.createImportedFirebaseUser(
+        userType,
+        firebaseUser,
         email,
-        password: placeholderPassword,
-        phoneNumber:
-          String(firebaseUser.phoneNumber || "").trim() ||
-          `firebase:${firebaseUser.uid.slice(0, 24)}`,
-        username,
-        isEmailVerified: !!firebaseUser.emailVerified,
-        isMobileVerified: !!firebaseUser.phoneNumber,
-        firstRegisteredAt: createdAt,
-        status: "pending",
-        categories: [],
-        creatorTypes: [],
-        languages: [],
-        socialMedia: [],
-        profileImages: [],
-        contact: { whatsapp: false, email: true, call: false },
-        signupAttribution: {
-          source: "firebase_import",
-          audience: "influencer",
-          referrerPath: "firebase_auth_console",
-          capturedAt: new Date(),
-        },
-        verificationStatus: "not_submitted",
-        verifiedByTrendStarz: false,
-        verificationAdminNotes:
-          "Imported from Firebase Auth because no MongoDB profile existed.",
-      });
-
-      await doc.save();
+      );
+      byType[userType] += 1;
       imported.push({
         id: String(doc._id),
         email,
-        username,
+        userType,
+        username: doc.username || doc.brandUsername || "",
         firebaseUid: firebaseUser.uid,
       });
     }
@@ -307,8 +411,14 @@ export class AdminUserTableController {
       success: true,
       imported: imported.length,
       skipped,
+      byType,
       users: imported,
     };
+  }
+
+  @Post("firebase/import-missing-influencers")
+  importMissingFirebaseInfluencers() {
+    return this.importMissingFirebaseUsers({ fallbackType: "influencer" });
   }
 
   private async getActiveEarlyAccessCount(

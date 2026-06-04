@@ -94,14 +94,15 @@ export class AuthService {
       throw new BadRequestException("Email is required");
     }
 
-    const user = await this.findAnyUserByEmail(normalizedEmail);
-    if (!user) {
+    const match = await this.findAnyUserWithRole(normalizedEmail);
+    if (!match) {
       // Avoid exposing user existence details.
       return {
         success: true,
         message: "If the email exists, a verification link has been sent.",
       };
     }
+    const user = match.user;
 
     if (user.isEmailVerified) {
       return { success: true, message: "Email is already verified." };
@@ -113,6 +114,10 @@ export class AuthService {
         await this.firebaseAdminService.generateEmailVerificationLink(
           normalizedEmail,
         );
+      await this.firebaseAdminService.setUserRoleClaim(
+        normalizedEmail,
+        match.role,
+      );
     } else {
       const token = jwt.sign(
         { email: normalizedEmail, purpose: "email_verification" },
@@ -1085,7 +1090,11 @@ export class AuthService {
         "Failed to save influencer: " + error.message,
       );
     }
-    return { success: true, message: "Influencer registered", influencer };
+    return {
+      success: true,
+      message: "Influencer registered",
+      influencer,
+    };
   }
 
   async registerBrand(data: any) {
@@ -1197,7 +1206,11 @@ export class AuthService {
     });
     // Status stays "pending" until email is verified — auto-approve (if enabled) is applied in verifyEmailByToken.
     const savedBrand = await brand.save();
-    return { success: true, message: "Brand registered", brand: savedBrand };
+    return {
+      success: true,
+      message: "Brand registered",
+      brand: savedBrand,
+    };
   }
 
   async registerPhotographer(data: any) {

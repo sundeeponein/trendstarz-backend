@@ -21,11 +21,16 @@ function logMissingBrevoKeyOnce() {
 export async function sendAppEmail(options: AppEmailOptions) {
   if (!process.env.BREVO_API_KEY) {
     logMissingBrevoKeyOnce();
-    return {
-      skipped: true,
-      provider: "brevo",
-      reason: "BREVO_API_KEY missing",
-    };
+    if (process.env.EMAIL_ALLOW_SKIP === "true") {
+      return {
+        skipped: true,
+        provider: "brevo",
+        reason: "BREVO_API_KEY missing",
+      };
+    }
+    throw new Error(
+      "Email delivery is not configured: BREVO_API_KEY is missing.",
+    );
   }
 
   return sendEmailBrevo(options);

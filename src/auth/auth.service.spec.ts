@@ -118,6 +118,7 @@ describe("AuthService", () => {
             generateEmailVerificationLink: jest.fn(),
             isFirebaseEmailVerified: jest.fn(),
             ensureEmailUser: jest.fn(),
+            setUserRoleClaim: jest.fn(),
             verifyIdToken: jest.fn(),
           },
         },

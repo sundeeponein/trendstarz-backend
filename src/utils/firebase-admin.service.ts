@@ -80,6 +80,15 @@ export class FirebaseAdminService {
       });
   }
 
+  async setUserRoleClaim(email: string, role: string): Promise<void> {
+    const user = await this.ensureEmailUser(email);
+    await this.getApp().auth().setCustomUserClaims(user.uid, {
+      ...(user.customClaims || {}),
+      role,
+      trendstarzRole: role,
+    });
+  }
+
   async isFirebaseEmailVerified(email: string): Promise<boolean> {
     try {
       const user = await this.getApp().auth().getUserByEmail(email);
