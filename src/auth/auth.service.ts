@@ -20,7 +20,10 @@ import {
   normalizeSelectionList,
 } from "../utils/profile-selection-limits.util";
 import { FirebaseAdminService } from "../utils/firebase-admin.service";
-import { normalizeSocialHandle } from "../utils/social-handle.util";
+import {
+  normalizeSocialHandle,
+  normalizeSocialMediaList,
+} from "../utils/social-handle.util";
 
 type AnyUserDoc = {
   email: string;
@@ -101,6 +104,25 @@ export class AuthService {
       return true;
     }
     return false;
+  }
+
+  private validateCreatorSocialMediaRates(socialMedia: any[]) {
+    for (const sm of socialMedia || []) {
+      if (!String(sm?.platform || "").trim()) {
+        throw new BadRequestException("Platform is required.");
+      }
+      if (!String(sm?.handle || "").trim()) {
+        throw new BadRequestException("Username is required for every selected platform.");
+      }
+      if (!String(sm?.tier || "").trim()) {
+        throw new BadRequestException("Tier is required for every selected platform.");
+      }
+      if (!Array.isArray(sm?.contentTypes) || sm.contentTypes.length === 0) {
+        throw new BadRequestException(
+          "Please select at least one content type and enter a starting rate.",
+        );
+      }
+    }
   }
 
   async sendEmailVerificationLink(email: string) {
@@ -654,6 +676,20 @@ export class AuthService {
       ...sm,
       platform: smMap.get(sm.platform) || sm.platform,
       handle: normalizeSocialHandle(sm.handle, smMap.get(sm.platform) || sm.platform),
+      contentTypes: Array.isArray(sm.contentTypes)
+        ? sm.contentTypes
+            .filter((ct: any) => {
+              const price = Number(ct?.price);
+              const selected = ct?.enabled === true || ct?.selected === true;
+              return selected && Number.isFinite(price) && price > 0;
+            })
+            .map((ct: any) => ({
+              name: String(ct?.name || ct?.label || "").trim(),
+              enabled: true,
+              price: Number(ct.price),
+            }))
+            .filter((ct: any) => !!ct.name)
+        : [],
     }));
 
     return {
@@ -986,6 +1022,7 @@ export class AuthService {
       categoryNames,
       PROFILE_SELECTION_LIMITS.influencer.categories,
     );
+    this.validateCreatorSocialMediaRates(socialMediaMapped);
     const normalizedCreatorTypes = normalizeSelectionList(
       data?.creatorTypes,
       PROFILE_SELECTION_LIMITS.influencer.creatorTypes,
@@ -997,7 +1034,6 @@ export class AuthService {
           .filter((img: any) => img?.url && img?.public_id)
           .slice(0, 10)
       : [];
-
     const signupAttribution = {
       source:
         data?.signupAttribution?.source ||
@@ -1323,6 +1359,8 @@ export class AuthService {
           .filter((img: any) => img?.url && img?.public_id)
           .slice(0, 10)
       : [];
+    const normalizedSocialMedia = normalizeSocialMediaList(data?.socialMedia);
+    this.validateCreatorSocialMediaRates(normalizedSocialMedia);
 
     const signupAttribution = {
       source:
@@ -1352,6 +1390,7 @@ export class AuthService {
         data?.collaborationAvailability,
         "photographer",
       ),
+      socialMedia: normalizedSocialMedia,
       profileImages: normalizedProfileImages,
       signupAttribution,
     });

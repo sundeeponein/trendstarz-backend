@@ -2,16 +2,19 @@ import { Injectable, Logger } from "@nestjs/common";
 import { InjectModel } from "@nestjs/mongoose";
 import { Cron, CronExpression } from "@nestjs/schedule";
 import { Model } from "mongoose";
+import { FirebaseAdminService } from "../utils/firebase-admin.service";
 
 @Injectable()
 export class PendingUserCleanupService {
   private readonly logger = new Logger(PendingUserCleanupService.name);
 
   constructor(
+    @InjectModel("User") private readonly userModel: Model<any>,
     @InjectModel("Influencer") private readonly influencerModel: Model<any>,
     @InjectModel("Brand") private readonly brandModel: Model<any>,
     @InjectModel("Photographer") private readonly photographerModel: Model<any>,
     @InjectModel("AppSettings") private readonly appSettingsModel: Model<any>,
+    private readonly firebaseAdminService: FirebaseAdminService,
   ) {}
 
   private normalizeDays(rawValue: unknown, fallback = 45): number {
@@ -133,6 +136,150 @@ export class PendingUserCleanupService {
     };
   }
 
+  private async syncFirebaseVerifiedUser(firebaseUser: any) {
+    const email = String(firebaseUser?.email || "").trim().toLowerCase();
+    if (!email || firebaseUser?.emailVerified !== true) {
+      return null;
+    }
+
+    const filter = {
+      email,
+      isEmailVerified: { $ne: true },
+      isDeleted: { $ne: true },
+    };
+    const setPatch: any = {
+      isEmailVerified: true,
+      firebaseUid: firebaseUser.uid,
+    };
+    const activatePatch = {
+      $set: {
+        ...setPatch,
+        status: "accepted",
+      },
+    };
+    const adminPatch = { $set: setPatch };
+
+    const [adminRes, influencerRes, brandRes, photographerRes] =
+      await Promise.all([
+        this.userModel.updateOne(filter, adminPatch),
+        this.influencerModel.updateOne(
+          { ...filter, status: "pending" },
+          activatePatch,
+        ),
+        this.brandModel.updateOne({ ...filter, status: "pending" }, activatePatch),
+        this.photographerModel.updateOne(
+          { ...filter, status: "pending" },
+          activatePatch,
+        ),
+      ]);
+
+    const adminModified = Number((adminRes as any)?.modifiedCount || 0);
+    const influencerModified = Number((influencerRes as any)?.modifiedCount || 0);
+    const brandModified = Number((brandRes as any)?.modifiedCount || 0);
+    const photographerModified = Number(
+      (photographerRes as any)?.modifiedCount || 0,
+    );
+
+    if (adminModified || influencerModified || brandModified || photographerModified) {
+      return {
+        email,
+        firebaseUid: firebaseUser.uid,
+        role: adminModified
+          ? "admin"
+          : influencerModified
+            ? "influencer"
+            : brandModified
+              ? "brand"
+              : "photographer",
+      };
+    }
+
+    const [influencerAccepted, brandAccepted, photographerAccepted] =
+      await Promise.all([
+        this.influencerModel.updateOne(filter, { $set: setPatch }),
+        this.brandModel.updateOne(filter, { $set: setPatch }),
+        this.photographerModel.updateOne(filter, { $set: setPatch }),
+      ]);
+
+    const acceptedInfluencerModified = Number(
+      (influencerAccepted as any)?.modifiedCount || 0,
+    );
+    const acceptedBrandModified = Number((brandAccepted as any)?.modifiedCount || 0);
+    const acceptedPhotographerModified = Number(
+      (photographerAccepted as any)?.modifiedCount || 0,
+    );
+
+    if (
+      acceptedInfluencerModified ||
+      acceptedBrandModified ||
+      acceptedPhotographerModified
+    ) {
+      return {
+        email,
+        firebaseUid: firebaseUser.uid,
+        role: acceptedInfluencerModified
+          ? "influencer"
+          : acceptedBrandModified
+            ? "brand"
+            : "photographer",
+      };
+    }
+
+    return null;
+  }
+
+  async syncFirebaseVerifiedEmails(triggeredBy: string = "system") {
+    if (!this.firebaseAdminService.isConfigured()) {
+      return {
+        success: false,
+        skipped: true,
+        reason: "Firebase Admin is not configured",
+        triggeredBy,
+      };
+    }
+
+    const firebaseUsers = await this.firebaseAdminService.listEmailUsers(100000);
+    const verifiedUsers = firebaseUsers.filter((user) => user.emailVerified === true);
+    const synced: any[] = [];
+
+    for (const firebaseUser of verifiedUsers) {
+      const result = await this.syncFirebaseVerifiedUser(firebaseUser);
+      if (result) synced.push(result);
+    }
+
+    const counts = synced.reduce(
+      (acc: any, row: any) => {
+        acc[row.role] = (acc[row.role] || 0) + 1;
+        return acc;
+      },
+      { admin: 0, influencer: 0, brand: 0, photographer: 0 },
+    );
+
+    await this.appSettingsModel.findOneAndUpdate(
+      {},
+      {
+        $set: {
+          firebaseEmailSyncLastRunAt: new Date(),
+          firebaseEmailSyncLastRunCount: synced.length,
+          firebaseEmailSyncLastRunBy: triggeredBy,
+          firebaseEmailSyncLastRunCounts: counts,
+        },
+      },
+      { upsert: true },
+    );
+
+    return {
+      success: true,
+      skipped: false,
+      triggeredBy,
+      scanned: firebaseUsers.length,
+      firebaseVerified: verifiedUsers.length,
+      synced: synced.length,
+      counts,
+      users: synced.slice(0, 50),
+    };
+  }
+
   async runCleanupNow(triggeredBy: string = "system") {
     const settings: any = (await this.appSettingsModel.findOne({}).lean()) || {};
     const enabled = settings.pendingUserAutoDeleteEnabled === true;
@@ -233,6 +380,21 @@ export class PendingUserCleanupService {
     } catch (err: any) {
       this.logger.error(
         "[PendingUserCleanup] Pending unverified report cron failed",
+        err?.stack || err?.message || String(err),
+      );
+    }
+  }
+
+  @Cron(CronExpression.EVERY_DAY_AT_5AM)
+  async runScheduledFirebaseEmailSync() {
+    try {
+      const result = await this.syncFirebaseVerifiedEmails("system_cron");
+      this.logger.log(
+        `[PendingUserCleanup] Firebase email sync completed: synced=${result?.synced || 0}, scanned=${result?.scanned || 0}`,
+      );
+    } catch (err: any) {
+      this.logger.error(
+        "[PendingUserCleanup] Firebase email sync cron failed",
         err?.stack || err?.message || String(err),
       );
     }

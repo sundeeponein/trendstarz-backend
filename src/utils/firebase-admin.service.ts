@@ -103,7 +103,18 @@ export class FirebaseAdminService {
   }
 
   async listEmailUsers(maxResults = 1000): Promise<admin.auth.UserRecord[]> {
-    const result = await this.getApp().auth().listUsers(maxResults);
-    return result.users.filter((user) => !!user.email);
+    const auth = this.getApp().auth();
+    const users: admin.auth.UserRecord[] = [];
+    let nextPageToken: string | undefined;
+
+    do {
+      const remaining = Math.max(maxResults - users.length, 0);
+      if (remaining <= 0) break;
+      const result = await auth.listUsers(Math.min(1000, remaining), nextPageToken);
+      users.push(...result.users.filter((user) => !!user.email));
+      nextPageToken = result.pageToken;
+    } while (nextPageToken);
+
+    return users;
   }
 }

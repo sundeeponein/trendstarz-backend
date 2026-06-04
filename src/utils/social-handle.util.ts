@@ -32,9 +32,24 @@ export function normalizeSocialMediaList(value: unknown): any[] {
   if (!Array.isArray(value)) return [];
   return value.map((item: any) => {
     const platform = item?.platform || item?.name || "";
+    const contentTypes = Array.isArray(item?.contentTypes)
+      ? item.contentTypes
+          .filter((ct: any) => {
+            const price = Number(ct?.price);
+            const selected = ct?.enabled === true || ct?.selected === true;
+            return selected && Number.isFinite(price) && price > 0;
+          })
+          .map((ct: any) => ({
+            name: String(ct?.name || ct?.label || "").trim(),
+            enabled: true,
+            price: Number(ct.price),
+          }))
+          .filter((ct: any) => !!ct.name)
+      : [];
     return {
       ...item,
       handle: normalizeSocialHandle(item?.handle, platform),
+      contentTypes,
     };
   });
 }

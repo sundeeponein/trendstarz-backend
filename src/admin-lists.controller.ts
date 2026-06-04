@@ -242,6 +242,15 @@ export class AdminListsController {
         brands: 0,
         photographers: 0,
       },
+      firebaseEmailSyncLastRunAt: null,
+      firebaseEmailSyncLastRunCount: 0,
+      firebaseEmailSyncLastRunBy: "",
+      firebaseEmailSyncLastRunCounts: {
+        admin: 0,
+        influencer: 0,
+        brand: 0,
+        photographer: 0,
+      },
       campaignApprovalMode: "manual",
       collaborationApprovalMode: "manual",
       platformFeeEnabled: false,
@@ -341,6 +350,15 @@ export class AdminListsController {
     return this.pendingUserCleanupService.getPendingUnverifiedReport(
       days || 7,
       limit || 25,
+    );
+  }
+
+  @Post("firebase-email-sync/run")
+  async runFirebaseEmailSync(@Req() req: any) {
+    const actor =
+      req?.user?.email || req?.user?.userId || req?.user?.sub || "admin";
+    return this.pendingUserCleanupService.syncFirebaseVerifiedEmails(
+      String(actor),
     );
   }
 
