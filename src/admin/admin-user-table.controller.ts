@@ -42,7 +42,7 @@ export class AdminUserTableController {
 
   private getPaging(pageRaw?: string, limitRaw?: string) {
     const page = Math.max(1, Number(pageRaw) || 1);
-    const limit = Math.min(100, Math.max(1, Number(limitRaw) || 50));
+    const limit = Math.min(500, Math.max(1, Number(limitRaw) || 100));
     return {
       page,
       limit,
@@ -380,7 +380,7 @@ export class AdminUserTableController {
     }
     const influencers = await this.influencerModel
       .find(filter)
-      .sort({ createdAt: -1 })
+      .sort({ firstRegisteredAt: -1, createdAt: -1, _id: -1 })
       .skip(paging.skip)
       .limit(paging.limit)
       .lean()
@@ -424,7 +424,7 @@ export class AdminUserTableController {
     }
     const brands = await this.brandModel
       .find(filter)
-      .sort({ createdAt: -1 })
+      .sort({ firstRegisteredAt: -1, createdAt: -1, _id: -1 })
       .skip(paging.skip)
       .limit(paging.limit)
       .lean()
@@ -472,7 +472,7 @@ export class AdminUserTableController {
 
     const photographers = await this.photographerModel
       .find(filter)
-      .sort({ createdAt: -1 })
+      .sort({ firstRegisteredAt: -1, createdAt: -1, _id: -1 })
       .skip(paging.skip)
       .limit(paging.limit)
       .lean()
