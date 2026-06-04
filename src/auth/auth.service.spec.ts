@@ -3,6 +3,7 @@ import { getModelToken } from "@nestjs/mongoose";
 import { UnauthorizedException, BadRequestException } from "@nestjs/common";
 import { AuthService } from "./auth.service";
 import * as bcrypt from "bcryptjs";
+import { FirebaseAdminService } from "../utils/firebase-admin.service";
 
 // Mock external dependencies
 jest.mock("bcryptjs");
@@ -77,6 +78,7 @@ describe("AuthService", () => {
       findById: jest
         .fn()
         .mockReturnValue({ lean: jest.fn().mockResolvedValue(null) }),
+      updateOne: jest.fn().mockResolvedValue({ modifiedCount: 1 }),
       exists: jest.fn().mockResolvedValue(null),
     });
 
@@ -107,6 +109,16 @@ describe("AuthService", () => {
             findOne: jest
               .fn()
               .mockReturnValue({ lean: jest.fn().mockResolvedValue({}) }),
+          },
+        },
+        {
+          provide: FirebaseAdminService,
+          useValue: {
+            isConfigured: jest.fn().mockReturnValue(false),
+            generateEmailVerificationLink: jest.fn(),
+            isFirebaseEmailVerified: jest.fn(),
+            ensureEmailUser: jest.fn(),
+            verifyIdToken: jest.fn(),
           },
         },
       ],
@@ -218,6 +230,7 @@ describe("AuthService", () => {
     it("should reset password when valid token found", async () => {
       const mockUser = {
         password: "old",
+        isEmailVerified: false,
         resetToken: "hash",
         resetTokenExpires: Date.now() + 100000,
         save: jest.fn().mockResolvedValue(undefined),
@@ -229,15 +242,16 @@ describe("AuthService", () => {
       );
       expect(result.success).toBe(true);
       expect(mockUser.save).toHaveBeenCalled();
+      expect(mockUser.isEmailVerified).toBe(true);
       expect(mockUser.resetToken).toBeNull();
     });
   });
 
   describe("forgotPassword", () => {
-    it("should throw if email not found", async () => {
-      await expect(service.forgotPassword("unknown@test.com")).rejects.toThrow(
-        "Email not found",
-      );
+    it("should silently return if email not found", async () => {
+      await expect(
+        service.forgotPassword("unknown@test.com"),
+      ).resolves.toBeUndefined();
     });
 
     it("should set reset token and send email", async () => {
@@ -254,7 +268,7 @@ describe("AuthService", () => {
       expect(sendAppEmail).toHaveBeenCalledWith(
         expect.objectContaining({
           to: "user@test.com",
-          subject: "Reset your password",
+          subject: "Reset your Trendstarz password",
         }),
       );
     });

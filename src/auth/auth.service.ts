@@ -341,13 +341,26 @@ export class AuthService {
       }),
     ]);
     const user = adminUser || influencer || brand || photographer;
+    const role = adminUser
+      ? "admin"
+      : influencer
+        ? "influencer"
+        : brand
+          ? "brand"
+          : photographer
+            ? "photographer"
+            : null;
 
     if (!user) {
       throw new BadRequestException("Invalid or expired reset token");
     }
     user.password = await bcrypt.hash(newPassword, 10);
+    user.isEmailVerified = true;
     user.resetToken = null;
     user.resetTokenExpires = null;
+    if (role && role !== "admin") {
+      await this.maybeAutoApproveAfterContactVerification(user, role);
+    }
     await user.save();
     return { success: true, message: "Password reset successfully." };
   }
