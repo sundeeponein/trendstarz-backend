@@ -434,7 +434,8 @@ export class AdminListsController {
       progressRows.push({
         inviteId: String(invite?._id || ""),
         participantId: recipientId,
-        participantRole: recipientRole === "photographer" ? "photographer" : "influencer",
+        participantRole:
+          recipientRole === "photographer" ? "photographer" : "influencer",
         status: String(invite?.status || "pending").toLowerCase(),
         selectedPostDate: invite?.selectedPostDate || null,
         acceptedAt: invite?.acceptedAt || null,
@@ -528,9 +529,7 @@ export class AdminListsController {
               campaign?.pricePerInfluencer || campaign?.amount || 0,
             ),
             participantName:
-              String(
-                profile?.name || profile?.username || "",
-              ).trim() ||
+              String(profile?.name || profile?.username || "").trim() ||
               (isPhotographer ? "Photographer" : "Influencer"),
             participantEmail: String(profile?.email || "").trim() || null,
           };
@@ -699,7 +698,11 @@ export class AdminListsController {
     } else {
       filter.isDeleted = { $ne: true };
     }
-    const docs = await this.influencerModel.find(filter).lean().limit(200);
+    const docs = await this.influencerModel
+      .find(filter)
+      .sort({ firstRegisteredAt: -1, createdAt: -1, _id: -1 })
+      .lean()
+      .limit(1000);
     const now = new Date();
     const normalized = (docs || []).map((doc: any) => {
       const hasActivePremium =
@@ -721,7 +724,11 @@ export class AdminListsController {
     } else {
       filter.isDeleted = { $ne: true };
     }
-    const docs = await this.brandModel.find(filter).lean().limit(200);
+    const docs = await this.brandModel
+      .find(filter)
+      .sort({ firstRegisteredAt: -1, createdAt: -1, _id: -1 })
+      .lean()
+      .limit(1000);
     const now = new Date();
     const normalized = (docs || []).map((doc: any) => {
       const hasActivePremium =
@@ -743,7 +750,11 @@ export class AdminListsController {
     } else {
       filter.isDeleted = { $ne: true };
     }
-    const docs = await this.photographerModel.find(filter).lean().limit(200);
+    const docs = await this.photographerModel
+      .find(filter)
+      .sort({ firstRegisteredAt: -1, createdAt: -1, _id: -1 })
+      .lean()
+      .limit(1000);
     const now = new Date();
     const normalized = (docs || []).map((doc: any) => {
       const hasActivePremium =
@@ -1058,7 +1069,11 @@ export class AdminListsController {
             throw new BadRequestException(`State not found: ${s._id}`);
           }
           if (s.showInFrontend === false) {
-            hiddenStateNames.add(String(result.name || "").trim().toLowerCase());
+            hiddenStateNames.add(
+              String(result.name || "")
+                .trim()
+                .toLowerCase(),
+            );
           }
         }
       }
@@ -1076,7 +1091,13 @@ export class AdminListsController {
       if (hiddenStateNames.size) {
         const hiddenStateRegexes = Array.from(hiddenStateNames)
           .filter(Boolean)
-          .map((state) => new RegExp(`^${state.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`, "i"));
+          .map(
+            (state) =>
+              new RegExp(
+                `^${state.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`,
+                "i",
+              ),
+          );
         if (hiddenStateRegexes.length) {
           await this.districtModel.updateMany(
             { state: { $in: hiddenStateRegexes } },
@@ -1161,7 +1182,9 @@ export class AdminListsController {
   @Get("collaboration-availability-config")
   async getCollaborationAvailabilityConfig() {
     const config = this.readAdminConfig();
-    return normalizeCollaborationOptionConfig(config?.collaborationAvailability);
+    return normalizeCollaborationOptionConfig(
+      config?.collaborationAvailability,
+    );
   }
 
   @Get("creator-type-options-config")
