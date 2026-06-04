@@ -29,6 +29,7 @@ import {
   normalizeCollaborationOptionConfig,
   normalizeCreatorTypeConfig,
 } from "./utils/collaboration-options.util";
+import { PendingUserCleanupService } from "./admin/pending-user-cleanup.service";
 
 interface VisibilityItem {
   _id: string;
@@ -174,6 +175,7 @@ export class AdminListsController {
     @InjectModel("CampaignInvite")
     private readonly campaignInviteModel: Model<any>,
     @InjectModel("AppSettings") private readonly appSettingsModel: Model<any>,
+    private readonly pendingUserCleanupService: PendingUserCleanupService,
   ) {
     // Load plans-config.json on initialization
     this.loadPlansConfig();
@@ -233,6 +235,13 @@ export class AdminListsController {
       pendingUserAutoDeleteLastRunAt: null,
       pendingUserAutoDeleteLastRunCount: 0,
       pendingUserAutoDeleteLastRunBy: "",
+      pendingUnverifiedReportLastRunAt: null,
+      pendingUnverifiedReportLastRunCount: 0,
+      pendingUnverifiedReportLastRunCounts: {
+        influencers: 0,
+        brands: 0,
+        photographers: 0,
+      },
       campaignApprovalMode: "manual",
       collaborationApprovalMode: "manual",
       platformFeeEnabled: false,
@@ -322,6 +331,17 @@ export class AdminListsController {
       .findOneAndUpdate({}, { $set: next }, { upsert: true, new: true })
       .lean();
     return { success: true, settings };
+  }
+
+  @Get("pending-unverified-report")
+  async getPendingUnverifiedReport(
+    @Query("days") days?: string,
+    @Query("limit") limit?: string,
+  ) {
+    return this.pendingUserCleanupService.getPendingUnverifiedReport(
+      days || 7,
+      limit || 25,
+    );
   }
 
   @Get("campaigns")

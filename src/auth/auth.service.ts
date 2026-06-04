@@ -27,6 +27,7 @@ type AnyUserDoc = {
   name?: string;
   password?: string;
   isEmailVerified?: boolean;
+  firebaseUid?: string | null;
   resetToken?: string;
   resetTokenExpires?: number;
   save: () => Promise<unknown>;
@@ -86,6 +87,20 @@ export class AuthService {
     if (brand) return { user: brand, role: "brand" };
     if (photographer) return { user: photographer, role: "photographer" };
     return null;
+  }
+
+  private activateAfterEmailOwnership(
+    user: any,
+    role: TrendstarzRole | null,
+    firebaseUid?: string,
+  ): boolean {
+    user.isEmailVerified = true;
+    if (firebaseUid) user.firebaseUid = firebaseUid;
+    if (role && role !== "admin" && user.status === "pending") {
+      user.status = "accepted";
+      return true;
+    }
+    return false;
   }
 
   async sendEmailVerificationLink(email: string) {
@@ -169,57 +184,16 @@ export class AuthService {
     }
 
     if (!user.isEmailVerified) {
-      user.isEmailVerified = true;
-      let autoApproved = false;
-
-      // Auto-approve only after email is verified (secure: not at registration time).
-      // The email condition is inherently satisfied here (we just verified it).
-      // Mobile condition gates approval until mobile verification is also done (future feature).
-      if (influencer && !adminUser) {
-        const settings = (await this.appSettingsModel
-          .findOne({})
-          .lean()) as any;
-        const mobileOk =
-          !settings?.influencerRequireMobileVerified ||
-          !!influencer.isMobileVerified;
-        if (
-          settings?.preApproveInfluencers &&
-          mobileOk &&
-          influencer.status === "pending"
-        ) {
-          influencer.status = "accepted";
-          autoApproved = true;
-        }
-      } else if (brand && !adminUser) {
-        const settings = (await this.appSettingsModel
-          .findOne({})
-          .lean()) as any;
-        const mobileOk =
-          !settings?.brandRequireMobileVerified || !!brand.isMobileVerified;
-        if (
-          settings?.preApproveBrands &&
-          mobileOk &&
-          brand.status === "pending"
-        ) {
-          brand.status = "accepted";
-          autoApproved = true;
-        }
-      } else if (photographer && !adminUser) {
-        const settings = (await this.appSettingsModel
-          .findOne({})
-          .lean()) as any;
-        const mobileOk =
-          !settings?.photographerRequireMobileVerified ||
-          !!photographer.isMobileVerified;
-        if (
-          settings?.preApprovePhotographers &&
-          mobileOk &&
-          photographer.status === "pending"
-        ) {
-          photographer.status = "accepted";
-          autoApproved = true;
-        }
-      }
+      const role = adminUser
+        ? "admin"
+        : influencer
+          ? "influencer"
+          : brand
+            ? "brand"
+            : photographer
+              ? "photographer"
+              : null;
+      const autoApproved = this.activateAfterEmailOwnership(user, role);
 
       await user.save();
       return {
@@ -244,9 +218,15 @@ export class AuthService {
     if (!this.firebaseAdminService.isConfigured()) {
       throw new BadRequestException("Firebase Admin is not configured.");
     }
-    const isVerified =
-      await this.firebaseAdminService.isFirebaseEmailVerified(normalizedEmail);
-    if (!isVerified) {
+    let firebaseUser: any = null;
+    try {
+      firebaseUser = await this.firebaseAdminService.getUserByEmail(
+        normalizedEmail,
+      );
+    } catch {
+      throw new BadRequestException("Firebase user not found.");
+    }
+    if (!firebaseUser?.emailVerified) {
       throw new BadRequestException("Firebase email is not verified yet.");
     }
 
@@ -268,11 +248,11 @@ export class AuthService {
             : null;
     if (!user) throw new BadRequestException("User not found.");
 
-    user.isEmailVerified = true;
-    const autoApproved =
-      role && role !== "admin"
-        ? await this.maybeAutoApproveAfterContactVerification(user, role)
-        : false;
+    const autoApproved = this.activateAfterEmailOwnership(
+      user,
+      role,
+      firebaseUser?.uid,
+    );
     await user.save();
 
     return { success: true, autoApproved, message: "Email verified successfully." };
@@ -301,17 +281,15 @@ export class AuthService {
       .createHash("sha256")
       .update(resetToken)
       .digest("hex");
-    user.resetToken = resetTokenHash;
-    user.resetTokenExpires = Date.now() + 1000 * 60 * 60; // 1 hour expiry
-    await user.save();
     const frontendBase = (
       process.env.FRONTEND_URL || "https://www.trendstarz.in"
     ).replace(/\/$/, "");
     const resetUrl = `${frontendBase}/reset-password?token=${resetToken}`;
     const { subject, html, text } = resetPasswordTemplate(resetUrl);
-    await sendAppEmail({ to: user.email, subject, html, text }).catch((err) => {
-      console.error("[forgotPassword] Email send failed:", err?.message || err);
-    });
+    await sendAppEmail({ to: user.email, subject, html, text });
+    user.resetToken = resetTokenHash;
+    user.resetTokenExpires = Date.now() + 1000 * 60 * 60; // 1 hour expiry
+    await user.save();
   }
 
   async resetPassword(token: string, newPassword: string) {
@@ -360,12 +338,9 @@ export class AuthService {
       throw new BadRequestException("Invalid or expired reset token");
     }
     user.password = await bcrypt.hash(newPassword, 10);
-    user.isEmailVerified = true;
+    this.activateAfterEmailOwnership(user, role);
     user.resetToken = null;
     user.resetTokenExpires = null;
-    if (role && role !== "admin") {
-      await this.maybeAutoApproveAfterContactVerification(user, role);
-    }
     await user.save();
     return { success: true, message: "Password reset successfully." };
   }
@@ -588,7 +563,7 @@ export class AuthService {
               ? "photographer"
               : null;
       if (!user) throw new BadRequestException("No TrendStarz user matches this Firebase email.");
-      user.isEmailVerified = true;
+      this.activateAfterEmailOwnership(user, role, decoded.uid);
     } else {
       const phoneValues = this.phoneLookupValues(decoded.phone_number);
       if (!phoneValues.length) {
@@ -606,9 +581,11 @@ export class AuthService {
     }
 
     const autoApproved =
-      role && role !== "admin"
-        ? await this.maybeAutoApproveAfterContactVerification(user, role)
-        : false;
+      type === "email" && role !== "admin"
+        ? user.status === "accepted"
+        : role && role !== "admin"
+          ? await this.maybeAutoApproveAfterContactVerification(user, role)
+          : false;
     await user.save();
 
     return {
@@ -766,6 +743,11 @@ export class AuthService {
           "Your account has been deleted. Please contact support.",
         );
       }
+      if (!influencer.isEmailVerified) {
+        throw new UnauthorizedException(
+          "Your email address is not verified yet. Please verify your email to activate your account.",
+        );
+      }
       if (influencer.status === "pending") {
         throw new UnauthorizedException(
           "Your account is pending approval. Please wait for admin to activate your account.",
@@ -822,8 +804,11 @@ export class AuthService {
           "Your account has been deleted. Please contact support.",
         );
       }
-      // Allow login even if status is pending for auto-created minimal brands
-      // (optionally, you can enforce approval here if needed)
+      if (!brand.isEmailVerified) {
+        throw new UnauthorizedException(
+          "Your email address is not verified yet. Please verify your email to activate your account.",
+        );
+      }
       const now = new Date();
       await this.brandModel.updateOne(
         { _id: brand._id },
@@ -870,6 +855,11 @@ export class AuthService {
       ) {
         throw new UnauthorizedException(
           "Your account has been deleted. Please contact support.",
+        );
+      }
+      if (!photographer.isEmailVerified) {
+        throw new UnauthorizedException(
+          "Your email address is not verified yet. Please verify your email to activate your account.",
         );
       }
       if (photographer.status === "pending") {

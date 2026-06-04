@@ -45,7 +45,7 @@ describe("AuthService", () => {
     password: hashedPw,
     status: "accepted",
     isDeleted: false,
-    isEmailVerified: false,
+    isEmailVerified: true,
     profileImages: [{ url: "inf.jpg" }],
     isPremium: false,
     premiumEnd: null,
@@ -58,7 +58,7 @@ describe("AuthService", () => {
     password: hashedPw,
     status: "accepted",
     isDeleted: false,
-    isEmailVerified: false,
+    isEmailVerified: true,
     brandLogo: [{ url: "logo.jpg" }],
     isPremium: false,
     premiumEnd: null,
@@ -192,6 +192,16 @@ describe("AuthService", () => {
       ).rejects.toThrow("pending approval");
     });
 
+    it("should block unverified influencer login", async () => {
+      influencerModel.findOne.mockResolvedValue({
+        ...mockInfluencer,
+        isEmailVerified: false,
+      });
+      await expect(
+        service.login("inf@test.com", "password123"),
+      ).rejects.toThrow("email address is not verified");
+    });
+
     it("should throw for deleted brand", async () => {
       brandModel.findOne.mockResolvedValue({ ...mockBrand, isDeleted: true });
       await expect(
@@ -298,6 +308,7 @@ describe("AuthService", () => {
       });
       const saveable = {
         ...mockInfluencer,
+        isEmailVerified: false,
         save: jest.fn().mockResolvedValue(undefined),
       };
       influencerModel.findOne.mockResolvedValue(saveable);
@@ -320,6 +331,7 @@ describe("AuthService", () => {
       const saveable = {
         ...mockInfluencer,
         status: "pending",
+        isEmailVerified: false,
         isMobileVerified: true,
         save: jest.fn().mockResolvedValue(undefined),
       };

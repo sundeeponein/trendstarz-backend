@@ -67,6 +67,10 @@ export class FirebaseAdminService {
     }
   }
 
+  async getUserByEmail(email: string): Promise<admin.auth.UserRecord> {
+    return this.getApp().auth().getUserByEmail(email);
+  }
+
   async generateEmailVerificationLink(email: string): Promise<string> {
     await this.ensureEmailUser(email);
     const frontendBase = (
