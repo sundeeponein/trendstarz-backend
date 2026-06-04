@@ -88,4 +88,9 @@ export class FirebaseAdminService {
       return false;
     }
   }
+
+  async listEmailUsers(maxResults = 1000): Promise<admin.auth.UserRecord[]> {
+    const result = await this.getApp().auth().listUsers(maxResults);
+    return result.users.filter((user) => !!user.email);
+  }
 }

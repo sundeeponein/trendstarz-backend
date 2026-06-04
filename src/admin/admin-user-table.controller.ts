@@ -15,6 +15,9 @@ import { InjectModel } from "@nestjs/mongoose";
 import { Model } from "mongoose";
 import { Payment } from "../database/schemas/payment.schema";
 import { EarlyAccessAssignmentService } from "./early-access-assignment.service";
+import { FirebaseAdminService } from "../utils/firebase-admin.service";
+import * as bcrypt from "bcryptjs";
+import * as crypto from "crypto";
 
 @Controller("admin")
 @UseGuards(JwtAuthGuard, RolesGuard)
@@ -29,10 +32,12 @@ export class AdminUserTableController {
 
   constructor(
     @InjectModel("Influencer") private readonly influencerModel: Model<any>,
+    @InjectModel("User") private readonly userModel: Model<any>,
     @InjectModel("Brand") private readonly brandModel: Model<any>,
     @InjectModel("Photographer") private readonly photographerModel: Model<any>,
     @InjectModel("Payment") private readonly paymentModel: Model<Payment>,
     private readonly earlyAccessAssignmentService: EarlyAccessAssignmentService,
+    private readonly firebaseAdminService: FirebaseAdminService,
   ) {}
 
   private getPaging(pageRaw?: string, limitRaw?: string) {
@@ -145,6 +150,29 @@ export class AdminUserTableController {
     };
   }
 
+  private slugifyUsername(value: string): string {
+    return String(value || "")
+      .trim()
+      .toLowerCase()
+      .replace(/@.*$/, "")
+      .replace(/[^a-z0-9_-]+/g, "-")
+      .replace(/-+/g, "-")
+      .replace(/^-+/, "")
+      .replace(/-+$/, "")
+      .slice(0, 40) || "firebase-user";
+  }
+
+  private async buildUniqueInfluencerUsername(baseValue: string): Promise<string> {
+    const base = this.slugifyUsername(baseValue);
+    let candidate = base;
+    for (let i = 1; i <= 50; i += 1) {
+      const exists = await this.influencerModel.findOne({ username: candidate }).lean();
+      if (!exists) return candidate;
+      candidate = `${base}-${i}`;
+    }
+    return `${base}-${crypto.randomBytes(3).toString("hex")}`;
+  }
+
   private buildEarlyAccessOverride(
     config: { note: string },
     assignedBy: string,
@@ -183,6 +211,104 @@ export class AdminUserTableController {
   @Post("early-access/normalize-existing-tags")
   normalizeExistingCommissionTags() {
     return this.earlyAccessAssignmentService.normalizeExistingCommissionTags();
+  }
+
+  @Post("firebase/import-missing-influencers")
+  async importMissingFirebaseInfluencers() {
+    if (!this.firebaseAdminService.isConfigured()) {
+      return {
+        success: false,
+        imported: 0,
+        skipped: 0,
+        message: "Firebase Admin is not configured.",
+      };
+    }
+
+    const firebaseUsers = await this.firebaseAdminService.listEmailUsers();
+    const imported: any[] = [];
+    let skipped = 0;
+
+    for (const firebaseUser of firebaseUsers) {
+      const email = String(firebaseUser.email || "").trim().toLowerCase();
+      if (!email) {
+        skipped += 1;
+        continue;
+      }
+
+      const emailRegex = new RegExp(
+        `^${email.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`,
+        "i",
+      );
+      const [adminUser, influencer, brand, photographer] = await Promise.all([
+        this.userModel.findOne({ email: emailRegex }).lean(),
+        this.influencerModel.findOne({ email: emailRegex }).lean(),
+        this.brandModel.findOne({ email: emailRegex }).lean(),
+        this.photographerModel.findOne({ email: emailRegex }).lean(),
+      ]);
+
+      if (adminUser || influencer || brand || photographer) {
+        skipped += 1;
+        continue;
+      }
+
+      const username = await this.buildUniqueInfluencerUsername(email);
+      const createdAt = firebaseUser.metadata?.creationTime
+        ? new Date(firebaseUser.metadata.creationTime)
+        : new Date();
+      const displayName =
+        String(firebaseUser.displayName || "").trim() ||
+        email.split("@")[0] ||
+        "Firebase User";
+      const placeholderPassword = await bcrypt.hash(
+        crypto.randomBytes(32).toString("hex"),
+        10,
+      );
+
+      const doc = new this.influencerModel({
+        name: displayName,
+        email,
+        password: placeholderPassword,
+        phoneNumber:
+          String(firebaseUser.phoneNumber || "").trim() ||
+          `firebase:${firebaseUser.uid.slice(0, 24)}`,
+        username,
+        isEmailVerified: !!firebaseUser.emailVerified,
+        isMobileVerified: !!firebaseUser.phoneNumber,
+        firstRegisteredAt: createdAt,
+        status: "pending",
+        categories: [],
+        creatorTypes: [],
+        languages: [],
+        socialMedia: [],
+        profileImages: [],
+        contact: { whatsapp: false, email: true, call: false },
+        signupAttribution: {
+          source: "firebase_import",
+          audience: "influencer",
+          referrerPath: "firebase_auth_console",
+          capturedAt: new Date(),
+        },
+        verificationStatus: "not_submitted",
+        verifiedByTrendStarz: false,
+        verificationAdminNotes:
+          "Imported from Firebase Auth because no MongoDB profile existed.",
+      });
+
+      await doc.save();
+      imported.push({
+        id: String(doc._id),
+        email,
+        username,
+        firebaseUid: firebaseUser.uid,
+      });
+    }
+
+    return {
+      success: true,
+      imported: imported.length,
+      skipped,
+      users: imported,
+    };
   }
 
   private async getActiveEarlyAccessCount(
