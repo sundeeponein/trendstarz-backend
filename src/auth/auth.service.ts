@@ -23,6 +23,7 @@ import { FirebaseAdminService } from "../utils/firebase-admin.service";
 import {
   normalizeSocialHandle,
   normalizeSocialMediaList,
+  validateSocialHandle,
 } from "../utils/social-handle.util";
 
 type AnyUserDoc = {
@@ -742,6 +743,10 @@ export class AuthService {
             .filter((ct: any) => !!ct.name)
         : [],
     }));
+    for (const sm of socialMediaMapped) {
+      const handleError = validateSocialHandle(sm.handle, sm.platform);
+      if (handleError) throw new BadRequestException(handleError);
+    }
 
     return {
       categoryNames,
