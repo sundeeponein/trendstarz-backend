@@ -67,6 +67,21 @@ export class FirebaseAdminService {
     }
   }
 
+  async setEmailUserPassword(
+    email: string,
+    password: string,
+    emailVerified = true,
+  ): Promise<admin.auth.UserRecord> {
+    const auth = this.getApp().auth();
+    try {
+      const user = await auth.getUserByEmail(email);
+      return auth.updateUser(user.uid, { password, emailVerified });
+    } catch (error: any) {
+      if (error?.code !== "auth/user-not-found") throw error;
+      return auth.createUser({ email, password, emailVerified });
+    }
+  }
+
   async getUserByEmail(email: string): Promise<admin.auth.UserRecord> {
     return this.getApp().auth().getUserByEmail(email);
   }

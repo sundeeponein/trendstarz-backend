@@ -359,8 +359,17 @@ export class AuthService {
     if (!user) {
       throw new BadRequestException("Invalid or expired reset token");
     }
+    if (this.firebaseAdminService.isConfigured()) {
+      const firebaseUser = await this.firebaseAdminService.setEmailUserPassword(
+        user.email,
+        newPassword,
+        true,
+      );
+      this.activateAfterEmailOwnership(user, role, firebaseUser.uid);
+    } else {
+      this.activateAfterEmailOwnership(user, role);
+    }
     user.password = await bcrypt.hash(newPassword, 10);
-    this.activateAfterEmailOwnership(user, role);
     user.resetToken = null;
     user.resetTokenExpires = null;
     await user.save();
@@ -414,6 +423,7 @@ export class AuthService {
 
     match.user.password = await bcrypt.hash(newPassword, 10);
     match.user.isEmailVerified = true;
+    match.user.firebaseUid = decoded.uid;
     match.user.resetToken = null;
     match.user.resetTokenExpires = null;
     const autoApproved =
@@ -490,6 +500,14 @@ export class AuthService {
       throw new BadRequestException("Existing password is incorrect.");
     }
 
+    if (this.firebaseAdminService.isConfigured()) {
+      const firebaseUser = await this.firebaseAdminService.setEmailUserPassword(
+        user.email,
+        newPassword,
+        !!user.isEmailVerified,
+      );
+      user.firebaseUid = firebaseUser.uid;
+    }
     user.password = await bcrypt.hash(newPassword, 10);
     await user.save();
 
@@ -552,6 +570,39 @@ export class AuthService {
     if (!preApproveEnabled || user.status !== "pending") return false;
     user.status = "accepted";
     return true;
+  }
+
+  private async assertVerifiedFirebaseLogin(
+    normalizedEmail: string,
+    firebaseIdToken: string | undefined,
+    user: any,
+    role: "influencer" | "brand" | "photographer",
+  ): Promise<void> {
+    if (!this.firebaseAdminService.isConfigured()) {
+      throw new UnauthorizedException(
+        "Firebase verification is required before login.",
+      );
+    }
+    if (!firebaseIdToken) {
+      throw new UnauthorizedException(
+        "Please verify your email before logging in.",
+      );
+    }
+
+    const decoded = await this.firebaseAdminService.verifyIdToken(
+      firebaseIdToken,
+    );
+    const firebaseEmail = String(decoded.email || "").trim().toLowerCase();
+    if (firebaseEmail !== normalizedEmail || !decoded.email_verified) {
+      throw new UnauthorizedException(
+        "Please verify your email before logging in.",
+      );
+    }
+
+    user.isEmailVerified = true;
+    user.firebaseUid = decoded.uid;
+    await this.maybeAutoApproveAfterContactVerification(user, role);
+    await user.save();
   }
 
   async verifyFirebaseContact(idToken: string, type: FirebaseContactType) {
@@ -702,7 +753,7 @@ export class AuthService {
   }
 
   // Admin / influencer / brand login
-  async login(email: string, password: string) {
+  async login(email: string, password: string, firebaseIdToken?: string) {
     const normalizedEmail = (email || "").trim().toLowerCase();
 
     // Fetch all collections in parallel to eliminate sequential DB round-trips
@@ -779,11 +830,12 @@ export class AuthService {
           "Your account has been deleted. Please contact support.",
         );
       }
-      if (!influencer.isEmailVerified) {
-        throw new UnauthorizedException(
-          "Your email address is not verified yet. Please verify your email to activate your account.",
-        );
-      }
+      await this.assertVerifiedFirebaseLogin(
+        normalizedEmail,
+        firebaseIdToken,
+        influencer,
+        "influencer",
+      );
       if (influencer.status === "pending") {
         throw new UnauthorizedException(
           "Your account is pending approval. Please wait for admin to activate your account.",
@@ -840,11 +892,12 @@ export class AuthService {
           "Your account has been deleted. Please contact support.",
         );
       }
-      if (!brand.isEmailVerified) {
-        throw new UnauthorizedException(
-          "Your email address is not verified yet. Please verify your email to activate your account.",
-        );
-      }
+      await this.assertVerifiedFirebaseLogin(
+        normalizedEmail,
+        firebaseIdToken,
+        brand,
+        "brand",
+      );
       const now = new Date();
       await this.brandModel.updateOne(
         { _id: brand._id },
@@ -893,11 +946,12 @@ export class AuthService {
           "Your account has been deleted. Please contact support.",
         );
       }
-      if (!photographer.isEmailVerified) {
-        throw new UnauthorizedException(
-          "Your email address is not verified yet. Please verify your email to activate your account.",
-        );
-      }
+      await this.assertVerifiedFirebaseLogin(
+        normalizedEmail,
+        firebaseIdToken,
+        photographer,
+        "photographer",
+      );
       if (photographer.status === "pending") {
         throw new UnauthorizedException(
           "Your account is pending approval. Please wait for admin to activate your account.",

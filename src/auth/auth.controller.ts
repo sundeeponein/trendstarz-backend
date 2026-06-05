@@ -75,7 +75,11 @@ export class AuthController {
   @UsePipes(new ValidationPipe({ whitelist: true, transform: true }))
   async login(@Body() body: LoginDto, @Res() res: Response) {
     try {
-      const result = await this.authService.login(body.email, body.password);
+      const result = await this.authService.login(
+        body.email,
+        body.password,
+        body.firebaseIdToken,
+      );
       return res.status(200).json(result);
     } catch (err: any) {
       console.error("Auth login error:", err);
