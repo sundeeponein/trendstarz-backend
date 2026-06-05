@@ -86,6 +86,31 @@ export class FirebaseAdminService {
     return this.getApp().auth().getUserByEmail(email);
   }
 
+  async deleteUserByUid(uid: string): Promise<boolean> {
+    const cleanUid = String(uid || "").trim();
+    if (!cleanUid) return false;
+    try {
+      await this.getApp().auth().deleteUser(cleanUid);
+      return true;
+    } catch (error: any) {
+      if (error?.code === "auth/user-not-found") return false;
+      throw error;
+    }
+  }
+
+  async deleteUserByEmail(email: string): Promise<boolean> {
+    const cleanEmail = String(email || "").trim().toLowerCase();
+    if (!cleanEmail) return false;
+    try {
+      const user = await this.getApp().auth().getUserByEmail(cleanEmail);
+      await this.getApp().auth().deleteUser(user.uid);
+      return true;
+    } catch (error: any) {
+      if (error?.code === "auth/user-not-found") return false;
+      throw error;
+    }
+  }
+
   async generateEmailVerificationLink(email: string): Promise<string> {
     await this.ensureEmailUser(email);
     const frontendBase = (

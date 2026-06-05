@@ -9,6 +9,7 @@ import { InjectModel } from "@nestjs/mongoose";
 import { Model } from "mongoose";
 import { PlansService } from "../plans/plans.service";
 import { normalizeCollaborationAvailability } from "../utils/collaboration-availability.util";
+import { FirebaseAdminService } from "../utils/firebase-admin.service";
 import {
   PROFILE_SELECTION_LIMITS,
   normalizeSelectionList,
@@ -40,6 +41,37 @@ export class UsersService {
       .replace(/-+/g, "-")
       .replace(/^-+/, "")
       .replace(/-+$/, "");
+  }
+
+  private async deleteFirebaseAuthUserForPermanentDelete(user: any): Promise<{
+    firebaseDeleted: boolean;
+    firebaseDeleteSkipped: boolean;
+    firebaseDeleteError?: string;
+  }> {
+    if (!this.firebaseAdminService.isConfigured()) {
+      return { firebaseDeleted: false, firebaseDeleteSkipped: true };
+    }
+
+    try {
+      const firebaseUid = String(user?.firebaseUid || "").trim();
+      if (firebaseUid) {
+        const deleted = await this.firebaseAdminService.deleteUserByUid(firebaseUid);
+        if (deleted) return { firebaseDeleted: true, firebaseDeleteSkipped: false };
+      }
+
+      const deletedByEmail = await this.firebaseAdminService.deleteUserByEmail(user?.email);
+      return { firebaseDeleted: deletedByEmail, firebaseDeleteSkipped: false };
+    } catch (error: any) {
+      console.error(
+        "[DELETE] Error deleting Firebase Auth user during permanent delete:",
+        error?.message || error,
+      );
+      return {
+        firebaseDeleted: false,
+        firebaseDeleteSkipped: false,
+        firebaseDeleteError: error?.message || "Firebase user deletion failed.",
+      };
+    }
   }
 
   private async findBrandByNameOrSlug(brandName: string): Promise<any> {
@@ -348,6 +380,10 @@ export class UsersService {
     let user = await this.influencerModel.findById(id);
     if (user) {
       const errors: any[] = [];
+      const firebaseDelete = await this.deleteFirebaseAuthUserForPermanentDelete(user);
+      if (firebaseDelete.firebaseDeleteError) {
+        throw new BadRequestException(firebaseDelete.firebaseDeleteError);
+      }
       // Delete all images from Cloudinary
       if (user.profileImages && Array.isArray(user.profileImages)) {
         for (const img of user.profileImages) {
@@ -390,14 +426,19 @@ export class UsersService {
           message: "Influencer deleted with some image deletion errors",
           user,
           errors,
+          ...firebaseDelete,
         };
       }
-      return { message: "Influencer permanently deleted", user };
+      return { message: "Influencer permanently deleted", user, ...firebaseDelete };
     }
     // Try brand
     user = await this.brandModel.findById(id);
     if (user) {
       const errors: any[] = [];
+      const firebaseDelete = await this.deleteFirebaseAuthUserForPermanentDelete(user);
+      if (firebaseDelete.firebaseDeleteError) {
+        throw new BadRequestException(firebaseDelete.firebaseDeleteError);
+      }
       if (user.brandLogo && Array.isArray(user.brandLogo)) {
         for (const img of user.brandLogo) {
           const publicId =
@@ -461,15 +502,20 @@ export class UsersService {
           message: "Brand deleted with some image deletion errors",
           user,
           errors,
+          ...firebaseDelete,
         };
       }
-      return { message: "Brand permanently deleted", user };
+      return { message: "Brand permanently deleted", user, ...firebaseDelete };
     }
 
     // Try photographer
     user = await this.photographerModel.findById(id);
     if (user) {
       const errors: any[] = [];
+      const firebaseDelete = await this.deleteFirebaseAuthUserForPermanentDelete(user);
+      if (firebaseDelete.firebaseDeleteError) {
+        throw new BadRequestException(firebaseDelete.firebaseDeleteError);
+      }
       if (user.profileImages && Array.isArray(user.profileImages)) {
         for (const img of user.profileImages) {
           const publicId =
@@ -512,15 +558,17 @@ export class UsersService {
           message: "Photographer deleted with some image deletion errors",
           user,
           errors,
+          ...firebaseDelete,
         };
       }
-      return { message: "Photographer permanently deleted", user };
+      return { message: "Photographer permanently deleted", user, ...firebaseDelete };
     }
 
     return { message: "User not found", id };
   }
   constructor(
     private readonly cloudinaryService: CloudinaryService,
+    private readonly firebaseAdminService: FirebaseAdminService,
     @InjectModel("User") private readonly userModel: Model<any>,
     @InjectModel("Influencer") private readonly influencerModel: Model<any>,
     @InjectModel("Brand") private readonly brandModel: Model<any>,
