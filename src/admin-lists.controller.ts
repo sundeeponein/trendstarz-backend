@@ -222,6 +222,10 @@ export class AdminListsController {
         typeof timing.submissionApprovalWaitHours === "number"
           ? timing.submissionApprovalWaitHours
           : 24,
+      submissionAutoCompleteGraceHours:
+        typeof timing.submissionAutoCompleteGraceHours === "number"
+          ? timing.submissionAutoCompleteGraceHours
+          : 48,
       payoutReleaseWaitHours:
         typeof timing.payoutReleaseWaitHours === "number"
           ? timing.payoutReleaseWaitHours
@@ -274,6 +278,8 @@ export class AdminListsController {
       gstPercent: commissionDefaults.gstPercent,
       submissionApprovalWaitHours:
         workflowTimingDefaults.submissionApprovalWaitHours,
+      submissionAutoCompleteGraceHours:
+        workflowTimingDefaults.submissionAutoCompleteGraceHours,
       payoutReleaseWaitHours: workflowTimingDefaults.payoutReleaseWaitHours,
       earlyAccessAssignmentMode: "manual",
       earlyAccessLastRunAt: null,
@@ -351,6 +357,7 @@ export class AdminListsController {
     }
     for (const key of [
       "submissionApprovalWaitHours",
+      "submissionAutoCompleteGraceHours",
       "payoutReleaseWaitHours",
     ]) {
       if (next[key] === undefined) continue;

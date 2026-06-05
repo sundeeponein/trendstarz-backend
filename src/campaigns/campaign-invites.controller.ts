@@ -406,7 +406,9 @@ export class CampaignInvitesController {
     body: {
       action: "approve" | "dispute";
       feedback?: string;
+      disputeIssueReason?: string;
       disputeReason?: string;
+      disputeEvidenceUrl?: string;
     },
   ) {
     const brandId = this.requesterId(req);
@@ -416,6 +418,8 @@ export class CampaignInvitesController {
       body.action,
       body.feedback,
       body.disputeReason,
+      body.disputeIssueReason,
+      body.disputeEvidenceUrl,
     );
   }
 

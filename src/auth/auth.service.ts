@@ -1429,6 +1429,8 @@ export class AuthService {
       minimumCampaignFee: settings?.minimumCampaignFee ?? 1000,
       gstPercent: settings?.gstPercent ?? 18,
       submissionApprovalWaitHours: settings?.submissionApprovalWaitHours ?? 24,
+      submissionAutoCompleteGraceHours:
+        settings?.submissionAutoCompleteGraceHours ?? 48,
       payoutReleaseWaitHours: settings?.payoutReleaseWaitHours ?? 24,
       // Campaign payment UPI shown to brands on the payment screen
       paymentUpiId: settings?.paymentUpiId || "trendstarzin@kotak",

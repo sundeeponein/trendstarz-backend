@@ -584,6 +584,7 @@ export const AppSettingsSchema = new Schema({
   minimumCampaignFee: { type: Number, default: 1000 },
   gstPercent: { type: Number, default: 0 },
   submissionApprovalWaitHours: { type: Number, default: 24 },
+  submissionAutoCompleteGraceHours: { type: Number, default: 48 },
   payoutReleaseWaitHours: { type: Number, default: 24 },
   earlyAccessAssignmentMode: {
     type: String,

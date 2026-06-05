@@ -1,6 +1,7 @@
 {
   "campaignWorkflowTiming": {
     "submissionApprovalWaitHours": 24,
+    "submissionAutoCompleteGraceHours": 48,
     "payoutReleaseWaitHours": 24
   },
   "socialMediaPlatforms": [

@@ -20,6 +20,7 @@ export const CampaignInviteSchema = new Schema({
       "working",
       "submitted",
       "completed",
+      "approved",
       "disputed",
       "withdrawn",
     ],
@@ -63,6 +64,7 @@ export const CampaignInviteSchema = new Schema({
   },
   acceptedAt: { type: Date },
   completedAt: { type: Date },
+  paidOutAt: { type: Date },
   // Contact preference snapshot at acceptance time.
   // This keeps existing accepted invites stable even if profile preferences change later.
   acceptedContact: {

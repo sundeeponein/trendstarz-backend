@@ -37,6 +37,7 @@ export const CampaignSubmissionSchema = new Schema(
 
     submittedAt: { type: Date },
     reviewedAt: { type: Date },
+    autoCompletedAt: { type: Date },
 
     status: {
       type: String,
@@ -44,7 +45,9 @@ export const CampaignSubmissionSchema = new Schema(
       default: "submitted",
     },
     brandFeedback: { type: String },
+    disputeIssueReason: { type: String },
     disputeReason: { type: String },
+    disputeEvidenceUrl: { type: String },
   },
   { timestamps: true },
 );
@@ -67,8 +70,11 @@ export interface CampaignSubmission extends Document {
   engagementRate?: number;
   submittedAt?: Date;
   reviewedAt?: Date;
+  autoCompletedAt?: Date;
   status: "draft" | "submitted" | "approved" | "rejected" | "disputed";
   brandFeedback?: string;
+  disputeIssueReason?: string;
   disputeReason?: string;
+  disputeEvidenceUrl?: string;
   createdAt: Date;
 }

@@ -25,6 +25,7 @@ describe("PaymentsPayoutsService", () => {
     const mockInviteModel = {
       find: jest.fn(),
       findById: jest.fn(),
+      findByIdAndUpdate: jest.fn(),
     };
 
     const mockTransactionModel = {
@@ -311,6 +312,15 @@ describe("PaymentsPayoutsService", () => {
       expect(tx.adminNotes).toBe("done");
       expect(tx.paidOutAt).toBeInstanceOf(Date);
       expect(tx.save).toHaveBeenCalled();
+      expect(inviteModel.findByIdAndUpdate).toHaveBeenCalledWith(
+        "inv1",
+        expect.objectContaining({
+          $set: expect.objectContaining({
+            status: "approved",
+            paidOutAt: tx.paidOutAt,
+          }),
+        }),
+      );
     });
 
     it("rejects payout before 24h completion hold", async () => {
@@ -473,6 +483,15 @@ describe("PaymentsPayoutsService", () => {
       expect(tx.payoutGatewayProvider).toBe("razorpayx");
       expect(tx.payoutUtr).toBe("UTR_AUTO_READY");
       expect(tx.save).toHaveBeenCalled();
+      expect(inviteModel.findByIdAndUpdate).toHaveBeenCalledWith(
+        "inv_auto_ready",
+        expect.objectContaining({
+          $set: expect.objectContaining({
+            status: "approved",
+            paidOutAt: tx.paidOutAt,
+          }),
+        }),
+      );
     });
   });
 

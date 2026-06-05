@@ -108,7 +108,9 @@ export const CampaignTransactionSchema = new Schema(
       default: "none",
       index: true,
     },
+    disputeIssueReason: { type: String },
     disputeReason: { type: String },
+    disputeEvidenceUrl: { type: String },
     disputedBy: { type: Schema.Types.Mixed },     // userId of whoever raised dispute
     disputedByRole: { type: String },              // 'brand' | 'influencer' | 'photographer' | 'admin'
     disputedAt: { type: Date },
@@ -157,7 +159,9 @@ export interface CampaignTransaction extends Document {
   payoutStatus: "pending" | "processing" | "paid" | "skipped" | "frozen";
   workStatus: "pending" | "submitted" | "approved" | "disputed";
   disputeStatus: "none" | "open" | "resolved";
+  disputeIssueReason?: string;
   disputeReason?: string;
+  disputeEvidenceUrl?: string;
   disputedBy?: string;
   disputedByRole?: string;
   disputedAt?: Date;
@@ -166,4 +170,3 @@ export interface CampaignTransaction extends Document {
   resolvedAt?: Date;
   adminNotes?: string;
 }
-

@@ -88,6 +88,45 @@ export class CampaignInvitesService {
     return Number.isFinite(hours) && hours >= 0 ? hours : 24;
   }
 
+  private async getSubmissionAutoCompleteGraceHours(): Promise<number> {
+    const settings: any = await this.appSettingsModel.findOne({}).lean();
+    const hours = Number(settings?.submissionAutoCompleteGraceHours ?? 48);
+    return Number.isFinite(hours) && hours >= 0 ? hours : 48;
+  }
+
+  private async autoCompleteSubmission(
+    submission: any,
+    invite: any,
+    now = new Date(),
+  ) {
+    submission.status = "approved";
+    submission.brandFeedback =
+      submission.brandFeedback ||
+      "Auto-completed after the host review window expired without response.";
+    submission.reviewedAt = now;
+    submission.autoCompletedAt = now;
+    await submission.save();
+
+    invite.status = "completed";
+    invite.completedAt = now;
+    await invite.save();
+
+    const inviteId = String(invite._id || submission.inviteId || "");
+    const txQuery: any = {
+      $or: [{ inviteId }],
+    };
+    if (Types.ObjectId.isValid(inviteId)) {
+      txQuery.$or.push({ inviteId: new Types.ObjectId(inviteId) });
+    }
+    const txs = await this.campaignTransactionModel.find(txQuery);
+    for (const tx of txs) {
+      tx.workStatus = "approved";
+      tx.payoutStatus =
+        tx.collectionStatus === "verified" ? "processing" : "pending";
+      await tx.save();
+    }
+  }
+
   private normalizeRecipientRole(role: any): "influencer" | "photographer" {
     return String(role || "influencer")
       .trim()
@@ -576,7 +615,10 @@ export class CampaignInvitesService {
   }
 
   async autoApproveStaleSubmissions() {
-    const cutoff = new Date(Date.now() - 48 * 60 * 60 * 1000);
+    const waitHours = await this.getSubmissionApprovalWaitHours();
+    const graceHours = await this.getSubmissionAutoCompleteGraceHours();
+    const totalHours = waitHours + graceHours;
+    const cutoff = new Date(Date.now() - totalHours * 60 * 60 * 1000);
     const staleSubmissions = await this.submissionModel
       .find({ status: "submitted", submittedAt: { $lte: cutoff } })
       .lean();
@@ -590,26 +632,7 @@ export class CampaignInvitesService {
       const invite = await this.inviteModel.findById(submission.inviteId);
       if (!invite) continue;
 
-      submission.status = "approved";
-      submission.brandFeedback =
-        submission.brandFeedback ||
-        "Auto-approved after 48h without brand review.";
-      submission.reviewedAt = new Date();
-      await submission.save();
-
-      invite.status = "completed";
-      invite.completedAt = new Date();
-      await invite.save();
-
-      const txs = await this.campaignTransactionModel.find({
-        inviteId: invite._id,
-      });
-      for (const tx of txs) {
-        tx.workStatus = "approved";
-        tx.payoutStatus =
-          tx.collectionStatus === "verified" ? "processing" : "pending";
-        await tx.save();
-      }
+      await this.autoCompleteSubmission(submission, invite);
 
       // Auto-approved post emails are disabled by product request.
 
@@ -619,6 +642,9 @@ export class CampaignInvitesService {
     return {
       success: true,
       autoApprovedCount,
+      waitHours,
+      graceHours,
+      totalHours,
     };
   }
 
@@ -1039,6 +1065,44 @@ export class CampaignInvitesService {
     return photographerOwnerIds?.has(String(campaign?.brandId || "")) || false;
   }
 
+  private async attachLatestSubmissions(invites: any[]): Promise<any[]> {
+    const inviteIds = (invites || [])
+      .map((invite: any) => String(invite?._id || ""))
+      .filter(Boolean);
+    if (!inviteIds.length) return invites || [];
+
+    const inviteObjectIds = inviteIds
+      .filter((id) => Types.ObjectId.isValid(id))
+      .map((id) => new Types.ObjectId(id));
+    const submissionQuery: any = {
+      $or: [{ inviteId: { $in: inviteIds } }],
+    };
+    if (inviteObjectIds.length) {
+      submissionQuery.$or.push({ inviteId: { $in: inviteObjectIds } });
+    }
+
+    const submissions: any[] = await this.submissionModel
+      .find(submissionQuery)
+      .select(
+        "inviteId postUrl postType postPlatform status submittedAt reviewedAt autoCompletedAt createdAt updatedAt brandFeedback disputeIssueReason disputeReason disputeEvidenceUrl",
+      )
+      .sort({ submittedAt: -1, createdAt: -1 })
+      .lean();
+
+    const byInviteId = new Map<string, any>();
+    for (const submission of submissions || []) {
+      const key = String(submission?.inviteId || "");
+      if (key && !byInviteId.has(key)) {
+        byInviteId.set(key, submission);
+      }
+    }
+
+    return (invites || []).map((invite: any) => ({
+      ...invite,
+      latestSubmission: byInviteId.get(String(invite?._id || "")) || null,
+    }));
+  }
+
   async findByInfluencer(influencerId: string, scope?: string) {
     const invites: any[] = await this.inviteModel
       .find({
@@ -1093,8 +1157,10 @@ export class CampaignInvitesService {
       return this.isCampaignLiveForRecipient(campaign);
     });
 
+    const visibleWithSubmissions = await this.attachLatestSubmissions(visible);
+
     // Strip brand contact details from invites that haven't been unlocked yet
-    return visible.map((rawInv: any) => {
+    return visibleWithSubmissions.map((rawInv: any) => {
       const inv = this.applyRecipientLocationVisibility(rawInv);
       if (inv.brandId) {
         const shouldShowContact = this.isInviteContactVisible(inv);
@@ -1141,7 +1207,9 @@ export class CampaignInvitesService {
       return true;
     });
 
-    return visible.map((rawInv: any) => {
+    const visibleWithSubmissions = await this.attachLatestSubmissions(visible);
+
+    return visibleWithSubmissions.map((rawInv: any) => {
       const inv = this.applyRecipientLocationVisibility(rawInv);
       if (inv.brandId) {
         const shouldShowContact = this.isInviteContactVisible(inv);
@@ -1194,13 +1262,31 @@ export class CampaignInvitesService {
   async findOneWithCampaign(inviteId: string) {
     const invite = (await this.inviteModel.findById(inviteId).lean()) as any;
     if (!invite) throw new NotFoundException("Invite not found");
+    const txQuery: any = {
+      $or: [{ inviteId: String(invite._id) }, { inviteId: invite._id }],
+    };
+    const tx: any = await this.campaignTransactionModel
+      .findOne(txQuery)
+      .select("payoutStatus paidOutAt payoutSettledAt payoutUtr")
+      .sort({ updatedAt: -1, createdAt: -1 })
+      .lean();
+    const inviteForResponse = {
+      ...invite,
+      payoutStatus: tx?.payoutStatus || null,
+      paidOutAt: invite?.paidOutAt || tx?.paidOutAt || tx?.payoutSettledAt || null,
+      payoutUtr: tx?.payoutUtr || null,
+      status:
+        String(tx?.payoutStatus || "").toLowerCase() === "paid"
+          ? "approved"
+          : invite.status,
+    };
     const campaign: any = await this.campaignModel
       .findById(invite.campaignId)
       .select(
         "title platforms socialMedia deliverables specialInstructions image images galleryImages",
       )
       .lean();
-    return { invite, campaign };
+    return { invite: inviteForResponse, campaign };
   }
 
   /**
@@ -2710,6 +2796,8 @@ export class CampaignInvitesService {
     action: "approve" | "dispute",
     feedback?: string,
     disputeReason?: string,
+    disputeIssueReason?: string,
+    disputeEvidenceUrl?: string,
   ) {
     const invite = await this.inviteModel.findById(inviteId);
     if (!invite) throw new NotFoundException("Invite not found");
@@ -2736,14 +2824,17 @@ export class CampaignInvitesService {
     if (!submission) throw new NotFoundException("Submission not found");
 
     const now = new Date();
-    if (action === "approve") {
+    if (action === "approve" || action === "dispute") {
       const waitHours = await this.getSubmissionApprovalWaitHours();
+      const graceHours = await this.getSubmissionAutoCompleteGraceHours();
       const submittedAtRaw =
         submission.submittedAt || submission.updatedAt || submission.createdAt;
 
       if (!submittedAtRaw) {
         throw new BadRequestException(
-          `Review period active. Completion confirmation unlocks in ${waitHours} hours after influencer submission.`,
+          action === "approve"
+            ? `Review period active. Completion confirmation unlocks in ${waitHours} hours after influencer submission.`
+            : `Review period active. Issues can be raised after ${waitHours} hours from influencer submission.`,
         );
       }
 
@@ -2751,13 +2842,22 @@ export class CampaignInvitesService {
       const unlockAt = new Date(
         submittedAt.getTime() + waitHours * 60 * 60 * 1000,
       );
+      const autoCompleteAt = new Date(
+        unlockAt.getTime() + graceHours * 60 * 60 * 1000,
+      );
       if (
         Number.isNaN(submittedAt.getTime()) ||
         now.getTime() < unlockAt.getTime()
       ) {
         throw new BadRequestException(
-          `Review period active. Completion confirmation unlocks ${waitHours} hours after submission. Unlocks at: ${unlockAt.toUTCString()}`,
+          action === "approve"
+            ? `Review period active. Completion confirmation unlocks ${waitHours} hours after submission. Unlocks at: ${unlockAt.toUTCString()}`
+            : `Review period active. Issues can be raised after ${waitHours} hours from submission. Unlocks at: ${unlockAt.toUTCString()}`,
         );
+      }
+      if (now.getTime() >= autoCompleteAt.getTime()) {
+        await this.autoCompleteSubmission(submission, invite, now);
+        return { success: true, submission, autoCompleted: true };
       }
     }
 
@@ -2807,8 +2907,30 @@ export class CampaignInvitesService {
         console.error("Failed to send approval notification:", e);
       }
     } else {
+      const allowedIssueReasons = new Set([
+        "Missing hashtag",
+        "Missing mention",
+        "Wrong platform",
+        "Wrong content type",
+        "Content removed",
+        "Wrong account",
+        "Other",
+      ]);
+      const issueReason = String(disputeIssueReason || "").trim();
+      const issueDescription = String(disputeReason || "").trim();
+      const evidenceUrl = String(disputeEvidenceUrl || "").trim();
+      if (!allowedIssueReasons.has(issueReason)) {
+        throw new BadRequestException("Issue reason is required");
+      }
+      if (issueDescription.length < 20) {
+        throw new BadRequestException(
+          "Issue description must be at least 20 characters",
+        );
+      }
       submission.status = "disputed";
-      submission.disputeReason = disputeReason || "";
+      submission.disputeIssueReason = issueReason;
+      submission.disputeReason = issueDescription;
+      submission.disputeEvidenceUrl = evidenceUrl;
       submission.brandFeedback = feedback || "";
       submission.reviewedAt = now;
       await submission.save();
@@ -2825,8 +2947,9 @@ export class CampaignInvitesService {
             workStatus: "disputed",
             payoutStatus: "frozen",
             disputeStatus: "open",
-            disputeReason:
-              disputeReason || feedback || "Brand raised a content dispute",
+            disputeIssueReason: issueReason,
+            disputeReason: issueDescription,
+            disputeEvidenceUrl: evidenceUrl,
             disputedByRole: "brand",
             disputedAt: new Date(),
           },

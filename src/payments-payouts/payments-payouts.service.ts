@@ -86,6 +86,17 @@ export class PaymentsPayoutsService {
     return Number.isFinite(fallback) && fallback >= 0 ? fallback : 24;
   }
 
+  private async markInvitePayoutReleased(tx: any, paidOutAt?: Date) {
+    if (!tx?.inviteId) return;
+    await this.inviteModel.findByIdAndUpdate(tx.inviteId, {
+      $set: {
+        status: "approved",
+        paidOutAt: paidOutAt || tx.paidOutAt || new Date(),
+        updatedAt: new Date(),
+      },
+    });
+  }
+
   /**
    * Calculate effective commission percentage for a user (brand or influencer)
    * Checks for commission override and applies discount/waiver/fixed rate
@@ -360,6 +371,9 @@ export class PaymentsPayoutsService {
     }
 
     await tx.save();
+    if (tx.payoutStatus === "paid") {
+      await this.markInvitePayoutReleased(tx, tx.paidOutAt);
+    }
     return {
       success: true,
       message: "Webhook processed",
@@ -1328,6 +1342,7 @@ export class PaymentsPayoutsService {
     tx.payoutInitiatedAt = tx.payoutInitiatedAt || new Date();
     tx.payoutFailureReason = "";
     await tx.save();
+    await this.markInvitePayoutReleased(tx, tx.paidOutAt);
 
     // Fire-and-forget: notify influencer their payout has been sent
     if (
@@ -1521,6 +1536,9 @@ export class PaymentsPayoutsService {
         }
 
         await tx.save();
+        if (tx.payoutStatus === "paid") {
+          await this.markInvitePayoutReleased(tx, tx.paidOutAt);
+        }
       } catch (error: any) {
         tx.payoutStatus = "pending";
         tx.payoutGatewayProvider = "razorpayx";
