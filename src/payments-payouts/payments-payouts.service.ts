@@ -27,10 +27,6 @@ type FeeSettings = {
 @Injectable()
 export class PaymentsPayoutsService {
   private readonly logger = new Logger(PaymentsPayoutsService.name);
-  private static readonly PAYOUT_RELEASE_MIN_HOURS = Math.max(
-    Number(process.env.PAYOUT_RELEASE_MIN_HOURS || 24),
-    0,
-  );
   private static readonly AUTO_PAYOUT_ENABLED =
     String(process.env.AUTO_PAYOUT_ENABLED || "false").toLowerCase() ===
     "true";
@@ -80,6 +76,14 @@ export class PaymentsPayoutsService {
           ? settings.platformFeePercent
           : 10,
     };
+  }
+
+  private async getPayoutReleaseWaitHours(): Promise<number> {
+    const settings: any = await this.appSettingsModel.findOne({}).lean();
+    const configured = Number(settings?.payoutReleaseWaitHours);
+    if (Number.isFinite(configured) && configured >= 0) return configured;
+    const fallback = Number(process.env.PAYOUT_RELEASE_MIN_HOURS || 24);
+    return Number.isFinite(fallback) && fallback >= 0 ? fallback : 24;
   }
 
   /**
@@ -232,7 +236,7 @@ export class PaymentsPayoutsService {
 
     const minMs =
       completedAt.getTime() +
-      PaymentsPayoutsService.PAYOUT_RELEASE_MIN_HOURS * 60 * 60 * 1000;
+      (await this.getPayoutReleaseWaitHours()) * 60 * 60 * 1000;
     if (Date.now() < minMs) {
       return {
         eligible: false,
@@ -753,7 +757,8 @@ export class PaymentsPayoutsService {
     const filter: any = {};
     if (status === "awaiting") filter.collectionStatus = "awaiting_payment";
     if (status === "verified") filter.collectionStatus = "verified";
-    if (status === "payout_pending") filter.payoutStatus = "pending";
+    if (status === "payout_pending")
+      filter.payoutStatus = { $in: ["pending", "processing"] };
     if (status === "paid") filter.payoutStatus = "paid";
 
     const rows = await this.transactionModel
@@ -938,7 +943,9 @@ export class PaymentsPayoutsService {
     const rows = await this.transactionModel.find({}).lean();
     const verified = rows.filter((r: any) => r.collectionStatus === "verified");
     const paid = rows.filter((r: any) => r.payoutStatus === "paid");
-    const pending = rows.filter((r: any) => r.payoutStatus === "pending");
+    const pending = rows.filter((r: any) =>
+      ["pending", "processing"].includes(String(r.payoutStatus || "")),
+    );
 
     const collected = verified.reduce(
       (sum: number, r: any) => sum + Number(r.payerTotal || 0),

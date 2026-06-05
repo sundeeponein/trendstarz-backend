@@ -1428,6 +1428,8 @@ export class AuthService {
       inviteUnlockFee: settings?.inviteUnlockFee ?? 499,
       minimumCampaignFee: settings?.minimumCampaignFee ?? 1000,
       gstPercent: settings?.gstPercent ?? 18,
+      submissionApprovalWaitHours: settings?.submissionApprovalWaitHours ?? 24,
+      payoutReleaseWaitHours: settings?.payoutReleaseWaitHours ?? 24,
       // Campaign payment UPI shown to brands on the payment screen
       paymentUpiId: settings?.paymentUpiId || "trendstarzin@kotak",
       showSearchLink: settings?.showSearchLink !== false,

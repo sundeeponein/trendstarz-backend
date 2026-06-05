@@ -214,10 +214,26 @@ export class AdminListsController {
     };
   }
 
+  private getCampaignWorkflowTimingDefaults() {
+    const config = this.readAdminConfig();
+    const timing = config?.campaignWorkflowTiming || {};
+    return {
+      submissionApprovalWaitHours:
+        typeof timing.submissionApprovalWaitHours === "number"
+          ? timing.submissionApprovalWaitHours
+          : 24,
+      payoutReleaseWaitHours:
+        typeof timing.payoutReleaseWaitHours === "number"
+          ? timing.payoutReleaseWaitHours
+          : 24,
+    };
+  }
+
   @Get("settings")
   async getSettings() {
     // Get commission defaults from plans-config
     const commissionDefaults = this.getCommissionDefaults();
+    const workflowTimingDefaults = this.getCampaignWorkflowTimingDefaults();
 
     // These are the base defaults from the schema
     const defaults = {
@@ -256,6 +272,9 @@ export class AdminListsController {
       platformFeeEnabled: false,
       platformFeePercent: commissionDefaults.platformFeePercent,
       gstPercent: commissionDefaults.gstPercent,
+      submissionApprovalWaitHours:
+        workflowTimingDefaults.submissionApprovalWaitHours,
+      payoutReleaseWaitHours: workflowTimingDefaults.payoutReleaseWaitHours,
       earlyAccessAssignmentMode: "manual",
       earlyAccessLastRunAt: null,
       earlyAccessLastRunStatus: "",
@@ -329,6 +348,19 @@ export class AdminListsController {
         );
       }
       next.pendingUserAutoDeleteDays = Math.floor(days);
+    }
+    for (const key of [
+      "submissionApprovalWaitHours",
+      "payoutReleaseWaitHours",
+    ]) {
+      if (next[key] === undefined) continue;
+      const hours = Number(next[key]);
+      if (!Number.isFinite(hours) || hours < 0 || hours > 720) {
+        throw new BadRequestException(
+          `${key} must be a number between 0 and 720`,
+        );
+      }
+      next[key] = Math.round(hours * 100) / 100;
     }
     if (next.campaignTypeConfigs !== undefined) {
       next.campaignTypeConfigs = this.normalizeCampaignTypeConfigs(

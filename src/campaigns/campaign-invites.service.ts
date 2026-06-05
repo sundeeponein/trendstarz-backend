@@ -76,10 +76,17 @@ export class CampaignInvitesService {
     @InjectModel("Influencer") private readonly influencerModel: Model<any>,
     @InjectModel("CampaignTransaction")
     private readonly campaignTransactionModel: Model<any>,
+    @InjectModel("AppSettings") private readonly appSettingsModel: Model<any>,
     private readonly plansService: PlansService,
     private readonly pushService: PushService,
     private readonly notificationsService: NotificationsService,
   ) {}
+
+  private async getSubmissionApprovalWaitHours(): Promise<number> {
+    const settings: any = await this.appSettingsModel.findOne({}).lean();
+    const hours = Number(settings?.submissionApprovalWaitHours ?? 24);
+    return Number.isFinite(hours) && hours >= 0 ? hours : 24;
+  }
 
   private normalizeRecipientRole(role: any): "influencer" | "photographer" {
     return String(role || "influencer")
@@ -2730,23 +2737,26 @@ export class CampaignInvitesService {
 
     const now = new Date();
     if (action === "approve") {
+      const waitHours = await this.getSubmissionApprovalWaitHours();
       const submittedAtRaw =
         submission.submittedAt || submission.updatedAt || submission.createdAt;
 
       if (!submittedAtRaw) {
         throw new BadRequestException(
-          "Review period active. Completion confirmation unlocks in 24 hours after influencer submission.",
+          `Review period active. Completion confirmation unlocks in ${waitHours} hours after influencer submission.`,
         );
       }
 
       const submittedAt = new Date(submittedAtRaw);
-      const unlockAt = new Date(submittedAt.getTime() + 24 * 60 * 60 * 1000);
+      const unlockAt = new Date(
+        submittedAt.getTime() + waitHours * 60 * 60 * 1000,
+      );
       if (
         Number.isNaN(submittedAt.getTime()) ||
         now.getTime() < unlockAt.getTime()
       ) {
         throw new BadRequestException(
-          `Review period active. Completion confirmation unlocks 24 hours after submission. Unlocks at: ${unlockAt.toUTCString()}`,
+          `Review period active. Completion confirmation unlocks ${waitHours} hours after submission. Unlocks at: ${unlockAt.toUTCString()}`,
         );
       }
     }

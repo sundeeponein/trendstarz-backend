@@ -1,4 +1,8 @@
 {
+  "campaignWorkflowTiming": {
+    "submissionApprovalWaitHours": 24,
+    "payoutReleaseWaitHours": 24
+  },
   "socialMediaPlatforms": [
     {
       "name": "YouTube",
