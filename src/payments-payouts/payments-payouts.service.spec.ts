@@ -12,6 +12,10 @@ describe("PaymentsPayoutsService", () => {
   let inviteModel: any;
   let transactionModel: any;
   let appSettingsModel: any;
+  let brandModel: any;
+  let influencerModel: any;
+  let photographerModel: any;
+  let razorpayService: any;
 
   beforeEach(async () => {
     const mockCampaignModel = {
@@ -89,6 +93,29 @@ describe("PaymentsPayoutsService", () => {
     inviteModel = module.get(getModelToken("CampaignInvite"));
     transactionModel = module.get(getModelToken("CampaignTransaction"));
     appSettingsModel = module.get(getModelToken("AppSettings"));
+    brandModel = module.get(getModelToken("Brand"));
+    influencerModel = module.get(getModelToken("Influencer"));
+    photographerModel = module.get(getModelToken("Photographer"));
+    razorpayService = module.get(RazorpayService);
+
+    appSettingsModel.findOne.mockReturnValue({
+      lean: jest.fn().mockResolvedValue({}),
+    });
+    transactionModel.find.mockReturnValue({
+      select: jest.fn().mockReturnValue({
+        lean: jest.fn().mockResolvedValue([]),
+      }),
+    });
+    transactionModel.findOne.mockResolvedValue(null);
+    const emptyUserLookup = {
+      lean: jest.fn().mockResolvedValue(null),
+      select: jest.fn().mockReturnValue({
+        lean: jest.fn().mockResolvedValue(null),
+      }),
+    };
+    brandModel.findById.mockReturnValue(emptyUserLookup);
+    influencerModel.findById.mockReturnValue(emptyUserLookup);
+    photographerModel.findById.mockReturnValue(emptyUserLookup);
   });
 
   describe("calculatePayment", () => {
@@ -333,6 +360,119 @@ describe("PaymentsPayoutsService", () => {
         service.markPayoutPaid("tx4", { payoutUtr: "PAYOUT123" }),
       ).rejects.toThrow(BadRequestException);
       expect(tx.save).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("runAutoPayoutSweep", () => {
+    let originalAutoPayoutEnabled: boolean;
+
+    beforeEach(() => {
+      originalAutoPayoutEnabled = (PaymentsPayoutsService as any).AUTO_PAYOUT_ENABLED;
+      (PaymentsPayoutsService as any).AUTO_PAYOUT_ENABLED = true;
+      razorpayService.isPayoutsConfigured.mockReturnValue(true);
+    });
+
+    afterEach(() => {
+      (PaymentsPayoutsService as any).AUTO_PAYOUT_ENABLED = originalAutoPayoutEnabled;
+    });
+
+    it("skips gateway payout until the admin-configured payout wait is satisfied", async () => {
+      const tx: any = {
+        _id: "tx_auto_wait",
+        collectionStatus: "verified",
+        payoutStatus: "pending",
+        disputeStatus: "none",
+        gateway: "razorpay",
+        inviteId: "inv_auto_wait",
+        recipientId: "inf_auto_wait",
+        recipientRole: "influencer",
+        recipientPayout: 100000,
+        save: jest.fn().mockResolvedValue(true),
+      };
+      transactionModel.find.mockReturnValue({
+        sort: jest.fn().mockReturnValue({
+          limit: jest.fn().mockResolvedValue([tx]),
+        }),
+      });
+      appSettingsModel.findOne.mockReturnValue({
+        lean: jest.fn().mockResolvedValue({ payoutReleaseWaitHours: 4 }),
+      });
+      inviteModel.findById.mockReturnValue({
+        select: jest.fn().mockReturnValue({
+          lean: jest.fn().mockResolvedValue({
+            status: "completed",
+            completedAt: new Date(Date.now() - 2 * 60 * 60 * 1000),
+            updatedAt: new Date(Date.now() - 2 * 60 * 60 * 1000),
+          }),
+        }),
+      });
+
+      const result = await service.runAutoPayoutSweep("admin1");
+
+      expect(result.skipped).toBe(1);
+      expect(result.details?.[0]?.message).toContain("Payout lock active");
+      expect(razorpayService.createPayoutByUpi).not.toHaveBeenCalled();
+      expect(tx.save).not.toHaveBeenCalled();
+    });
+
+    it("creates gateway payout after the admin-configured payout wait is satisfied", async () => {
+      const tx: any = {
+        _id: "tx_auto_ready",
+        collectionStatus: "verified",
+        payoutStatus: "pending",
+        disputeStatus: "none",
+        gateway: "razorpay",
+        inviteId: "inv_auto_ready",
+        recipientId: "inf_auto_ready",
+        recipientRole: "influencer",
+        recipientPayout: 100000,
+        save: jest.fn().mockResolvedValue(true),
+      };
+      transactionModel.find.mockReturnValue({
+        sort: jest.fn().mockReturnValue({
+          limit: jest.fn().mockResolvedValue([tx]),
+        }),
+      });
+      appSettingsModel.findOne.mockReturnValue({
+        lean: jest.fn().mockResolvedValue({ payoutReleaseWaitHours: 4 }),
+      });
+      inviteModel.findById.mockReturnValue({
+        select: jest.fn().mockReturnValue({
+          lean: jest.fn().mockResolvedValue({
+            status: "completed",
+            completedAt: new Date(Date.now() - 5 * 60 * 60 * 1000),
+            updatedAt: new Date(Date.now() - 5 * 60 * 60 * 1000),
+          }),
+        }),
+      });
+      influencerModel.findById.mockReturnValue({
+        select: jest.fn().mockReturnValue({
+          lean: jest.fn().mockResolvedValue({
+            name: "Creator",
+            payout: { upiId: "creator@upi" },
+          }),
+        }),
+      });
+      razorpayService.createPayoutByUpi.mockResolvedValue({
+        payoutId: "pout_auto_ready",
+        status: "processed",
+        utr: "UTR_AUTO_READY",
+      });
+
+      const result = await service.runAutoPayoutSweep("admin1");
+
+      expect(result.processed).toBe(1);
+      expect(razorpayService.createPayoutByUpi).toHaveBeenCalledWith(
+        expect.objectContaining({
+          amountPaise: 100000,
+          recipientName: "Creator",
+          recipientUpiId: "creator@upi",
+        }),
+      );
+      expect(tx.payoutStatus).toBe("paid");
+      expect(tx.payoutGatewayProvider).toBe("razorpayx");
+      expect(tx.payoutUtr).toBe("UTR_AUTO_READY");
+      expect(tx.save).toHaveBeenCalled();
     });
   });
 
