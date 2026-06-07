@@ -39,8 +39,26 @@ export class AuthController {
     private readonly cloudinaryService: CloudinaryService,
   ) {}
 
-  private resolveFrontendBase(_host?: string, _req?: any) {
-    return (process.env.FRONTEND_URL || "https://www.trendstarz.in").replace(/\/$/, "");
+  private resolveFrontendBase() {
+    return (process.env.FRONTEND_URL || "https://www.trendstarz.in").replace(
+      /\/$/,
+      "",
+    );
+  }
+
+  private isLocalAuthBypassRequest(req: any): boolean {
+    if (process.env.NODE_ENV === "production") return false;
+    const host = String(
+      req?.get?.("host") || req?.hostname || "",
+    ).toLowerCase();
+    return (
+      host.startsWith("localhost:") ||
+      host === "localhost" ||
+      host.startsWith("127.0.0.1:") ||
+      host === "127.0.0.1" ||
+      host.startsWith("[::1]:") ||
+      host === "::1"
+    );
   }
 
   private formatRegistrationError(err: any, fallbackMessage: string) {
@@ -73,12 +91,13 @@ export class AuthController {
   @Throttle({ default: { ttl: 60000, limit: 5 } })
   @HttpCode(200)
   @UsePipes(new ValidationPipe({ whitelist: true, transform: true }))
-  async login(@Body() body: LoginDto, @Res() res: Response) {
+  async login(@Body() body: LoginDto, @Req() req: any, @Res() res: Response) {
     try {
       const result = await this.authService.login(
         body.email,
         body.password,
         body.firebaseIdToken,
+        { localAuthBypass: this.isLocalAuthBypassRequest(req) },
       );
       return res.status(200).json(result);
     } catch (err: any) {
@@ -275,7 +294,7 @@ export class AuthController {
     @Req() req: any,
     @Res() res: Response,
   ) {
-    const frontendBase = this.resolveFrontendBase(req?.get?.("host"), req);
+    const frontendBase = this.resolveFrontendBase();
 
     try {
       const result = await this.authService.verifyEmailByToken(token);

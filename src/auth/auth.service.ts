@@ -113,10 +113,14 @@ export class AuthService {
         throw new BadRequestException("Platform is required.");
       }
       if (!String(sm?.handle || "").trim()) {
-        throw new BadRequestException("Username is required for every selected platform.");
+        throw new BadRequestException(
+          "Username is required for every selected platform.",
+        );
       }
       if (!String(sm?.tier || "").trim()) {
-        throw new BadRequestException("Tier is required for every selected platform.");
+        throw new BadRequestException(
+          "Tier is required for every selected platform.",
+        );
       }
       if (!Array.isArray(sm?.contentTypes) || sm.contentTypes.length === 0) {
         throw new BadRequestException(
@@ -234,7 +238,9 @@ export class AuthService {
   }
 
   async syncFirebaseEmailVerification(email: string) {
-    const normalizedEmail = String(email || "").trim().toLowerCase();
+    const normalizedEmail = String(email || "")
+      .trim()
+      .toLowerCase();
     if (!normalizedEmail) {
       throw new BadRequestException("Email is required.");
     }
@@ -243,9 +249,8 @@ export class AuthService {
     }
     let firebaseUser: any = null;
     try {
-      firebaseUser = await this.firebaseAdminService.getUserByEmail(
-        normalizedEmail,
-      );
+      firebaseUser =
+        await this.firebaseAdminService.getUserByEmail(normalizedEmail);
     } catch {
       throw new BadRequestException("Firebase user not found.");
     }
@@ -278,7 +283,11 @@ export class AuthService {
     );
     await user.save();
 
-    return { success: true, autoApproved, message: "Email verified successfully." };
+    return {
+      success: true,
+      autoApproved,
+      message: "Email verified successfully.",
+    };
   }
 
   async forgotPassword(email: string) {
@@ -378,7 +387,9 @@ export class AuthService {
   }
 
   async ensureFirebasePasswordResetUser(email: string) {
-    const normalizedEmail = String(email || "").trim().toLowerCase();
+    const normalizedEmail = String(email || "")
+      .trim()
+      .toLowerCase();
     if (!normalizedEmail) {
       throw new BadRequestException("Email is required.");
     }
@@ -412,9 +423,13 @@ export class AuthService {
     this.validatePasswordStrength(newPassword);
 
     const decoded = await this.firebaseAdminService.verifyIdToken(idToken);
-    const email = String(decoded.email || "").trim().toLowerCase();
+    const email = String(decoded.email || "")
+      .trim()
+      .toLowerCase();
     if (!email) {
-      throw new BadRequestException("Firebase token does not include an email.");
+      throw new BadRequestException(
+        "Firebase token does not include an email.",
+      );
     }
 
     const match = await this.findAnyUserWithRole(email);
@@ -530,7 +545,9 @@ export class AuthService {
   ) {}
 
   private normalizePhone(value: unknown): string {
-    return String(value || "").replace(/\D/g, "");
+    if (value === null || value === undefined) return "";
+    if (typeof value !== "string" && typeof value !== "number") return "";
+    return String(value).replace(/\D/g, "");
   }
 
   private phoneLookupValues(value: unknown): string[] {
@@ -578,7 +595,16 @@ export class AuthService {
     firebaseIdToken: string | undefined,
     user: any,
     role: "influencer" | "brand" | "photographer",
+    options?: { localAuthBypass?: boolean },
   ): Promise<void> {
+    if (options?.localAuthBypass) {
+      user.isEmailVerified = true;
+      if (!user.firebaseUid)
+        user.firebaseUid = `local-dev:${role}:${normalizedEmail}`;
+      await this.maybeAutoApproveAfterContactVerification(user, role);
+      await user.save();
+      return;
+    }
     if (!this.firebaseAdminService.isConfigured()) {
       throw new UnauthorizedException(
         "Firebase verification is required before login.",
@@ -590,10 +616,11 @@ export class AuthService {
       );
     }
 
-    const decoded = await this.firebaseAdminService.verifyIdToken(
-      firebaseIdToken,
-    );
-    const firebaseEmail = String(decoded.email || "").trim().toLowerCase();
+    const decoded =
+      await this.firebaseAdminService.verifyIdToken(firebaseIdToken);
+    const firebaseEmail = String(decoded.email || "")
+      .trim()
+      .toLowerCase();
     if (firebaseEmail !== normalizedEmail || !decoded.email_verified) {
       throw new UnauthorizedException(
         "Please verify your email before logging in.",
@@ -608,7 +635,9 @@ export class AuthService {
 
   async verifyFirebaseContact(idToken: string, type: FirebaseContactType) {
     if (type !== "email" && type !== "phone") {
-      throw new BadRequestException("Verification type must be email or phone.");
+      throw new BadRequestException(
+        "Verification type must be email or phone.",
+      );
     }
 
     const decoded = await this.firebaseAdminService.verifyIdToken(idToken);
@@ -616,7 +645,9 @@ export class AuthService {
     let role: "influencer" | "brand" | "photographer" | "admin" | null = null;
 
     if (type === "email") {
-      const email = String(decoded.email || "").trim().toLowerCase();
+      const email = String(decoded.email || "")
+        .trim()
+        .toLowerCase();
       if (!email || !decoded.email_verified) {
         throw new BadRequestException("Firebase email is not verified.");
       }
@@ -636,7 +667,10 @@ export class AuthService {
             : photographer
               ? "photographer"
               : null;
-      if (!user) throw new BadRequestException("No TrendStarz user matches this Firebase email.");
+      if (!user)
+        throw new BadRequestException(
+          "No TrendStarz user matches this Firebase email.",
+        );
       this.activateAfterEmailOwnership(user, role, decoded.uid);
     } else {
       const phoneValues = this.phoneLookupValues(decoded.phone_number);
@@ -649,8 +683,17 @@ export class AuthService {
         this.photographerModel.findOne({ phoneNumber: { $in: phoneValues } }),
       ]);
       user = influencer || brand || photographer;
-      role = influencer ? "influencer" : brand ? "brand" : photographer ? "photographer" : null;
-      if (!user) throw new BadRequestException("No TrendStarz user matches this Firebase phone.");
+      role = influencer
+        ? "influencer"
+        : brand
+          ? "brand"
+          : photographer
+            ? "photographer"
+            : null;
+      if (!user)
+        throw new BadRequestException(
+          "No TrendStarz user matches this Firebase phone.",
+        );
       user.isMobileVerified = true;
     }
 
@@ -665,7 +708,10 @@ export class AuthService {
     return {
       success: true,
       autoApproved,
-      message: type === "email" ? "Email verified successfully." : "Mobile verified successfully.",
+      message:
+        type === "email"
+          ? "Email verified successfully."
+          : "Mobile verified successfully.",
     };
   }
 
@@ -727,7 +773,10 @@ export class AuthService {
     const socialMediaMapped = socialMedia.map((sm: any) => ({
       ...sm,
       platform: smMap.get(sm.platform) || sm.platform,
-      handle: normalizeSocialHandle(sm.handle, smMap.get(sm.platform) || sm.platform),
+      handle: normalizeSocialHandle(
+        sm.handle,
+        smMap.get(sm.platform) || sm.platform,
+      ),
       contentTypes: Array.isArray(sm.contentTypes)
         ? sm.contentTypes
             .filter((ct: any) => {
@@ -758,7 +807,12 @@ export class AuthService {
   }
 
   // Admin / influencer / brand login
-  async login(email: string, password: string, firebaseIdToken?: string) {
+  async login(
+    email: string,
+    password: string,
+    firebaseIdToken?: string,
+    options?: { localAuthBypass?: boolean },
+  ) {
     const normalizedEmail = (email || "").trim().toLowerCase();
 
     // Fetch all collections in parallel to eliminate sequential DB round-trips
@@ -840,8 +894,9 @@ export class AuthService {
         firebaseIdToken,
         influencer,
         "influencer",
+        options,
       );
-      if (influencer.status === "pending") {
+      if (influencer.status === "pending" && !options?.localAuthBypass) {
         throw new UnauthorizedException(
           "Your account is pending approval. Please wait for admin to activate your account.",
         );
@@ -902,6 +957,7 @@ export class AuthService {
         firebaseIdToken,
         brand,
         "brand",
+        options,
       );
       const now = new Date();
       await this.brandModel.updateOne(
@@ -956,8 +1012,9 @@ export class AuthService {
         firebaseIdToken,
         photographer,
         "photographer",
+        options,
       );
-      if (photographer.status === "pending") {
+      if (photographer.status === "pending" && !options?.localAuthBypass) {
         throw new UnauthorizedException(
           "Your account is pending approval. Please wait for admin to activate your account.",
         );
