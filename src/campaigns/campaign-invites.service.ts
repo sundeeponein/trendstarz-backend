@@ -12,6 +12,7 @@ import { inviteReminderTemplate } from "../email/templates/campaign.templates";
 import { PlansService } from "../plans/plans.service";
 import { PushService } from "../push/push.service";
 import { NotificationsService } from "../notifications/notifications.service";
+import { ProfileVerificationService } from "../profile-verification/profile-verification.service";
 
 function detectPlatform(url: string): string {
   if (!url) return "other";
@@ -80,6 +81,7 @@ export class CampaignInvitesService {
     private readonly plansService: PlansService,
     private readonly pushService: PushService,
     private readonly notificationsService: NotificationsService,
+    private readonly profileVerificationService: ProfileVerificationService,
   ) {}
 
   private async getSubmissionApprovalWaitHours(): Promise<number> {
@@ -1740,6 +1742,11 @@ export class CampaignInvitesService {
     }
 
     if (status === "accepted" || status === "counter_sent") {
+      await this.profileVerificationService.assertCampaignEligible(
+        influencerId,
+        recipientRole,
+      );
+
       if (!selectedPostDate) {
         throw new BadRequestException(
           "selectedPostDate is required to respond",
@@ -2416,6 +2423,10 @@ export class CampaignInvitesService {
     // Check influencer meets minimum tier requirement
     const influencer = await this.influencerModel.findById(influencerId).lean();
     if (!influencer) throw new NotFoundException("Influencer not found");
+    await this.profileVerificationService.assertCampaignEligible(
+      influencerId,
+      "influencer",
+    );
 
     const sm: any[] = (influencer as any).socialMedia || [];
     const campaignPlatforms: string[] = campaign.platforms || [];

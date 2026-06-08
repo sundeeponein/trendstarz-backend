@@ -837,9 +837,18 @@ export class AdminUserTableController {
 
     if (hasEmail) {
       user.isEmailVerified = !!body.isEmailVerified;
+      user.emailVerified = !!body.isEmailVerified;
+      user.emailVerifiedAt = body.isEmailVerified ? user.emailVerifiedAt || new Date() : null;
     }
     if (hasMobile) {
       user.isMobileVerified = !!body.isMobileVerified;
+      user.mobileVerified = !!body.isMobileVerified;
+      user.mobileVerifiedAt = body.isMobileVerified ? user.mobileVerifiedAt || new Date() : null;
+      user.mobileVerificationDate = body.isMobileVerified
+        ? user.mobileVerificationDate || new Date()
+        : null;
+      user.mobileVerificationMethod = body.isMobileVerified ? "Manual" : "";
+      user.mobileVerifiedBy = body.isMobileVerified ? "Admin" : "";
     }
 
     const saved = await user.save();

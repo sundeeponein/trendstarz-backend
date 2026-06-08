@@ -21,12 +21,14 @@ import { PlansModule } from "../plans/plans.module";
 import { CloudinaryService } from "../cloudinary.service";
 import { PushModule } from "../push/push.module";
 import { NotificationsModule } from "../notifications/notifications.module";
+import { ProfileVerificationModule } from "../profile-verification/profile-verification.module";
 
 @Module({
   imports: [
     PlansModule,
     PushModule,
     NotificationsModule,
+    ProfileVerificationModule,
     MongooseModule.forFeature([
       { name: "Campaign", schema: CampaignSchema, collection: "campaigns" },
       {
