@@ -1,5 +1,51 @@
 import { Schema, Types, model } from "mongoose";
 
+const ProfileVerificationFields = {
+  emailVerified: { type: Boolean, default: false },
+  emailVerifiedAt: { type: Date, default: null },
+  mobileVerified: { type: Boolean, default: false },
+  mobileVerifiedAt: { type: Date, default: null },
+  mobileVerificationMethod: { type: String, default: "" },
+  mobileVerificationDate: { type: Date, default: null },
+  mobileVerifiedBy: { type: String, default: "" },
+  identityVerified: { type: Boolean, default: false },
+  identityVerifiedAt: { type: Date, default: null },
+  identityConfirmed: { type: Boolean, default: false },
+  verifiedByAdmin: { type: String, default: "" },
+  verificationCallCompleted: { type: Boolean, default: false },
+  verificationCallCompletedAt: { type: Date, default: null },
+  locationVerified: { type: Boolean, default: false },
+  locationVerifiedAt: { type: Date, default: null },
+  socialVerified: { type: Boolean, default: false },
+  socialVerifiedAt: { type: Date, default: null },
+  socialProfilesReviewed: { type: Boolean, default: false },
+  socialProfilesReviewedAt: { type: Date, default: null },
+  paymentVerified: { type: Boolean, default: false },
+  paymentVerifiedAt: { type: Date, default: null },
+  panVerified: { type: Boolean, default: false },
+  panVerifiedAt: { type: Date, default: null },
+  lastReviewedAt: { type: Date, default: null },
+  reviewedBy: { type: String, default: "" },
+  profileCompletion: { type: Number, default: 0, min: 0, max: 100 },
+  profileQualityScore: { type: Number, default: 100, min: 0, max: 100 },
+  profileQualityLabel: { type: String, default: "Premium Verified" },
+  verificationDashboardStatus: {
+    type: String,
+    enum: [
+      "Draft",
+      "Under Review",
+      "Action Required",
+      "Verified Creator",
+      "Brand Ready",
+      "Premium Verified",
+    ],
+    default: "Draft",
+    index: true,
+  },
+  adminReviewPending: { type: Boolean, default: false },
+  profileModerationNotes: { type: String, default: "" },
+};
+
 export const TierSchema = new Schema({
   name: { type: String, required: true },
   icon: { type: String },
@@ -27,6 +73,7 @@ export const UserSchema = new Schema(
     lastLoginAt: { type: Date, default: null },
     isEmailVerified: { type: Boolean, default: false },
     isMobileVerified: { type: Boolean, default: false },
+    ...ProfileVerificationFields,
     resetToken: { type: String, default: null },
     resetTokenExpires: { type: Number, default: null },
   },
@@ -46,6 +93,7 @@ export const InfluencerSchema = new Schema(
     username: { type: String, required: true, unique: true },
     isEmailVerified: { type: Boolean, default: false },
     isMobileVerified: { type: Boolean, default: false },
+    ...ProfileVerificationFields,
     firstRegisteredAt: { type: Date, default: Date.now },
     lastLoginAt: { type: Date, default: null },
     profileImages: [
@@ -255,6 +303,7 @@ export const BrandSchema = new Schema(
     phoneNumber: { type: String, required: true },
     isEmailVerified: { type: Boolean, default: false },
     isMobileVerified: { type: Boolean, default: false },
+    ...ProfileVerificationFields,
     firstRegisteredAt: { type: Date, default: Date.now },
     lastLoginAt: { type: Date, default: null },
     brandLogo: [
@@ -385,6 +434,7 @@ export const PhotographerSchema = new Schema(
     phoneNumber: { type: String, required: true },
     isEmailVerified: { type: Boolean, default: false },
     isMobileVerified: { type: Boolean, default: false },
+    ...ProfileVerificationFields,
     firstRegisteredAt: { type: Date, default: Date.now },
     lastLoginAt: { type: Date, default: null },
     profileImages: [

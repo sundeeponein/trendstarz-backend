@@ -233,6 +233,26 @@ export class AdminListsController {
     };
   }
 
+  private applyAdminUserStatusFilter(filter: Record<string, any>, status?: string) {
+    const normalizedStatus = String(status || "").trim().toLowerCase();
+    if (normalizedStatus === "deleted") {
+      filter.$and = [
+        {
+          $or: [
+            { isDeleted: { $in: [true, "true"] } },
+            { status: "deleted" },
+          ],
+        },
+      ];
+      return;
+    }
+
+    filter.isDeleted = { $nin: [true, "true"] };
+    filter.status = normalizedStatus
+      ? normalizedStatus
+      : { $ne: "deleted" };
+  }
+
   @Get("settings")
   async getSettings() {
     // Get commission defaults from plans-config
@@ -767,14 +787,7 @@ export class AdminListsController {
   @Get("influencers")
   async getAllInfluencers(@Query("status") status?: string) {
     const filter: any = {};
-    if (status === "deleted") {
-      filter.isDeleted = true;
-    } else if (status) {
-      filter.status = status;
-      filter.isDeleted = { $ne: true };
-    } else {
-      filter.isDeleted = { $ne: true };
-    }
+    this.applyAdminUserStatusFilter(filter, status);
     const docs = await this.influencerModel
       .find(filter)
       .sort({ firstRegisteredAt: -1, createdAt: -1, _id: -1 })
@@ -793,14 +806,7 @@ export class AdminListsController {
   @Get("brands")
   async getAllBrands(@Query("status") status?: string) {
     const filter: any = {};
-    if (status === "deleted") {
-      filter.isDeleted = true;
-    } else if (status) {
-      filter.status = status;
-      filter.isDeleted = { $ne: true };
-    } else {
-      filter.isDeleted = { $ne: true };
-    }
+    this.applyAdminUserStatusFilter(filter, status);
     const docs = await this.brandModel
       .find(filter)
       .sort({ firstRegisteredAt: -1, createdAt: -1, _id: -1 })
@@ -819,14 +825,7 @@ export class AdminListsController {
   @Get("photographers")
   async getAllPhotographers(@Query("status") status?: string) {
     const filter: any = {};
-    if (status === "deleted") {
-      filter.isDeleted = true;
-    } else if (status) {
-      filter.status = status;
-      filter.isDeleted = { $ne: true };
-    } else {
-      filter.isDeleted = { $ne: true };
-    }
+    this.applyAdminUserStatusFilter(filter, status);
     const docs = await this.photographerModel
       .find(filter)
       .sort({ firstRegisteredAt: -1, createdAt: -1, _id: -1 })

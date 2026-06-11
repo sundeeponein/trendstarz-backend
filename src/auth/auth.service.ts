@@ -99,6 +99,8 @@ export class AuthService {
     firebaseUid?: string,
   ): boolean {
     user.isEmailVerified = true;
+    user.emailVerified = true;
+    user.emailVerifiedAt = user.emailVerifiedAt || new Date();
     if (firebaseUid) user.firebaseUid = firebaseUid;
     if (role && role !== "admin" && user.status === "pending") {
       user.status = "accepted";
@@ -439,6 +441,8 @@ export class AuthService {
 
     match.user.password = await bcrypt.hash(newPassword, 10);
     match.user.isEmailVerified = true;
+    match.user.emailVerified = true;
+    match.user.emailVerifiedAt = match.user.emailVerifiedAt || new Date();
     match.user.firebaseUid = decoded.uid;
     match.user.resetToken = null;
     match.user.resetTokenExpires = null;
@@ -599,6 +603,8 @@ export class AuthService {
   ): Promise<void> {
     if (options?.localAuthBypass) {
       user.isEmailVerified = true;
+      user.emailVerified = true;
+      user.emailVerifiedAt = user.emailVerifiedAt || new Date();
       if (!user.firebaseUid)
         user.firebaseUid = `local-dev:${role}:${normalizedEmail}`;
       await this.maybeAutoApproveAfterContactVerification(user, role);
@@ -628,6 +634,8 @@ export class AuthService {
     }
 
     user.isEmailVerified = true;
+    user.emailVerified = true;
+    user.emailVerifiedAt = user.emailVerifiedAt || new Date();
     user.firebaseUid = decoded.uid;
     await this.maybeAutoApproveAfterContactVerification(user, role);
     await user.save();
@@ -695,6 +703,10 @@ export class AuthService {
           "No TrendStarz user matches this Firebase phone.",
         );
       user.isMobileVerified = true;
+      user.mobileVerified = true;
+      user.mobileVerifiedAt = user.mobileVerifiedAt || new Date();
+      user.mobileVerificationDate = user.mobileVerificationDate || new Date();
+      user.mobileVerificationMethod = "OTP";
     }
 
     const autoApproved =
