@@ -982,6 +982,13 @@ export class CampaignInvitesService {
     return status === "active" || status === "completed";
   }
 
+  private assertCampaignLiveForRecipient(campaign: any, action: string) {
+    if (this.isCampaignLiveForRecipient(campaign)) return;
+    throw new BadRequestException(
+      `This campaign/collaboration is still under admin review. You can ${action} after it is approved.`,
+    );
+  }
+
   private toPaiseFromMaybeRupees(value: any): number {
     const n = Number(value || 0);
     if (!Number.isFinite(n) || n <= 0) return 0;
@@ -1347,8 +1354,9 @@ export class CampaignInvitesService {
     // Fetch campaign to check type (gate differs by campaign type)
     const campaign: any = await this.campaignModel
       .findById(invite.campaignId)
-      .select("campaignType")
+      .select("campaignType status")
       .lean();
+    this.assertCampaignLiveForRecipient(campaign, "unlock contact");
     const campaignType = String(campaign?.campaignType || "").toLowerCase();
     const isLocationCampaign =
       campaignType === "invite_location" || campaignType === "product";
@@ -1780,15 +1788,7 @@ export class CampaignInvitesService {
         .lean();
       if (!campaign) throw new NotFoundException("Campaign not found");
 
-      // Guard: recipient cannot accept a collaboration until admin approval is live.
-      if (
-        this.isCollaborationCampaign(campaign) &&
-        !this.isCampaignLiveForRecipient(campaign)
-      ) {
-        throw new BadRequestException(
-          "This collaboration is still under admin review. You can accept after it is approved.",
-        );
-      }
+      this.assertCampaignLiveForRecipient(campaign, "accept");
 
       // Shipping address capture — required when brand is shipping a physical product.
       const requiresShippingAddress =
@@ -2326,6 +2326,19 @@ export class CampaignInvitesService {
     }
 
     if (action === "accept") {
+      const campaign: any = await this.campaignModel
+        .findById(invite.campaignId)
+        .select("status")
+        .lean();
+      this.assertCampaignLiveForRecipient(campaign, "accept the counter offer");
+      const recipientRole = this.normalizeRecipientRole(invite?.recipientRole);
+      const recipientIdForEligibility = String(
+        invite?.influencerId || invite?.photographerId || "",
+      );
+      await this.profileVerificationService.assertCampaignEligible(
+        recipientIdForEligibility,
+        recipientRole,
+      );
       const requestedAmount = Number(counter?.requestedAmount || 0);
       const requestedAmountPaise = Number(counter?.requestedAmountPaise || 0);
       if (!requestedAmountPaise || requestedAmountPaise <= 0) {
@@ -2619,6 +2632,11 @@ export class CampaignInvitesService {
         `Work can only start after collaboration confirmation. Status was: ${invite.status}`,
       );
     }
+    const campaign: any = await this.campaignModel
+      .findById(invite.campaignId)
+      .select("status")
+      .lean();
+    this.assertCampaignLiveForRecipient(campaign, "start work");
 
     invite.status = "working";
     await invite.save();
@@ -2657,6 +2675,11 @@ export class CampaignInvitesService {
         `Can only submit for active invites. Status was: ${invite.status}`,
       );
     }
+    const campaign: any = await this.campaignModel
+      .findById(invite.campaignId)
+      .select("status")
+      .lean();
+    this.assertCampaignLiveForRecipient(campaign, "submit work");
     if (!data.postUrl) throw new BadRequestException("Post URL is required");
     // Screenshot is recommended but optional — influencers can submit without one
 
