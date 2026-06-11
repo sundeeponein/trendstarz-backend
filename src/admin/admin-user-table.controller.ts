@@ -215,9 +215,10 @@ export class AdminUserTableController {
     );
     const phoneNumber =
       String(firebaseUser.phoneNumber || "").trim() ||
-      `firebase:${firebaseUser.uid.slice(0, 24)}`;
+      `pending-mobile:${firebaseUser.uid.slice(0, 24)}`;
     const common = {
       email,
+      firebaseUid: firebaseUser.uid,
       password: placeholderPassword,
       phoneNumber,
       isEmailVerified: !!firebaseUser.emailVerified,

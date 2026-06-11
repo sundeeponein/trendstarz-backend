@@ -6,14 +6,17 @@ export function normalizeSocialHandle(value: unknown, platformName = ""): string
 
   text = text.replace(/^@+/, "");
 
-  try {
-    const withProtocol = /^https?:\/\//i.test(text) ? text : `https://${text}`;
-    const url = new URL(withProtocol);
-    if (url.hostname.includes(".")) {
-      text = `${url.pathname}${url.search}`;
+  const looksLikeUrl = /^https?:\/\//i.test(text) || /^www\./i.test(text) || /^[a-z0-9.-]+\.[a-z]{2,}\//i.test(text);
+  if (looksLikeUrl) {
+    try {
+      const withProtocol = /^https?:\/\//i.test(text) ? text : `https://${text}`;
+      const url = new URL(withProtocol);
+      if (url.hostname.includes(".")) {
+        text = `${url.pathname}${url.search}`;
+      }
+    } catch {
+      // Keep direct usernames as-is and continue with cleanup.
     }
-  } catch {
-    // Keep direct usernames as-is and continue with cleanup.
   }
 
   text = text.split("?")[0].split("#")[0];
