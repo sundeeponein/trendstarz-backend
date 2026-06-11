@@ -376,6 +376,24 @@ export class CampaignInvitesService {
     return brand || influencer || photographer || null;
   }
 
+  private async loadOwnerVerificationProfile(ownerId: string) {
+    const select = "isEmailVerified isMobileVerified";
+    const [brand, photographer] = await Promise.all([
+      this.brandModel.findById(ownerId).select(select).lean(),
+      this.photographerModel.findById(ownerId).select(select).lean(),
+    ]);
+    return brand || photographer || null;
+  }
+
+  private assertVerifiedForCampaignAccess(profile: any, label: string) {
+    if (profile?.isEmailVerified === true && profile?.isMobileVerified === true) {
+      return;
+    }
+    throw new BadRequestException(
+      `${label} must verify both email and mobile before sending or receiving campaign invitations.`,
+    );
+  }
+
   private async resolveSenderProfile(ownerId: string): Promise<{
     role: "brand" | "influencer" | "photographer";
     name: string;
@@ -662,6 +680,8 @@ export class CampaignInvitesService {
         throw new BadRequestException("Not your campaign");
       }
     }
+    const ownerProfile = await this.loadOwnerVerificationProfile(brandId);
+    this.assertVerifiedForCampaignAccess(ownerProfile, "Campaign owner");
     // Collaboration invites can be queued by the owner even while pending_review.
     // Recipients will not be able to accept until the collaboration goes live.
     // Block only truly terminal/unknown states (rejected, completed, draft).
@@ -699,6 +719,7 @@ export class CampaignInvitesService {
           : "Influencer not found",
       );
     }
+    this.assertVerifiedForCampaignAccess(recipientDoc, "Recipient");
     // Enforce invite limits for brands (admin-manageable)
     const caps = await this.plansService.getUserPlanCapabilities(brandId);
     const capFeatures = Array.isArray(caps?.features) ? caps.features : [];
@@ -852,39 +873,40 @@ export class CampaignInvitesService {
     });
     const saved = await invite.save();
 
-    // Send notification email to recipient
-    try {
-      const sender = await this.resolveSenderProfile(brandId);
-      // New campaign invite emails are disabled by product request.
-      // Push notification to recipient
-      this.pushService
-        .sendToUser(String(recipientId), {
-          title: "New Campaign Invite 🎉",
-          body: `${sender.name || "A creator"} invited you to "${campaign.title}"`,
-          url:
-            recipientRole === "photographer"
-              ? "/photographer-dashboard"
-              : "/influencer-dashboard",
-        })
-        .catch(() => {
-          /* non-critical */
-        });
-      this.notificationsService
-        .createForUser({
-          userId: String(recipientId),
-          userRole: recipientRole,
-          title: "New Campaign Invite",
-          body: `${sender.name || "A creator"} invited you to "${campaign.title}"`,
-          url:
-            recipientRole === "photographer"
-              ? "/photographer-dashboard"
-              : "/influencer-dashboard",
-        })
-        .catch(() => {
-          /* non-critical */
-        });
-    } catch (err) {
-      console.error("Failed to send invite notification:", err);
+    if (this.isCampaignLiveForRecipient(campaign)) {
+      try {
+        const sender = await this.resolveSenderProfile(brandId);
+        // New campaign invite emails are disabled by product request.
+        // Push notification to recipient
+        this.pushService
+          .sendToUser(String(recipientId), {
+            title: "New Campaign Invite 🎉",
+            body: `${sender.name || "A creator"} invited you to "${campaign.title}"`,
+            url:
+              recipientRole === "photographer"
+                ? "/photographer-dashboard"
+                : "/influencer-dashboard",
+          })
+          .catch(() => {
+            /* non-critical */
+          });
+        this.notificationsService
+          .createForUser({
+            userId: String(recipientId),
+            userRole: recipientRole,
+            title: "New Campaign Invite",
+            body: `${sender.name || "A creator"} invited you to "${campaign.title}"`,
+            url:
+              recipientRole === "photographer"
+                ? "/photographer-dashboard"
+                : "/influencer-dashboard",
+          })
+          .catch(() => {
+            /* non-critical */
+          });
+      } catch (err) {
+        console.error("Failed to send invite notification:", err);
+      }
     }
 
     return saved;
@@ -1154,8 +1176,6 @@ export class CampaignInvitesService {
       const campaign = inv?.campaignId;
       if (!campaign) return false;
       if (this.isCampaignDeletedForRecipient(campaign)) return false;
-      const isCollab = this.isCollaborationInvite(inv, photographerOwnerIds);
-      if (!isCollab) return true;
       return this.isCampaignLiveForRecipient(campaign);
     });
 
@@ -1206,7 +1226,7 @@ export class CampaignInvitesService {
       const campaign = inv?.campaignId;
       if (!campaign) return false;
       if (this.isCampaignDeletedForRecipient(campaign)) return false;
-      return true;
+      return this.isCampaignLiveForRecipient(campaign);
     });
 
     const visibleWithSubmissions = await this.attachLatestSubmissions(visible);

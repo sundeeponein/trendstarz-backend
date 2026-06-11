@@ -91,6 +91,23 @@ export class CampaignsService {
     return "active";
   }
 
+  private async loadOwnerVerificationProfile(ownerId: string, ownerType: CampaignOwnerType) {
+    const select = "isEmailVerified isMobileVerified";
+    if (ownerType === "photographer") {
+      return this.photographerModel.findById(ownerId).select(select).lean();
+    }
+    return this.brandModel.findById(ownerId).select(select).lean();
+  }
+
+  private assertOwnerCanPost(profile: any) {
+    if (profile?.isEmailVerified === true && profile?.isMobileVerified === true) {
+      return;
+    }
+    throw new BadRequestException(
+      "Verify both email and mobile before posting or sending campaign invitations.",
+    );
+  }
+
   private normalizeCampaignPayload(data: any) {
     const normalized: any = { ...data };
 
@@ -567,6 +584,13 @@ export class CampaignsService {
       ownerId,
       requesterRole,
     );
+    const persistedOwnerType: CampaignOwnerType =
+      ownerType === "influencer" ? "brand" : ownerType;
+    const ownerProfile = await this.loadOwnerVerificationProfile(
+      ownerId,
+      persistedOwnerType,
+    );
+    this.assertOwnerCanPost(ownerProfile);
     // Lazy load PlansService to avoid circular dep
     const caps = await this.plansService.getUserPlanCapabilities(ownerId);
     const settings = await this.appSettingsModel.findOne({}).lean().exec();
@@ -589,8 +613,6 @@ export class CampaignsService {
       caps.hasPremium,
       settings,
     );
-    const persistedOwnerType: CampaignOwnerType =
-      ownerType === "influencer" ? "brand" : ownerType;
     const normalized = this.normalizeCampaignPayload(data);
     if (
       !Number.isFinite(Number(normalized.maxInfluencers)) ||
@@ -738,8 +760,15 @@ export class CampaignsService {
     if (influencerId) {
       influencer = await this.influencerModel
         .findById(influencerId)
-        .select("socialMedia location")
+        .select("socialMedia location isEmailVerified isMobileVerified")
         .lean();
+      if (
+        !influencer ||
+        influencer.isEmailVerified !== true ||
+        influencer.isMobileVerified !== true
+      ) {
+        return [];
+      }
     }
 
     // Helper: whether influencer has at least one exact-tier match on campaign target platform(s).
@@ -1075,6 +1104,8 @@ export class CampaignsService {
     // ── 1. Build DB-level query ──────────────────────────────────────────────
     const baseQuery: Record<string, any> = {
       isDeleted: { $ne: true },
+      isEmailVerified: true,
+      isMobileVerified: true,
       email: { $exists: true, $ne: "" },
     };
 
@@ -1109,7 +1140,7 @@ export class CampaignsService {
 
     const candidates: any[] = await recipientModel
       .find(baseQuery)
-      .select("name email socialMedia")
+      .select("name email socialMedia isEmailVerified isMobileVerified")
       .limit(500)
       .lean();
 
@@ -1224,10 +1255,16 @@ export class CampaignsService {
 
         const recipient = (await recipientModel
           .findById(invite.influencerId)
-          .select("name email")
+          .select("name email isEmailVerified isMobileVerified")
           .lean()) as any;
 
-        if (!recipient?.email) return;
+        if (
+          !recipient?.email ||
+          recipient.isEmailVerified !== true ||
+          recipient.isMobileVerified !== true
+        ) {
+          return;
+        }
 
         const tpl = inviteCampaignLiveTemplate({
           recipientName: recipient.name || "Creator",
