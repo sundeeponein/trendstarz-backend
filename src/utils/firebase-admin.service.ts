@@ -86,6 +86,23 @@ export class FirebaseAdminService {
     return this.getApp().auth().getUserByEmail(email);
   }
 
+  async setEmailVerified(
+    email: string,
+    emailVerified = true,
+  ): Promise<admin.auth.UserRecord | null> {
+    const cleanEmail = String(email || "").trim().toLowerCase();
+    if (!cleanEmail) return null;
+    const auth = this.getApp().auth();
+    try {
+      const user = await auth.getUserByEmail(cleanEmail);
+      return auth.updateUser(user.uid, { emailVerified });
+    } catch (error: any) {
+      if (error?.code !== "auth/user-not-found") throw error;
+      if (!emailVerified) return null;
+      return auth.createUser({ email: cleanEmail, emailVerified: true });
+    }
+  }
+
   async deleteUserByUid(uid: string): Promise<boolean> {
     const cleanUid = String(uid || "").trim();
     if (!cleanUid) return false;
