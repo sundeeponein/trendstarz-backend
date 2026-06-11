@@ -22,10 +22,41 @@ describe("AdminListsController", () => {
       {} as any,
       {} as any,
       appSettingsModel as any,
+      {} as any,
     );
 
     return { controller, appSettingsModel };
   }
+
+  it("treats status=deleted as either soft-delete flag or deleted status", () => {
+    const { controller } = createController();
+    const filter: Record<string, any> = {};
+
+    (controller as any).applyAdminUserStatusFilter(filter, "deleted");
+
+    expect(filter).toEqual({
+      $and: [
+        {
+          $or: [
+            { isDeleted: { $in: [true, "true"] } },
+            { status: "deleted" },
+          ],
+        },
+      ],
+    });
+  });
+
+  it("excludes both deleted markers from active admin lists", () => {
+    const { controller } = createController();
+    const filter: Record<string, any> = {};
+
+    (controller as any).applyAdminUserStatusFilter(filter);
+
+    expect(filter).toEqual({
+      isDeleted: { $nin: [true, "true"] },
+      status: { $ne: "deleted" },
+    });
+  });
 
   it("returns campaignTypeConfigDefaults in admin settings payload", async () => {
     const { controller } = createController();

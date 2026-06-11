@@ -86,6 +86,26 @@ export class AdminUserTableController {
     return new RegExp(escaped, "i");
   }
 
+  private applyAdminUserStatusFilter(filter: Record<string, any>, status?: string) {
+    const normalizedStatus = String(status || "").trim().toLowerCase();
+    if (normalizedStatus === "deleted") {
+      filter.$and = [
+        {
+          $or: [
+            { isDeleted: { $in: [true, "true"] } },
+            { status: "deleted" },
+          ],
+        },
+      ];
+      return;
+    }
+
+    filter.isDeleted = { $nin: [true, "true"] };
+    filter.status = normalizedStatus
+      ? normalizedStatus
+      : { $ne: "deleted" };
+  }
+
   private normalizeAdminTags(tags: unknown): string[] {
     if (!Array.isArray(tags)) return [];
     return Array.from(
@@ -471,11 +491,7 @@ export class AdminUserTableController {
   ) {
     const paging = this.getPaging(page, limit);
     const filter: any = {};
-    if (status === "deleted") {
-      filter.isDeleted = { $in: [true, "true"] };
-    } else {
-      filter.isDeleted = { $nin: [true, "true"] };
-    }
+    this.applyAdminUserStatusFilter(filter, status);
     const qRegex = this.toRegex(q);
     if (qRegex) {
       filter.$or = [
@@ -515,11 +531,7 @@ export class AdminUserTableController {
   ) {
     const paging = this.getPaging(page, limit);
     const filter: any = {};
-    if (status === "deleted") {
-      filter.isDeleted = { $in: [true, "true"] };
-    } else {
-      filter.isDeleted = { $nin: [true, "true"] };
-    }
+    this.applyAdminUserStatusFilter(filter, status);
     const qRegex = this.toRegex(q);
     if (qRegex) {
       filter.$or = [
@@ -564,11 +576,7 @@ export class AdminUserTableController {
   ) {
     const paging = this.getPaging(page, limit);
     const filter: any = {};
-    if (status === "deleted") {
-      filter.isDeleted = { $in: [true, "true"] };
-    } else {
-      filter.isDeleted = { $nin: [true, "true"] };
-    }
+    this.applyAdminUserStatusFilter(filter, status);
     const qRegex = this.toRegex(q);
     if (qRegex) {
       filter.$or = [
