@@ -160,7 +160,7 @@ export class ProfileVerificationService {
   }
 
   private isEmailVerified(profile: any): boolean {
-    return profile?.emailVerified === true || profile?.isEmailVerified === true;
+    return profile?.isEmailVerified === true;
   }
 
   private isMobileVerified(profile: any): boolean {
@@ -474,7 +474,6 @@ export class ProfileVerificationService {
         profileQualityScore: quality.score,
         profileQualityLabel: quality.label,
         verificationDashboardStatus: status,
-        emailVerified: this.isEmailVerified(profile),
         mobileVerified: this.isMobileVerified(profile),
       },
     });

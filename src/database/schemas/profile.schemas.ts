@@ -1,7 +1,6 @@
 import { Schema, Types, model } from "mongoose";
 
 const ProfileVerificationFields = {
-  emailVerified: { type: Boolean, default: false },
   emailVerifiedAt: { type: Date, default: null },
   mobileVerified: { type: Boolean, default: false },
   mobileVerifiedAt: { type: Date, default: null },

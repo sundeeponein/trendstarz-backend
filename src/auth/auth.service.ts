@@ -99,7 +99,6 @@ export class AuthService {
     firebaseUid?: string,
   ): boolean {
     user.isEmailVerified = true;
-    user.emailVerified = true;
     user.emailVerifiedAt = user.emailVerifiedAt || new Date();
     if (firebaseUid) user.firebaseUid = firebaseUid;
     if (role && role !== "admin" && user.status === "pending") {
@@ -441,7 +440,6 @@ export class AuthService {
 
     match.user.password = await bcrypt.hash(newPassword, 10);
     match.user.isEmailVerified = true;
-    match.user.emailVerified = true;
     match.user.emailVerifiedAt = match.user.emailVerifiedAt || new Date();
     match.user.firebaseUid = decoded.uid;
     match.user.resetToken = null;
@@ -594,6 +592,19 @@ export class AuthService {
     return true;
   }
 
+  private async bestEffortSyncFirebaseEmailVerified(
+    email: string,
+    isEmailVerified = true,
+  ): Promise<void> {
+    if (!this.firebaseAdminService.isConfigured()) return;
+    try {
+      await this.firebaseAdminService.setEmailVerified(email, isEmailVerified);
+    } catch {
+      // MongoDB remains the source of truth for admin/manual verification.
+      // Firebase sync is best-effort so login is not blocked by provider drift.
+    }
+  }
+
   private async assertVerifiedFirebaseLogin(
     normalizedEmail: string,
     firebaseIdToken: string | undefined,
@@ -603,12 +614,19 @@ export class AuthService {
   ): Promise<void> {
     if (options?.localAuthBypass) {
       user.isEmailVerified = true;
-      user.emailVerified = true;
       user.emailVerifiedAt = user.emailVerifiedAt || new Date();
       if (!user.firebaseUid)
         user.firebaseUid = `local-dev:${role}:${normalizedEmail}`;
       await this.maybeAutoApproveAfterContactVerification(user, role);
       await user.save();
+      return;
+    }
+    if (user?.isEmailVerified === true) {
+      user.isEmailVerified = true;
+      user.emailVerifiedAt = user.emailVerifiedAt || new Date();
+      await this.maybeAutoApproveAfterContactVerification(user, role);
+      await user.save();
+      await this.bestEffortSyncFirebaseEmailVerified(normalizedEmail, true);
       return;
     }
     if (!this.firebaseAdminService.isConfigured()) {
@@ -634,7 +652,6 @@ export class AuthService {
     }
 
     user.isEmailVerified = true;
-    user.emailVerified = true;
     user.emailVerifiedAt = user.emailVerifiedAt || new Date();
     user.firebaseUid = decoded.uid;
     await this.maybeAutoApproveAfterContactVerification(user, role);

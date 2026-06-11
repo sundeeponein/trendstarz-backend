@@ -120,6 +120,7 @@ describe("AuthService", () => {
             ensureEmailUser: jest.fn(),
             setUserRoleClaim: jest.fn(),
             verifyIdToken: jest.fn(),
+            setEmailVerified: jest.fn(),
           },
         },
       ],
@@ -199,7 +200,7 @@ describe("AuthService", () => {
       });
       await expect(
         service.login("inf@test.com", "password123"),
-      ).rejects.toThrow("email address is not verified");
+      ).rejects.toThrow("Firebase verification is required");
     });
 
     it("should throw for deleted brand", async () => {

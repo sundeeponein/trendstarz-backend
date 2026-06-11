@@ -846,8 +846,18 @@ export class AdminUserTableController {
 
     if (hasEmail) {
       user.isEmailVerified = !!body.isEmailVerified;
-      user.emailVerified = !!body.isEmailVerified;
       user.emailVerifiedAt = body.isEmailVerified ? user.emailVerifiedAt || new Date() : null;
+      if (this.firebaseAdminService.isConfigured()) {
+        try {
+          await this.firebaseAdminService.setEmailVerified(
+            user.email,
+            !!body.isEmailVerified,
+          );
+        } catch {
+          // Admin approval should still persist in MongoDB even if Firebase sync
+          // is temporarily unavailable. Login trusts MongoDB verification.
+        }
+      }
     }
     if (hasMobile) {
       user.isMobileVerified = !!body.isMobileVerified;

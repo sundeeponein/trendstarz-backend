@@ -29,7 +29,8 @@
     "cleanup:orphan-campaign-invites": "node cron/cleanupOrphanCampaignInvites.js",
     "cleanup:orphan-campaign-invites:apply": "node cron/cleanupOrphanCampaignInvites.js --apply",
     "cleanup:collab-availability-locations": "node cron/removeCollaborationAvailabilityLocations.js",
-    "cleanup:collab-availability-locations:apply": "node cron/removeCollaborationAvailabilityLocations.js --apply"
+    "cleanup:collab-availability-locations:apply": "node cron/removeCollaborationAvailabilityLocations.js --apply",
+    "migrate:email-verified-field": "node cron/migrateEmailVerifiedToIsEmailVerified.js"
   },
   "dependencies": {
     "@nestjs/cli": "^11.0.16",
