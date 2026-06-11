@@ -376,6 +376,24 @@ export class CampaignInvitesService {
     return brand || influencer || photographer || null;
   }
 
+  private async loadOwnerVerificationProfile(ownerId: string) {
+    const select = "isEmailVerified isMobileVerified";
+    const [brand, photographer] = await Promise.all([
+      this.brandModel.findById(ownerId).select(select).lean(),
+      this.photographerModel.findById(ownerId).select(select).lean(),
+    ]);
+    return brand || photographer || null;
+  }
+
+  private assertVerifiedForCampaignAccess(profile: any, label: string) {
+    if (profile?.isEmailVerified === true && profile?.isMobileVerified === true) {
+      return;
+    }
+    throw new BadRequestException(
+      `${label} must verify both email and mobile before sending or receiving campaign invitations.`,
+    );
+  }
+
   private async resolveSenderProfile(ownerId: string): Promise<{
     role: "brand" | "influencer" | "photographer";
     name: string;
@@ -662,6 +680,8 @@ export class CampaignInvitesService {
         throw new BadRequestException("Not your campaign");
       }
     }
+    const ownerProfile = await this.loadOwnerVerificationProfile(brandId);
+    this.assertVerifiedForCampaignAccess(ownerProfile, "Campaign owner");
     // Collaboration invites can be queued by the owner even while pending_review.
     // Recipients will not be able to accept until the collaboration goes live.
     // Block only truly terminal/unknown states (rejected, completed, draft).
@@ -699,6 +719,7 @@ export class CampaignInvitesService {
           : "Influencer not found",
       );
     }
+    this.assertVerifiedForCampaignAccess(recipientDoc, "Recipient");
     // Enforce invite limits for brands (admin-manageable)
     const caps = await this.plansService.getUserPlanCapabilities(brandId);
     const capFeatures = Array.isArray(caps?.features) ? caps.features : [];
@@ -852,39 +873,40 @@ export class CampaignInvitesService {
     });
     const saved = await invite.save();
 
-    // Send notification email to recipient
-    try {
-      const sender = await this.resolveSenderProfile(brandId);
-      // New campaign invite emails are disabled by product request.
-      // Push notification to recipient
-      this.pushService
-        .sendToUser(String(recipientId), {
-          title: "New Campaign Invite 🎉",
-          body: `${sender.name || "A creator"} invited you to "${campaign.title}"`,
-          url:
-            recipientRole === "photographer"
-              ? "/photographer-dashboard"
-              : "/influencer-dashboard",
-        })
-        .catch(() => {
-          /* non-critical */
-        });
-      this.notificationsService
-        .createForUser({
-          userId: String(recipientId),
-          userRole: recipientRole,
-          title: "New Campaign Invite",
-          body: `${sender.name || "A creator"} invited you to "${campaign.title}"`,
-          url:
-            recipientRole === "photographer"
-              ? "/photographer-dashboard"
-              : "/influencer-dashboard",
-        })
-        .catch(() => {
-          /* non-critical */
-        });
-    } catch (err) {
-      console.error("Failed to send invite notification:", err);
+    if (this.isCampaignLiveForRecipient(campaign)) {
+      try {
+        const sender = await this.resolveSenderProfile(brandId);
+        // New campaign invite emails are disabled by product request.
+        // Push notification to recipient
+        this.pushService
+          .sendToUser(String(recipientId), {
+            title: "New Campaign Invite 🎉",
+            body: `${sender.name || "A creator"} invited you to "${campaign.title}"`,
+            url:
+              recipientRole === "photographer"
+                ? "/photographer-dashboard"
+                : "/influencer-dashboard",
+          })
+          .catch(() => {
+            /* non-critical */
+          });
+        this.notificationsService
+          .createForUser({
+            userId: String(recipientId),
+            userRole: recipientRole,
+            title: "New Campaign Invite",
+            body: `${sender.name || "A creator"} invited you to "${campaign.title}"`,
+            url:
+              recipientRole === "photographer"
+                ? "/photographer-dashboard"
+                : "/influencer-dashboard",
+          })
+          .catch(() => {
+            /* non-critical */
+          });
+      } catch (err) {
+        console.error("Failed to send invite notification:", err);
+      }
     }
 
     return saved;
@@ -958,6 +980,13 @@ export class CampaignInvitesService {
       .trim()
       .toLowerCase();
     return status === "active" || status === "completed";
+  }
+
+  private assertCampaignLiveForRecipient(campaign: any, action: string) {
+    if (this.isCampaignLiveForRecipient(campaign)) return;
+    throw new BadRequestException(
+      `This campaign/collaboration is still under admin review. You can ${action} after it is approved.`,
+    );
   }
 
   private toPaiseFromMaybeRupees(value: any): number {
@@ -1154,8 +1183,6 @@ export class CampaignInvitesService {
       const campaign = inv?.campaignId;
       if (!campaign) return false;
       if (this.isCampaignDeletedForRecipient(campaign)) return false;
-      const isCollab = this.isCollaborationInvite(inv, photographerOwnerIds);
-      if (!isCollab) return true;
       return this.isCampaignLiveForRecipient(campaign);
     });
 
@@ -1206,7 +1233,7 @@ export class CampaignInvitesService {
       const campaign = inv?.campaignId;
       if (!campaign) return false;
       if (this.isCampaignDeletedForRecipient(campaign)) return false;
-      return true;
+      return this.isCampaignLiveForRecipient(campaign);
     });
 
     const visibleWithSubmissions = await this.attachLatestSubmissions(visible);
@@ -1327,8 +1354,9 @@ export class CampaignInvitesService {
     // Fetch campaign to check type (gate differs by campaign type)
     const campaign: any = await this.campaignModel
       .findById(invite.campaignId)
-      .select("campaignType")
+      .select("campaignType status")
       .lean();
+    this.assertCampaignLiveForRecipient(campaign, "unlock contact");
     const campaignType = String(campaign?.campaignType || "").toLowerCase();
     const isLocationCampaign =
       campaignType === "invite_location" || campaignType === "product";
@@ -1760,15 +1788,7 @@ export class CampaignInvitesService {
         .lean();
       if (!campaign) throw new NotFoundException("Campaign not found");
 
-      // Guard: recipient cannot accept a collaboration until admin approval is live.
-      if (
-        this.isCollaborationCampaign(campaign) &&
-        !this.isCampaignLiveForRecipient(campaign)
-      ) {
-        throw new BadRequestException(
-          "This collaboration is still under admin review. You can accept after it is approved.",
-        );
-      }
+      this.assertCampaignLiveForRecipient(campaign, "accept");
 
       // Shipping address capture — required when brand is shipping a physical product.
       const requiresShippingAddress =
@@ -2306,6 +2326,19 @@ export class CampaignInvitesService {
     }
 
     if (action === "accept") {
+      const campaign: any = await this.campaignModel
+        .findById(invite.campaignId)
+        .select("status")
+        .lean();
+      this.assertCampaignLiveForRecipient(campaign, "accept the counter offer");
+      const recipientRole = this.normalizeRecipientRole(invite?.recipientRole);
+      const recipientIdForEligibility = String(
+        invite?.influencerId || invite?.photographerId || "",
+      );
+      await this.profileVerificationService.assertCampaignEligible(
+        recipientIdForEligibility,
+        recipientRole,
+      );
       const requestedAmount = Number(counter?.requestedAmount || 0);
       const requestedAmountPaise = Number(counter?.requestedAmountPaise || 0);
       if (!requestedAmountPaise || requestedAmountPaise <= 0) {
@@ -2599,6 +2632,11 @@ export class CampaignInvitesService {
         `Work can only start after collaboration confirmation. Status was: ${invite.status}`,
       );
     }
+    const campaign: any = await this.campaignModel
+      .findById(invite.campaignId)
+      .select("status")
+      .lean();
+    this.assertCampaignLiveForRecipient(campaign, "start work");
 
     invite.status = "working";
     await invite.save();
@@ -2637,6 +2675,11 @@ export class CampaignInvitesService {
         `Can only submit for active invites. Status was: ${invite.status}`,
       );
     }
+    const campaign: any = await this.campaignModel
+      .findById(invite.campaignId)
+      .select("status")
+      .lean();
+    this.assertCampaignLiveForRecipient(campaign, "submit work");
     if (!data.postUrl) throw new BadRequestException("Post URL is required");
     // Screenshot is recommended but optional — influencers can submit without one
 
