@@ -9,6 +9,7 @@ import { PlansService } from "../plans/plans.service";
 import { CloudinaryService } from "../cloudinary.service";
 import {
   CampaignTypeConfigItem,
+  resolveCampaignAccessModeConfigs,
   resolveCampaignTypeConfigs,
 } from "../campaign-type-configs";
 import { getRequiredFields } from "./campaign-required-fields";
@@ -341,10 +342,25 @@ export class CampaignsService {
     return "none";
   }
 
-  private assertCampaignModeAvailability(data: any) {
+  private assertCampaignModeAvailability(
+    data: any,
+    hasPremium: boolean,
+    settings: any,
+  ) {
     const mode = String(data?.campaignMode || "invite_only");
     if (!["invite_only", "tier_filtered_open"].includes(mode)) {
       throw new BadRequestException("Invalid campaign access mode.");
+    }
+    const config = resolveCampaignAccessModeConfigs(
+      settings?.campaignAccessModeConfigs,
+    ).find((item) => item.key === mode);
+    if (!config || !config.enabled) {
+      throw new BadRequestException("This campaign access mode is currently unavailable.");
+    }
+    if (config.premiumOnly && !hasPremium) {
+      throw new BadRequestException(
+        "This campaign access mode requires a Premium plan. Upgrade to unlock it.",
+      );
     }
   }
 
@@ -578,7 +594,6 @@ export class CampaignsService {
   }
 
   async create(ownerId: string, data: any, requesterRole?: string) {
-    this.assertCampaignModeAvailability(data);
     // Enforce creation limit for owners (brand/photographer)
     const ownerType: CampaignOwnerType = await this.resolveOwnerTypeByProfile(
       ownerId,
@@ -594,6 +609,7 @@ export class CampaignsService {
     // Lazy load PlansService to avoid circular dep
     const caps = await this.plansService.getUserPlanCapabilities(ownerId);
     const settings = await this.appSettingsModel.findOne({}).lean().exec();
+    this.assertCampaignModeAvailability(data, caps.hasPremium, settings);
     const maxCampaigns =
       caps.limits.find((l: any) => l.key === "maxActiveCampaigns")?.value ?? 1;
     // Count currently active/pending/draft campaigns — completed or deleted do NOT count toward the cap
@@ -933,7 +949,6 @@ export class CampaignsService {
   }
 
   async update(id: string, brandId: string, data: any) {
-    this.assertCampaignModeAvailability(data);
     const campaign = await this.campaignModel.findById(id);
     if (!campaign) throw new NotFoundException("Campaign not found");
     // Allow update if brandId matches ObjectId or brandUsername
@@ -972,6 +987,12 @@ export class CampaignsService {
       }
     }
 
+    const caps = await this.plansService.getUserPlanCapabilities(brandId);
+    const settings = await this.appSettingsModel.findOne({}).lean().exec();
+    if (data?.campaignMode) {
+      this.assertCampaignModeAvailability(data, caps.hasPremium, settings);
+    }
+
     if (data?.campaignType && data.campaignType !== campaign.campaignType) {
       const campaignOwnerType: "brand" | "photographer" =
         String(campaign.ownerType || campaign.createdByRole || "brand") ===
@@ -979,8 +1000,6 @@ export class CampaignsService {
           ? "photographer"
           : "brand";
       const selectedType = String(data.campaignType);
-      const caps = await this.plansService.getUserPlanCapabilities(brandId);
-      const settings = await this.appSettingsModel.findOne({}).lean().exec();
       this.assertCampaignTypeAllowed(
         campaignOwnerType,
         selectedType,

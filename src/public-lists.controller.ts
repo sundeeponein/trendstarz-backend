@@ -2,6 +2,7 @@ import { Controller, Get, Query } from "@nestjs/common";
 import { InjectModel } from "@nestjs/mongoose";
 import { Model } from "mongoose";
 import {
+  resolveCampaignAccessModeConfigs,
   resolveCampaignTypeConfigs,
 } from "./campaign-type-configs";
 import { seedMissingLocationsFromConfig } from "./utils/location-seed.util";
@@ -244,6 +245,7 @@ export class PublicCampaignTypeConfigsController {
       (await this.appSettingsModel.findOne({}).lean()) || {};
     return {
       items: resolveCampaignTypeConfigs(settings.campaignTypeConfigs),
+      accessModes: resolveCampaignAccessModeConfigs(settings.campaignAccessModeConfigs),
     };
   }
 }

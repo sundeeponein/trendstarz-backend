@@ -2,11 +2,20 @@ import * as fs from "fs";
 import * as path from "path";
 
 export type CampaignTypeOwnerType = "brand" | "photographer";
+export type CampaignAccessMode = "invite_only" | "tier_filtered_open";
 
 export type CampaignTypeConfigItem = {
   key: string;
   label: string;
   ownerType: CampaignTypeOwnerType;
+  enabled: boolean;
+  premiumOnly: boolean;
+  sortOrder: number;
+};
+
+export type CampaignAccessModeConfigItem = {
+  key: CampaignAccessMode;
+  label: string;
   enabled: boolean;
   premiumOnly: boolean;
   sortOrder: number;
@@ -33,6 +42,77 @@ function getAdminConfigPath(): string {
     configPath = path.join(process.cwd(), "assets/admin-config.json");
   }
   return configPath;
+}
+
+function normalizeCampaignAccessMode(value: unknown): CampaignAccessMode {
+  return String(value || "") === "tier_filtered_open"
+    ? "tier_filtered_open"
+    : "invite_only";
+}
+
+export function normalizeCampaignAccessModeConfigs(
+  list: unknown,
+  fallbackList?: unknown,
+): CampaignAccessModeConfigItem[] {
+  const defaults: CampaignAccessModeConfigItem[] = [
+    {
+      key: "invite_only",
+      label: "Invite only",
+      enabled: true,
+      premiumOnly: false,
+      sortOrder: 10,
+    },
+    {
+      key: "tier_filtered_open",
+      label: "Open to all",
+      enabled: true,
+      premiumOnly: false,
+      sortOrder: 20,
+    },
+  ];
+  const fallback = Array.isArray(fallbackList) && fallbackList.length ? fallbackList : defaults;
+  const source = Array.isArray(list) && list.length ? list : fallback;
+  const out: CampaignAccessModeConfigItem[] = [];
+  const seen = new Set<string>();
+
+  for (const raw of source) {
+    if (!raw || typeof raw !== "object") continue;
+    const key = normalizeCampaignAccessMode((raw as any).key || (raw as any).value);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    const fallbackItem = (fallback as any[]).find(
+      (item: any) => normalizeCampaignAccessMode(item?.key || item?.value) === key,
+    );
+
+    out.push({
+      key,
+      label: String((raw as any).label || fallbackItem?.label || key).trim(),
+      enabled: (raw as any).enabled !== false,
+      premiumOnly: (raw as any).premiumOnly === true,
+      sortOrder: Number.isFinite(Number((raw as any).sortOrder))
+        ? Number((raw as any).sortOrder)
+        : Number(fallbackItem?.sortOrder || out.length * 10 + 10),
+    });
+  }
+
+  for (const fallbackItem of fallback as any[]) {
+    const key = normalizeCampaignAccessMode(fallbackItem?.key || fallbackItem?.value);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push({
+      key,
+      label: String(fallbackItem?.label || key).trim(),
+      enabled: fallbackItem?.enabled !== false,
+      premiumOnly: fallbackItem?.premiumOnly === true,
+      sortOrder: Number.isFinite(Number(fallbackItem?.sortOrder))
+        ? Number(fallbackItem.sortOrder)
+        : out.length * 10 + 10,
+    });
+  }
+
+  return out.sort(
+    (a, b) => a.sortOrder - b.sortOrder || a.label.localeCompare(b.label),
+  );
 }
 
 export function readAdminConfig(): any {
@@ -118,4 +198,15 @@ export function resolveCampaignTypeConfigs(
 ): CampaignTypeConfigItem[] {
   const defaults = getCampaignTypeConfigDefaults();
   return normalizeCampaignTypeConfigs(overrides, defaults);
+}
+
+export function getCampaignAccessModeConfigDefaults(): CampaignAccessModeConfigItem[] {
+  return normalizeCampaignAccessModeConfigs(undefined, undefined);
+}
+
+export function resolveCampaignAccessModeConfigs(
+  overrides: unknown,
+): CampaignAccessModeConfigItem[] {
+  const defaults = getCampaignAccessModeConfigDefaults();
+  return normalizeCampaignAccessModeConfigs(overrides, defaults);
 }

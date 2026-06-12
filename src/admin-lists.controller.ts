@@ -20,8 +20,10 @@ import { Model } from "mongoose";
 import * as fs from "fs";
 import * as path from "path";
 import {
+  getCampaignAccessModeConfigDefaults,
   CampaignTypeConfigItem,
   getCampaignTypeConfigDefaults,
+  resolveCampaignAccessModeConfigs,
   resolveCampaignTypeConfigs,
 } from "./campaign-type-configs";
 import { seedMissingLocationsFromConfig } from "./utils/location-seed.util";
@@ -159,6 +161,10 @@ export class AdminListsController {
     list: unknown,
   ): CampaignTypeConfigItem[] {
     return resolveCampaignTypeConfigs(list);
+  }
+
+  private normalizeCampaignAccessModeConfigs(list: unknown) {
+    return resolveCampaignAccessModeConfigs(list);
   }
 
   constructor(
@@ -322,6 +328,7 @@ export class AdminListsController {
       showRegisterInfluencerLink: true,
       showRegisterBrandLink: true,
       showRegisterPhotographerLink: true,
+      campaignAccessModeConfigs: getCampaignAccessModeConfigDefaults(),
       campaignTypeConfigs: getCampaignTypeConfigDefaults(),
     };
     const settings = await this.appSettingsModel.findOne({}).lean();
@@ -329,7 +336,11 @@ export class AdminListsController {
     merged.campaignTypeConfigs = this.normalizeCampaignTypeConfigs(
       merged.campaignTypeConfigs,
     );
+    merged.campaignAccessModeConfigs = this.normalizeCampaignAccessModeConfigs(
+      merged.campaignAccessModeConfigs,
+    );
     merged.campaignTypeConfigDefaults = getCampaignTypeConfigDefaults();
+    merged.campaignAccessModeConfigDefaults = getCampaignAccessModeConfigDefaults();
     return merged;
   }
 
@@ -389,9 +400,30 @@ export class AdminListsController {
       }
       next[key] = Math.round(hours * 100) / 100;
     }
+    for (const key of [
+      "platformFeePercent",
+      "gstPercent",
+      "earlyAccessCommissionPercent",
+      "partnerCommissionPercent",
+      "internalTestCommissionPercent",
+    ]) {
+      if (next[key] === undefined) continue;
+      const percent = Number(next[key]);
+      if (!Number.isFinite(percent) || percent < 0 || percent > 100) {
+        throw new BadRequestException(
+          `${key} must be a number between 0 and 100`,
+        );
+      }
+      next[key] = Math.round(percent * 100) / 100;
+    }
     if (next.campaignTypeConfigs !== undefined) {
       next.campaignTypeConfigs = this.normalizeCampaignTypeConfigs(
         next.campaignTypeConfigs,
+      );
+    }
+    if (next.campaignAccessModeConfigs !== undefined) {
+      next.campaignAccessModeConfigs = this.normalizeCampaignAccessModeConfigs(
+        next.campaignAccessModeConfigs,
       );
     }
     // Only update fields present in the request body
