@@ -335,7 +335,7 @@ export class ProfileVerificationService {
         status: this.isMobileVerified(profile) ? "Verified" : "Action Required",
       },
       {
-        label: "Profile Photo Needs Update",
+        label: "Profile Photo",
         status: hasFlag("PROFILE_PHOTO_SCREENSHOT") || hasFlag("PROFILE_PHOTO_MISSING")
           ? "Action Required"
           : "Verified",
@@ -634,7 +634,31 @@ export class ProfileVerificationService {
     };
     const nextStatus = statusByAction[action];
     if (!nextStatus) throw new BadRequestException("Invalid moderation action");
-    await this.modelForUserType(userType).findByIdAndUpdate(userId, {
+    const profileModel = this.modelForUserType(userType);
+    const legacyAuditActions: Array<{ from: string; to: string }> = [
+      { from: "approve", to: "approved" },
+      { from: "reject", to: "rejected" },
+      { from: "request_changes", to: "status_changed" },
+    ];
+    for (const legacy of legacyAuditActions) {
+      await profileModel.updateOne(
+        {
+          _id: this.objectIdOrString(userId),
+          "verificationAuditLog.action": legacy.from,
+        },
+        { $set: { "verificationAuditLog.$[entry].action": legacy.to } },
+        { arrayFilters: [{ "entry.action": legacy.from }] },
+      );
+    }
+    const auditAction =
+      action === "approve" || action === "approve_warning"
+        ? "approved"
+        : action === "request_changes"
+          ? "status_changed"
+          : action === "reject"
+            ? "rejected"
+            : action;
+    await profileModel.findByIdAndUpdate(userId, {
       $set: {
         verificationDashboardStatus: nextStatus,
         adminReviewPending: false,
@@ -646,7 +670,7 @@ export class ProfileVerificationService {
       },
       $push: {
         verificationAuditLog: {
-          action: action === "approve_warning" ? "approved" : action,
+          action: auditAction,
           status: action === "reject" ? "rejected" : action === "request_changes" ? "pending" : "approved",
           note: notes,
           actorId: String(actor?.userId || actor?.id || ""),

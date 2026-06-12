@@ -65,6 +65,25 @@ export class AuthService {
     }
   }
 
+  private async promoteLegacyEmailVerified(
+    user: any,
+    model: Model<any>,
+  ): Promise<void> {
+    if (!user || user.isEmailVerified === true || user.emailVerified !== true) {
+      return;
+    }
+    const verifiedAt = user.emailVerifiedAt || new Date();
+    user.isEmailVerified = true;
+    user.emailVerifiedAt = verifiedAt;
+    await model.updateOne(
+      { _id: user._id },
+      {
+        $set: { isEmailVerified: true, emailVerifiedAt: verifiedAt },
+        $unset: { emailVerified: "" },
+      },
+    );
+  }
+
   private async findAnyUserByEmail(email: string): Promise<AnyUserDoc | null> {
     // Parallel queries — eliminates sequential round-trips and prevents
     // timing-based user-enumeration across collections.
@@ -86,10 +105,22 @@ export class AuthService {
       this.brandModel.findOne({ email }),
       this.photographerModel.findOne({ email }),
     ]);
-    if (adminUser) return { user: adminUser, role: "admin" };
-    if (influencer) return { user: influencer, role: "influencer" };
-    if (brand) return { user: brand, role: "brand" };
-    if (photographer) return { user: photographer, role: "photographer" };
+    if (adminUser) {
+      await this.promoteLegacyEmailVerified(adminUser, this.userModel);
+      return { user: adminUser, role: "admin" };
+    }
+    if (influencer) {
+      await this.promoteLegacyEmailVerified(influencer, this.influencerModel);
+      return { user: influencer, role: "influencer" };
+    }
+    if (brand) {
+      await this.promoteLegacyEmailVerified(brand, this.brandModel);
+      return { user: brand, role: "brand" };
+    }
+    if (photographer) {
+      await this.promoteLegacyEmailVerified(photographer, this.photographerModel);
+      return { user: photographer, role: "photographer" };
+    }
     return null;
   }
 
@@ -206,12 +237,22 @@ export class AuthService {
       this.photographerModel.findOne({ email: normalizedEmail }),
     ]);
 
-    const user = adminUser || influencer || brand || photographer;
-    if (!user) {
-      throw new BadRequestException("User not found for verification token");
-    }
+	    const user = adminUser || influencer || brand || photographer;
+	    if (!user) {
+	      throw new BadRequestException("User not found for verification token");
+	    }
+	    await this.promoteLegacyEmailVerified(
+	      user,
+	      adminUser
+	        ? this.userModel
+	        : influencer
+	          ? this.influencerModel
+	          : brand
+	            ? this.brandModel
+	            : this.photographerModel,
+	    );
 
-    if (!user.isEmailVerified) {
+	    if (!user.isEmailVerified) {
       const role = adminUser
         ? "admin"
         : influencer
@@ -265,9 +306,9 @@ export class AuthService {
       this.brandModel.findOne({ email: normalizedEmail }),
       this.photographerModel.findOne({ email: normalizedEmail }),
     ]);
-    const user = adminUser || influencer || brand || photographer;
-    const role = adminUser
-      ? "admin"
+	    const user = adminUser || influencer || brand || photographer;
+	    const role = adminUser
+	      ? "admin"
       : influencer
         ? "influencer"
         : brand
@@ -365,12 +406,22 @@ export class AuthService {
           ? "brand"
           : photographer
             ? "photographer"
-            : null;
+	            : null;
 
-    if (!user) {
-      throw new BadRequestException("Invalid or expired reset token");
-    }
-    if (this.firebaseAdminService.isConfigured()) {
+	    if (!user) {
+	      throw new BadRequestException("Invalid or expired reset token");
+	    }
+	    await this.promoteLegacyEmailVerified(
+	      user,
+	      adminUser
+	        ? this.userModel
+	        : influencer
+	          ? this.influencerModel
+	          : brand
+	            ? this.brandModel
+	            : this.photographerModel,
+	    );
+	    if (this.firebaseAdminService.isConfigured()) {
       const firebaseUser = await this.firebaseAdminService.setEmailUserPassword(
         user.email,
         newPassword,
@@ -715,16 +766,16 @@ export class AuthService {
           : photographer
             ? "photographer"
             : null;
-      if (!user)
-        throw new BadRequestException(
-          "No TrendStarz user matches this Firebase phone.",
-        );
+	    if (!user)
+	        throw new BadRequestException(
+	          "No TrendStarz user matches this Firebase phone.",
+	        );
       user.isMobileVerified = true;
       user.mobileVerified = true;
       user.mobileVerifiedAt = user.mobileVerifiedAt || new Date();
       user.mobileVerificationDate = user.mobileVerificationDate || new Date();
       user.mobileVerificationMethod = "OTP";
-    }
+	    }
 
     const autoApproved =
       type === "email" && role !== "admin"
@@ -855,7 +906,7 @@ export class AuthService {
 
     // If user is a brand but no brand profile exists, auto-create a minimal profile
     let brand = brandRaw;
-    if (!brand && !adminUser && !influencer && !photographer) {
+	    if (!brand && !adminUser && !influencer && !photographer) {
       // Create minimal brand profile
       const minimalBrand = new this.brandModel({
         brandName: normalizedEmail.split("@")[0] || "Brand",
@@ -870,11 +921,18 @@ export class AuthService {
       } catch {
         throw new UnauthorizedException(
           "Could not auto-create brand profile for this user.",
-        );
-      }
-    }
+	        );
+	      }
+	    }
 
-    if (adminUser) {
+	    await Promise.all([
+	      this.promoteLegacyEmailVerified(adminUser, this.userModel),
+	      this.promoteLegacyEmailVerified(influencer, this.influencerModel),
+	      this.promoteLegacyEmailVerified(brand, this.brandModel),
+	      this.promoteLegacyEmailVerified(photographer, this.photographerModel),
+	    ]);
+
+	    if (adminUser) {
       const isMatch = await bcrypt.compare(password, adminUser.password);
       if (!isMatch) throw new UnauthorizedException("Invalid credentials");
       const now = new Date();
