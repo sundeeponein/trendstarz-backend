@@ -14,6 +14,7 @@ export class PhotographersService {
   constructor(
     @InjectModel("Photographer") private readonly photographerModel: Model<any>,
     @InjectModel("CampaignInvite") private readonly campaignInviteModel: Model<any>,
+    @InjectModel("ProfileFlag") private readonly profileFlagModel: Model<any>,
     @InjectModel("State") private readonly stateModel: Model<any>,
     @InjectModel("District") private readonly districtModel: Model<any>,
     private readonly cloudinaryService: CloudinaryService,
@@ -62,6 +63,54 @@ export class PhotographersService {
 
   private normalizeEmail(value: any): string {
     return String(value ?? "").trim().toLowerCase();
+  }
+
+  private getPrimaryImageKey(images: any): string {
+    const first = Array.isArray(images) ? images[0] : images;
+    return String(first?.public_id || first?.url || first || "").trim();
+  }
+
+  private hasPrimaryProfileImageChanged(before: any, after: any): boolean {
+    const beforeKey = this.getPrimaryImageKey(before);
+    const afterKey = this.getPrimaryImageKey(after);
+    return !!afterKey && beforeKey !== afterKey;
+  }
+
+  private async markProfilePhotoPendingReview(userId: string) {
+    const now = new Date();
+    await this.profileFlagModel.updateOne(
+      { userId: String(userId), userType: "Photographer", flagCode: "PROFILE_PHOTO_PENDING_REVIEW", status: "Open" },
+      {
+        $setOnInsert: {
+          createdAt: now,
+          auditLog: [
+            {
+              action: "created",
+              actorId: String(userId),
+              actorRole: "user",
+              note: "Profile photo changed by user.",
+              actedAt: now,
+            },
+          ],
+        },
+        $set: {
+          category: "Identity",
+          severity: "Medium",
+          message: "Profile photo is pending admin review. Please allow 24-48 hours.",
+          createdBy: "AUTO",
+          reviewedBy: "",
+          reviewedAt: null,
+          reviewNotes: "",
+        },
+      },
+      { upsert: true },
+    );
+    await this.photographerModel.findByIdAndUpdate(userId, {
+      $set: {
+        adminReviewPending: true,
+        verificationDashboardStatus: "Under Review",
+      },
+    });
   }
 
   async getProfile(userId: string) {
@@ -162,7 +211,7 @@ export class PhotographersService {
 
     const current: any = await this.photographerModel
       .findById(userId)
-      .select("phoneNumber email isMobileVerified")
+      .select("phoneNumber email isMobileVerified profileImages")
       .lean();
     if (!current) throw new NotFoundException("Photographer not found");
 
@@ -191,6 +240,12 @@ export class PhotographersService {
       .findByIdAndUpdate(userId, { $set: update }, { new: true })
       .lean();
     if (!updated) throw new NotFoundException("Photographer not found");
+    if (
+      Object.prototype.hasOwnProperty.call(update, "profileImages") &&
+      this.hasPrimaryProfileImageChanged(current.profileImages, update.profileImages)
+    ) {
+      await this.markProfilePhotoPendingReview(userId);
+    }
     const { password: _pw, resetToken: _rt, resetTokenExpires: _rte, ...safe } = updated as any;
     return safe;
   }

@@ -37,6 +37,16 @@ const VALID_TRANSITIONS: Record<string, string[]> = {
 
 const TIER_FILTERED_OPEN_ROLLOUT_AT = new Date("2026-05-05T00:00:00.000Z"); // Rolled out May 2026
 const ENABLE_CAMPAIGN_LIVE_EMAILS = false; // comment this if need to send campaign notification emails
+const PROFILE_PHOTO_VISIBILITY_BLOCK_FLAG_CODES = [
+  "PROFILE_PHOTO_PENDING_REVIEW",
+  "PROFILE_PHOTO_MISSING",
+  "PROFILE_PHOTO_SCREENSHOT",
+  "PROFILE_PHOTO_CELEBRITY",
+  "PROFILE_PHOTO_GROUP",
+  "PROFILE_PHOTO_BLURRY",
+  "PROFILE_PHOTO_LOGO",
+  "FACE_NOT_VISIBLE",
+];
 
 type CampaignOwnerType = "brand" | "photographer" | "influencer";
 type InviteRecipientRole = "influencer" | "photographer";
@@ -56,12 +66,13 @@ export class CampaignsService {
     @InjectModel("Brand") private readonly brandModel: Model<any>,
     @InjectModel("Photographer") private readonly photographerModel: Model<any>,
     @InjectModel("Influencer") private readonly influencerModel: Model<any>,
-	    @InjectModel("AppSettings") private readonly appSettingsModel: Model<any>,
-	    private readonly plansService: PlansService,
-	    private readonly cloudinaryService: CloudinaryService,
-	    private readonly pushService: PushService,
-	    private readonly notificationsService: NotificationsService,
-	  ) {}
+    @InjectModel("AppSettings") private readonly appSettingsModel: Model<any>,
+    @InjectModel("ProfileFlag") private readonly profileFlagModel: Model<any>,
+    private readonly plansService: PlansService,
+    private readonly cloudinaryService: CloudinaryService,
+    private readonly pushService: PushService,
+    private readonly notificationsService: NotificationsService,
+  ) {}
 
   private async resolveInitialCampaignStatus(
     status: unknown,
@@ -111,6 +122,20 @@ export class CampaignsService {
     throw new BadRequestException(
       "Verify both email and mobile before posting or sending campaign invitations.",
     );
+  }
+
+  private async hasProfilePhotoVisibilityBlock(
+    userId: string,
+    userType: "Influencer" | "Photographer",
+  ): Promise<boolean> {
+    if (!userId) return true;
+    const count = await this.profileFlagModel.countDocuments({
+      userId: String(userId),
+      userType,
+      status: "Open",
+      flagCode: { $in: PROFILE_PHOTO_VISIBILITY_BLOCK_FLAG_CODES },
+    });
+    return count > 0;
   }
 
   private normalizeCampaignPayload(data: any) {
@@ -789,6 +814,14 @@ export class CampaignsService {
       ) {
         return [];
       }
+      if (
+        await this.hasProfilePhotoVisibilityBlock(
+          influencerId,
+          "Influencer",
+        )
+      ) {
+        return [];
+      }
     }
 
     // Helper: whether influencer has at least one exact-tier match on campaign target platform(s).
@@ -1123,13 +1156,25 @@ export class CampaignsService {
       campaignPlatforms.length;
     if (!hasAnyFilter) return;
 
-    // ── 1. Build DB-level query ──────────────────────────────────────────────
-    const baseQuery: Record<string, any> = {
-      isDeleted: { $ne: true },
-      isEmailVerified: true,
-      isMobileVerified: true,
-      email: { $exists: true, $ne: "" },
-    };
+	    // ── 1. Build DB-level query ──────────────────────────────────────────────
+    const blockedRows = await this.profileFlagModel
+      .find({
+        userType: isPhotographer ? "Photographer" : "Influencer",
+        status: "Open",
+        flagCode: { $in: PROFILE_PHOTO_VISIBILITY_BLOCK_FLAG_CODES },
+      })
+      .select("userId")
+      .lean();
+    const blockedIds = [
+      ...new Set((blockedRows || []).map((row: any) => String(row.userId)).filter(Boolean)),
+    ];
+	    const baseQuery: Record<string, any> = {
+	      isDeleted: { $ne: true },
+	      isEmailVerified: true,
+	      isMobileVerified: true,
+	      email: { $exists: true, $ne: "" },
+	    };
+    if (blockedIds.length) baseQuery._id = { $nin: blockedIds };
 
     // Location filters (both optional)
     if (locationState) baseQuery["location.state"] = locationState;

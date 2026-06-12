@@ -12,6 +12,7 @@ import {
   PhotographerSchema,
 } from "../database/schemas/profile.schemas";
 import { CampaignInviteSchema } from "../database/schemas/campaign-invite.schema";
+import { ProfileFlagSchema } from "../database/schemas/profile-flag.schema";
 import { UsageCounterSchema } from "../database/schemas/usage-counter.schema";
 import { PlansModule } from "../plans/plans.module";
 import { MonetizationModule } from "../monetization/monetization.module";
@@ -41,6 +42,11 @@ import { FirebaseAdminService } from "../utils/firebase-admin.service";
         name: "UsageCounter",
         schema: UsageCounterSchema,
         collection: "usage_counters",
+      },
+      {
+        name: "ProfileFlag",
+        schema: ProfileFlagSchema,
+        collection: "profile_flags",
       },
     ]),
     PlansModule,
