@@ -20,6 +20,11 @@ const TIER_RANGES: Record<string, [number, number]> = {
 };
 
 const FLAG_META: Record<string, { category: string; severity: string; message: string }> = {
+  PROFILE_PHOTO_PENDING_REVIEW: {
+    category: "Identity",
+    severity: "Medium",
+    message: "Profile photo is pending admin review. Please allow 24-48 hours.",
+  },
   PROFILE_PHOTO_MISSING: {
     category: "Identity",
     severity: "Medium",
@@ -129,6 +134,25 @@ const SOCIAL_ACTION_FLAG_CODES = new Set<string>([
   "SOCIAL_LINK_BROKEN",
   "SOCIAL_LINK_DUPLICATE",
   "TIER_MISMATCH",
+]);
+
+const PERSISTENT_REVIEW_FLAG_CODES = new Set<string>([
+  "PROFILE_PHOTO_PENDING_REVIEW",
+]);
+
+const AUTO_FLAG_CODES = new Set(
+  Object.keys(FLAG_META).filter((code) => !PERSISTENT_REVIEW_FLAG_CODES.has(code)),
+);
+
+const PROFILE_PHOTO_VISIBILITY_BLOCK_FLAG_CODES = new Set<string>([
+  "PROFILE_PHOTO_PENDING_REVIEW",
+  "PROFILE_PHOTO_MISSING",
+  "PROFILE_PHOTO_SCREENSHOT",
+  "PROFILE_PHOTO_CELEBRITY",
+  "PROFILE_PHOTO_GROUP",
+  "PROFILE_PHOTO_BLURRY",
+  "PROFILE_PHOTO_LOGO",
+  "FACE_NOT_VISIBLE",
 ]);
 
 @Injectable()
@@ -336,7 +360,9 @@ export class ProfileVerificationService {
       },
       {
         label: "Profile Photo",
-        status: hasFlag("PROFILE_PHOTO_SCREENSHOT") || hasFlag("PROFILE_PHOTO_MISSING")
+        status: hasFlag("PROFILE_PHOTO_PENDING_REVIEW")
+          ? "Pending"
+          : [...PROFILE_PHOTO_VISIBILITY_BLOCK_FLAG_CODES].some((code) => hasFlag(code))
           ? "Action Required"
           : "Verified",
       },
@@ -470,6 +496,36 @@ export class ProfileVerificationService {
     if (!this.isEmailVerified(profile)) await add("EMAIL_NOT_VERIFIED");
     if (!this.isMobileVerified(profile)) await add("MOBILE_NOT_VERIFIED");
     if (!this.hasPayout(profile) && !(await this.hasApprovedPayment(userId, userType))) await add("PAYMENT_MISSING");
+
+    await this.flagModel.updateMany(
+      {
+        userId: String(userId),
+        userType,
+        status: "Open",
+        createdBy: "AUTO",
+        flagCode: {
+          $in: Array.from(AUTO_FLAG_CODES),
+          $nin: Array.from(desired),
+        },
+      },
+      {
+        $set: {
+          status: "Resolved",
+          reviewedBy: "AUTO",
+          reviewedAt: new Date(),
+          reviewNotes: "Automatically resolved after profile data changed.",
+        },
+        $push: {
+          auditLog: {
+            action: "auto_resolved",
+            actorId: "AUTO",
+            actorRole: "system",
+            note: "Profile data no longer matches this automatic flag.",
+            actedAt: new Date(),
+          },
+        },
+      },
+    );
   }
 
   async getDashboard(userId: string, role: any) {
@@ -533,7 +589,9 @@ export class ProfileVerificationService {
     const hasOpen = (code: string) => flags.some((flag) => flag.flagCode === code && flag.status === "Open");
     if (!this.isEmailVerified(profile)) blockers.push("Email not verified");
     if (!this.isMobileVerified(profile)) blockers.push("Mobile not verified");
-    if (hasOpen("PROFILE_PHOTO_SCREENSHOT")) blockers.push("Profile photo needs review");
+    if ([...PROFILE_PHOTO_VISIBILITY_BLOCK_FLAG_CODES].some((code) => hasOpen(code))) {
+      blockers.push("Profile photo must match the guidelines");
+    }
     if (hasOpen("SOCIAL_LINK_BROKEN")) blockers.push("Broken social link");
     if (hasOpen("PAYMENT_MISSING")) blockers.push("Payment or payout details missing");
     return { eligible: blockers.length === 0, blockers };
@@ -679,6 +737,33 @@ export class ProfileVerificationService {
         },
       },
     });
+    if (action === "approve" || action === "approve_warning") {
+      await this.flagModel.updateMany(
+        {
+          userId: String(userId),
+          userType,
+          status: "Open",
+          flagCode: "PROFILE_PHOTO_PENDING_REVIEW",
+        },
+        {
+          $set: {
+            status: "Resolved",
+            reviewedBy: String(actor?.name || actor?.email || actor?.userId || "TrendStarz Team"),
+            reviewedAt: new Date(),
+            reviewNotes: notes || "Profile photo approved by admin.",
+          },
+          $push: {
+            auditLog: {
+              action: "resolved",
+              actorId: String(actor?.userId || actor?.id || ""),
+              actorRole: "admin",
+              note: notes || "Profile photo approved by admin.",
+              actedAt: new Date(),
+            },
+          },
+        },
+      );
+    }
     return this.adminDetail(actor, userType, userId);
   }
 
@@ -779,6 +864,17 @@ export class ProfileVerificationService {
         actedAt: new Date(),
       },
     ];
-    return flag.save();
+    const saved = await flag.save();
+    if (
+      flag.flagCode === "PROFILE_PHOTO_PENDING_REVIEW" &&
+      flag.status === "Resolved"
+    ) {
+      await this.modelForUserType(flag.userType as ProfileUserType).findByIdAndUpdate(flag.userId, {
+        $set: {
+          adminReviewPending: false,
+        },
+      });
+    }
+    return saved;
   }
 }

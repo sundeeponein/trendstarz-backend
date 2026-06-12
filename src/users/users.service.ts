@@ -22,6 +22,17 @@ if (USE_LOCAL_IMAGES && !fs.existsSync(LOCAL_IMAGE_DIR)) {
   fs.mkdirSync(LOCAL_IMAGE_DIR, { recursive: true });
 }
 
+const PROFILE_PHOTO_VISIBILITY_BLOCK_FLAG_CODES = [
+  "PROFILE_PHOTO_PENDING_REVIEW",
+  "PROFILE_PHOTO_MISSING",
+  "PROFILE_PHOTO_SCREENSHOT",
+  "PROFILE_PHOTO_CELEBRITY",
+  "PROFILE_PHOTO_GROUP",
+  "PROFILE_PHOTO_BLURRY",
+  "PROFILE_PHOTO_LOGO",
+  "FACE_NOT_VISIBLE",
+];
+
 @Injectable()
 export class UsersService {
   private normalizePhone(value: any): string {
@@ -575,8 +586,78 @@ export class UsersService {
     @InjectModel("Photographer") private readonly photographerModel: Model<any>,
     @InjectModel("CampaignInvite")
     private readonly campaignInviteModel: Model<any>,
+    @InjectModel("ProfileFlag") private readonly profileFlagModel: Model<any>,
     private readonly plansService: PlansService,
   ) {}
+
+  private async profilePhotoBlockedIds(userType: "Influencer" | "Photographer") {
+    const rows = await this.profileFlagModel
+      .find({
+        userType,
+        status: "Open",
+        flagCode: { $in: PROFILE_PHOTO_VISIBILITY_BLOCK_FLAG_CODES },
+      })
+      .select("userId")
+      .lean();
+    return [...new Set((rows || []).map((row: any) => String(row.userId)).filter(Boolean))];
+  }
+
+  private applyExcludedIds(filter: any, ids: string[]) {
+    if (!ids.length) return;
+    filter._id = { ...(filter._id || {}), $nin: ids };
+  }
+
+  private getPrimaryImageKey(images: any): string {
+    const first = Array.isArray(images) ? images[0] : images;
+    return String(first?.public_id || first?.url || first || "").trim();
+  }
+
+  private hasPrimaryProfileImageChanged(before: any, after: any): boolean {
+    const beforeKey = this.getPrimaryImageKey(before);
+    const afterKey = this.getPrimaryImageKey(after);
+    return !!afterKey && beforeKey !== afterKey;
+  }
+
+  private async markProfilePhotoPendingReview(
+    userId: string,
+    userType: "Influencer" | "Photographer",
+  ) {
+    const now = new Date();
+    await this.profileFlagModel.updateOne(
+      { userId: String(userId), userType, flagCode: "PROFILE_PHOTO_PENDING_REVIEW", status: "Open" },
+      {
+        $setOnInsert: {
+          createdAt: now,
+          auditLog: [
+            {
+              action: "created",
+              actorId: String(userId),
+              actorRole: "user",
+              note: "Profile photo changed by user.",
+              actedAt: now,
+            },
+          ],
+        },
+        $set: {
+          category: "Identity",
+          severity: "Medium",
+          message: "Profile photo is pending admin review. Please allow 24-48 hours.",
+          createdBy: "AUTO",
+          reviewedBy: "",
+          reviewedAt: null,
+          reviewNotes: "",
+        },
+      },
+      { upsert: true },
+    );
+    const model = userType === "Photographer" ? this.photographerModel : this.influencerModel;
+    await model.findByIdAndUpdate(userId, {
+      $set: {
+        adminReviewPending: true,
+        verificationDashboardStatus: "Under Review",
+      },
+    });
+  }
 
   /** True if the user has an active premium subscription right now. */
   private isCurrentlyPremium(user: any): boolean {
@@ -768,8 +849,15 @@ export class UsersService {
     if (user) {
       if (images.profileImages) {
         // ...existing code for influencer...
+        const shouldReviewPhoto = this.hasPrimaryProfileImageChanged(
+          user.profileImages,
+          images.profileImages,
+        );
         user.profileImages = images.profileImages;
         await user.save();
+        if (shouldReviewPhoto) {
+          await this.markProfilePhotoPendingReview(id, "Influencer");
+        }
         return { message: "Influencer images updated", user };
       }
     }
@@ -991,6 +1079,7 @@ export class UsersService {
 
     const baseFilter: any = { status: "accepted" };
     const allowSocialLinks = await this.canViewerOpenSocialLinks(viewerId);
+    this.applyExcludedIds(baseFilter, await this.profilePhotoBlockedIds("Influencer"));
     if (stateFilter) {
       baseFilter["location.state"] = new RegExp(
         `^${this.escapeRegex(stateFilter)}$`,
@@ -1235,6 +1324,7 @@ export class UsersService {
     limit?: number;
   }) {
     const filter: any = { status: "accepted" };
+    this.applyExcludedIds(filter, await this.profilePhotoBlockedIds("Influencer"));
     if (query.q) {
       const escaped = this.escapeRegex(query.q);
       filter.$or = [
@@ -1948,6 +2038,9 @@ export class UsersService {
     // NOTE: isPremium is intentionally excluded — it is only set via upgradeSelfPremium or admin setPremium
     const userDoc: any = await this.influencerModel.findById(userId);
     if (!userDoc) return { message: "Influencer not found", userId };
+    const shouldReviewPhoto = Object.prototype.hasOwnProperty.call(updateData, "profileImages")
+      ? this.hasPrimaryProfileImageChanged(userDoc.profileImages, updateData.profileImages)
+      : false;
 
     if (Object.prototype.hasOwnProperty.call(updateData, "phoneNumber")) {
       const existingPhone = this.normalizePhone(userDoc.phoneNumber);
@@ -2018,6 +2111,9 @@ export class UsersService {
     }
 
     const updated = await userDoc.save();
+    if (shouldReviewPhoto) {
+      await this.markProfilePhotoPendingReview(userId, "Influencer");
+    }
     return { message: "Profile updated", user: updated };
   }
   async updateBrandProfile(userId: string, update: any) {

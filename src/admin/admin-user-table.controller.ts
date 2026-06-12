@@ -106,6 +106,40 @@ export class AdminUserTableController {
       : { $ne: "deleted" };
   }
 
+  private applyContactVerificationFilter(filter: Record<string, any>, verification?: string) {
+    const normalized = String(verification || "").trim().toLowerCase();
+    if (!normalized) return;
+    if (normalized === "email_pending") {
+      filter.isEmailVerified = { $ne: true };
+      return;
+    }
+    if (normalized === "mobile_pending") {
+      filter.isMobileVerified = { $ne: true };
+      return;
+    }
+    if (normalized === "email_or_mobile_pending") {
+      filter.$and = [
+        ...(filter.$and || []),
+        {
+          $or: [
+            { isEmailVerified: { $ne: true } },
+            { isMobileVerified: { $ne: true } },
+          ],
+        },
+      ];
+      return;
+    }
+    if (normalized === "both_pending") {
+      filter.isEmailVerified = { $ne: true };
+      filter.isMobileVerified = { $ne: true };
+      return;
+    }
+    if (normalized === "both_verified") {
+      filter.isEmailVerified = true;
+      filter.isMobileVerified = true;
+    }
+  }
+
   private normalizeAdminTags(tags: unknown): string[] {
     if (!Array.isArray(tags)) return [];
     return Array.from(
@@ -486,12 +520,14 @@ export class AdminUserTableController {
     @Query("status") status?: string,
     @Query("q") q?: string,
     @Query("category") category?: string,
+    @Query("verification") verification?: string,
     @Query("page") page?: string,
     @Query("limit") limit?: string,
   ) {
     const paging = this.getPaging(page, limit);
     const filter: any = {};
     this.applyAdminUserStatusFilter(filter, status);
+    this.applyContactVerificationFilter(filter, verification);
     const qRegex = this.toRegex(q);
     if (qRegex) {
       filter.$or = [
@@ -526,12 +562,14 @@ export class AdminUserTableController {
     @Query("status") status?: string,
     @Query("q") q?: string,
     @Query("category") category?: string,
+    @Query("verification") verification?: string,
     @Query("page") page?: string,
     @Query("limit") limit?: string,
   ) {
     const paging = this.getPaging(page, limit);
     const filter: any = {};
     this.applyAdminUserStatusFilter(filter, status);
+    this.applyContactVerificationFilter(filter, verification);
     const qRegex = this.toRegex(q);
     if (qRegex) {
       filter.$or = [
@@ -571,12 +609,14 @@ export class AdminUserTableController {
     @Query("status") status?: string,
     @Query("q") q?: string,
     @Query("category") category?: string,
+    @Query("verification") verification?: string,
     @Query("page") page?: string,
     @Query("limit") limit?: string,
   ) {
     const paging = this.getPaging(page, limit);
     const filter: any = {};
     this.applyAdminUserStatusFilter(filter, status);
+    this.applyContactVerificationFilter(filter, verification);
     const qRegex = this.toRegex(q);
     if (qRegex) {
       filter.$or = [

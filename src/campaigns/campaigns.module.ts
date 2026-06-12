@@ -11,6 +11,7 @@ import { CampaignInviteSchema } from "../database/schemas/campaign-invite.schema
 import { CampaignSubmissionSchema } from "../database/schemas/campaign-submission.schema";
 import { CampaignTransactionSchema } from "../database/schemas/campaign-transaction.schema";
 import { AnalyticsEventSchema } from "../database/schemas/analytics-event.schema";
+import { ProfileFlagSchema } from "../database/schemas/profile-flag.schema";
 import { CampaignsController } from "./campaigns.controller";
 import { CampaignsService } from "./campaigns.service";
 import { CampaignInvitesController } from "./campaign-invites.controller";
@@ -66,6 +67,11 @@ import { ProfileVerificationModule } from "../profile-verification/profile-verif
         name: "AppSettings",
         schema: AppSettingsSchema,
         collection: "appsettings",
+      },
+      {
+        name: "ProfileFlag",
+        schema: ProfileFlagSchema,
+        collection: "profile_flags",
       },
     ]),
   ],
