@@ -112,6 +112,25 @@ const FLAG_META: Record<string, { category: string; severity: string; message: s
   },
 };
 
+const SCORE_ONLY_FLAG_CODES = new Set<string>([
+  "FOLLOWER_COUNT_MISMATCH",
+  "PORTFOLIO_MISSING",
+]);
+
+const ADMIN_ONLY_FLAG_CODES = new Set<string>(["ID_PENDING"]);
+
+const HIDDEN_ACTION_FLAG_CODES = new Set<string>([
+  ...SCORE_ONLY_FLAG_CODES,
+  ...ADMIN_ONLY_FLAG_CODES,
+]);
+
+const SOCIAL_ACTION_FLAG_CODES = new Set<string>([
+  "SOCIAL_LINK_MISSING",
+  "SOCIAL_LINK_BROKEN",
+  "SOCIAL_LINK_DUPLICATE",
+  "TIER_MISMATCH",
+]);
+
 @Injectable()
 export class ProfileVerificationService {
   constructor(
@@ -285,9 +304,13 @@ export class ProfileVerificationService {
             : score <= 95
               ? "Brand Ready"
               : "Premium Verified";
-    const hasActionRequired = flags.some((flag) =>
-      ["High", "Medium"].includes(String(flag?.severity || "")),
-    );
+    const hasActionRequired = flags.some((flag) => {
+      const code = String(flag?.flagCode || "");
+      return (
+        !HIDDEN_ACTION_FLAG_CODES.has(code) &&
+        ["High", "Medium"].includes(String(flag?.severity || ""))
+      );
+    });
     const status =
       hasActionRequired || score <= 60
         ? "Action Required"
@@ -319,7 +342,9 @@ export class ProfileVerificationService {
       },
       {
         label: "Social Profile Review Required",
-        status: flags.some((flag) => flag.category === "Social Media") ? "Action Required" : "Verified",
+        status: flags.some((flag) => SOCIAL_ACTION_FLAG_CODES.has(String(flag.flagCode || "")))
+          ? "Action Required"
+          : "Verified",
       },
       {
         label: "Payment Method Missing",
@@ -328,10 +353,6 @@ export class ProfileVerificationService {
       {
         label: "Admin Review Pending",
         status: ["pending", "not_submitted"].includes(verificationStatus) ? "Pending" : "Verified",
-      },
-      {
-        label: "Identity Verified",
-        status: profile?.identityVerified || profile?.identityConfirmed ? "Verified" : "Pending",
       },
     ];
   }
@@ -422,7 +443,6 @@ export class ProfileVerificationService {
         if (platform) platforms.add(platform);
         if (!platform || !handle) await add("SOCIAL_LINK_BROKEN");
         const followers = Number(sm?.followersCount || 0);
-        if (!followers && this.hasText(sm?.tier)) await add("FOLLOWER_COUNT_MISMATCH");
         const expected = followers > 0 ? this.expectedTier(followers) : "";
         if (expected && this.hasText(sm?.tier) && expected !== String(sm.tier).trim()) {
           await add("TIER_MISMATCH", {
@@ -449,7 +469,6 @@ export class ProfileVerificationService {
 
     if (!this.isEmailVerified(profile)) await add("EMAIL_NOT_VERIFIED");
     if (!this.isMobileVerified(profile)) await add("MOBILE_NOT_VERIFIED");
-    if (["pending", "not_submitted"].includes(String(profile?.verificationStatus || ""))) await add("ID_PENDING");
     if (!this.hasPayout(profile) && !(await this.hasApprovedPayment(userId, userType))) await add("PAYMENT_MISSING");
   }
 
@@ -461,7 +480,13 @@ export class ProfileVerificationService {
       .sort({ severity: 1, createdAt: -1 })
       .lean();
     const completion = this.computeCompletion(profile, userType);
-    const quality = this.qualityFromFlags(flags);
+    const qualityFlags = flags.filter(
+      (flag) => !ADMIN_ONLY_FLAG_CODES.has(String(flag.flagCode || "")),
+    );
+    const visibleActionFlags = flags.filter(
+      (flag) => !HIDDEN_ACTION_FLAG_CODES.has(String(flag.flagCode || "")),
+    );
+    const quality = this.qualityFromFlags(qualityFlags);
     const status =
       completion < 40
         ? "Draft"
@@ -489,7 +514,7 @@ export class ProfileVerificationService {
       verificationChecks: this.verificationChecks(profile),
       verificationBadges: this.verificationBadges(profile),
       checklist: this.checklist(profile, flags),
-      actionRequired: flags.map((flag) => ({
+      actionRequired: visibleActionFlags.map((flag) => ({
         id: flag._id,
         category: flag.category,
         flagCode: flag.flagCode,
