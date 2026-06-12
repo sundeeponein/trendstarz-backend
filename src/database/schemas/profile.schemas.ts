@@ -45,6 +45,29 @@ const ProfileVerificationFields = {
   profileModerationNotes: { type: String, default: "" },
 };
 
+const LEGACY_VERIFICATION_AUDIT_ACTIONS: Record<string, string> = {
+  approve: "approved",
+  reject: "rejected",
+  request_changes: "status_changed",
+};
+
+function normalizeVerificationAuditLog(doc: any) {
+  const log = doc?.verificationAuditLog;
+  if (!Array.isArray(log)) return;
+  let changed = false;
+  for (const entry of log) {
+    if (!entry) continue;
+    const action = String(entry.action || "");
+    if (LEGACY_VERIFICATION_AUDIT_ACTIONS[action]) {
+      entry.action = LEGACY_VERIFICATION_AUDIT_ACTIONS[action];
+      changed = true;
+    }
+  }
+  if (changed && typeof doc.markModified === "function") {
+    doc.markModified("verificationAuditLog");
+  }
+}
+
 export const TierSchema = new Schema({
   name: { type: String, required: true },
   icon: { type: String },
@@ -270,6 +293,10 @@ InfluencerSchema.index({ "location.state": 1 });
 InfluencerSchema.index({ "location.district": 1 });
 InfluencerSchema.index({ resetToken: 1 }, { sparse: true });
 InfluencerSchema.index({ commissionBadge: 1 });
+InfluencerSchema.pre("validate", function (next) {
+  normalizeVerificationAuditLog(this);
+  next();
+});
 
 export const InfluencerModel = model("Influencer", InfluencerSchema);
 
@@ -598,6 +625,10 @@ PhotographerSchema.index({ skills: 1 });
 PhotographerSchema.index({ "location.state": 1 });
 PhotographerSchema.index({ resetToken: 1 }, { sparse: true });
 PhotographerSchema.index({ commissionBadge: 1 });
+PhotographerSchema.pre("validate", function (next) {
+  normalizeVerificationAuditLog(this);
+  next();
+});
 
 export const PhotographerModel = model("Photographer", PhotographerSchema);
 

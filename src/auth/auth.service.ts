@@ -79,7 +79,6 @@ export class AuthService {
       { _id: user._id },
       {
         $set: { isEmailVerified: true, emailVerifiedAt: verifiedAt },
-        $unset: { emailVerified: "" },
       },
     );
   }
