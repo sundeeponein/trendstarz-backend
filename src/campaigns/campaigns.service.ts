@@ -7,6 +7,8 @@ import { InjectModel } from "@nestjs/mongoose";
 import { Model, Types } from "mongoose";
 import { PlansService } from "../plans/plans.service";
 import { CloudinaryService } from "../cloudinary.service";
+import { PushService } from "../push/push.service";
+import { NotificationsService } from "../notifications/notifications.service";
 import {
   CampaignTypeConfigItem,
   resolveCampaignAccessModeConfigs,
@@ -54,10 +56,12 @@ export class CampaignsService {
     @InjectModel("Brand") private readonly brandModel: Model<any>,
     @InjectModel("Photographer") private readonly photographerModel: Model<any>,
     @InjectModel("Influencer") private readonly influencerModel: Model<any>,
-    @InjectModel("AppSettings") private readonly appSettingsModel: Model<any>,
-    private readonly plansService: PlansService,
-    private readonly cloudinaryService: CloudinaryService,
-  ) {}
+	    @InjectModel("AppSettings") private readonly appSettingsModel: Model<any>,
+	    private readonly plansService: PlansService,
+	    private readonly cloudinaryService: CloudinaryService,
+	    private readonly pushService: PushService,
+	    private readonly notificationsService: NotificationsService,
+	  ) {}
 
   private async resolveInitialCampaignStatus(
     status: unknown,
@@ -1065,9 +1069,8 @@ export class CampaignsService {
     return saved;
   }
 
-  private async notifyMatchingInfluencers(campaign: any): Promise<void> {
-    if (!ENABLE_CAMPAIGN_LIVE_EMAILS) return; // comment this if need to send campaign notification emails
-    const TIER_ORDER = [
+	  private async notifyMatchingInfluencers(campaign: any): Promise<void> {
+	    const TIER_ORDER = [
       "Starter",
       "Nano",
       "Micro",
@@ -1193,7 +1196,7 @@ export class CampaignsService {
 
     if (!matched.length) return;
 
-    // ── 4. Resolve sender name and send emails ───────────────────────────────
+	    // ── 4. Resolve sender name and notify matched users ──────────────────────
     const brand = (await this.brandModel
       .findById(brandId)
       .select("brandName name")
@@ -1216,25 +1219,46 @@ export class CampaignsService {
       .filter(Boolean)
       .join(", ");
 
-    const emailPromises = matched
-      .filter((r: any) => !!r.email)
-      .map((recipient: any) => {
-        const tpl = openCampaignLiveTemplate({
-          influencerName: recipient.name || "Creator",
-          campaignTitle: title,
-          brandName,
-          location: locationLabel,
-          campaignUrl,
-        });
-        return sendAppEmail({ to: recipient.email, ...tpl }).catch(() => {});
-      });
+	    const notificationPromises = matched.map((recipient: any) => {
+	      const userRole = isPhotographer ? "photographer" : "influencer";
+	      const body = `${brandName} posted "${title}"${locationLabel ? ` in ${locationLabel}` : ""}.`;
+	      const base = [
+	        this.notificationsService
+	          .createForUser({
+	            userId: String(recipient._id),
+	            userRole,
+	            title: "New open campaign",
+	            body,
+	            url: dashboardPath,
+	          })
+	          .catch(() => {}),
+	        this.pushService
+	          .sendToUser(String(recipient._id), {
+	            title: "New open campaign",
+	            body,
+	            url: dashboardPath,
+	          })
+	          .catch(() => {}),
+	      ];
 
-    await Promise.allSettled(emailPromises);
-  }
+	      if (ENABLE_CAMPAIGN_LIVE_EMAILS && recipient.email) {
+	        const tpl = openCampaignLiveTemplate({
+	          influencerName: recipient.name || "Creator",
+	          campaignTitle: title,
+	          brandName,
+	          location: locationLabel,
+	          campaignUrl,
+	        });
+	        base.push(sendAppEmail({ to: recipient.email, ...tpl }).catch(() => {}));
+	      }
+	      return Promise.allSettled(base);
+	    });
 
-  private async notifyInvitedUsers(campaign: any): Promise<void> {
-    if (!ENABLE_CAMPAIGN_LIVE_EMAILS) return; // comment this if need to send campaign notification emails
-    const { _id: campaignId, title, brandId, inviteRecipientRole } = campaign;
+	    await Promise.allSettled(notificationPromises);
+	  }
+
+	  private async notifyInvitedUsers(campaign: any): Promise<void> {
+	    const { _id: campaignId, title, brandId, inviteRecipientRole } = campaign;
 
     // Get all active invites for this campaign
     const inviteQueries: any[] = [{ campaignId }];
@@ -1264,11 +1288,11 @@ export class CampaignsService {
         : "/influencer-dashboard/invites";
     const campaignUrl = `${frontendBase}${dashboardPath}`;
 
-    // Load recipient profiles and send emails
-    const emailPromises = invites.map(async (invite: any) => {
-      try {
-        const recipientModel =
-          String(invite.recipientRole || "influencer") === "photographer"
+	    // Load recipient profiles and notify verified invited users after campaign is live.
+	    const notificationPromises = invites.map(async (invite: any) => {
+	      try {
+	        const recipientModel =
+	          String(invite.recipientRole || "influencer") === "photographer"
             ? this.photographerModel
             : this.influencerModel;
 
@@ -1277,16 +1301,41 @@ export class CampaignsService {
           .select("name email isEmailVerified isMobileVerified")
           .lean()) as any;
 
-        if (
-          !recipient?.email ||
-          recipient.isEmailVerified !== true ||
-          recipient.isMobileVerified !== true
-        ) {
-          return;
-        }
+	        if (
+	          !recipient?._id ||
+	          recipient.isEmailVerified !== true ||
+	          recipient.isMobileVerified !== true
+	        ) {
+	          return;
+	        }
+	        const userRole =
+	          String(invite.recipientRole || "influencer") === "photographer"
+	            ? "photographer"
+	            : "influencer";
+	        const body = `${brandName} invited you to "${title}".`;
 
-        const tpl = inviteCampaignLiveTemplate({
-          recipientName: recipient.name || "Creator",
+	        await this.notificationsService
+	          .createForUser({
+	            userId: String(recipient._id),
+	            userRole,
+	            title: "New campaign invite",
+	            body,
+	            url: dashboardPath,
+	          })
+	          .catch(() => {});
+
+	        await this.pushService
+	          .sendToUser(String(recipient._id), {
+	            title: "New campaign invite",
+	            body,
+	            url: dashboardPath,
+	          })
+	          .catch(() => {});
+
+	        if (!ENABLE_CAMPAIGN_LIVE_EMAILS || !recipient?.email) return;
+
+	        const tpl = inviteCampaignLiveTemplate({
+	          recipientName: recipient.name || "Creator",
           campaignTitle: title,
           brandName,
           campaignUrl,
@@ -1295,11 +1344,11 @@ export class CampaignsService {
         return sendAppEmail({ to: recipient.email, ...tpl }).catch(() => {});
       } catch (err) {
         console.error("Failed to notify invited user:", err);
-      }
-    });
+	      }
+	    });
 
-    await Promise.allSettled(emailPromises);
-  }
+	    await Promise.allSettled(notificationPromises);
+	  }
 
   async remove(id: string, brandId: string) {
     const campaign = await this.campaignModel.findById(id);
