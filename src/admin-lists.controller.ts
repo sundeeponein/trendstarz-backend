@@ -322,6 +322,7 @@ export class AdminListsController {
       supportContactPhone: "",
       supportContactWhatsapp: "",
       verificationCallNumber: "",
+      otpVerificationEnabled: false,
       supportContactMessage:
         "For now, please contact our team to complete campaign payments. Our admin will update the payment status once received.",
       showSearchLink: true,

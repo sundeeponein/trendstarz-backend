@@ -686,6 +686,7 @@ export const AppSettingsSchema = new Schema({
   supportContactPhone: { type: String, default: "" },
   supportContactWhatsapp: { type: String, default: "" },
   verificationCallNumber: { type: String, default: "" },
+  otpVerificationEnabled: { type: Boolean, default: false },
   supportContactMessage: {
     type: String,
     default:

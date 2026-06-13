@@ -15,6 +15,7 @@ import {
   normalizeSelectionList,
 } from "../utils/profile-selection-limits.util";
 import { normalizeSocialMediaList } from "../utils/social-handle.util";
+import { consumeOtpVerificationToken } from "../otp/otp.controller";
 
 const USE_LOCAL_IMAGES = process.env.USE_LOCAL_IMAGES === "true";
 const LOCAL_IMAGE_DIR = path.resolve(__dirname, "../../assets/local-images");

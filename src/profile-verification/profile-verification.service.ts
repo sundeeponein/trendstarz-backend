@@ -354,53 +354,63 @@ export class ProfileVerificationService {
         PROFILE_PHOTO_VISIBILITY_BLOCK_FLAG_CODES.has(code)
       );
     });
+    const hasOpenLocationIssue = ["LOCATION_MISSING", "LOCATION_MISMATCH", "INTERNATIONAL_LOCATION"].some((code) =>
+      hasOpenFlag(code),
+    );
+    const hasOpenSocialIssue = [
+      "SOCIAL_LINK_MISSING",
+      "SOCIAL_LINK_BROKEN",
+      "SOCIAL_LINK_PRIVATE",
+      "SOCIAL_LINK_MISMATCH",
+      "SOCIAL_LINK_DUPLICATE",
+      "FOLLOWER_COUNT_MISMATCH",
+      "TIER_MISMATCH",
+    ].some((code) => hasOpenFlag(code));
+    const hasOpenPortfolioIssue = [
+      "PORTFOLIO_MISSING",
+      "PORTFOLIO_SCREENSHOT",
+      "PORTFOLIO_LOW_QUALITY",
+      "PORTFOLIO_DUPLICATE",
+      "PORTFOLIO_WATERMARK",
+    ].some((code) => hasOpenFlag(code));
+    const hasOpenPaymentIssue = [
+      "PAYMENT_MISSING",
+      "PAYMENT_PENDING",
+      "PAYMENT_FAILED",
+      "PAN_MISSING",
+    ].some((code) => hasOpenFlag(code));
     const name = profile?.name || profile?.brandName;
     const basic =
       this.hasText(name) &&
       this.hasText(profile?.email) &&
-      (this.hasText(profile?.phoneNumber) || this.hasText(profile?.phone)) &&
-      this.profileImageUrls(profile).length > 0;
-    if (basic) score += 15;
-
-    const creatorDetails =
-      userType === "Brand"
-        ? (profile?.categories || []).length > 0 ||
-          this.hasText(profile?.website)
-        : (profile?.categories || profile?.skills || []).length > 0 ||
-          (profile?.creatorTypes || []).length > 0 ||
-          this.hasText(profile?.expertiseArea);
-    if (creatorDetails) score += 15;
+      (this.hasText(profile?.phoneNumber) || this.hasText(profile?.phone));
+    if (basic) score += 25;
 
     const social = Array.isArray(profile?.socialMedia)
       ? profile.socialMedia.some(
           (sm: any) => this.hasText(sm?.platform) && this.hasText(sm?.handle),
         )
       : false;
-    if (social) score += 15;
-
     const audience = Array.isArray(profile?.socialMedia)
       ? profile.socialMedia.some(
           (sm: any) =>
             Number(sm?.followersCount || 0) > 0 || this.hasText(sm?.tier),
         )
       : false;
-    if (audience && !hasOpenFlag("TIER_MISMATCH")) score += 10;
+    if ((social || audience) && !hasOpenSocialIssue) score += 15;
 
     const portfolio =
       this.portfolioUrls(profile).length > 0 ||
       this.profileImageUrls(profile).length > 1;
-    if (portfolio && !hasOpenFlag("PORTFOLIO_MISSING")) score += 10;
+    if (portfolio && !hasOpenPortfolioIssue) score += 5;
 
     if (this.isEmailVerified(profile)) score += 10;
     if (this.isMobileVerified(profile)) score += 10;
     if (this.profileImageUrls(profile).length > 0 && !hasOpenProfilePhotoIssue)
       score += 15;
-    if (
-      !["pending", "not_submitted"].includes(
-        String(profile?.verificationStatus || ""),
-      )
-    )
+    if (this.hasLocation(profile) && !hasOpenLocationIssue)
       score += 10;
+    if (this.hasPayout(profile) && !hasOpenPaymentIssue) score += 10;
     return Math.max(0, Math.min(100, score));
   }
 
@@ -502,13 +512,14 @@ export class ProfileVerificationService {
       },
       {
         label: "Payment Method Verified",
-        status:
-          hasFlag("PAYMENT_MISSING") ||
+        status: hasFlag("PAYMENT_MISSING") ||
           hasFlag("PAYMENT_PENDING") ||
           hasFlag("PAYMENT_FAILED") ||
           hasFlag("PAN_MISSING")
             ? "Action Required"
-            : "Verified",
+            : this.hasPayout(profile)
+              ? "Verified"
+              : "Action Required",
       },
       {
         label: "Admin Review Pending",
