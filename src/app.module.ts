@@ -44,6 +44,7 @@ import {
 import { PaymentSchema } from "./database/schemas/payment.schema";
 import { CampaignInviteSchema } from "./database/schemas/campaign-invite.schema";
 import { CampaignSubmissionSchema } from "./database/schemas/campaign-submission.schema";
+import { ProfileFlagSchema } from "./database/schemas/profile-flag.schema";
 
 import { AuthService } from "./auth/auth.service";
 import { AuthController } from "./auth/auth.controller";
@@ -123,6 +124,11 @@ import { ProfileVerificationModule } from "./profile-verification/profile-verifi
         name: "Campaign",
         schema: CampaignSchema,
         collection: "campaigns",
+      },
+      {
+        name: "ProfileFlag",
+        schema: ProfileFlagSchema,
+        collection: "profile_flags",
       },
     ]),
     UsersModule,

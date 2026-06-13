@@ -36,6 +36,7 @@ export class AdminUserTableController {
     @InjectModel("Brand") private readonly brandModel: Model<any>,
     @InjectModel("Photographer") private readonly photographerModel: Model<any>,
     @InjectModel("Payment") private readonly paymentModel: Model<Payment>,
+    @InjectModel("ProfileFlag") private readonly flagModel: Model<any>,
     private readonly earlyAccessAssignmentService: EarlyAccessAssignmentService,
     private readonly firebaseAdminService: FirebaseAdminService,
   ) {}
@@ -86,28 +87,33 @@ export class AdminUserTableController {
     return new RegExp(escaped, "i");
   }
 
-  private applyAdminUserStatusFilter(filter: Record<string, any>, status?: string) {
-    const normalizedStatus = String(status || "").trim().toLowerCase();
+  private applyAdminUserStatusFilter(
+    filter: Record<string, any>,
+    status?: string,
+  ) {
+    const normalizedStatus = String(status || "")
+      .trim()
+      .toLowerCase();
     if (normalizedStatus === "deleted") {
       filter.$and = [
         {
-          $or: [
-            { isDeleted: { $in: [true, "true"] } },
-            { status: "deleted" },
-          ],
+          $or: [{ isDeleted: { $in: [true, "true"] } }, { status: "deleted" }],
         },
       ];
       return;
     }
 
     filter.isDeleted = { $nin: [true, "true"] };
-    filter.status = normalizedStatus
-      ? normalizedStatus
-      : { $ne: "deleted" };
+    filter.status = normalizedStatus ? normalizedStatus : { $ne: "deleted" };
   }
 
-  private applyContactVerificationFilter(filter: Record<string, any>, verification?: string) {
-    const normalized = String(verification || "").trim().toLowerCase();
+  private applyContactVerificationFilter(
+    filter: Record<string, any>,
+    verification?: string,
+  ) {
+    const normalized = String(verification || "")
+      .trim()
+      .toLowerCase();
     if (!normalized) return;
     if (normalized === "email_pending") {
       filter.isEmailVerified = { $ne: true };
@@ -167,7 +173,9 @@ export class AdminUserTableController {
     ];
   }
 
-  private getEarlyAccessConfig(userType: "influencer" | "brand" | "photographer") {
+  private getEarlyAccessConfig(
+    userType: "influencer" | "brand" | "photographer",
+  ) {
     if (userType === "influencer") {
       return {
         cap: 50,
@@ -205,15 +213,17 @@ export class AdminUserTableController {
   }
 
   private slugifyUsername(value: string): string {
-    return String(value || "")
-      .trim()
-      .toLowerCase()
-      .replace(/@.*$/, "")
-      .replace(/[^a-z0-9_-]+/g, "-")
-      .replace(/-+/g, "-")
-      .replace(/^-+/, "")
-      .replace(/-+$/, "")
-      .slice(0, 40) || "firebase-user";
+    return (
+      String(value || "")
+        .trim()
+        .toLowerCase()
+        .replace(/@.*$/, "")
+        .replace(/[^a-z0-9_-]+/g, "-")
+        .replace(/-+/g, "-")
+        .replace(/^-+/, "")
+        .replace(/-+$/, "")
+        .slice(0, 40) || "firebase-user"
+    );
   }
 
   private async buildUniqueUsername(
@@ -424,7 +434,9 @@ export class AdminUserTableController {
     let skipped = 0;
 
     for (const firebaseUser of firebaseUsers) {
-      const email = String(firebaseUser.email || "").trim().toLowerCase();
+      const email = String(firebaseUser.email || "")
+        .trim()
+        .toLowerCase();
       if (!email) {
         skipped += 1;
         continue;
@@ -596,10 +608,10 @@ export class AdminUserTableController {
     for (const b of brands as any[]) {
       if (!b.brandLogo) b.brandLogo = [];
       if (!b.products) b.products = [];
-      if (b.promotionalPrice === undefined && (b as any).price !== undefined) {
-        b.promotionalPrice = (b as any).price;
+      if (b.promotionalPrice === undefined && b.price !== undefined) {
+        b.promotionalPrice = b.price;
       }
-      (b as any).latestPayment = latestPayments.get(String(b?._id || "")) || null;
+      b.latestPayment = latestPayments.get(String(b?._id || "")) || null;
     }
     return brands;
   }
@@ -640,7 +652,7 @@ export class AdminUserTableController {
       photographers.map((p: any) => String(p?._id || "")).filter(Boolean),
     );
     for (const p of photographers as any[]) {
-      (p as any).latestPayment = latestPayments.get(String(p?._id || "")) || null;
+      p.latestPayment = latestPayments.get(String(p?._id || "")) || null;
     }
 
     return photographers;
@@ -665,7 +677,7 @@ export class AdminUserTableController {
       return { message: "Unsupported user type", type, id };
     }
 
-    const userType = normalizedType as "influencer" | "brand" | "photographer";
+    const userType = normalizedType;
     const model =
       userType === "influencer"
         ? this.influencerModel
@@ -856,6 +868,11 @@ export class AdminUserTableController {
     body: {
       isEmailVerified?: boolean;
       isMobileVerified?: boolean;
+      profilePhotoVerified?: boolean;
+      creatorTierVerified?: boolean;
+      locationVerified?: boolean;
+      galleryImagesVerified?: boolean;
+      paymentVerified?: boolean;
     },
   ) {
     const normalizedType = String(type || "").toLowerCase();
@@ -880,13 +897,28 @@ export class AdminUserTableController {
 
     const hasEmail = typeof body?.isEmailVerified === "boolean";
     const hasMobile = typeof body?.isMobileVerified === "boolean";
-    if (!hasEmail && !hasMobile) {
+    const hasProfilePhoto = typeof body?.profilePhotoVerified === "boolean";
+    const hasCreatorTier = typeof body?.creatorTierVerified === "boolean";
+    const hasLocation = typeof body?.locationVerified === "boolean";
+    const hasGallery = typeof body?.galleryImagesVerified === "boolean";
+    const hasPayment = typeof body?.paymentVerified === "boolean";
+    if (
+      !hasEmail &&
+      !hasMobile &&
+      !hasProfilePhoto &&
+      !hasCreatorTier &&
+      !hasLocation &&
+      !hasGallery &&
+      !hasPayment
+    ) {
       return { message: "No verification fields provided", type, id };
     }
 
     if (hasEmail) {
       user.isEmailVerified = !!body.isEmailVerified;
-      user.emailVerifiedAt = body.isEmailVerified ? user.emailVerifiedAt || new Date() : null;
+      user.emailVerifiedAt = body.isEmailVerified
+        ? user.emailVerifiedAt || new Date()
+        : null;
       if (this.firebaseAdminService.isConfigured()) {
         try {
           await this.firebaseAdminService.setEmailVerified(
@@ -902,15 +934,217 @@ export class AdminUserTableController {
     if (hasMobile) {
       user.isMobileVerified = !!body.isMobileVerified;
       user.mobileVerified = !!body.isMobileVerified;
-      user.mobileVerifiedAt = body.isMobileVerified ? user.mobileVerifiedAt || new Date() : null;
+      user.mobileVerifiedAt = body.isMobileVerified
+        ? user.mobileVerifiedAt || new Date()
+        : null;
       user.mobileVerificationDate = body.isMobileVerified
         ? user.mobileVerificationDate || new Date()
         : null;
       user.mobileVerificationMethod = body.isMobileVerified ? "Manual" : "";
       user.mobileVerifiedBy = body.isMobileVerified ? "Admin" : "";
     }
+    if (hasLocation) {
+      user.locationVerified = !!body.locationVerified;
+      user.locationVerifiedAt = body.locationVerified
+        ? user.locationVerifiedAt || new Date()
+        : null;
+    }
+    if (hasPayment) {
+      user.paymentVerified = !!body.paymentVerified;
+      user.paymentVerifiedAt = body.paymentVerified
+        ? user.paymentVerifiedAt || new Date()
+        : null;
+    }
 
     const saved = await user.save();
+
+    const userType =
+      normalizedType === "brand"
+        ? "Brand"
+        : normalizedType === "photographer"
+          ? "Photographer"
+          : "Influencer";
+    const resolveFlags = async (flagCodes: string[], note: string) => {
+      await this.flagModel.updateMany(
+        {
+          userId: String(id),
+          userType,
+          status: "Open",
+          flagCode: { $in: flagCodes },
+        },
+        {
+          $set: {
+            status: "Resolved",
+            reviewedBy: "Admin",
+            reviewedAt: new Date(),
+            reviewNotes: note,
+          },
+          $push: {
+            auditLog: {
+              action: "resolved",
+              actorRole: "admin",
+              note,
+              actedAt: new Date(),
+            },
+          },
+        },
+      );
+    };
+    const openFlag = async (
+      flagCode: string,
+      category: string,
+      severity: "Low" | "Medium" | "High",
+      message: string,
+      note: string,
+    ) => {
+      await this.flagModel.updateOne(
+        {
+          userId: String(id),
+          userType,
+          flagCode,
+          status: "Open",
+        },
+        {
+          $setOnInsert: {
+            createdAt: new Date(),
+            auditLog: [
+              {
+                action: "created",
+                actorRole: "admin",
+                note,
+                actedAt: new Date(),
+              },
+            ],
+          },
+          $set: {
+            category,
+            severity,
+            message,
+            createdBy: "ADMIN",
+            reviewedBy: "Admin",
+            reviewedAt: new Date(),
+            reviewNotes: note,
+          },
+        },
+        { upsert: true },
+      );
+    };
+
+    if (hasProfilePhoto) {
+      const profilePhotoFlagCodes = [
+        "PROFILE_PHOTO_PENDING_REVIEW",
+        "PROFILE_PHOTO_MISSING",
+        "PROFILE_PHOTO_SCREENSHOT",
+        "PROFILE_PHOTO_CELEBRITY",
+        "PROFILE_PHOTO_GROUP",
+        "PROFILE_PHOTO_BLURRY",
+        "PROFILE_PHOTO_LOGO",
+        "PROFILE_PHOTO_LOW_QUALITY",
+        "FACE_NOT_VISIBLE",
+      ];
+
+      if (body.profilePhotoVerified) {
+        await resolveFlags(
+          profilePhotoFlagCodes,
+          "Profile photo verified by admin.",
+        );
+      } else {
+        await openFlag(
+          "PROFILE_PHOTO_BLURRY",
+          "Identity",
+          "High",
+          "Profile photo does not match TrendStarz guidelines. Please replace screenshots, blurry images, sunglasses/covered-face photos, group photos, logos, or any image where your face is not clearly visible.",
+          "Profile photo marked unverified by admin.",
+        );
+      }
+    }
+    if (hasCreatorTier) {
+      const tierFlagCodes = [
+        "TIER_MISMATCH",
+        "FOLLOWER_COUNT_MISMATCH",
+        "SOCIAL_LINK_MISMATCH",
+        "SOCIAL_LINK_BROKEN",
+        "SOCIAL_LINK_DUPLICATE",
+      ];
+      if (body.creatorTierVerified) {
+        await resolveFlags(
+          tierFlagCodes,
+          "Creator tier/social profile verified by admin.",
+        );
+      } else {
+        await openFlag(
+          "TIER_MISMATCH",
+          "Social Media",
+          "High",
+          "Social profile and creator tier need verification. Please update your social media username/handle and select the correct tier range for your followers.",
+          "Social profile and creator tier marked unverified by admin.",
+        );
+      }
+    }
+    if (hasLocation) {
+      const locationFlagCodes = [
+        "LOCATION_MISSING",
+        "LOCATION_MISMATCH",
+        "INTERNATIONAL_LOCATION",
+      ];
+      if (body.locationVerified) {
+        await resolveFlags(locationFlagCodes, "Location verified by admin.");
+      } else {
+        await openFlag(
+          "LOCATION_MISMATCH",
+          "Location",
+          "Medium",
+          "Location details could not be verified. Please update your city, district, and state.",
+          "Location marked unverified by admin.",
+        );
+      }
+    }
+    if (hasGallery) {
+      const galleryFlagCodes = [
+        "PORTFOLIO_MISSING",
+        "PORTFOLIO_SCREENSHOT",
+        "PORTFOLIO_LOW_QUALITY",
+        "PORTFOLIO_DUPLICATE",
+        "PORTFOLIO_WATERMARK",
+      ];
+      if (body.galleryImagesVerified) {
+        await resolveFlags(
+          galleryFlagCodes,
+          "Gallery images verified by admin.",
+        );
+      } else {
+        await openFlag(
+          "PORTFOLIO_LOW_QUALITY",
+          "Portfolio",
+          "Medium",
+          "Gallery images do not match TrendStarz guidelines. Please replace screenshots, duplicate, watermarked, or low-quality images.",
+          "Gallery images marked unverified by admin.",
+        );
+      }
+    }
+    if (hasPayment) {
+      const paymentFlagCodes = [
+        "PAYMENT_MISSING",
+        "PAYMENT_PENDING",
+        "PAYMENT_FAILED",
+        "PAN_MISSING",
+      ];
+      if (body.paymentVerified) {
+        await resolveFlags(
+          paymentFlagCodes,
+          "Payment/payout method verified by admin.",
+        );
+      } else {
+        await openFlag(
+          "PAYMENT_MISSING",
+          "Payment",
+          "High",
+          "Payment or payout method is not verified. Please add or correct your payout/payment details.",
+          "Payment/payout method marked unverified by admin.",
+        );
+      }
+    }
+
     return { message: "Contact verification updated", user: saved };
   }
 

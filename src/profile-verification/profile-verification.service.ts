@@ -19,7 +19,10 @@ const TIER_RANGES: Record<string, [number, number]> = {
   "Mega / Celebrity": [100001, Number.MAX_SAFE_INTEGER],
 };
 
-const FLAG_META: Record<string, { category: string; severity: string; message: string }> = {
+const FLAG_META: Record<
+  string,
+  { category: string; severity: string; message: string }
+> = {
   PROFILE_PHOTO_PENDING_REVIEW: {
     category: "Identity",
     severity: "Medium",
@@ -34,6 +37,12 @@ const FLAG_META: Record<string, { category: string; severity: string; message: s
     category: "Identity",
     severity: "High",
     message: "Profile image appears to be a screenshot or social media UI.",
+  },
+  PROFILE_PHOTO_LOW_QUALITY: {
+    category: "Identity",
+    severity: "Medium",
+    message:
+      "Profile photo appears to be low quality or below the recommended size.",
   },
   LOCATION_MISSING: {
     category: "Location",
@@ -141,7 +150,9 @@ const PERSISTENT_REVIEW_FLAG_CODES = new Set<string>([
 ]);
 
 const AUTO_FLAG_CODES = new Set(
-  Object.keys(FLAG_META).filter((code) => !PERSISTENT_REVIEW_FLAG_CODES.has(code)),
+  Object.keys(FLAG_META).filter(
+    (code) => !PERSISTENT_REVIEW_FLAG_CODES.has(code),
+  ),
 );
 
 const PROFILE_PHOTO_VISIBILITY_BLOCK_FLAG_CODES = new Set<string>([
@@ -152,8 +163,17 @@ const PROFILE_PHOTO_VISIBILITY_BLOCK_FLAG_CODES = new Set<string>([
   "PROFILE_PHOTO_GROUP",
   "PROFILE_PHOTO_BLURRY",
   "PROFILE_PHOTO_LOGO",
+  "PROFILE_PHOTO_LOW_QUALITY",
   "FACE_NOT_VISIBLE",
 ]);
+
+const PROFILE_PHOTO_ADMIN_REVIEW_FLAG_CODES = new Set<string>([
+  ...PROFILE_PHOTO_VISIBILITY_BLOCK_FLAG_CODES,
+  "PROFILE_PHOTO_LOW_QUALITY",
+]);
+
+const PROFILE_PHOTO_GUIDELINE_MESSAGE =
+  "Profile photo does not match TrendStarz guidelines. Please replace screenshots, blurry images, sunglasses/covered-face photos, group photos, logos, or any image where your face is not clearly visible.";
 
 @Injectable()
 export class ProfileVerificationService {
@@ -207,7 +227,9 @@ export class ProfileVerificationService {
   }
 
   private isMobileVerified(profile: any): boolean {
-    return profile?.mobileVerified === true || profile?.isMobileVerified === true;
+    return (
+      profile?.mobileVerified === true || profile?.isMobileVerified === true
+    );
   }
 
   private hasText(value: any): boolean {
@@ -215,23 +237,58 @@ export class ProfileVerificationService {
   }
 
   private hasLocation(profile: any): boolean {
-    return this.hasText(profile?.location?.state) || this.hasText(profile?.location?.district);
+    return (
+      this.hasText(profile?.location?.state) ||
+      this.hasText(profile?.location?.district)
+    );
   }
 
   private profileImageUrls(profile: any): string[] {
     const urls: string[] = [];
-    if (this.hasText(profile?.profileImage)) urls.push(String(profile.profileImage));
-    for (const img of profile?.profileImages || profile?.brandLogo || []) {
+    for (const img of this.profileImageItems(profile)) {
       if (this.hasText(img?.url)) urls.push(String(img.url));
+      else if (this.hasText(img)) urls.push(String(img));
+    }
+    return urls;
+  }
+
+  private profileImageItems(profile: any): any[] {
+    const items: any[] = [];
+    if (this.hasText(profile?.profileImage)) {
+      items.push({
+        url: String(profile.profileImage),
+        public_id: profile?.profileImagePublicId,
+      });
+    }
+    for (const img of profile?.profileImages || profile?.brandLogo || []) {
+      items.push(img);
+    }
+    return items;
+  }
+
+  private galleryImageItems(profile: any): any[] {
+    const items: any[] = [];
+    for (const img of profile?.galleryImages || profile?.products || []) {
+      items.push(img);
+    }
+    const profileImages = Array.isArray(profile?.profileImages)
+      ? profile.profileImages
+      : [];
+    if (profileImages.length > 1) items.push(...profileImages.slice(1));
+    return items;
+  }
+
+  private galleryImageUrls(profile: any): string[] {
+    const urls: string[] = [];
+    for (const img of this.galleryImageItems(profile)) {
+      if (this.hasText(img?.url)) urls.push(String(img.url));
+      else if (this.hasText(img)) urls.push(String(img));
     }
     return urls;
   }
 
   private portfolioUrls(profile: any): string[] {
-    const urls: string[] = [];
-    for (const img of profile?.galleryImages || profile?.products || []) {
-      if (this.hasText(img?.url)) urls.push(String(img.url));
-    }
+    const urls: string[] = this.galleryImageUrls(profile);
     if (this.hasText(profile?.portfolio)) urls.push(String(profile.portfolio));
     return urls;
   }
@@ -249,18 +306,24 @@ export class ProfileVerificationService {
   }
 
   private looksWatermarked(url: string): boolean {
-    return /(watermark|wm_|sample|preview|shutterstock|getty|stock)/i.test(url || "");
+    return /(watermark|wm_|sample|preview|shutterstock|getty|stock)/i.test(
+      url || "",
+    );
   }
 
   private hasPayout(profile: any): boolean {
     const payout = profile?.payout || {};
     return (
+      profile?.paymentVerified === true ||
       this.hasText(payout.upiId) ||
       (this.hasText(payout.mobile) && this.hasText(payout.accountHolderName))
     );
   }
 
-  private hasApprovedPayment = async (userId: string, userType: ProfileUserType): Promise<boolean> => {
+  private hasApprovedPayment = async (
+    userId: string,
+    userType: ProfileUserType,
+  ): Promise<boolean> => {
     const count = await this.paymentModel.countDocuments({
       userId: this.objectIdOrString(userId),
       userType,
@@ -276,42 +339,76 @@ export class ProfileVerificationService {
     return "";
   }
 
-  private computeCompletion(profile: any, userType: ProfileUserType): number {
+  private computeCompletion(
+    profile: any,
+    userType: ProfileUserType,
+    flags: any[] = [],
+  ): number {
     let score = 0;
+    const hasOpenFlag = (code: string) =>
+      flags.some((flag) => flag?.status === "Open" && flag?.flagCode === code);
+    const hasOpenProfilePhotoIssue = flags.some((flag) => {
+      const code = String(flag?.flagCode || "");
+      return (
+        flag?.status === "Open" &&
+        PROFILE_PHOTO_VISIBILITY_BLOCK_FLAG_CODES.has(code)
+      );
+    });
     const name = profile?.name || profile?.brandName;
     const basic =
       this.hasText(name) &&
       this.hasText(profile?.email) &&
       (this.hasText(profile?.phoneNumber) || this.hasText(profile?.phone)) &&
       this.profileImageUrls(profile).length > 0;
-    if (basic) score += 20;
+    if (basic) score += 15;
 
     const creatorDetails =
       userType === "Brand"
-        ? (profile?.categories || []).length > 0 || this.hasText(profile?.website)
+        ? (profile?.categories || []).length > 0 ||
+          this.hasText(profile?.website)
         : (profile?.categories || profile?.skills || []).length > 0 ||
           (profile?.creatorTypes || []).length > 0 ||
           this.hasText(profile?.expertiseArea);
-    if (creatorDetails) score += 20;
+    if (creatorDetails) score += 15;
 
     const social = Array.isArray(profile?.socialMedia)
-      ? profile.socialMedia.some((sm: any) => this.hasText(sm?.platform) && this.hasText(sm?.handle))
+      ? profile.socialMedia.some(
+          (sm: any) => this.hasText(sm?.platform) && this.hasText(sm?.handle),
+        )
       : false;
-    if (social) score += 25;
+    if (social) score += 15;
 
     const audience = Array.isArray(profile?.socialMedia)
-      ? profile.socialMedia.some((sm: any) => Number(sm?.followersCount || 0) > 0 || this.hasText(sm?.tier))
+      ? profile.socialMedia.some(
+          (sm: any) =>
+            Number(sm?.followersCount || 0) > 0 || this.hasText(sm?.tier),
+        )
       : false;
-    if (audience) score += 15;
+    if (audience && !hasOpenFlag("TIER_MISMATCH")) score += 10;
 
-    const portfolio = this.portfolioUrls(profile).length > 0 || this.profileImageUrls(profile).length > 1;
-    if (portfolio) score += 15;
+    const portfolio =
+      this.portfolioUrls(profile).length > 0 ||
+      this.profileImageUrls(profile).length > 1;
+    if (portfolio && !hasOpenFlag("PORTFOLIO_MISSING")) score += 10;
 
-    if (this.isEmailVerified(profile) && this.isMobileVerified(profile)) score += 5;
+    if (this.isEmailVerified(profile)) score += 10;
+    if (this.isMobileVerified(profile)) score += 10;
+    if (this.profileImageUrls(profile).length > 0 && !hasOpenProfilePhotoIssue)
+      score += 15;
+    if (
+      !["pending", "not_submitted"].includes(
+        String(profile?.verificationStatus || ""),
+      )
+    )
+      score += 10;
     return Math.max(0, Math.min(100, score));
   }
 
-  private qualityFromFlags(flags: any[]): { score: number; label: string; status: string } {
+  private qualityFromFlags(flags: any[]): {
+    score: number;
+    label: string;
+    status: string;
+  } {
     const penalty = (flags || []).reduce((sum, flag) => {
       if (flag.severity === "High") return sum + 15;
       if (flag.severity === "Medium") return sum + 10;
@@ -346,10 +443,12 @@ export class ProfileVerificationService {
     return { score, label, status };
   }
 
-  private checklist(profile: any, flags: any[]) {
-    const hasFlag = (code: string) => flags.some((flag) => flag.flagCode === code);
+  private checklist(profile: any, flags: any[], userType: ProfileUserType) {
+    const hasFlag = (code: string) =>
+      flags.some((flag) => flag.flagCode === code);
+    const galleryCount = this.galleryImageUrls(profile).length;
     const verificationStatus = String(profile?.verificationStatus || "");
-    return [
+    const items = [
       {
         label: "Email Verified",
         status: this.isEmailVerified(profile) ? "Verified" : "Action Required",
@@ -362,25 +461,54 @@ export class ProfileVerificationService {
         label: "Profile Photo",
         status: hasFlag("PROFILE_PHOTO_PENDING_REVIEW")
           ? "Pending"
-          : [...PROFILE_PHOTO_VISIBILITY_BLOCK_FLAG_CODES].some((code) => hasFlag(code))
-          ? "Action Required"
-          : "Verified",
+          : [...PROFILE_PHOTO_VISIBILITY_BLOCK_FLAG_CODES].some((code) =>
+                hasFlag(code),
+              )
+            ? "Action Required"
+            : "Verified",
       },
       {
-        label: "Social Profile Review Required",
-        status: flags.some((flag) => SOCIAL_ACTION_FLAG_CODES.has(String(flag.flagCode || "")))
-          ? "Action Required"
-          : "Verified",
+        label: "Social Profile & Creator Tier",
+        status:
+          flags.some((flag) =>
+            [
+              "SOCIAL_LINK_MISSING",
+              "SOCIAL_LINK_BROKEN",
+              "SOCIAL_LINK_PRIVATE",
+              "SOCIAL_LINK_MISMATCH",
+              "SOCIAL_LINK_DUPLICATE",
+              "FOLLOWER_COUNT_MISMATCH",
+              "TIER_MISMATCH",
+            ].includes(String(flag.flagCode || "")),
+          )
+            ? "Action Required"
+            : "Verified",
       },
       {
-        label: "Payment Method Missing",
-        status: hasFlag("PAYMENT_MISSING") ? "Action Required" : "Verified",
+        label: "Gallery Images Attached",
+        status:
+          galleryCount > 0 || userType === "Brand"
+            ? "Verified"
+            : "Action Required",
+      },
+      {
+        label: "Payment Method Verified",
+        status:
+          hasFlag("PAYMENT_MISSING") ||
+          hasFlag("PAYMENT_PENDING") ||
+          hasFlag("PAYMENT_FAILED") ||
+          hasFlag("PAN_MISSING")
+            ? "Action Required"
+            : "Verified",
       },
       {
         label: "Admin Review Pending",
-        status: ["pending", "not_submitted"].includes(verificationStatus) ? "Pending" : "Verified",
+        status: ["pending", "not_submitted"].includes(verificationStatus)
+          ? "Pending"
+          : "Verified",
       },
     ];
+    return items;
   }
 
   private verificationChecks(profile: any) {
@@ -388,17 +516,23 @@ export class ProfileVerificationService {
       emailVerified: this.isEmailVerified(profile),
       emailVerifiedAt: profile?.emailVerifiedAt || null,
       mobileVerified: this.isMobileVerified(profile),
-      mobileVerifiedAt: profile?.mobileVerifiedAt || profile?.mobileVerificationDate || null,
+      mobileVerifiedAt:
+        profile?.mobileVerifiedAt || profile?.mobileVerificationDate || null,
       mobileVerificationMethod: profile?.mobileVerificationMethod || "",
       verificationCallCompleted: !!profile?.verificationCallCompleted,
       verificationCallCompletedAt: profile?.verificationCallCompletedAt || null,
-      identityVerified: !!(profile?.identityVerified || profile?.identityConfirmed),
+      identityVerified: !!(
+        profile?.identityVerified || profile?.identityConfirmed
+      ),
       identityVerifiedAt: profile?.identityVerifiedAt || null,
       verifiedByAdmin: profile?.verifiedByAdmin || "",
       locationVerified: !!profile?.locationVerified,
       locationVerifiedAt: profile?.locationVerifiedAt || null,
-      socialVerified: !!(profile?.socialVerified || profile?.socialProfilesReviewed),
-      socialVerifiedAt: profile?.socialVerifiedAt || profile?.socialProfilesReviewedAt || null,
+      socialVerified: !!(
+        profile?.socialVerified || profile?.socialProfilesReviewed
+      ),
+      socialVerifiedAt:
+        profile?.socialVerifiedAt || profile?.socialProfilesReviewedAt || null,
       paymentVerified: !!profile?.paymentVerified,
       paymentVerifiedAt: profile?.paymentVerifiedAt || null,
       panVerified: !!profile?.panVerified,
@@ -432,7 +566,14 @@ export class ProfileVerificationService {
       {
         $setOnInsert: {
           createdAt: new Date(),
-          auditLog: [{ action: "created", actorId: "AUTO", actorRole: "system", actedAt: new Date() }],
+          auditLog: [
+            {
+              action: "created",
+              actorId: "AUTO",
+              actorRole: "system",
+              actedAt: new Date(),
+            },
+          ],
         },
         $set: {
           category: meta.category || "Identity",
@@ -445,7 +586,11 @@ export class ProfileVerificationService {
     );
   }
 
-  private async refreshAutomaticFlags(userId: string, userType: ProfileUserType, profile: any) {
+  private async refreshAutomaticFlags(
+    userId: string,
+    userType: ProfileUserType,
+    profile: any,
+  ) {
     const desired = new Set<string>();
     const add = async (code: string, override?: any) => {
       desired.add(code);
@@ -454,23 +599,40 @@ export class ProfileVerificationService {
 
     const profileImages = this.profileImageUrls(profile);
     if (!profileImages.length) await add("PROFILE_PHOTO_MISSING");
-    if (profileImages.some((url) => this.looksLikeScreenshot(url))) await add("PROFILE_PHOTO_SCREENSHOT");
+    if (profileImages.some((url) => this.looksLikeScreenshot(url)))
+      await add("PROFILE_PHOTO_SCREENSHOT");
+    if (
+      this.profileImageItems(profile).some((item: any) =>
+        this.looksLowQuality(item),
+      )
+    ) {
+      await add("PROFILE_PHOTO_LOW_QUALITY");
+    }
     if (!this.hasLocation(profile)) await add("LOCATION_MISSING");
 
-    const socials = Array.isArray(profile?.socialMedia) ? profile.socialMedia : [];
+    const socials = Array.isArray(profile?.socialMedia)
+      ? profile.socialMedia
+      : [];
     if (!socials.length) {
       await add("SOCIAL_LINK_MISSING");
     } else {
       const platforms = new Set<string>();
       for (const sm of socials) {
-        const platform = String(sm?.platform || "").trim().toLowerCase();
+        const platform = String(sm?.platform || "")
+          .trim()
+          .toLowerCase();
         const handle = String(sm?.handle || "").trim();
-        if (platform && platforms.has(platform)) await add("SOCIAL_LINK_DUPLICATE");
+        if (platform && platforms.has(platform))
+          await add("SOCIAL_LINK_DUPLICATE");
         if (platform) platforms.add(platform);
         if (!platform || !handle) await add("SOCIAL_LINK_BROKEN");
         const followers = Number(sm?.followersCount || 0);
         const expected = followers > 0 ? this.expectedTier(followers) : "";
-        if (expected && this.hasText(sm?.tier) && expected !== String(sm.tier).trim()) {
+        if (
+          expected &&
+          this.hasText(sm?.tier) &&
+          expected !== String(sm.tier).trim()
+        ) {
           await add("TIER_MISMATCH", {
             message: `${sm.platform || "Social profile"} has ${followers} followers, expected ${expected} tier.`,
           });
@@ -485,17 +647,26 @@ export class ProfileVerificationService {
     if (!hasNiche) await add("NICHE_MISSING");
 
     const portfolio = this.portfolioUrls(profile);
-    if (!portfolio.length && userType !== "Brand") await add("PORTFOLIO_MISSING");
-    if (portfolio.some((url) => this.looksLikeScreenshot(url))) await add("PORTFOLIO_SCREENSHOT");
-    if (portfolio.some((url) => this.looksWatermarked(url))) await add("PORTFOLIO_WATERMARK");
-    const allPortfolioItems = [...(profile?.galleryImages || []), ...(profile?.products || [])];
-    if (allPortfolioItems.some((item: any) => this.looksLowQuality(item))) await add("PORTFOLIO_LOW_QUALITY");
+    if (!portfolio.length && userType !== "Brand")
+      await add("PORTFOLIO_MISSING");
+    if (portfolio.some((url) => this.looksLikeScreenshot(url)))
+      await add("PORTFOLIO_SCREENSHOT");
+    if (portfolio.some((url) => this.looksWatermarked(url)))
+      await add("PORTFOLIO_WATERMARK");
+    const allPortfolioItems = this.galleryImageItems(profile);
+    if (allPortfolioItems.some((item: any) => this.looksLowQuality(item)))
+      await add("PORTFOLIO_LOW_QUALITY");
     const normalizedPortfolio = portfolio.map((url) => url.toLowerCase());
-    if (new Set(normalizedPortfolio).size !== normalizedPortfolio.length) await add("PORTFOLIO_DUPLICATE");
+    if (new Set(normalizedPortfolio).size !== normalizedPortfolio.length)
+      await add("PORTFOLIO_DUPLICATE");
 
     if (!this.isEmailVerified(profile)) await add("EMAIL_NOT_VERIFIED");
     if (!this.isMobileVerified(profile)) await add("MOBILE_NOT_VERIFIED");
-    if (!this.hasPayout(profile) && !(await this.hasApprovedPayment(userId, userType))) await add("PAYMENT_MISSING");
+    if (
+      !this.hasPayout(profile) &&
+      !(await this.hasApprovedPayment(userId, userType))
+    )
+      await add("PAYMENT_MISSING");
 
     await this.flagModel.updateMany(
       {
@@ -535,7 +706,7 @@ export class ProfileVerificationService {
       .find({ userId: String(userId), userType, status: "Open" })
       .sort({ severity: 1, createdAt: -1 })
       .lean();
-    const completion = this.computeCompletion(profile, userType);
+    const completion = this.computeCompletion(profile, userType, flags);
     const qualityFlags = flags.filter(
       (flag) => !ADMIN_ONLY_FLAG_CODES.has(String(flag.flagCode || "")),
     );
@@ -569,7 +740,7 @@ export class ProfileVerificationService {
       verificationStatus: status,
       verificationChecks: this.verificationChecks(profile),
       verificationBadges: this.verificationBadges(profile),
-      checklist: this.checklist(profile, flags),
+      checklist: this.checklist(profile, flags, userType),
       actionRequired: visibleActionFlags.map((flag) => ({
         id: flag._id,
         category: flag.category,
@@ -586,14 +757,40 @@ export class ProfileVerificationService {
 
   buildEligibility(profile: any, flags: any[]) {
     const blockers: string[] = [];
-    const hasOpen = (code: string) => flags.some((flag) => flag.flagCode === code && flag.status === "Open");
+    const hasOpen = (code: string) =>
+      flags.some((flag) => flag.flagCode === code && flag.status === "Open");
     if (!this.isEmailVerified(profile)) blockers.push("Email not verified");
     if (!this.isMobileVerified(profile)) blockers.push("Mobile not verified");
-    if ([...PROFILE_PHOTO_VISIBILITY_BLOCK_FLAG_CODES].some((code) => hasOpen(code))) {
+    if (
+      [...PROFILE_PHOTO_VISIBILITY_BLOCK_FLAG_CODES].some((code) =>
+        hasOpen(code),
+      )
+    ) {
       blockers.push("Profile photo must match the guidelines");
     }
-    if (hasOpen("SOCIAL_LINK_BROKEN")) blockers.push("Broken social link");
-    if (hasOpen("PAYMENT_MISSING")) blockers.push("Payment or payout details missing");
+    if (hasOpen("TIER_MISMATCH") || hasOpen("FOLLOWER_COUNT_MISMATCH")) {
+      blockers.push("Creator tier must match social followers");
+    }
+    if (hasOpen("SOCIAL_LINK_BROKEN") || hasOpen("SOCIAL_LINK_MISMATCH"))
+      blockers.push("Broken or mismatched social link");
+    if (
+      hasOpen("LOCATION_MISSING") ||
+      hasOpen("LOCATION_MISMATCH") ||
+      hasOpen("INTERNATIONAL_LOCATION")
+    ) {
+      blockers.push("Location must be verified");
+    }
+    if (
+      hasOpen("PORTFOLIO_MISSING") ||
+      hasOpen("PORTFOLIO_SCREENSHOT") ||
+      hasOpen("PORTFOLIO_LOW_QUALITY") ||
+      hasOpen("PORTFOLIO_DUPLICATE") ||
+      hasOpen("PORTFOLIO_WATERMARK")
+    ) {
+      blockers.push("Gallery images must match the guidelines");
+    }
+    if (hasOpen("PAYMENT_MISSING"))
+      blockers.push("Payment or payout details missing");
     return { eligible: blockers.length === 0, blockers };
   }
 
@@ -601,7 +798,8 @@ export class ProfileVerificationService {
     const dashboard = await this.getDashboard(userId, role);
     if (!dashboard.campaignEligibility.eligible) {
       throw new BadRequestException({
-        message: "Profile verification is required before campaign participation.",
+        message:
+          "Profile verification is required before campaign participation.",
         blockers: dashboard.campaignEligibility.blockers,
       });
     }
@@ -610,7 +808,10 @@ export class ProfileVerificationService {
   async resubmit(userId: string, role: any) {
     const { userType } = await this.loadProfile(userId, role);
     await this.modelForUserType(userType).findByIdAndUpdate(userId, {
-      $set: { adminReviewPending: true, verificationDashboardStatus: "Under Review" },
+      $set: {
+        adminReviewPending: true,
+        verificationDashboardStatus: "Under Review",
+      },
     });
     return this.getDashboard(userId, role);
   }
@@ -626,7 +827,11 @@ export class ProfileVerificationService {
     const page = Math.max(1, Number(query?.page || 1));
     const limit = Math.min(100, Math.max(1, Number(query?.limit || 20)));
     const statusFilter = String(query?.status || "").trim();
-    const userTypes: ProfileUserType[] = ["Influencer", "Brand", "Photographer"];
+    const userTypes: ProfileUserType[] = [
+      "Influencer",
+      "Brand",
+      "Photographer",
+    ];
     const rows: any[] = [];
 
     for (const userType of userTypes) {
@@ -634,14 +839,20 @@ export class ProfileVerificationService {
       const filter: any = { isDeleted: { $ne: true } };
       if (statusFilter && statusFilter !== "all") {
         if (statusFilter === "Pending Review") filter.adminReviewPending = true;
-        else if (statusFilter === "Action Required") filter.verificationDashboardStatus = "Action Required";
+        else if (statusFilter === "Action Required")
+          filter.verificationDashboardStatus = "Action Required";
         else if (statusFilter === "Verified") {
-          filter.verificationDashboardStatus = { $in: ["Verified Creator", "Brand Ready", "Premium Verified"] };
-        } else if (statusFilter === "Rejected") filter.verificationStatus = "rejected";
+          filter.verificationDashboardStatus = {
+            $in: ["Verified Creator", "Brand Ready", "Premium Verified"],
+          };
+        } else if (statusFilter === "Rejected")
+          filter.verificationStatus = "rejected";
       }
       const users = await model
         .find(filter)
-        .select("name brandName email profileCompletion profileQualityScore verificationDashboardStatus verificationStatus adminReviewPending status updatedAt")
+        .select(
+          "name brandName email profileCompletion profileQualityScore verificationDashboardStatus verificationStatus adminReviewPending status updatedAt",
+        )
         .sort({ updatedAt: -1 })
         .lean();
       const ids = users.map((u: any) => String(u._id));
@@ -651,7 +862,9 @@ export class ProfileVerificationService {
             { $group: { _id: "$userId", count: { $sum: 1 } } },
           ])
         : [];
-      const countMap = new Map(counts.map((item: any) => [String(item._id), item.count]));
+      const countMap = new Map(
+        counts.map((item: any) => [String(item._id), item.count]),
+      );
       for (const user of users) {
         rows.push({
           userId: String(user._id),
@@ -669,18 +882,37 @@ export class ProfileVerificationService {
       }
     }
 
-    rows.sort((a, b) => new Date(b.updatedAt || 0).getTime() - new Date(a.updatedAt || 0).getTime());
+    rows.sort(
+      (a, b) =>
+        new Date(b.updatedAt || 0).getTime() -
+        new Date(a.updatedAt || 0).getTime(),
+    );
     const start = (page - 1) * limit;
-    return { items: rows.slice(start, start + limit), total: rows.length, page, limit };
+    return {
+      items: rows.slice(start, start + limit),
+      total: rows.length,
+      page,
+      limit,
+    };
   }
 
   async adminDetail(actor: any, userType: ProfileUserType, userId: string) {
     this.assertAdmin(actor);
-    const role = userType === "Brand" ? "brand" : userType === "Photographer" ? "photographer" : "influencer";
+    const role =
+      userType === "Brand"
+        ? "brand"
+        : userType === "Photographer"
+          ? "photographer"
+          : "influencer";
     return this.getDashboard(userId, role);
   }
 
-  async adminAction(actor: any, userType: ProfileUserType, userId: string, body: any) {
+  async adminAction(
+    actor: any,
+    userType: ProfileUserType,
+    userId: string,
+    body: any,
+  ) {
     this.assertAdmin(actor);
     const action = String(body?.action || "").trim();
     const notes = String(body?.notes || "").trim();
@@ -729,7 +961,12 @@ export class ProfileVerificationService {
       $push: {
         verificationAuditLog: {
           action: auditAction,
-          status: action === "reject" ? "rejected" : action === "request_changes" ? "pending" : "approved",
+          status:
+            action === "reject"
+              ? "rejected"
+              : action === "request_changes"
+                ? "pending"
+                : "approved",
           note: notes,
           actorId: String(actor?.userId || actor?.id || ""),
           actorRole: "admin",
@@ -748,7 +985,9 @@ export class ProfileVerificationService {
         {
           $set: {
             status: "Resolved",
-            reviewedBy: String(actor?.name || actor?.email || actor?.userId || "TrendStarz Team"),
+            reviewedBy: String(
+              actor?.name || actor?.email || actor?.userId || "TrendStarz Team",
+            ),
             reviewedAt: new Date(),
             reviewNotes: notes || "Profile photo approved by admin.",
           },
@@ -767,7 +1006,12 @@ export class ProfileVerificationService {
     return this.adminDetail(actor, userType, userId);
   }
 
-  async updateVerificationChecks(actor: any, userType: ProfileUserType, userId: string, body: any) {
+  async updateVerificationChecks(
+    actor: any,
+    userType: ProfileUserType,
+    userId: string,
+    body: any,
+  ) {
     this.assertAdmin(actor);
     const allowed = [
       "verificationCallCompleted",
@@ -781,7 +1025,9 @@ export class ProfileVerificationService {
     ];
     const set: any = {
       lastReviewedAt: new Date(),
-      reviewedBy: String(actor?.name || actor?.email || actor?.userId || "TrendStarz Team"),
+      reviewedBy: String(
+        actor?.name || actor?.email || actor?.userId || "TrendStarz Team",
+      ),
     };
     for (const key of allowed) {
       if (typeof body?.[key] !== "boolean") continue;
@@ -797,13 +1043,17 @@ export class ProfileVerificationService {
     if (typeof body?.identityVerified === "boolean") {
       set.identityConfirmed = body.identityVerified;
       set.verifiedByAdmin = body.identityVerified
-        ? String(actor?.name || actor?.email || actor?.userId || "TrendStarz Team")
+        ? String(
+            actor?.name || actor?.email || actor?.userId || "TrendStarz Team",
+          )
         : "";
     }
     if (typeof body?.identityConfirmed === "boolean") {
       set.identityVerified = body.identityConfirmed;
       set.verifiedByAdmin = body.identityConfirmed
-        ? String(actor?.name || actor?.email || actor?.userId || "TrendStarz Team")
+        ? String(
+            actor?.name || actor?.email || actor?.userId || "TrendStarz Team",
+          )
         : "";
     }
     if (typeof body?.socialVerified === "boolean") {
@@ -814,11 +1064,87 @@ export class ProfileVerificationService {
       set.socialVerified = body.socialProfilesReviewed;
       set.socialVerifiedAt = body.socialProfilesReviewed ? new Date() : null;
     }
-    await this.modelForUserType(userType).findByIdAndUpdate(userId, { $set: set });
+    await this.modelForUserType(userType).findByIdAndUpdate(userId, {
+      $set: set,
+    });
+
+    if (typeof body?.profilePhotoVerified === "boolean") {
+      const reviewer = String(
+        actor?.name || actor?.email || actor?.userId || "TrendStarz Team",
+      );
+      if (body.profilePhotoVerified) {
+        await this.flagModel.updateMany(
+          {
+            userId: String(userId),
+            userType,
+            status: "Open",
+            flagCode: {
+              $in: Array.from(PROFILE_PHOTO_ADMIN_REVIEW_FLAG_CODES),
+            },
+          },
+          {
+            $set: {
+              status: "Resolved",
+              reviewedBy: reviewer,
+              reviewedAt: new Date(),
+              reviewNotes: "Profile photo verified by admin.",
+            },
+            $push: {
+              auditLog: {
+                action: "resolved",
+                actorId: String(actor?.userId || actor?.id || ""),
+                actorRole: "admin",
+                note: "Profile photo verified by admin.",
+                actedAt: new Date(),
+              },
+            },
+          },
+        );
+      } else {
+        await this.flagModel.updateOne(
+          {
+            userId: String(userId),
+            userType,
+            flagCode: "PROFILE_PHOTO_BLURRY",
+            status: "Open",
+          },
+          {
+            $setOnInsert: {
+              createdAt: new Date(),
+              auditLog: [
+                {
+                  action: "created",
+                  actorId: String(actor?.userId || actor?.id || ""),
+                  actorRole: "admin",
+                  note: "Profile photo marked unverified by admin.",
+                  actedAt: new Date(),
+                },
+              ],
+            },
+            $set: {
+              category: "Identity",
+              severity: "High",
+              message: PROFILE_PHOTO_GUIDELINE_MESSAGE,
+              createdBy: "ADMIN",
+              reviewedBy: reviewer,
+              reviewedAt: new Date(),
+              reviewNotes: "Profile photo marked unverified by admin.",
+            },
+          },
+          { upsert: true },
+        );
+      }
+    }
+
     return this.adminDetail(actor, userType, userId);
   }
 
-  async addFlag(actor: any, userType: ProfileUserType, userId: string, body: any) {
+  async addFlag(
+    actor: any,
+    userType: ProfileUserType,
+    userId: string,
+    body: any,
+  ) {
     this.assertAdmin(actor);
     const flagCode = String(body?.flagCode || "").trim();
     const meta = FLAG_META[flagCode] || {};
@@ -869,7 +1195,9 @@ export class ProfileVerificationService {
       flag.flagCode === "PROFILE_PHOTO_PENDING_REVIEW" &&
       flag.status === "Resolved"
     ) {
-      await this.modelForUserType(flag.userType as ProfileUserType).findByIdAndUpdate(flag.userId, {
+      await this.modelForUserType(
+        flag.userType as ProfileUserType,
+      ).findByIdAndUpdate(flag.userId, {
         $set: {
           adminReviewPending: false,
         },
