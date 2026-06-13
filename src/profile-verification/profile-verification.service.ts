@@ -485,6 +485,15 @@ export class ProfileVerificationService {
             : "Verified",
       },
       {
+        label: "Location",
+        status:
+          hasFlag("LOCATION_MISSING") ||
+          hasFlag("LOCATION_MISMATCH") ||
+          hasFlag("INTERNATIONAL_LOCATION")
+            ? "Action Required"
+            : "Verified",
+      },
+      {
         label: "Gallery Images Attached",
         status:
           galleryCount > 0 || userType === "Brand"

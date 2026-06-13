@@ -1,4 +1,8 @@
-import { Injectable, BadRequestException, NotFoundException } from "@nestjs/common";
+import {
+  Injectable,
+  BadRequestException,
+  NotFoundException,
+} from "@nestjs/common";
 import { InjectModel } from "@nestjs/mongoose";
 import { Model, Types } from "mongoose";
 import { CloudinaryService } from "../cloudinary.service";
@@ -9,11 +13,52 @@ import {
 } from "../utils/profile-selection-limits.util";
 import { normalizeSocialMediaList } from "../utils/social-handle.util";
 
+const PROFILE_PHOTO_VISIBILITY_BLOCK_FLAG_CODES = [
+  "PROFILE_PHOTO_PENDING_REVIEW",
+  "PROFILE_PHOTO_MISSING",
+  "PROFILE_PHOTO_SCREENSHOT",
+  "PROFILE_PHOTO_CELEBRITY",
+  "PROFILE_PHOTO_GROUP",
+  "PROFILE_PHOTO_BLURRY",
+  "PROFILE_PHOTO_LOGO",
+  "PROFILE_PHOTO_LOW_QUALITY",
+  "FACE_NOT_VISIBLE",
+];
+
+const SOCIAL_TIER_VISIBILITY_BLOCK_FLAG_CODES = [
+  "SOCIAL_LINK_BROKEN",
+  "SOCIAL_LINK_PRIVATE",
+  "SOCIAL_LINK_MISMATCH",
+  "SOCIAL_LINK_DUPLICATE",
+  "FOLLOWER_COUNT_MISMATCH",
+  "TIER_MISMATCH",
+];
+
+const LOCATION_VISIBILITY_BLOCK_FLAG_CODES = [
+  "LOCATION_MISMATCH",
+  "INTERNATIONAL_LOCATION",
+];
+
+const GALLERY_VISIBILITY_BLOCK_FLAG_CODES = [
+  "PORTFOLIO_MISSING",
+  "PORTFOLIO_SCREENSHOT",
+  "PORTFOLIO_LOW_QUALITY",
+  "PORTFOLIO_DUPLICATE",
+  "PORTFOLIO_WATERMARK",
+];
+
+const PUBLIC_PROFILE_VISIBILITY_BLOCK_FLAG_CODES = [
+  ...PROFILE_PHOTO_VISIBILITY_BLOCK_FLAG_CODES,
+  ...SOCIAL_TIER_VISIBILITY_BLOCK_FLAG_CODES,
+  ...LOCATION_VISIBILITY_BLOCK_FLAG_CODES,
+];
+
 @Injectable()
 export class PhotographersService {
   constructor(
     @InjectModel("Photographer") private readonly photographerModel: Model<any>,
-    @InjectModel("CampaignInvite") private readonly campaignInviteModel: Model<any>,
+    @InjectModel("CampaignInvite")
+    private readonly campaignInviteModel: Model<any>,
     @InjectModel("ProfileFlag") private readonly profileFlagModel: Model<any>,
     @InjectModel("State") private readonly stateModel: Model<any>,
     @InjectModel("District") private readonly districtModel: Model<any>,
@@ -39,11 +84,15 @@ export class PhotographersService {
           {
             influencerId: { $in: [photographer._id, String(photographer._id)] },
             recipientRole: "photographer",
-            brandId: viewerObjectId ? { $in: [viewerObjectId, String(viewerId)] } : String(viewerId),
+            brandId: viewerObjectId
+              ? { $in: [viewerObjectId, String(viewerId)] }
+              : String(viewerId),
           },
           {
             brandId: { $in: [photographer._id, String(photographer._id)] },
-            influencerId: viewerObjectId ? { $in: [viewerObjectId, String(viewerId)] } : String(viewerId),
+            influencerId: viewerObjectId
+              ? { $in: [viewerObjectId, String(viewerId)] }
+              : String(viewerId),
           },
         ],
       })
@@ -62,7 +111,9 @@ export class PhotographersService {
   }
 
   private normalizeEmail(value: any): string {
-    return String(value ?? "").trim().toLowerCase();
+    return String(value ?? "")
+      .trim()
+      .toLowerCase();
   }
 
   private getPrimaryImageKey(images: any): string {
@@ -76,16 +127,68 @@ export class PhotographersService {
     return !!afterKey && beforeKey !== afterKey;
   }
 
-  private async markProfilePhotoPendingReview(userId: string) {
+  private async hasOpenPublicProfileBlock(userId: any): Promise<boolean> {
+    const row = await this.profileFlagModel
+      .findOne({
+        userId: String(userId),
+        userType: "Photographer",
+        status: "Open",
+        flagCode: { $in: PUBLIC_PROFILE_VISIBILITY_BLOCK_FLAG_CODES },
+      })
+      .select("_id")
+      .lean();
+    return !!row;
+  }
+
+  private async hasOpenGalleryBlock(userId: any): Promise<boolean> {
+    const row = await this.profileFlagModel
+      .findOne({
+        userId: String(userId),
+        userType: "Photographer",
+        status: "Open",
+        flagCode: { $in: GALLERY_VISIBILITY_BLOCK_FLAG_CODES },
+      })
+      .select("_id")
+      .lean();
+    return !!row;
+  }
+
+  private visibleProfileImages(
+    profileImages: any,
+    hideGallery: boolean,
+  ): any[] {
+    const images = Array.isArray(profileImages) ? profileImages : [];
+    return hideGallery ? images.slice(0, 1) : images;
+  }
+
+  private async clearProfilePhotoFlags(userId: string) {
     const now = new Date();
     await this.profileFlagModel.updateMany(
-      { userId: String(userId), userType: "Photographer", flagCode: "PROFILE_PHOTO_PENDING_REVIEW", status: "Open" },
+      {
+        userId: String(userId),
+        userType: "Photographer",
+        status: "Open",
+        flagCode: {
+          $in: [
+            "PROFILE_PHOTO_PENDING_REVIEW",
+            "PROFILE_PHOTO_MISSING",
+            "PROFILE_PHOTO_SCREENSHOT",
+            "PROFILE_PHOTO_CELEBRITY",
+            "PROFILE_PHOTO_GROUP",
+            "PROFILE_PHOTO_BLURRY",
+            "PROFILE_PHOTO_LOGO",
+            "PROFILE_PHOTO_LOW_QUALITY",
+            "FACE_NOT_VISIBLE",
+          ],
+        },
+      },
       {
         $set: {
           status: "Resolved",
           reviewedBy: "AUTO",
           reviewedAt: now,
-          reviewNotes: "Automatically cleared after user uploaded a profile photo with guidelines.",
+          reviewNotes:
+            "Automatically cleared after user uploaded a profile photo with guidelines.",
         },
         $push: {
           auditLog: {
@@ -103,6 +206,44 @@ export class PhotographersService {
         adminReviewPending: false,
       },
     });
+  }
+
+  private async clearGalleryFlags(userId: string) {
+    const now = new Date();
+    await this.profileFlagModel.updateMany(
+      {
+        userId: String(userId),
+        userType: "Photographer",
+        status: "Open",
+        flagCode: {
+          $in: [
+            "PORTFOLIO_MISSING",
+            "PORTFOLIO_SCREENSHOT",
+            "PORTFOLIO_LOW_QUALITY",
+            "PORTFOLIO_DUPLICATE",
+            "PORTFOLIO_WATERMARK",
+          ],
+        },
+      },
+      {
+        $set: {
+          status: "Resolved",
+          reviewedBy: "AUTO",
+          reviewedAt: now,
+          reviewNotes:
+            "Automatically cleared after user uploaded/replaced gallery images.",
+        },
+        $push: {
+          auditLog: {
+            action: "auto_resolved",
+            actorId: String(userId),
+            actorRole: "user",
+            note: "User uploaded/replaced gallery images.",
+            actedAt: now,
+          },
+        },
+      },
+    );
   }
 
   async getProfile(userId: string) {
@@ -124,7 +265,12 @@ export class PhotographersService {
         firstRegisteredAt,
       };
     }
-    const { password: _pw, resetToken: _rt, resetTokenExpires: _rte, ...safe } = doc as any;
+    const {
+      password: _pw,
+      resetToken: _rt,
+      resetTokenExpires: _rte,
+      ...safe
+    } = doc;
     return safe;
   }
 
@@ -155,7 +301,9 @@ export class PhotographersService {
       const stateRaw = data?.location?.state ?? "";
       const districtRaw = data?.location?.district ?? "";
       const stateId = this.isObjectId(stateRaw) ? String(stateRaw) : null;
-      const districtId = this.isObjectId(districtRaw) ? String(districtRaw) : null;
+      const districtId = this.isObjectId(districtRaw)
+        ? String(districtRaw)
+        : null;
 
       const [stateDoc, districtDoc] = await Promise.all([
         stateId ? this.stateModel.findById(stateId).lean() : null,
@@ -163,7 +311,9 @@ export class PhotographersService {
       ]);
 
       update.location = {
-        state: stateDoc ? String((stateDoc as any)?.name || "") : String(stateRaw || ""),
+        state: stateDoc
+          ? String((stateDoc as any)?.name || "")
+          : String(stateRaw || ""),
         district: districtDoc
           ? String((districtDoc as any)?.name || "")
           : String(districtRaw || ""),
@@ -234,11 +384,25 @@ export class PhotographersService {
     if (!updated) throw new NotFoundException("Photographer not found");
     if (
       Object.prototype.hasOwnProperty.call(update, "profileImages") &&
-      this.hasPrimaryProfileImageChanged(current.profileImages, update.profileImages)
+      this.hasPrimaryProfileImageChanged(
+        current.profileImages,
+        update.profileImages,
+      )
     ) {
-      await this.markProfilePhotoPendingReview(userId);
+      await this.clearProfilePhotoFlags(userId);
     }
-    const { password: _pw, resetToken: _rt, resetTokenExpires: _rte, ...safe } = updated as any;
+    if (
+      Array.isArray(update.profileImages) &&
+      update.profileImages.length > 1
+    ) {
+      await this.clearGalleryFlags(userId);
+    }
+    const {
+      password: _pw,
+      resetToken: _rt,
+      resetTokenExpires: _rte,
+      ...safe
+    } = updated as any;
     return safe;
   }
 
@@ -274,21 +438,31 @@ export class PhotographersService {
     }
 
     const hasManualLocationFilter = !!String(query.location || "").trim();
-    const useSmartPriority = !!query.smartLocationPriority && !hasManualLocationFilter;
+    const useSmartPriority =
+      !!query.smartLocationPriority && !hasManualLocationFilter;
     const smartLocationMeta = {
       smartLocationPriorityApplied: useSmartPriority,
       manualLocationFilterApplied: hasManualLocationFilter,
       smartLocationContext: {
         viewerState: this.normalizeLocationValue(query.viewerState) || null,
-        viewerDistrict: this.normalizeLocationValue(query.viewerDistrict) || null,
+        viewerDistrict:
+          this.normalizeLocationValue(query.viewerDistrict) || null,
       },
     };
     if (useSmartPriority) {
       const viewerState = this.normalizeLocationValue(query.viewerState);
       const viewerDistrict = this.normalizeLocationValue(query.viewerDistrict);
       docs = [...docs].sort((a: any, b: any) => {
-        const scoreA = this.getLocationPriorityScore(a, viewerState, viewerDistrict);
-        const scoreB = this.getLocationPriorityScore(b, viewerState, viewerDistrict);
+        const scoreA = this.getLocationPriorityScore(
+          a,
+          viewerState,
+          viewerDistrict,
+        );
+        const scoreB = this.getLocationPriorityScore(
+          b,
+          viewerState,
+          viewerDistrict,
+        );
         if (scoreA !== scoreB) return scoreB - scoreA;
         const followersA = this.extractTopFollowersCount(a);
         const followersB = this.extractTopFollowersCount(b);
@@ -303,7 +477,9 @@ export class PhotographersService {
   }
 
   private normalizeLocationValue(value: unknown): string {
-    return String(value || "").trim().toLowerCase();
+    return String(value || "")
+      .trim()
+      .toLowerCase();
   }
 
   private getLocationPriorityScore(
@@ -314,7 +490,8 @@ export class PhotographersService {
     if (!viewerState) return 0;
     const userState = this.normalizeLocationValue(user?.location?.state);
     const userDistrict = this.normalizeLocationValue(user?.location?.district);
-    if (viewerDistrict && userDistrict && viewerDistrict === userDistrict) return 100;
+    if (viewerDistrict && userDistrict && viewerDistrict === userDistrict)
+      return 100;
     if (userState && viewerState === userState) return 70;
     return 30;
   }
@@ -341,9 +518,12 @@ export class PhotographersService {
       return null;
     }
     const doc: any = rawDoc;
+    if (await this.hasOpenPublicProfileBlock(doc._id)) return null;
+    const hideGallery = await this.hasOpenGalleryBlock(doc._id);
     const allowContact = await this.canViewPhotographerContact(doc, viewerId);
     return {
       ...doc,
+      profileImages: this.visibleProfileImages(doc.profileImages, hideGallery),
       email: allowContact && doc?.isEmailVerified ? doc.email : undefined,
       phoneNumber:
         allowContact && doc?.isMobileVerified ? doc.phoneNumber : undefined,
@@ -353,10 +533,7 @@ export class PhotographersService {
     };
   }
 
-  async getPhotographerByUsername(
-    username: string,
-    viewerId?: string | null,
-  ) {
+  async getPhotographerByUsername(username: string, viewerId?: string | null) {
     if (!username) return null;
     const rawDoc: any = await this.photographerModel
       .findOne({ username, isDeleted: { $ne: true } })
