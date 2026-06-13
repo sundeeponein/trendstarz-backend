@@ -242,6 +242,67 @@ export class UsersService {
     }
   }
 
+  private getImagePublicId(image: any): string {
+    if (!image) return "";
+    if (typeof image === "string") return image.trim();
+    return String(image?.public_id || image?.publicId || "").trim();
+  }
+
+  private uniquePublicIds(values: string[]): string[] {
+    return [
+      ...new Set(
+        values.map((value) => String(value || "").trim()).filter(Boolean),
+      ),
+    ];
+  }
+
+  private prepareSoftDeletedMediaSnapshot(
+    user: any,
+    userType: "Influencer" | "Brand" | "Photographer",
+  ): string[] {
+    const publicIdsToDelete: string[] = [];
+
+    if (userType === "Brand") {
+      const logos = Array.isArray(user?.brandLogo) ? user.brandLogo : [];
+      const primaryLogo = logos[0] || null;
+      publicIdsToDelete.push(
+        ...logos.slice(1).map((img: any) => this.getImagePublicId(img)),
+        ...(Array.isArray(user?.products)
+          ? user.products.map((img: any) => this.getImagePublicId(img))
+          : []),
+        ...(Array.isArray(user?.galleryImages)
+          ? user.galleryImages.map((img: any) => this.getImagePublicId(img))
+          : []),
+      );
+      user.brandLogo = primaryLogo ? [primaryLogo] : [];
+      user.products = [];
+      user.galleryImages = [];
+      return this.uniquePublicIds(publicIdsToDelete);
+    }
+
+    const images = Array.isArray(user?.profileImages) ? user.profileImages : [];
+    const primaryImage = images[0] || null;
+    publicIdsToDelete.push(
+      ...images.slice(1).map((img: any) => this.getImagePublicId(img)),
+      ...(Array.isArray(user?.galleryImages)
+        ? user.galleryImages.map((img: any) => this.getImagePublicId(img))
+        : []),
+    );
+
+    user.profileImages = primaryImage ? [primaryImage] : [];
+    user.galleryImages = [];
+    if (primaryImage && typeof primaryImage === "object") {
+      user.profileImage =
+        user.profileImage || primaryImage.url || primaryImage.secure_url || null;
+      user.profileImagePublicId =
+        user.profileImagePublicId ||
+        primaryImage.public_id ||
+        primaryImage.publicId ||
+        null;
+    }
+    return this.uniquePublicIds(publicIdsToDelete);
+  }
+
   private clearUserMediaFields(user: any) {
     user.profileImage = null;
     user.profileImagePublicId = null;
@@ -1913,13 +1974,18 @@ export class UsersService {
   async deleteUser(id: string) {
     // Try influencer first
     let user: any = await this.influencerModel.findById(id);
+    let userType: "Influencer" | "Brand" | "Photographer" | null = user
+      ? "Influencer"
+      : null;
     if (!user) {
       user = await this.brandModel.findById(id);
+      userType = user ? "Brand" : null;
     }
     if (!user) {
       user = await this.photographerModel.findById(id);
+      userType = user ? "Photographer" : null;
     }
-    if (!user) return { message: "User not found", id };
+    if (!user || !userType) return { message: "User not found", id };
 
     // --- SNAPSHOT LOGIC: Only if user has at least one payment, and only if deleting (soft delete) ---
     const paymentModel =
@@ -1946,19 +2012,17 @@ export class UsersService {
       }
     }
 
-    const publicIds = this.extractMediaPublicIds(user);
+    const publicIds = this.prepareSoftDeletedMediaSnapshot(user, userType);
     await this.removeStoredMedia(publicIds);
 
     // Soft delete
     user.isDeleted = true;
     user.deletedAt = new Date();
     user.status = "deleted";
-    // Remove heavy fields
-    this.clearUserMediaFields(user);
     await user.save();
 
     return {
-      message: "User soft deleted and media cleaned",
+      message: "User soft deleted; profile image retained and gallery/product media cleaned",
       removedImages: publicIds.length,
     };
   }
