@@ -78,37 +78,29 @@ export class PhotographersService {
 
   private async markProfilePhotoPendingReview(userId: string) {
     const now = new Date();
-    await this.profileFlagModel.updateOne(
+    await this.profileFlagModel.updateMany(
       { userId: String(userId), userType: "Photographer", flagCode: "PROFILE_PHOTO_PENDING_REVIEW", status: "Open" },
       {
-        $setOnInsert: {
-          createdAt: now,
-          auditLog: [
-            {
-              action: "created",
-              actorId: String(userId),
-              actorRole: "user",
-              note: "Profile photo changed by user.",
-              actedAt: now,
-            },
-          ],
-        },
         $set: {
-          category: "Identity",
-          severity: "Medium",
-          message: "Profile photo is pending admin review. Please allow 24-48 hours.",
-          createdBy: "AUTO",
-          reviewedBy: "",
-          reviewedAt: null,
-          reviewNotes: "",
+          status: "Resolved",
+          reviewedBy: "AUTO",
+          reviewedAt: now,
+          reviewNotes: "Automatically cleared after user uploaded a profile photo with guidelines.",
+        },
+        $push: {
+          auditLog: {
+            action: "auto_resolved",
+            actorId: String(userId),
+            actorRole: "user",
+            note: "User uploaded/replaced profile photo.",
+            actedAt: now,
+          },
         },
       },
-      { upsert: true },
     );
     await this.photographerModel.findByIdAndUpdate(userId, {
       $set: {
-        adminReviewPending: true,
-        verificationDashboardStatus: "Under Review",
+        adminReviewPending: false,
       },
     });
   }
