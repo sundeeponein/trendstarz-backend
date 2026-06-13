@@ -25,8 +25,16 @@ interface OtpRecord {
   sendHistory: number[];
 }
 
+interface VerifiedOtpRecord {
+  type: string;
+  value: string;
+  expires: number;
+}
+
 const otpStore = new Map<string, OtpRecord>();
+const verifiedOtpStore = new Map<string, VerifiedOtpRecord>();
 const OTP_TTL = 5 * 60 * 1000; // 5 minutes
+const VERIFIED_OTP_TTL = 10 * 60 * 1000; // 10 minutes to complete registration
 const MAX_VERIFY_ATTEMPTS = 5;
 const SEND_MIN_INTERVAL_MS = 30 * 1000; // 30s between sends per value
 const SEND_HOURLY_LIMIT = 5; // max sends per value per rolling hour
@@ -45,6 +53,25 @@ function safeEqualHex(a: string, b: string): boolean {
   } catch {
     return false;
   }
+}
+
+export function consumeOtpVerificationToken(
+  type: string,
+  value: string,
+  token?: string,
+): boolean {
+  if (!token) return false;
+  const stored = verifiedOtpStore.get(token);
+  if (!stored) return false;
+  if (Date.now() > stored.expires) {
+    verifiedOtpStore.delete(token);
+    return false;
+  }
+  const matches =
+    stored.type === String(type || "").trim().toLowerCase() &&
+    stored.value === String(value || "").trim().toLowerCase();
+  verifiedOtpStore.delete(token);
+  return matches;
 }
 
 @Controller("otp")
@@ -144,6 +171,12 @@ export class OtpController {
       return { error: "Invalid or expired OTP" };
     }
     otpStore.delete(key);
-    return { message: "OTP verified successfully" };
+    const verificationToken = randomBytes(24).toString("hex");
+    verifiedOtpStore.set(verificationToken, {
+      type: String(type).trim().toLowerCase(),
+      value: key,
+      expires: Date.now() + VERIFIED_OTP_TTL,
+    });
+    return { message: "OTP verified successfully", verificationToken };
   }
 }

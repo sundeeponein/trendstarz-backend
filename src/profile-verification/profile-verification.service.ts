@@ -183,7 +183,6 @@ export class ProfileVerificationService {
     @InjectModel("Brand") private readonly brandModel: Model<any>,
     @InjectModel("Photographer") private readonly photographerModel: Model<any>,
     @InjectModel("User") private readonly userModel: Model<any>,
-    @InjectModel("Payment") private readonly paymentModel: Model<any>,
   ) {}
 
   private normalizeRole(role: any): ProfileRole {
@@ -320,18 +319,6 @@ export class ProfileVerificationService {
     );
   }
 
-  private hasApprovedPayment = async (
-    userId: string,
-    userType: ProfileUserType,
-  ): Promise<boolean> => {
-    const count = await this.paymentModel.countDocuments({
-      userId: this.objectIdOrString(userId),
-      userType,
-      $or: [{ status: "approved" }, { paymentStatus: "captured" }],
-    });
-    return count > 0;
-  };
-
   private expectedTier(followers: number): string {
     for (const [tier, [min, max]] of Object.entries(TIER_RANGES)) {
       if (followers >= min && followers <= max) return tier;
@@ -354,53 +341,63 @@ export class ProfileVerificationService {
         PROFILE_PHOTO_VISIBILITY_BLOCK_FLAG_CODES.has(code)
       );
     });
+    const hasOpenLocationIssue = ["LOCATION_MISSING", "LOCATION_MISMATCH", "INTERNATIONAL_LOCATION"].some((code) =>
+      hasOpenFlag(code),
+    );
+    const hasOpenSocialIssue = [
+      "SOCIAL_LINK_MISSING",
+      "SOCIAL_LINK_BROKEN",
+      "SOCIAL_LINK_PRIVATE",
+      "SOCIAL_LINK_MISMATCH",
+      "SOCIAL_LINK_DUPLICATE",
+      "FOLLOWER_COUNT_MISMATCH",
+      "TIER_MISMATCH",
+    ].some((code) => hasOpenFlag(code));
+    const hasOpenPortfolioIssue = [
+      "PORTFOLIO_MISSING",
+      "PORTFOLIO_SCREENSHOT",
+      "PORTFOLIO_LOW_QUALITY",
+      "PORTFOLIO_DUPLICATE",
+      "PORTFOLIO_WATERMARK",
+    ].some((code) => hasOpenFlag(code));
+    const hasOpenPaymentIssue = [
+      "PAYMENT_MISSING",
+      "PAYMENT_PENDING",
+      "PAYMENT_FAILED",
+      "PAN_MISSING",
+    ].some((code) => hasOpenFlag(code));
     const name = profile?.name || profile?.brandName;
     const basic =
       this.hasText(name) &&
       this.hasText(profile?.email) &&
-      (this.hasText(profile?.phoneNumber) || this.hasText(profile?.phone)) &&
-      this.profileImageUrls(profile).length > 0;
-    if (basic) score += 15;
-
-    const creatorDetails =
-      userType === "Brand"
-        ? (profile?.categories || []).length > 0 ||
-          this.hasText(profile?.website)
-        : (profile?.categories || profile?.skills || []).length > 0 ||
-          (profile?.creatorTypes || []).length > 0 ||
-          this.hasText(profile?.expertiseArea);
-    if (creatorDetails) score += 15;
+      (this.hasText(profile?.phoneNumber) || this.hasText(profile?.phone));
+    if (basic) score += 25;
 
     const social = Array.isArray(profile?.socialMedia)
       ? profile.socialMedia.some(
           (sm: any) => this.hasText(sm?.platform) && this.hasText(sm?.handle),
         )
       : false;
-    if (social) score += 15;
-
     const audience = Array.isArray(profile?.socialMedia)
       ? profile.socialMedia.some(
           (sm: any) =>
             Number(sm?.followersCount || 0) > 0 || this.hasText(sm?.tier),
         )
       : false;
-    if (audience && !hasOpenFlag("TIER_MISMATCH")) score += 10;
+    if ((social || audience) && !hasOpenSocialIssue) score += 15;
 
     const portfolio =
       this.portfolioUrls(profile).length > 0 ||
       this.profileImageUrls(profile).length > 1;
-    if (portfolio && !hasOpenFlag("PORTFOLIO_MISSING")) score += 10;
+    if (portfolio && !hasOpenPortfolioIssue) score += 5;
 
     if (this.isEmailVerified(profile)) score += 10;
     if (this.isMobileVerified(profile)) score += 10;
     if (this.profileImageUrls(profile).length > 0 && !hasOpenProfilePhotoIssue)
       score += 15;
-    if (
-      !["pending", "not_submitted"].includes(
-        String(profile?.verificationStatus || ""),
-      )
-    )
+    if (this.hasLocation(profile) && !hasOpenLocationIssue)
       score += 10;
+    if (this.hasPayout(profile) && !hasOpenPaymentIssue) score += 10;
     return Math.max(0, Math.min(100, score));
   }
 
@@ -485,6 +482,15 @@ export class ProfileVerificationService {
             : "Verified",
       },
       {
+        label: "Location",
+        status:
+          hasFlag("LOCATION_MISSING") ||
+          hasFlag("LOCATION_MISMATCH") ||
+          hasFlag("INTERNATIONAL_LOCATION")
+            ? "Action Required"
+            : "Verified",
+      },
+      {
         label: "Gallery Images Attached",
         status:
           galleryCount > 0 || userType === "Brand"
@@ -493,8 +499,7 @@ export class ProfileVerificationService {
       },
       {
         label: "Payment Method Verified",
-        status:
-          hasFlag("PAYMENT_MISSING") ||
+        status: hasFlag("PAYMENT_MISSING") ||
           hasFlag("PAYMENT_PENDING") ||
           hasFlag("PAYMENT_FAILED") ||
           hasFlag("PAN_MISSING")
@@ -662,12 +667,6 @@ export class ProfileVerificationService {
 
     if (!this.isEmailVerified(profile)) await add("EMAIL_NOT_VERIFIED");
     if (!this.isMobileVerified(profile)) await add("MOBILE_NOT_VERIFIED");
-    if (
-      !this.hasPayout(profile) &&
-      !(await this.hasApprovedPayment(userId, userType))
-    )
-      await add("PAYMENT_MISSING");
-
     await this.flagModel.updateMany(
       {
         userId: String(userId),
@@ -789,8 +788,12 @@ export class ProfileVerificationService {
     ) {
       blockers.push("Gallery images must match the guidelines");
     }
-    if (hasOpen("PAYMENT_MISSING"))
+    if (
+      !this.hasPayout(profile) ||
+      hasOpen("PAYMENT_MISSING")
+    ) {
       blockers.push("Payment or payout details missing");
+    }
     return { eligible: blockers.length === 0, blockers };
   }
 

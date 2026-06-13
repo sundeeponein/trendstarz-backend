@@ -25,6 +25,7 @@ import {
   normalizeSocialMediaList,
   validateSocialHandle,
 } from "../utils/social-handle.util";
+import { consumeOtpVerificationToken } from "../otp/otp.controller";
 
 type AnyUserDoc = {
   email: string;
@@ -1563,6 +1564,11 @@ export class AuthService {
       : [];
     const normalizedSocialMedia = normalizeSocialMediaList(data?.socialMedia);
     this.validateCreatorSocialMediaRates(normalizedSocialMedia);
+    const mobileOtpVerified = consumeOtpVerificationToken(
+      "phone",
+      normalizedPhone || data.phoneNumber,
+      data?.mobileOtpVerificationToken,
+    );
 
     const signupAttribution = {
       source:
@@ -1581,6 +1587,10 @@ export class AuthService {
       username: normalizedUsername,
       email: normalizedEmail || data.email,
       phoneNumber: normalizedPhone || data.phoneNumber,
+      isMobileVerified: mobileOtpVerified,
+      mobileVerified: mobileOtpVerified,
+      mobileVerifiedAt: mobileOtpVerified ? new Date() : null,
+      mobileVerificationMethod: mobileOtpVerified ? "OTP" : "",
       password: hashedPassword,
       firstRegisteredAt: new Date(),
       location: { state: stateName, district: districtName },
@@ -1634,6 +1644,7 @@ export class AuthService {
       submissionAutoCompleteGraceHours:
         settings?.submissionAutoCompleteGraceHours ?? 48,
       payoutReleaseWaitHours: settings?.payoutReleaseWaitHours ?? 24,
+      otpVerificationEnabled: !!settings?.otpVerificationEnabled,
       // Campaign payment UPI shown to brands on the payment screen
       paymentUpiId: settings?.paymentUpiId || "trendstarzin@kotak",
       showSearchLink: settings?.showSearchLink !== false,

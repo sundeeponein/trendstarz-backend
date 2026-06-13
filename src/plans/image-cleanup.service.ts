@@ -15,6 +15,7 @@ export class ImageCleanupService {
     @InjectModel("Subscription") private readonly subscriptionModel: Model<any>,
     @InjectModel("Influencer") private readonly influencerModel: Model<any>,
     @InjectModel("Brand") private readonly brandModel: Model<any>,
+    @InjectModel("Photographer") private readonly photographerModel: Model<any>,
   ) {}
 
   private parseRetentionDays(rawValue: string | undefined, fallback: number): number {
@@ -102,6 +103,74 @@ export class ImageCleanupService {
         this.logger.warn(`[ImageCleanup] Failed to delete ${publicId}`, err);
       }
     }
+  }
+
+  private getImagePublicId(image: any): string {
+    if (!image) return "";
+    if (typeof image === "string") return image.trim();
+    return String(image?.public_id || image?.publicId || "").trim();
+  }
+
+  private uniquePublicIds(values: string[]): string[] {
+    return [
+      ...new Set(
+        values.map((value) => String(value || "").trim()).filter(Boolean),
+      ),
+    ];
+  }
+
+  private softDeletedMediaToPurge(
+    user: any,
+    userType: "Influencer" | "Brand" | "Photographer",
+  ): { publicIds: string[]; update: any } {
+    if (userType === "Brand") {
+      const logos = Array.isArray(user?.brandLogo) ? user.brandLogo : [];
+      const primaryLogo = logos[0] || null;
+      return {
+        publicIds: this.uniquePublicIds([
+          ...logos.slice(1).map((img: any) => this.getImagePublicId(img)),
+          ...(Array.isArray(user?.products)
+            ? user.products.map((img: any) => this.getImagePublicId(img))
+            : []),
+          ...(Array.isArray(user?.galleryImages)
+            ? user.galleryImages.map((img: any) => this.getImagePublicId(img))
+            : []),
+        ]),
+        update: {
+          brandLogo: primaryLogo ? [primaryLogo] : [],
+          products: [],
+          galleryImages: [],
+          status: "deleted",
+        },
+      };
+    }
+
+    const images = Array.isArray(user?.profileImages) ? user.profileImages : [];
+    const primaryImage = images[0] || null;
+    const update: any = {
+      profileImages: primaryImage ? [primaryImage] : [],
+      galleryImages: [],
+      status: "deleted",
+    };
+    if (primaryImage && typeof primaryImage === "object") {
+      update.profileImage =
+        user.profileImage || primaryImage.url || primaryImage.secure_url || null;
+      update.profileImagePublicId =
+        user.profileImagePublicId ||
+        primaryImage.public_id ||
+        primaryImage.publicId ||
+        null;
+    }
+
+    return {
+      publicIds: this.uniquePublicIds([
+        ...images.slice(1).map((img: any) => this.getImagePublicId(img)),
+        ...(Array.isArray(user?.galleryImages)
+          ? user.galleryImages.map((img: any) => this.getImagePublicId(img))
+          : []),
+      ]),
+      update,
+    };
   }
 
   private clearMediaFields(user: any) {
@@ -209,6 +278,7 @@ export class ImageCleanupService {
     const models = [
       { name: "Influencer", model: this.influencerModel },
       { name: "Brand", model: this.brandModel },
+      { name: "Photographer", model: this.photographerModel },
     ];
 
     for (const entry of models) {
@@ -217,26 +287,21 @@ export class ImageCleanupService {
         .lean()) as any[];
 
       for (const user of users as any[]) {
-        const publicIds = this.extractMediaPublicIds(user);
+        const snapshot = this.softDeletedMediaToPurge(
+          user,
+          entry.name as "Influencer" | "Brand" | "Photographer",
+        );
 
-        if (publicIds.length > 0) {
-          await this.deleteMediaByPublicIds(publicIds);
+        if (snapshot.publicIds.length > 0) {
+          await this.deleteMediaByPublicIds(snapshot.publicIds);
         }
 
         await entry.model.findByIdAndUpdate(user._id, {
-          $set: {
-            profileImage: null,
-            profileImagePublicId: null,
-            profileImages: [],
-            brandLogo: [],
-            products: [],
-            galleryImages: [],
-            status: "deleted",
-          },
+          $set: snapshot.update,
         });
 
         this.logger.log(
-          `[ImageCleanup] Purged ${publicIds.length} media file(s) for soft-deleted ${entry.name} ${user._id}`,
+          `[ImageCleanup] Purged ${snapshot.publicIds.length} gallery/product media file(s) for soft-deleted ${entry.name} ${user._id}`,
         );
       }
     }
