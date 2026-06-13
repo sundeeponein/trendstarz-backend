@@ -720,6 +720,10 @@ export class CampaignInvitesService {
       );
     }
     this.assertVerifiedForCampaignAccess(recipientDoc, "Recipient");
+    await this.profileVerificationService.assertCampaignEligible(
+      recipientId,
+      recipientRole,
+    );
     // Enforce invite limits for brands (admin-manageable)
     const caps = await this.plansService.getUserPlanCapabilities(brandId);
     const capFeatures = Array.isArray(caps?.features) ? caps.features : [];

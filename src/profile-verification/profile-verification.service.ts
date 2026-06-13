@@ -183,7 +183,6 @@ export class ProfileVerificationService {
     @InjectModel("Brand") private readonly brandModel: Model<any>,
     @InjectModel("Photographer") private readonly photographerModel: Model<any>,
     @InjectModel("User") private readonly userModel: Model<any>,
-    @InjectModel("Payment") private readonly paymentModel: Model<any>,
   ) {}
 
   private normalizeRole(role: any): ProfileRole {
@@ -319,18 +318,6 @@ export class ProfileVerificationService {
       (this.hasText(payout.mobile) && this.hasText(payout.accountHolderName))
     );
   }
-
-  private hasApprovedPayment = async (
-    userId: string,
-    userType: ProfileUserType,
-  ): Promise<boolean> => {
-    const count = await this.paymentModel.countDocuments({
-      userId: this.objectIdOrString(userId),
-      userType,
-      $or: [{ status: "approved" }, { paymentStatus: "captured" }],
-    });
-    return count > 0;
-  };
 
   private expectedTier(followers: number): string {
     for (const [tier, [min, max]] of Object.entries(TIER_RANGES)) {
@@ -517,9 +504,7 @@ export class ProfileVerificationService {
           hasFlag("PAYMENT_FAILED") ||
           hasFlag("PAN_MISSING")
             ? "Action Required"
-            : this.hasPayout(profile)
-              ? "Verified"
-              : "Action Required",
+            : "Verified",
       },
       {
         label: "Admin Review Pending",
@@ -682,12 +667,6 @@ export class ProfileVerificationService {
 
     if (!this.isEmailVerified(profile)) await add("EMAIL_NOT_VERIFIED");
     if (!this.isMobileVerified(profile)) await add("MOBILE_NOT_VERIFIED");
-    if (
-      !this.hasPayout(profile) &&
-      !(await this.hasApprovedPayment(userId, userType))
-    )
-      await add("PAYMENT_MISSING");
-
     await this.flagModel.updateMany(
       {
         userId: String(userId),
@@ -809,8 +788,12 @@ export class ProfileVerificationService {
     ) {
       blockers.push("Gallery images must match the guidelines");
     }
-    if (hasOpen("PAYMENT_MISSING"))
+    if (
+      !this.hasPayout(profile) ||
+      hasOpen("PAYMENT_MISSING")
+    ) {
       blockers.push("Payment or payout details missing");
+    }
     return { eligible: blockers.length === 0, blockers };
   }
 

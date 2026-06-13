@@ -84,22 +84,24 @@ export class MonetizationService {
     userId: string;
     userRole: UserRole;
     planId: string;
-    billingCycle: "monthly" | "yearly";
+    billingCycle: "monthly" | "quarterly" | "yearly";
   }) {
     const plan: any = await this.plansService.planModel.findById(input.planId).lean();
     if (!plan) throw new NotFoundException("Plan not found");
 
-    const amount = Number(
+    const premiumDuration =
       input.billingCycle === "yearly"
-        ? plan?.price?.yearly ?? 0
-        : plan?.price?.monthly ?? 0,
-    );
+        ? "1y"
+        : input.billingCycle === "quarterly"
+          ? "3m"
+          : "1m";
+    const amount = Number(plan?.price?.[input.billingCycle] ?? 0);
     if (amount <= 0) throw new BadRequestException("Invalid plan amount");
 
     const amountPaise = Math.round(amount * 100);
     const order = await this.razorpayService.createOrder(amountPaise, {
       userId: input.userId,
-      premiumDuration: input.billingCycle === "yearly" ? "1y" : "1m",
+      premiumDuration,
     });
 
     const payment = await this.paymentModel.create({
@@ -107,9 +109,9 @@ export class MonetizationService {
       userType: input.userRole === "brand" ? "Brand" : input.userRole === "photographer" ? "Photographer" : "Influencer",
       transactionId: `rzp_sub_${Date.now()}`,
       amount: amountPaise,
-      premiumDuration: input.billingCycle === "yearly" ? "1y" : "1m",
+      premiumDuration,
       status: "pending",
-      paymentMethod: "upi",
+      paymentMethod: "razorpay",
       purpose: "subscription",
       orderId: order.orderId,
       paymentStatus: "created",
@@ -343,7 +345,7 @@ export class MonetizationService {
           input.userId,
           normalizedUserType,
           planId,
-          billingCycle === "yearly" ? "1y" : "1m",
+          billingCycle === "yearly" ? "1y" : billingCycle === "quarterly" ? "3m" : "1m",
           "payment",
         );
       }

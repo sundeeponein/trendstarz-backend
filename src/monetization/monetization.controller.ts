@@ -39,7 +39,8 @@ export class MonetizationController {
   @Post("subscriptions/order")
   createSubscriptionOrder(
     @Req() req: any,
-    @Body() body: { planId: string; billingCycle: "monthly" | "yearly" },
+    @Body()
+    body: { planId: string; billingCycle: "monthly" | "quarterly" | "yearly" },
   ) {
     const userId = req.user?.userId;
     const role = this.normalizeUserRole(req.user?.role);

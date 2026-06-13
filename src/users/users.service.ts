@@ -36,6 +36,7 @@ const PROFILE_PHOTO_VISIBILITY_BLOCK_FLAG_CODES = [
 ];
 
 const SOCIAL_TIER_VISIBILITY_BLOCK_FLAG_CODES = [
+  "SOCIAL_LINK_MISSING",
   "SOCIAL_LINK_BROKEN",
   "SOCIAL_LINK_PRIVATE",
   "SOCIAL_LINK_MISMATCH",
@@ -45,6 +46,7 @@ const SOCIAL_TIER_VISIBILITY_BLOCK_FLAG_CODES = [
 ];
 
 const LOCATION_VISIBILITY_BLOCK_FLAG_CODES = [
+  "LOCATION_MISSING",
   "LOCATION_MISMATCH",
   "INTERNATIONAL_LOCATION",
 ];
@@ -691,6 +693,27 @@ export class UsersService {
     return !!row;
   }
 
+  private applyPublicDiscoveryEligibilityFilter(filter: any): void {
+    filter.isEmailVerified = true;
+    filter.isMobileVerified = true;
+    filter.$and = [
+      ...(Array.isArray(filter.$and) ? filter.$and : []),
+      { "profileImages.0": { $exists: true } },
+      { "location.state": { $exists: true, $nin: ["", null] } },
+      {
+        socialMedia: {
+          $elemMatch: {
+            handle: { $exists: true, $nin: ["", null] },
+            $or: [
+              { tier: { $exists: true, $nin: ["", null] } },
+              { followersCount: { $gt: 0 } },
+            ],
+          },
+        },
+      },
+    ];
+  }
+
   private visibleInfluencerProfileImages(
     profileImages: any,
     hideGallery: boolean,
@@ -1257,6 +1280,7 @@ export class UsersService {
 
     const baseFilter: any = { status: "accepted" };
     const allowSocialLinks = await this.canViewerOpenSocialLinks(viewerId);
+    this.applyPublicDiscoveryEligibilityFilter(baseFilter);
     this.applyExcludedIds(
       baseFilter,
       await this.publicProfileBlockedIds("Influencer"),
@@ -1543,6 +1567,7 @@ export class UsersService {
     limit?: number;
   }) {
     const filter: any = { status: "accepted" };
+    this.applyPublicDiscoveryEligibilityFilter(filter);
     this.applyExcludedIds(
       filter,
       await this.publicProfileBlockedIds("Influencer"),

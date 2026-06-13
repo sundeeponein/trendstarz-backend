@@ -26,6 +26,7 @@ const PROFILE_PHOTO_VISIBILITY_BLOCK_FLAG_CODES = [
 ];
 
 const SOCIAL_TIER_VISIBILITY_BLOCK_FLAG_CODES = [
+  "SOCIAL_LINK_MISSING",
   "SOCIAL_LINK_BROKEN",
   "SOCIAL_LINK_PRIVATE",
   "SOCIAL_LINK_MISMATCH",
@@ -35,6 +36,7 @@ const SOCIAL_TIER_VISIBILITY_BLOCK_FLAG_CODES = [
 ];
 
 const LOCATION_VISIBILITY_BLOCK_FLAG_CODES = [
+  "LOCATION_MISSING",
   "LOCATION_MISMATCH",
   "INTERNATIONAL_LOCATION",
 ];
@@ -151,6 +153,27 @@ export class PhotographersService {
       .select("_id")
       .lean();
     return !!row;
+  }
+
+  private applyPublicDiscoveryEligibilityFilter(filter: any): void {
+    filter.isEmailVerified = true;
+    filter.isMobileVerified = true;
+    filter.$and = [
+      ...(Array.isArray(filter.$and) ? filter.$and : []),
+      { "profileImages.0": { $exists: true } },
+      { "location.state": { $exists: true, $nin: ["", null] } },
+      {
+        socialMedia: {
+          $elemMatch: {
+            handle: { $exists: true, $nin: ["", null] },
+            $or: [
+              { tier: { $exists: true, $nin: ["", null] } },
+              { followersCount: { $gt: 0 } },
+            ],
+          },
+        },
+      },
+    ];
   }
 
   private visibleProfileImages(
@@ -416,6 +439,7 @@ export class PhotographersService {
     smartLocationPriority?: boolean;
   }) {
     const filter: any = { status: "accepted", isDeleted: { $ne: true } };
+    this.applyPublicDiscoveryEligibilityFilter(filter);
     if (query.skill) filter.skills = query.skill;
     if (query.location) filter["location.state"] = query.location;
 
