@@ -23,6 +23,13 @@ export class PaymentService {
     };
   }
 
+  private userModelForType(userType: string) {
+    const normalized = String(userType || "").toLowerCase();
+    if (normalized === "brand") return this.brandModel;
+    if (normalized === "photographer") return this.photographerModel;
+    return this.influencerModel;
+  }
+
   /**
    * Get recent payments for a user (all statuses)
    */
@@ -222,14 +229,87 @@ export class PaymentService {
     return { success: true, message: "Payment rejected." };
   }
 
+  async refundPayment(paymentId: string, adminId: string, reason: string) {
+    const payment = await this.paymentModel.findById(paymentId);
+    if (!payment) return { success: false, message: "Payment not found" };
+    if (payment.status !== "approved") {
+      return { success: false, message: "Only approved payments can be refunded" };
+    }
+    if (payment.refundStatus === "processed" || payment.paymentStatus === "refunded") {
+      return { success: false, message: "Payment is already refunded" };
+    }
+
+    const refundedAt = new Date();
+    payment.refundStatus = "processed";
+    payment.paymentStatus = "refunded";
+    payment.refundedBy = adminId as any;
+    payment.refundedAt = refundedAt;
+    payment.refundAmount = Number(payment.amount || 0);
+    payment.refundReason = reason || "Refund marked by admin";
+    payment.approvalNotes = payment.approvalNotes
+      ? `${payment.approvalNotes}\nRefund: ${payment.refundReason}`
+      : `Refund: ${payment.refundReason}`;
+    await payment.save();
+
+    await this.plansService.subscriptionModel.updateMany(
+      {
+        userId: payment.userId,
+        status: "active",
+        source: "payment",
+      },
+      {
+        $set: {
+          status: "cancelled",
+          endDate: refundedAt,
+        },
+      },
+    );
+
+    const userModel = this.userModelForType(payment.userType);
+    await userModel.findByIdAndUpdate(payment.userId, {
+      $set: {
+        isPremium: false,
+        premiumDuration: null,
+        premiumStart: null,
+        premiumEnd: null,
+      },
+    });
+
+    const normalizedUserType = String(payment.userType).toLowerCase();
+    const userRole = normalizedUserType === "brand"
+      ? "brand"
+      : normalizedUserType === "photographer"
+        ? "photographer"
+        : "influencer";
+    this.notificationsService
+      .createForUser({
+        userId: String(payment.userId),
+        userRole,
+        title: "Premium Payment Refunded",
+        body: "Your premium payment was marked as refunded by TrendStarz support.",
+        url: "/payment-history",
+      })
+      .catch(() => {
+        /* non-critical */
+      });
+
+    return { success: true, message: "Payment marked refunded and premium removed." };
+  }
+
   async getPaymentsByStatus(
-    status: "approved" | "rejected" | "pending",
+    status: "approved" | "rejected" | "pending" | "refunded",
     page = 1,
     limit = 50,
   ) {
     const skip = (page - 1) * limit;
+    const statusFilter =
+      status === "refunded"
+        ? { refundStatus: "processed" }
+        : status === "approved"
+          ? { status, refundStatus: { $ne: "processed" }, paymentStatus: { $ne: "refunded" } }
+          : { status };
     const payments = await this.paymentModel
-      .find({ status, ...this.subscriptionPurposeFilter() })
+      .find({ ...statusFilter, ...this.subscriptionPurposeFilter() })
       .sort({ createdAt: -1 })
       .skip(skip)
       .limit(limit)
@@ -239,6 +319,39 @@ export class PaymentService {
       )
       .lean();
     return { success: true, payments };
+  }
+
+  async getAdminSummary() {
+    const rows = await this.paymentModel
+      .find({ ...this.subscriptionPurposeFilter() })
+      .select("amount status refundStatus paymentStatus")
+      .lean();
+
+    const pending = rows
+      .filter((row: any) => row.status === "pending")
+      .reduce((sum: number, row: any) => sum + Number(row.amount || 0), 0);
+    const received = rows
+      .filter((row: any) =>
+        row.status === "approved",
+      )
+      .reduce((sum: number, row: any) => sum + Number(row.amount || 0), 0);
+    const rejected = rows
+      .filter((row: any) => row.status === "rejected")
+      .reduce((sum: number, row: any) => sum + Number(row.amount || 0), 0);
+    const refunded = rows
+      .filter((row: any) => row.refundStatus === "processed" || row.paymentStatus === "refunded")
+      .reduce((sum: number, row: any) => sum + Number(row.amount || 0), 0);
+
+    return {
+      success: true,
+      data: {
+        received,
+        pending,
+        rejected,
+        refunded,
+        netReceived: received - refunded,
+      },
+    };
   }
 
   async getPaymentById(paymentId: string) {
