@@ -902,6 +902,7 @@ export class AdminUserTableController {
     const hasLocation = typeof body?.locationVerified === "boolean";
     const hasGallery = typeof body?.galleryImagesVerified === "boolean";
     const hasPayment = typeof body?.paymentVerified === "boolean";
+    let hasPayoutDetails = false;
     if (
       !hasEmail &&
       !hasMobile &&
@@ -950,8 +951,15 @@ export class AdminUserTableController {
         : null;
     }
     if (hasPayment) {
-      user.paymentVerified = !!body.paymentVerified;
-      user.paymentVerifiedAt = body.paymentVerified
+      const payout = user?.payout || {};
+      hasPayoutDetails = !!(
+        String(payout?.upiId || "").trim() ||
+        String(payout?.mobile || "").trim() ||
+        String(payout?.accountHolderName || "").trim()
+      );
+      const paymentVerified = !!body.paymentVerified && hasPayoutDetails;
+      user.paymentVerified = paymentVerified;
+      user.paymentVerifiedAt = paymentVerified
         ? user.paymentVerifiedAt || new Date()
         : null;
     }
@@ -1062,8 +1070,10 @@ export class AdminUserTableController {
       const tierFlagCodes = [
         "TIER_MISMATCH",
         "FOLLOWER_COUNT_MISMATCH",
+        "SOCIAL_LINK_MISSING",
         "SOCIAL_LINK_MISMATCH",
         "SOCIAL_LINK_BROKEN",
+        "SOCIAL_LINK_PRIVATE",
         "SOCIAL_LINK_DUPLICATE",
       ];
       if (body.creatorTierVerified) {
@@ -1129,7 +1139,7 @@ export class AdminUserTableController {
         "PAYMENT_FAILED",
         "PAN_MISSING",
       ];
-      if (body.paymentVerified) {
+      if (body.paymentVerified && hasPayoutDetails) {
         await resolveFlags(
           paymentFlagCodes,
           "Payment/payout method verified by admin.",

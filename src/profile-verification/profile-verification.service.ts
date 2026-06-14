@@ -313,7 +313,6 @@ export class ProfileVerificationService {
   private hasPayout(profile: any): boolean {
     const payout = profile?.payout || {};
     return (
-      profile?.paymentVerified === true ||
       this.hasText(payout.upiId) ||
       (this.hasText(payout.mobile) && this.hasText(payout.accountHolderName))
     );
@@ -441,8 +440,8 @@ export class ProfileVerificationService {
   }
 
   private checklist(profile: any, flags: any[], userType: ProfileUserType) {
-    const hasFlag = (code: string) =>
-      flags.some((flag) => flag.flagCode === code);
+    const hasOpenFlag = (code: string) =>
+      flags.some((flag) => flag.flagCode === code && flag.status === "Open");
     const galleryCount = this.galleryImageUrls(profile).length;
     const verificationStatus = String(profile?.verificationStatus || "");
     const items = [
@@ -456,10 +455,10 @@ export class ProfileVerificationService {
       },
       {
         label: "Profile Photo",
-        status: hasFlag("PROFILE_PHOTO_PENDING_REVIEW")
+        status: hasOpenFlag("PROFILE_PHOTO_PENDING_REVIEW")
           ? "Pending"
           : [...PROFILE_PHOTO_VISIBILITY_BLOCK_FLAG_CODES].some((code) =>
-                hasFlag(code),
+                hasOpenFlag(code),
               )
             ? "Action Required"
             : "Verified",
@@ -467,44 +466,50 @@ export class ProfileVerificationService {
       {
         label: "Social Profile & Creator Tier",
         status:
-          flags.some((flag) =>
-            [
-              "SOCIAL_LINK_MISSING",
-              "SOCIAL_LINK_BROKEN",
-              "SOCIAL_LINK_PRIVATE",
-              "SOCIAL_LINK_MISMATCH",
-              "SOCIAL_LINK_DUPLICATE",
-              "FOLLOWER_COUNT_MISMATCH",
-              "TIER_MISMATCH",
-            ].includes(String(flag.flagCode || "")),
-          )
+          [
+            "SOCIAL_LINK_MISSING",
+            "SOCIAL_LINK_BROKEN",
+            "SOCIAL_LINK_PRIVATE",
+            "SOCIAL_LINK_MISMATCH",
+            "SOCIAL_LINK_DUPLICATE",
+            "FOLLOWER_COUNT_MISMATCH",
+            "TIER_MISMATCH",
+          ].some((code) => hasOpenFlag(code))
             ? "Action Required"
             : "Verified",
       },
       {
         label: "Location",
         status:
-          hasFlag("LOCATION_MISSING") ||
-          hasFlag("LOCATION_MISMATCH") ||
-          hasFlag("INTERNATIONAL_LOCATION")
+          hasOpenFlag("LOCATION_MISSING") ||
+          hasOpenFlag("LOCATION_MISMATCH") ||
+          hasOpenFlag("INTERNATIONAL_LOCATION")
             ? "Action Required"
             : "Verified",
       },
       {
         label: "Gallery Images Attached",
         status:
-          galleryCount > 0 || userType === "Brand"
-            ? "Verified"
-            : "Action Required",
+          hasOpenFlag("PORTFOLIO_MISSING") ||
+          hasOpenFlag("PORTFOLIO_SCREENSHOT") ||
+          hasOpenFlag("PORTFOLIO_LOW_QUALITY") ||
+          hasOpenFlag("PORTFOLIO_DUPLICATE") ||
+          hasOpenFlag("PORTFOLIO_WATERMARK")
+            ? "Action Required"
+            : galleryCount > 0 || userType === "Brand"
+              ? "Verified"
+              : "Action Required",
       },
       {
         label: "Payment Method Verified",
-        status: hasFlag("PAYMENT_MISSING") ||
-          hasFlag("PAYMENT_PENDING") ||
-          hasFlag("PAYMENT_FAILED") ||
-          hasFlag("PAN_MISSING")
+        status: hasOpenFlag("PAYMENT_MISSING") ||
+          hasOpenFlag("PAYMENT_PENDING") ||
+          hasOpenFlag("PAYMENT_FAILED") ||
+          hasOpenFlag("PAN_MISSING")
             ? "Action Required"
-            : "Verified",
+            : this.hasPayout(profile)
+              ? "Verified"
+              : "Not Added",
       },
       {
         label: "Admin Review Pending",
@@ -538,7 +543,7 @@ export class ProfileVerificationService {
       ),
       socialVerifiedAt:
         profile?.socialVerifiedAt || profile?.socialProfilesReviewedAt || null,
-      paymentVerified: !!profile?.paymentVerified,
+      paymentVerified: this.hasPayout(profile) && profile?.paymentVerified !== false,
       paymentVerifiedAt: profile?.paymentVerifiedAt || null,
       panVerified: !!profile?.panVerified,
       panVerifiedAt: profile?.panVerifiedAt || null,
@@ -766,27 +771,6 @@ export class ProfileVerificationService {
       )
     ) {
       blockers.push("Profile photo must match the guidelines");
-    }
-    if (hasOpen("TIER_MISMATCH") || hasOpen("FOLLOWER_COUNT_MISMATCH")) {
-      blockers.push("Creator tier must match social followers");
-    }
-    if (hasOpen("SOCIAL_LINK_BROKEN") || hasOpen("SOCIAL_LINK_MISMATCH"))
-      blockers.push("Broken or mismatched social link");
-    if (
-      hasOpen("LOCATION_MISSING") ||
-      hasOpen("LOCATION_MISMATCH") ||
-      hasOpen("INTERNATIONAL_LOCATION")
-    ) {
-      blockers.push("Location must be verified");
-    }
-    if (
-      hasOpen("PORTFOLIO_MISSING") ||
-      hasOpen("PORTFOLIO_SCREENSHOT") ||
-      hasOpen("PORTFOLIO_LOW_QUALITY") ||
-      hasOpen("PORTFOLIO_DUPLICATE") ||
-      hasOpen("PORTFOLIO_WATERMARK")
-    ) {
-      blockers.push("Gallery images must match the guidelines");
     }
     if (
       !this.hasPayout(profile) ||
