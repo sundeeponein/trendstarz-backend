@@ -52,9 +52,13 @@ export const PaymentSchema = new Schema(
       enum: ['pending', 'approved', 'rejected'],
       default: 'pending',
     },
-    paymentMethod: { type: String, enum: ['upi', 'qr'], default: 'upi' },
+    paymentMethod: { type: String, enum: ['upi', 'qr', 'razorpay'], default: 'upi' },
     approvedBy: { type: Schema.Types.ObjectId, ref: 'Admin' },
     approvalNotes: { type: String },
+    refundedBy: { type: Schema.Types.ObjectId, ref: 'Admin' },
+    refundedAt: { type: Date },
+    refundAmount: { type: Number, default: 0 },
+    refundReason: { type: String },
     createdAt: { type: Date, default: Date.now },
     approvedAt: { type: Date },
   },
@@ -76,7 +80,7 @@ export interface Payment extends Document {
   gatewaySignature?: string;
   gatewayVerifiedAt?: Date;
   status: 'pending' | 'approved' | 'rejected';
-  paymentMethod: 'upi' | 'qr';
+  paymentMethod: 'upi' | 'qr' | 'razorpay';
   feeBreakdown?: {
     baseAmount: number;
     commissionPercent: number;
@@ -88,6 +92,10 @@ export interface Payment extends Document {
   metadata?: Record<string, any>;
   approvedBy?: string;
   approvalNotes?: string;
+  refundedBy?: string;
+  refundedAt?: Date;
+  refundAmount?: number;
+  refundReason?: string;
   createdAt: Date;
   approvedAt?: Date;
 }

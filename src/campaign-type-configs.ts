@@ -70,33 +70,39 @@ export function normalizeCampaignAccessModeConfigs(
       sortOrder: 20,
     },
   ];
-  const fallback = Array.isArray(fallbackList) && fallbackList.length ? fallbackList : defaults;
+  const fallback =
+    Array.isArray(fallbackList) && fallbackList.length
+      ? fallbackList
+      : defaults;
   const source = Array.isArray(list) && list.length ? list : fallback;
   const out: CampaignAccessModeConfigItem[] = [];
   const seen = new Set<string>();
 
   for (const raw of source) {
     if (!raw || typeof raw !== "object") continue;
-    const key = normalizeCampaignAccessMode((raw as any).key || (raw as any).value);
+    const key = normalizeCampaignAccessMode(raw.key || raw.value);
     if (seen.has(key)) continue;
     seen.add(key);
-    const fallbackItem = (fallback as any[]).find(
-      (item: any) => normalizeCampaignAccessMode(item?.key || item?.value) === key,
+    const fallbackItem = fallback.find(
+      (item: any) =>
+        normalizeCampaignAccessMode(item?.key || item?.value) === key,
     );
 
     out.push({
       key,
-      label: String((raw as any).label || fallbackItem?.label || key).trim(),
-      enabled: (raw as any).enabled !== false,
-      premiumOnly: (raw as any).premiumOnly === true,
-      sortOrder: Number.isFinite(Number((raw as any).sortOrder))
-        ? Number((raw as any).sortOrder)
+      label: String(raw.label || fallbackItem?.label || key).trim(),
+      enabled: raw.enabled !== false,
+      premiumOnly: raw.premiumOnly === true,
+      sortOrder: Number.isFinite(Number(raw.sortOrder))
+        ? Number(raw.sortOrder)
         : Number(fallbackItem?.sortOrder || out.length * 10 + 10),
     });
   }
 
-  for (const fallbackItem of fallback as any[]) {
-    const key = normalizeCampaignAccessMode(fallbackItem?.key || fallbackItem?.value);
+  for (const fallbackItem of fallback) {
+    const key = normalizeCampaignAccessMode(
+      fallbackItem?.key || fallbackItem?.value,
+    );
     if (seen.has(key)) continue;
     seen.add(key);
     out.push({
@@ -136,10 +142,10 @@ export function normalizeCampaignTypeConfigs(
   for (const raw of source) {
     if (!raw || typeof raw !== "object") continue;
     const ownerType: CampaignTypeOwnerType =
-      String((raw as any).ownerType || "brand") === "photographer"
+      String(raw.ownerType || "brand") === "photographer"
         ? "photographer"
         : "brand";
-    const key = String((raw as any).key || "").trim();
+    const key = String(raw.key || "").trim();
     if (!key || !CAMPAIGN_TYPE_ALLOWED_KEYS[ownerType].has(key)) continue;
 
     const dedupeKey = `${ownerType}:${key}`;
@@ -149,11 +155,11 @@ export function normalizeCampaignTypeConfigs(
     out.push({
       key,
       ownerType,
-      label: String((raw as any).label || key).trim(),
-      enabled: (raw as any).enabled !== false,
-      premiumOnly: (raw as any).premiumOnly === true,
-      sortOrder: Number.isFinite(Number((raw as any).sortOrder))
-        ? Number((raw as any).sortOrder)
+      label: String(raw.label || key).trim(),
+      enabled: raw.enabled !== false,
+      premiumOnly: raw.premiumOnly === true,
+      sortOrder: Number.isFinite(Number(raw.sortOrder))
+        ? Number(raw.sortOrder)
         : out.length * 10 + 10,
     });
   }
@@ -161,10 +167,10 @@ export function normalizeCampaignTypeConfigs(
   for (const raw of fallback) {
     if (!raw || typeof raw !== "object") continue;
     const ownerType: CampaignTypeOwnerType =
-      String((raw as any).ownerType || "brand") === "photographer"
+      String(raw.ownerType || "brand") === "photographer"
         ? "photographer"
         : "brand";
-    const key = String((raw as any).key || "").trim();
+    const key = String(raw.key || "").trim();
     if (!key || !CAMPAIGN_TYPE_ALLOWED_KEYS[ownerType].has(key)) continue;
 
     const dedupeKey = `${ownerType}:${key}`;
@@ -174,11 +180,11 @@ export function normalizeCampaignTypeConfigs(
     out.push({
       key,
       ownerType,
-      label: String((raw as any).label || key).trim(),
-      enabled: (raw as any).enabled !== false,
-      premiumOnly: (raw as any).premiumOnly === true,
-      sortOrder: Number.isFinite(Number((raw as any).sortOrder))
-        ? Number((raw as any).sortOrder)
+      label: String(raw.label || key).trim(),
+      enabled: raw.enabled !== false,
+      premiumOnly: raw.premiumOnly === true,
+      sortOrder: Number.isFinite(Number(raw.sortOrder))
+        ? Number(raw.sortOrder)
         : out.length * 10 + 10,
     });
   }

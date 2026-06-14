@@ -957,6 +957,9 @@ export class PaymentsPayoutsService {
     const rows = await this.transactionModel.find({}).lean();
     const verified = rows.filter((r: any) => r.collectionStatus === "verified");
     const paid = rows.filter((r: any) => r.payoutStatus === "paid");
+    const refundedRows = rows.filter(
+      (r: any) => r.resolveOutcome === "refund_to_brand",
+    );
     const pending = rows.filter((r: any) =>
       ["pending", "processing"].includes(String(r.payoutStatus || "")),
     );
@@ -977,6 +980,10 @@ export class PaymentsPayoutsService {
       (sum: number, r: any) => sum + Number(r.recipientPayout || 0),
       0,
     );
+    const refunded = refundedRows.reduce(
+      (sum: number, r: any) => sum + Number(r.payerTotal || 0),
+      0,
+    );
 
     return {
       success: true,
@@ -985,7 +992,8 @@ export class PaymentsPayoutsService {
         fees,
         pendingPayouts,
         paidOut,
-        netBalance: collected - paidOut - pendingPayouts,
+        refunded,
+        netBalance: collected - paidOut - pendingPayouts - refunded,
       },
     };
   }
