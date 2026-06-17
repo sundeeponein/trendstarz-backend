@@ -869,9 +869,12 @@ export class AdminUserTableController {
       isEmailVerified?: boolean;
       isMobileVerified?: boolean;
       profilePhotoVerified?: boolean;
+      photoPolicy?: boolean;
+      photoFlagCode?: string;
       creatorTierVerified?: boolean;
       locationVerified?: boolean;
       galleryImagesVerified?: boolean;
+      galleryFlagCode?: string;
       paymentVerified?: boolean;
     },
   ) {
@@ -898,6 +901,7 @@ export class AdminUserTableController {
     const hasEmail = typeof body?.isEmailVerified === "boolean";
     const hasMobile = typeof body?.isMobileVerified === "boolean";
     const hasProfilePhoto = typeof body?.profilePhotoVerified === "boolean";
+    const hasPhotoPolicy = typeof body?.photoPolicy === "boolean";
     const hasCreatorTier = typeof body?.creatorTierVerified === "boolean";
     const hasLocation = typeof body?.locationVerified === "boolean";
     const hasGallery = typeof body?.galleryImagesVerified === "boolean";
@@ -907,6 +911,7 @@ export class AdminUserTableController {
       !hasEmail &&
       !hasMobile &&
       !hasProfilePhoto &&
+      !hasPhotoPolicy &&
       !hasCreatorTier &&
       !hasLocation &&
       !hasGallery &&
@@ -1040,6 +1045,8 @@ export class AdminUserTableController {
 
     if (hasProfilePhoto) {
       const profilePhotoFlagCodes = [
+        "PROFILE_PHOTO_QUALITY",
+        "PROFILE_PHOTO_POLICY",
         "PROFILE_PHOTO_PENDING_REVIEW",
         "PROFILE_PHOTO_MISSING",
         "PROFILE_PHOTO_SCREENSHOT",
@@ -1049,20 +1056,117 @@ export class AdminUserTableController {
         "PROFILE_PHOTO_LOGO",
         "PROFILE_PHOTO_LOW_QUALITY",
         "FACE_NOT_VISIBLE",
+        "PROFILE_PHOTO_CONTACT_INFO",
+        "PROFILE_PHOTO_QR_CODE",
       ];
 
+      const PHOTO_QUALITY_CODES = new Set([
+        "PROFILE_PHOTO_QUALITY", "PROFILE_PHOTO_BLURRY", "PROFILE_PHOTO_GROUP",
+        "PROFILE_PHOTO_LOGO", "PROFILE_PHOTO_LOW_QUALITY", "FACE_NOT_VISIBLE",
+        "PROFILE_PHOTO_SCREENSHOT",
+      ]);
+      const PHOTO_POLICY_CODES = new Set([
+        "PROFILE_PHOTO_POLICY", "PROFILE_PHOTO_CELEBRITY",
+        "PROFILE_PHOTO_CONTACT_INFO", "PROFILE_PHOTO_QR_CODE",
+      ]);
+      const PHOTO_FLAG_MESSAGES: Record<string, string> = {
+        "PROFILE_PHOTO_QUALITY":      "Profile photo quality needs improvement. Please upload a clear, high-quality photo.",
+        "PROFILE_PHOTO_BLURRY":       "Profile photo quality needs improvement. Please upload a clear, high-quality photo.",
+        "PROFILE_PHOTO_LOW_QUALITY":  "Profile photo quality needs improvement. Please upload a clear, high-quality photo.",
+        "FACE_NOT_VISIBLE":           "Your profile photo must clearly show your face and contain only one person.",
+        "PROFILE_PHOTO_GROUP":        "Your profile photo must clearly show your face and contain only one person.",
+        "PROFILE_PHOTO_SCREENSHOT":   "Screenshots are not allowed. Please upload an original photo.",
+        "PROFILE_PHOTO_CELEBRITY":    "Please upload your own photo. Celebrity photos, logos, and third-party images are not allowed.",
+        "PROFILE_PHOTO_LOGO":         "Please upload your own photo. Celebrity photos, logos, and third-party images are not allowed.",
+        "PROFILE_PHOTO_POLICY":       "Your photo contains content that violates platform guidelines.",
+        "PROFILE_PHOTO_CONTACT_INFO": "Your photo contains content that violates platform guidelines.",
+        "PROFILE_PHOTO_QR_CODE":      "Your photo contains content that violates platform guidelines.",
+      };
+      const photoFlagCode = String(body.photoFlagCode || "");
       if (body.profilePhotoVerified) {
         await resolveFlags(
           profilePhotoFlagCodes,
           "Profile photo verified by admin.",
         );
-      } else {
+      } else if (PHOTO_POLICY_CODES.has(photoFlagCode)) {
+        // Close all other photo flags first, then open the specific one
+        await resolveFlags(
+          profilePhotoFlagCodes.filter((c) => c !== photoFlagCode),
+          `Superseded by policy flag (${photoFlagCode}).`,
+        );
         await openFlag(
-          "PROFILE_PHOTO_BLURRY",
+          photoFlagCode,
           "Identity",
           "High",
-          "Profile photo does not match TrendStarz guidelines. Please replace screenshots, blurry images, sunglasses/covered-face photos, group photos, logos, or any image where your face is not clearly visible.",
-          "Profile photo marked unverified by admin.",
+          PHOTO_FLAG_MESSAGES[photoFlagCode] || PHOTO_FLAG_MESSAGES["PROFILE_PHOTO_POLICY"],
+          `Photo policy violation (${photoFlagCode}) flagged by admin.`,
+        );
+      } else if (body.photoPolicy) {
+        // Close all other photo flags first, then open generic policy
+        await resolveFlags(
+          profilePhotoFlagCodes.filter((c) => c !== "PROFILE_PHOTO_POLICY"),
+          "Superseded by policy flag (PROFILE_PHOTO_POLICY).",
+        );
+        await openFlag(
+          "PROFILE_PHOTO_POLICY",
+          "Identity",
+          "High",
+          PHOTO_FLAG_MESSAGES["PROFILE_PHOTO_POLICY"],
+          "Photo policy violation flagged by admin.",
+        );
+      } else {
+        // Quality flag — close all other photo flags first, then open the specific one
+        const qualityCode = PHOTO_QUALITY_CODES.has(photoFlagCode) ? photoFlagCode : "PROFILE_PHOTO_QUALITY";
+        await resolveFlags(
+          profilePhotoFlagCodes.filter((c) => c !== qualityCode),
+          `Superseded by quality flag (${qualityCode}).`,
+        );
+        await openFlag(
+          qualityCode,
+          "Identity",
+          "Medium",
+          PHOTO_FLAG_MESSAGES[qualityCode] || PHOTO_FLAG_MESSAGES["PROFILE_PHOTO_QUALITY"],
+          `Profile photo quality issue (${qualityCode}) flagged by admin.`,
+        );
+      }
+    }
+    if (!hasProfilePhoto && hasPhotoPolicy) {
+      // Standalone policy toggle (when photo quality was already approved separately)
+      const allPhotoFlagCodes = [
+        "PROFILE_PHOTO_QUALITY", "PROFILE_PHOTO_POLICY", "PROFILE_PHOTO_PENDING_REVIEW",
+        "PROFILE_PHOTO_MISSING", "PROFILE_PHOTO_SCREENSHOT", "PROFILE_PHOTO_CELEBRITY",
+        "PROFILE_PHOTO_GROUP", "PROFILE_PHOTO_BLURRY", "PROFILE_PHOTO_LOGO",
+        "PROFILE_PHOTO_LOW_QUALITY", "FACE_NOT_VISIBLE",
+        "PROFILE_PHOTO_CONTACT_INFO", "PROFILE_PHOTO_QR_CODE",
+      ];
+      const safetyPolicyCodes = new Set([
+        "PROFILE_PHOTO_POLICY", "PROFILE_PHOTO_CELEBRITY",
+        "PROFILE_PHOTO_CONTACT_INFO", "PROFILE_PHOTO_QR_CODE",
+      ]);
+      const standalonePolicyMessages: Record<string, string> = {
+        "PROFILE_PHOTO_POLICY":       "Your photo contains content that violates platform guidelines.",
+        "PROFILE_PHOTO_CELEBRITY":    "Your photo contains content that violates platform guidelines.",
+        "PROFILE_PHOTO_CONTACT_INFO": "Your photo contains content that violates platform guidelines.",
+        "PROFILE_PHOTO_QR_CODE":      "Your photo contains content that violates platform guidelines.",
+      };
+      if (!body.photoPolicy) {
+        await resolveFlags(
+          Array.from(safetyPolicyCodes),
+          "Photo policy flag cleared by admin.",
+        );
+      } else {
+        const spCode = String(body.photoFlagCode || "");
+        const policyCode = safetyPolicyCodes.has(spCode) ? spCode : "PROFILE_PHOTO_POLICY";
+        await resolveFlags(
+          allPhotoFlagCodes.filter((c: string) => c !== policyCode),
+          `Superseded by policy flag (${policyCode}).`,
+        );
+        await openFlag(
+          policyCode,
+          "Identity",
+          "High",
+          standalonePolicyMessages[policyCode] || standalonePolicyMessages["PROFILE_PHOTO_POLICY"],
+          `Photo policy violation (${policyCode}) flagged by admin.`,
         );
       }
     }
@@ -1117,18 +1221,32 @@ export class AdminUserTableController {
         "PORTFOLIO_DUPLICATE",
         "PORTFOLIO_WATERMARK",
       ];
+      const GALLERY_FLAG_MESSAGES: Record<string, string> = {
+        "PORTFOLIO_MISSING":     "Portfolio / gallery images are missing. Please add at least 3 images.",
+        "PORTFOLIO_SCREENSHOT":  "Your gallery contains screenshots. Please upload original photos or work samples.",
+        "PORTFOLIO_LOW_QUALITY": "Gallery images do not match TrendStarz guidelines. Please replace screenshots, duplicate, watermarked, or low-quality images.",
+        "PORTFOLIO_DUPLICATE":   "Your gallery contains duplicate images. Please upload varied original content.",
+        "PORTFOLIO_WATERMARK":   "Your gallery images contain watermarks. Please upload clean, unbranded images.",
+      };
+      const galleryFlagCode = String(body.galleryFlagCode || "");
       if (body.galleryImagesVerified) {
         await resolveFlags(
           galleryFlagCodes,
           "Gallery images verified by admin.",
         );
       } else {
+        const galleryCode = galleryFlagCodes.includes(galleryFlagCode) ? galleryFlagCode : "PORTFOLIO_LOW_QUALITY";
+        // Close all other gallery flags first — only one active at a time
+        await resolveFlags(
+          galleryFlagCodes.filter((c) => c !== galleryCode),
+          `Superseded by gallery flag (${galleryCode}).`,
+        );
         await openFlag(
-          "PORTFOLIO_LOW_QUALITY",
+          galleryCode,
           "Portfolio",
           "Medium",
-          "Gallery images do not match TrendStarz guidelines. Please replace screenshots, duplicate, watermarked, or low-quality images.",
-          "Gallery images marked unverified by admin.",
+          GALLERY_FLAG_MESSAGES[galleryCode] || GALLERY_FLAG_MESSAGES["PORTFOLIO_LOW_QUALITY"],
+          `Gallery images flagged (${galleryCode}) by admin.`,
         );
       }
     }

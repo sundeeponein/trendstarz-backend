@@ -155,25 +155,91 @@ const AUTO_FLAG_CODES = new Set(
   ),
 );
 
-const PROFILE_PHOTO_VISIBILITY_BLOCK_FLAG_CODES = new Set<string>([
+// Quality/aesthetic issues — hide from public search/discovery, campaigns unaffected
+const PROFILE_PHOTO_QUALITY_FLAG_CODES = new Set<string>([
+  "PROFILE_PHOTO_QUALITY",
   "PROFILE_PHOTO_PENDING_REVIEW",
   "PROFILE_PHOTO_MISSING",
-  "PROFILE_PHOTO_SCREENSHOT",
-  "PROFILE_PHOTO_CELEBRITY",
   "PROFILE_PHOTO_GROUP",
   "PROFILE_PHOTO_BLURRY",
   "PROFILE_PHOTO_LOGO",
   "PROFILE_PHOTO_LOW_QUALITY",
   "FACE_NOT_VISIBLE",
+  "PROFILE_PHOTO_SCREENSHOT",
+]);
+
+// Identity/trust safety violations — hide from search AND block campaign invites
+const PROFILE_PHOTO_SAFETY_FLAG_CODES = new Set<string>([
+  "PROFILE_PHOTO_POLICY",
+  "PROFILE_PHOTO_CELEBRITY",
+  "PROFILE_PHOTO_CONTACT_INFO",
+  "PROFILE_PHOTO_QR_CODE",
+]);
+
+// Legacy alias
+const PROFILE_PHOTO_POLICY_FLAG_CODES = PROFILE_PHOTO_SAFETY_FLAG_CODES;
+
+// All photo flags block from search (quality + safety)
+const PROFILE_PHOTO_VISIBILITY_BLOCK_FLAG_CODES = new Set<string>([
+  ...PROFILE_PHOTO_QUALITY_FLAG_CODES,
+  ...PROFILE_PHOTO_SAFETY_FLAG_CODES,
 ]);
 
 const PROFILE_PHOTO_ADMIN_REVIEW_FLAG_CODES = new Set<string>([
   ...PROFILE_PHOTO_VISIBILITY_BLOCK_FLAG_CODES,
-  "PROFILE_PHOTO_LOW_QUALITY",
 ]);
 
-const PROFILE_PHOTO_GUIDELINE_MESSAGE =
-  "Profile photo does not match TrendStarz guidelines. Please replace screenshots, blurry images, sunglasses/covered-face photos, group photos, logos, or any image where your face is not clearly visible.";
+// Category-level user messages — one per taxonomy category
+const PROFILE_PHOTO_QUALITY_MESSAGE =
+  "Profile photo quality needs improvement. Please upload a clear, high-quality photo.";
+
+const PROFILE_PHOTO_FACE_MESSAGE =
+  "Your profile photo must clearly show your face and contain only one person.";
+
+const PROFILE_PHOTO_SCREENSHOT_MESSAGE =
+  "Screenshots are not allowed. Please upload an original photo.";
+
+const PROFILE_PHOTO_IDENTITY_MESSAGE =
+  "Please upload your own photo. Celebrity photos, logos, and third-party images are not allowed.";
+
+const PROFILE_PHOTO_SAFETY_MESSAGE =
+  "Your photo contains content that violates platform guidelines.";
+
+// All quality codes (hide from search; campaigns unaffected)
+const PHOTO_QUALITY_CODES = new Set([
+  "PROFILE_PHOTO_QUALITY", "PROFILE_PHOTO_BLURRY", "PROFILE_PHOTO_GROUP",
+  "PROFILE_PHOTO_LOGO", "PROFILE_PHOTO_LOW_QUALITY", "FACE_NOT_VISIBLE",
+  "PROFILE_PHOTO_SCREENSHOT",
+]);
+// Safety codes (hide from search AND block campaigns)
+const PHOTO_POLICY_CODES_SET = PROFILE_PHOTO_SAFETY_FLAG_CODES;
+
+// Map each flag code to its category-level user message
+const PHOTO_FLAG_MESSAGES: Record<string, string> = {
+  "PROFILE_PHOTO_QUALITY":      PROFILE_PHOTO_QUALITY_MESSAGE,
+  "PROFILE_PHOTO_BLURRY":       PROFILE_PHOTO_QUALITY_MESSAGE,
+  "PROFILE_PHOTO_LOW_QUALITY":  PROFILE_PHOTO_QUALITY_MESSAGE,
+  "FACE_NOT_VISIBLE":           PROFILE_PHOTO_FACE_MESSAGE,
+  "PROFILE_PHOTO_GROUP":        PROFILE_PHOTO_FACE_MESSAGE,
+  "PROFILE_PHOTO_SCREENSHOT":   PROFILE_PHOTO_SCREENSHOT_MESSAGE,
+  "PROFILE_PHOTO_CELEBRITY":    PROFILE_PHOTO_IDENTITY_MESSAGE,
+  "PROFILE_PHOTO_LOGO":         PROFILE_PHOTO_IDENTITY_MESSAGE,
+  "PROFILE_PHOTO_POLICY":       PROFILE_PHOTO_SAFETY_MESSAGE,
+  "PROFILE_PHOTO_CONTACT_INFO": PROFILE_PHOTO_SAFETY_MESSAGE,
+  "PROFILE_PHOTO_QR_CODE":      PROFILE_PHOTO_SAFETY_MESSAGE,
+};
+
+const GALLERY_FLAG_CODES_SET = new Set([
+  "PORTFOLIO_MISSING", "PORTFOLIO_SCREENSHOT", "PORTFOLIO_LOW_QUALITY",
+  "PORTFOLIO_DUPLICATE", "PORTFOLIO_WATERMARK",
+]);
+const GALLERY_FLAG_MESSAGES: Record<string, string> = {
+  "PORTFOLIO_MISSING":     "Some gallery images are missing. Please add at least 3 portfolio images.",
+  "PORTFOLIO_SCREENSHOT":  "Some gallery images are screenshots. Please upload original photos.",
+  "PORTFOLIO_LOW_QUALITY": "Some gallery images are low quality or contain watermarks. Please upload higher quality images.",
+  "PORTFOLIO_DUPLICATE":   "Your gallery contains duplicate images. Please upload varied original content.",
+  "PORTFOLIO_WATERMARK":   "Some gallery images contain watermarks. Please upload clean, unbranded images.",
+};
 
 @Injectable()
 export class ProfileVerificationService {
@@ -756,6 +822,7 @@ export class ProfileVerificationService {
       })),
       flags,
       campaignEligibility: this.buildEligibility(profile, flags),
+      campaignStatus: this.buildCampaignStatus(profile, flags),
     };
   }
 
@@ -765,20 +832,28 @@ export class ProfileVerificationService {
       flags.some((flag) => flag.flagCode === code && flag.status === "Open");
     if (!this.isEmailVerified(profile)) blockers.push("Email not verified");
     if (!this.isMobileVerified(profile)) blockers.push("Mobile not verified");
-    if (
-      [...PROFILE_PHOTO_VISIBILITY_BLOCK_FLAG_CODES].some((code) =>
-        hasOpen(code),
-      )
-    ) {
-      blockers.push("Profile photo must match the guidelines");
-    }
-    if (
-      !this.hasPayout(profile) ||
-      hasOpen("PAYMENT_MISSING")
-    ) {
-      blockers.push("Payment or payout details missing");
+    // Only safety violations block campaign invites
+    if ([...PROFILE_PHOTO_SAFETY_FLAG_CODES].some((code) => hasOpen(code))) {
+      blockers.push(PROFILE_PHOTO_SAFETY_MESSAGE);
     }
     return { eligible: blockers.length === 0, blockers };
+  }
+
+  buildCampaignStatus(profile: any, flags: any[]): "eligible" | "profile_update_required" | "restricted" {
+    const hasOpen = (code: string) =>
+      flags.some((flag) => flag.flagCode === code && flag.status === "Open");
+    // Restricted: email/mobile unverified or safety violation
+    if (!this.isEmailVerified(profile) || !this.isMobileVerified(profile)) {
+      return "restricted";
+    }
+    if ([...PROFILE_PHOTO_SAFETY_FLAG_CODES].some((code) => hasOpen(code))) {
+      return "restricted";
+    }
+    // Profile update required: photo quality issues hide from discovery
+    if ([...PROFILE_PHOTO_VISIBILITY_BLOCK_FLAG_CODES].some((code) => hasOpen(code))) {
+      return "profile_update_required";
+    }
+    return "eligible";
   }
 
   async assertCampaignEligible(userId: string, role: any) {
@@ -1060,6 +1135,7 @@ export class ProfileVerificationService {
         actor?.name || actor?.email || actor?.userId || "TrendStarz Team",
       );
       if (body.profilePhotoVerified) {
+        // Resolve all photo flags (quality + policy)
         await this.flagModel.updateMany(
           {
             userId: String(userId),
@@ -1088,34 +1164,233 @@ export class ProfileVerificationService {
           },
         );
       } else {
-        await this.flagModel.updateOne(
+        // Specific flag code if provided, otherwise generic quality
+        const isPolicy = PHOTO_POLICY_CODES_SET.has(body.photoFlagCode);
+        const flagCode = isPolicy
+          ? body.photoFlagCode
+          : PHOTO_QUALITY_CODES.has(body.photoFlagCode)
+            ? body.photoFlagCode
+            : "PROFILE_PHOTO_QUALITY";
+        const severity = isPolicy ? "High" : "Medium";
+        const message = PHOTO_FLAG_MESSAGES[flagCode] || PROFILE_PHOTO_QUALITY_MESSAGE;
+        // Close all existing photo flags first so only ONE flag is ever active
+        await this.flagModel.updateMany(
           {
             userId: String(userId),
             userType,
-            flagCode: "PROFILE_PHOTO_BLURRY",
             status: "Open",
+            flagCode: { $in: Array.from(PROFILE_PHOTO_ADMIN_REVIEW_FLAG_CODES), $ne: flagCode },
           },
+          {
+            $set: {
+              status: "Resolved",
+              reviewedBy: reviewer,
+              reviewedAt: new Date(),
+              reviewNotes: `Superseded by new flag (${flagCode}).`,
+            },
+            $push: {
+              auditLog: {
+                action: "resolved",
+                actorId: String(actor?.userId || actor?.id || ""),
+                actorRole: "admin",
+                note: `Superseded by new flag (${flagCode}).`,
+                actedAt: new Date(),
+              },
+            },
+          },
+        );
+        await this.flagModel.updateOne(
+          { userId: String(userId), userType, flagCode, status: "Open" },
           {
             $setOnInsert: {
               createdAt: new Date(),
-              auditLog: [
-                {
-                  action: "created",
-                  actorId: String(actor?.userId || actor?.id || ""),
-                  actorRole: "admin",
-                  note: "Profile photo marked unverified by admin.",
-                  actedAt: new Date(),
-                },
-              ],
+              auditLog: [{
+                action: "created",
+                actorId: String(actor?.userId || actor?.id || ""),
+                actorRole: "admin",
+                note: `Profile photo flagged (${flagCode}) by admin.`,
+                actedAt: new Date(),
+              }],
+            },
+            $set: {
+              category: "Identity",
+              severity,
+              message,
+              createdBy: "ADMIN",
+              reviewedBy: reviewer,
+              reviewedAt: new Date(),
+              reviewNotes: `Profile photo flagged (${flagCode}) by admin.`,
+            },
+          },
+          { upsert: true },
+        );
+      }
+    }
+
+    if (typeof body?.photoPolicy === "boolean") {
+      const reviewer = String(
+        actor?.name || actor?.email || actor?.userId || "TrendStarz Team",
+      );
+      if (!body.photoPolicy) {
+        // Clear all photo policy/safety flags
+        await this.flagModel.updateMany(
+          {
+            userId: String(userId),
+            userType,
+            status: "Open",
+            flagCode: { $in: Array.from(PROFILE_PHOTO_POLICY_FLAG_CODES) },
+          },
+          {
+            $set: {
+              status: "Resolved",
+              reviewedBy: reviewer,
+              reviewedAt: new Date(),
+              reviewNotes: "Photo policy flag cleared by admin.",
+            },
+            $push: {
+              auditLog: {
+                action: "resolved",
+                actorId: String(actor?.userId || actor?.id || ""),
+                actorRole: "admin",
+                note: "Photo policy flag cleared by admin.",
+                actedAt: new Date(),
+              },
+            },
+          },
+        );
+      } else {
+        const policyCode = PHOTO_POLICY_CODES_SET.has(body.photoFlagCode) ? body.photoFlagCode : "PROFILE_PHOTO_POLICY";
+        // Close all other photo flags (quality + other policy) — only one flag at a time
+        await this.flagModel.updateMany(
+          {
+            userId: String(userId),
+            userType,
+            status: "Open",
+            flagCode: { $in: Array.from(PROFILE_PHOTO_ADMIN_REVIEW_FLAG_CODES), $ne: policyCode },
+          },
+          {
+            $set: {
+              status: "Resolved",
+              reviewedBy: reviewer,
+              reviewedAt: new Date(),
+              reviewNotes: `Superseded by policy flag (${policyCode}).`,
+            },
+            $push: {
+              auditLog: {
+                action: "resolved",
+                actorId: String(actor?.userId || actor?.id || ""),
+                actorRole: "admin",
+                note: `Superseded by policy flag (${policyCode}).`,
+                actedAt: new Date(),
+              },
+            },
+          },
+        );
+        await this.flagModel.updateOne(
+          { userId: String(userId), userType, flagCode: policyCode, status: "Open" },
+          {
+            $setOnInsert: {
+              createdAt: new Date(),
+              auditLog: [{
+                action: "created",
+                actorId: String(actor?.userId || actor?.id || ""),
+                actorRole: "admin",
+                note: `Photo policy violation (${policyCode}) flagged by admin.`,
+                actedAt: new Date(),
+              }],
             },
             $set: {
               category: "Identity",
               severity: "High",
-              message: PROFILE_PHOTO_GUIDELINE_MESSAGE,
+              message: PHOTO_FLAG_MESSAGES[policyCode] || PROFILE_PHOTO_SAFETY_MESSAGE,
               createdBy: "ADMIN",
               reviewedBy: reviewer,
               reviewedAt: new Date(),
-              reviewNotes: "Profile photo marked unverified by admin.",
+              reviewNotes: `Photo policy violation (${policyCode}) flagged by admin.`,
+            },
+          },
+          { upsert: true },
+        );
+      }
+    }
+
+    if (typeof body?.galleryImagesVerified === "boolean") {
+      const reviewer = String(actor?.name || actor?.email || actor?.userId || "TrendStarz Team");
+      if (body.galleryImagesVerified) {
+        await this.flagModel.updateMany(
+          {
+            userId: String(userId),
+            userType,
+            status: "Open",
+            flagCode: { $in: Array.from(GALLERY_FLAG_CODES_SET) },
+          },
+          {
+            $set: {
+              status: "Resolved",
+              reviewedBy: reviewer,
+              reviewedAt: new Date(),
+              reviewNotes: "Gallery images verified by admin.",
+            },
+            $push: {
+              auditLog: {
+                action: "resolved",
+                actorId: String(actor?.userId || actor?.id || ""),
+                actorRole: "admin",
+                note: "Gallery images verified by admin.",
+                actedAt: new Date(),
+              },
+            },
+          },
+        );
+      } else {
+        const galleryCode = GALLERY_FLAG_CODES_SET.has(body.galleryFlagCode) ? body.galleryFlagCode : "PORTFOLIO_LOW_QUALITY";
+        // Close all other gallery flags first — only one flag active at a time
+        await this.flagModel.updateMany(
+          {
+            userId: String(userId),
+            userType,
+            status: "Open",
+            flagCode: { $in: Array.from(GALLERY_FLAG_CODES_SET), $ne: galleryCode },
+          },
+          {
+            $set: {
+              status: "Resolved",
+              reviewedBy: reviewer,
+              reviewedAt: new Date(),
+              reviewNotes: `Superseded by new gallery flag (${galleryCode}).`,
+            },
+            $push: {
+              auditLog: {
+                action: "resolved",
+                actorId: String(actor?.userId || actor?.id || ""),
+                actorRole: "admin",
+                note: `Superseded by new gallery flag (${galleryCode}).`,
+                actedAt: new Date(),
+              },
+            },
+          },
+        );
+        await this.flagModel.updateOne(
+          { userId: String(userId), userType, flagCode: galleryCode, status: "Open" },
+          {
+            $setOnInsert: {
+              createdAt: new Date(),
+              auditLog: [{
+                action: "created",
+                actorId: String(actor?.userId || actor?.id || ""),
+                actorRole: "admin",
+                note: `Gallery flagged (${galleryCode}) by admin.`,
+                actedAt: new Date(),
+              }],
+            },
+            $set: {
+              category: "Portfolio",
+              severity: "Medium",
+              message: GALLERY_FLAG_MESSAGES[galleryCode] || GALLERY_FLAG_MESSAGES["PORTFOLIO_LOW_QUALITY"],
+              createdBy: "ADMIN",
+              reviewedBy: reviewer,
+              reviewedAt: new Date(),
+              reviewNotes: `Gallery flagged (${galleryCode}) by admin.`,
             },
           },
           { upsert: true },

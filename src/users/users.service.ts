@@ -23,16 +23,35 @@ if (USE_LOCAL_IMAGES && !fs.existsSync(LOCAL_IMAGE_DIR)) {
   fs.mkdirSync(LOCAL_IMAGE_DIR, { recursive: true });
 }
 
-const PROFILE_PHOTO_VISIBILITY_BLOCK_FLAG_CODES = [
+// Minor quality issues: hide from public search only, campaigns still allowed
+// All photo quality issues — hide from public search/discovery only
+export const PROFILE_PHOTO_QUALITY_FLAG_CODES = [
+  "PROFILE_PHOTO_QUALITY",
   "PROFILE_PHOTO_PENDING_REVIEW",
   "PROFILE_PHOTO_MISSING",
-  "PROFILE_PHOTO_SCREENSHOT",
-  "PROFILE_PHOTO_CELEBRITY",
   "PROFILE_PHOTO_GROUP",
   "PROFILE_PHOTO_BLURRY",
   "PROFILE_PHOTO_LOGO",
   "PROFILE_PHOTO_LOW_QUALITY",
   "FACE_NOT_VISIBLE",
+  "PROFILE_PHOTO_SCREENSHOT",
+];
+
+// Identity/trust safety violations — hide from search AND block campaign invites
+export const PROFILE_PHOTO_SAFETY_FLAG_CODES = [
+  "PROFILE_PHOTO_POLICY",
+  "PROFILE_PHOTO_CELEBRITY",
+  "PROFILE_PHOTO_CONTACT_INFO",
+  "PROFILE_PHOTO_QR_CODE",
+];
+
+// Legacy alias kept for backward compat
+export const PROFILE_PHOTO_POLICY_FLAG_CODES = PROFILE_PHOTO_SAFETY_FLAG_CODES;
+
+// All photo flags block from public search/discovery (quality + safety)
+const PROFILE_PHOTO_VISIBILITY_BLOCK_FLAG_CODES = [
+  ...PROFILE_PHOTO_QUALITY_FLAG_CODES,
+  ...PROFILE_PHOTO_SAFETY_FLAG_CODES,
 ];
 
 const SOCIAL_TIER_VISIBILITY_BLOCK_FLAG_CODES = [
