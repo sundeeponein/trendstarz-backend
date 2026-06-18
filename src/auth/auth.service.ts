@@ -124,6 +124,25 @@ export class AuthService {
     return null;
   }
 
+  private modelForRole(role: TrendstarzRole | string | null | undefined): Model<any> | null {
+    const normalized = String(role || "").toLowerCase();
+    if (normalized === "admin") return this.userModel;
+    if (normalized === "influencer") return this.influencerModel;
+    if (normalized === "brand") return this.brandModel;
+    if (normalized === "photographer") return this.photographerModel;
+    return null;
+  }
+
+  async markSessionOpened(userId: string, role: TrendstarzRole | string) {
+    const model = this.modelForRole(role);
+    if (!model || !userId) {
+      throw new BadRequestException("Invalid session user.");
+    }
+    const now = new Date();
+    await model.updateOne({ _id: userId }, { $set: { lastOpenedAt: now } });
+    return { success: true, lastOpenedAt: now };
+  }
+
   private activateAfterEmailOwnership(
     user: any,
     role: TrendstarzRole | null,
@@ -949,7 +968,7 @@ export class AuthService {
       const token = jwt.sign(
         { userId: adminUser._id, email: adminUser.email, role: adminUser.role },
         getJwtSecret(),
-        { expiresIn: "7d" },
+        { expiresIn: "90d" },
       );
       return {
         token,
@@ -959,6 +978,8 @@ export class AuthService {
           name: adminUser.name,
           email: adminUser.email,
           role: adminUser.role,
+          lastLoginAt: now,
+          lastOpenedAt: adminUser.lastOpenedAt || null,
           profileImage:
             Array.isArray(adminUser.profileImages) &&
             adminUser.profileImages.length > 0
@@ -1014,7 +1035,7 @@ export class AuthService {
       const token = jwt.sign(
         { userId: influencer._id, email: influencer.email, role: "influencer" },
         getJwtSecret(),
-        { expiresIn: "7d" },
+        { expiresIn: "90d" },
       );
       return {
         token,
@@ -1024,6 +1045,8 @@ export class AuthService {
           name: displayName,
           email: influencer.email,
           role: "influencer",
+          lastLoginAt: now,
+          lastOpenedAt: influencer.lastOpenedAt || null,
           profileImage: profileImageUrl,
           isPremium: !!influencer.isPremium,
           premiumEnd: influencer.premiumEnd || null,
@@ -1066,7 +1089,7 @@ export class AuthService {
       const token = jwt.sign(
         { userId: brand._id, email: brand.email, role: "brand" },
         getJwtSecret(),
-        { expiresIn: "7d" },
+        { expiresIn: "90d" },
       );
       return {
         token,
@@ -1076,6 +1099,8 @@ export class AuthService {
           name: displayName,
           email: brand.email,
           role: "brand",
+          lastLoginAt: now,
+          lastOpenedAt: brand.lastOpenedAt || null,
           brandLogo: brandLogoArr,
           isPremium: !!brand.isPremium,
           premiumEnd: brand.premiumEnd || null,
@@ -1131,7 +1156,7 @@ export class AuthService {
           role: "photographer",
         },
         getJwtSecret(),
-        { expiresIn: "7d" },
+        { expiresIn: "90d" },
       );
       return {
         token,
@@ -1141,6 +1166,8 @@ export class AuthService {
           name: photographer.name || "",
           email: photographer.email,
           role: "photographer",
+          lastLoginAt: now,
+          lastOpenedAt: photographer.lastOpenedAt || null,
           profileImage: profileImageUrl,
           isPremium: !!photographer.isPremium,
           premiumEnd: photographer.premiumEnd || null,
