@@ -93,6 +93,7 @@ export const UserSchema = new Schema(
     role: { type: String, enum: ["admin", "user"], default: "user" },
     firstRegisteredAt: { type: Date, default: Date.now },
     lastLoginAt: { type: Date, default: null },
+    lastOpenedAt: { type: Date, default: null },
     isEmailVerified: { type: Boolean, default: false },
     isMobileVerified: { type: Boolean, default: false },
     ...ProfileVerificationFields,
@@ -118,6 +119,7 @@ export const InfluencerSchema = new Schema(
     ...ProfileVerificationFields,
     firstRegisteredAt: { type: Date, default: Date.now },
     lastLoginAt: { type: Date, default: null },
+    lastOpenedAt: { type: Date, default: null },
     profileImages: [
       {
         url: { type: String, required: true },
@@ -332,6 +334,7 @@ export const BrandSchema = new Schema(
     ...ProfileVerificationFields,
     firstRegisteredAt: { type: Date, default: Date.now },
     lastLoginAt: { type: Date, default: null },
+    lastOpenedAt: { type: Date, default: null },
     brandLogo: [
       {
         url: { type: String, required: true },
@@ -463,6 +466,7 @@ export const PhotographerSchema = new Schema(
     ...ProfileVerificationFields,
     firstRegisteredAt: { type: Date, default: Date.now },
     lastLoginAt: { type: Date, default: null },
+    lastOpenedAt: { type: Date, default: null },
     profileImages: [
       {
         url: { type: String, required: true },
@@ -925,8 +929,20 @@ export const CampaignSchema = new Schema(
   },
   { timestamps: true },
 );
+// Human-readable sequential display ID (e.g. 1001, 1002 → shown as CMP-1001)
+// Sparse unique so existing documents without the field are unaffected until backfilled.
+CampaignSchema.add({
+  campaignNumber: { type: Number, index: true, unique: true, sparse: true },
+});
 CampaignSchema.index({ status: 1 });
 export const CampaignModel = model("Campaign", CampaignSchema);
+
+// Atomic sequence counter — one document per named counter (e.g. { _id: 'campaign' })
+export const CounterSchema = new Schema({
+  _id: { type: String, required: true },
+  seq: { type: Number, default: 1000 },
+});
+export const CounterModel = model("Counter", CounterSchema);
 
 // Campaign Invite schema
 export const CampaignInviteSchema = new Schema(

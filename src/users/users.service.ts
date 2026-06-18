@@ -2223,6 +2223,7 @@ export class UsersService {
       premiumEnd: user.premiumEnd || null,
       firstRegisteredAt: user.firstRegisteredAt || user.createdAt || null,
       lastLoginAt: user.lastLoginAt || null,
+      lastOpenedAt: user.lastOpenedAt || null,
       promotionalPrice: user.promotionalPrice,
       payout: user.payout || {
         upiId: "",
@@ -2288,6 +2289,7 @@ export class UsersService {
       premiumEnd: user.premiumEnd || null,
       firstRegisteredAt: user.firstRegisteredAt || user.createdAt || null,
       lastLoginAt: user.lastLoginAt || null,
+      lastOpenedAt: user.lastOpenedAt || null,
       isEmailVerified: user.isEmailVerified || false,
       isMobileVerified: user.isMobileVerified || false,
       planCapabilities,

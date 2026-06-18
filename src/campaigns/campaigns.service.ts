@@ -31,7 +31,8 @@ const VALID_TRANSITIONS: Record<string, string[]> = {
   pending_review: ["active", "needs_changes", "rejected", "draft"],
   needs_changes: ["pending_review", "active", "rejected", "draft"],
   rejected: ["pending_review", "draft"],
-  active: ["pending", "pending_review", "completed"],
+  // active → pending is kept for brand "pause"; pending_review is admin-only (not via brand update)
+  active: ["pending", "completed"],
   completed: [],
 };
 
@@ -68,6 +69,7 @@ export class CampaignsService {
     @InjectModel("Influencer") private readonly influencerModel: Model<any>,
     @InjectModel("AppSettings") private readonly appSettingsModel: Model<any>,
     @InjectModel("ProfileFlag") private readonly profileFlagModel: Model<any>,
+    @InjectModel("Counter") private readonly counterModel: Model<any>,
     private readonly plansService: PlansService,
     private readonly cloudinaryService: CloudinaryService,
     private readonly pushService: PushService,
@@ -107,7 +109,10 @@ export class CampaignsService {
     return "active";
   }
 
-  private async loadOwnerVerificationProfile(ownerId: string, ownerType: CampaignOwnerType) {
+  private async loadOwnerVerificationProfile(
+    ownerId: string,
+    ownerType: CampaignOwnerType,
+  ) {
     const select = "isEmailVerified isMobileVerified";
     if (ownerType === "photographer") {
       return this.photographerModel.findById(ownerId).select(select).lean();
@@ -116,7 +121,10 @@ export class CampaignsService {
   }
 
   private assertOwnerCanPost(profile: any) {
-    if (profile?.isEmailVerified === true && profile?.isMobileVerified === true) {
+    if (
+      profile?.isEmailVerified === true &&
+      profile?.isMobileVerified === true
+    ) {
       return;
     }
     throw new BadRequestException(
@@ -326,7 +334,38 @@ export class CampaignsService {
       ? explicit
       : this.deriveLogisticsType(normalized);
 
+    // Contact-info guard: description, deliverables, and specialInstructions
+    // must not contain phone numbers, emails, URLs or messaging links.
+    // Contact details are shared automatically after payment confirmation.
+    const textFieldsToScan: Array<[string, string]> = [
+      ["description", String(normalized.description || "")],
+      ["specialInstructions", String(normalized.specialInstructions || "")],
+    ];
+    const deliverablesList: string[] = Array.isArray(normalized.deliverables)
+      ? normalized.deliverables.map((d: any) => String(d || ""))
+      : [];
+    textFieldsToScan.push(["deliverables", deliverablesList.join(" ")]);
+
+    for (const [field, value] of textFieldsToScan) {
+      if (value && this.containsContactInfo(value)) {
+        throw new BadRequestException(
+          `${field} must not contain contact details (phone numbers, emails, URLs or messaging links). These are shared with creators automatically after user accepted/confirmed.`,
+        );
+      }
+    }
+
     return normalized;
+  }
+
+  private containsContactInfo(text: string): boolean {
+    if (!text) return false;
+    const patterns = [
+      /[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}/,
+      /\b\d{10}\b|\+?91[\s\-]?\d{10}/,
+      /https?:\/\/\S+|www\.\S+/i,
+      /\bwhatsapp\b|\bwa\.me\b|\bt\.me\b|\btelegram\b/i,
+    ];
+    return patterns.some((p) => p.test(text));
   }
 
   private applyCampaignTargetCategoryLimit(
@@ -384,7 +423,9 @@ export class CampaignsService {
       settings?.campaignAccessModeConfigs,
     ).find((item) => item.key === mode);
     if (!config || !config.enabled) {
-      throw new BadRequestException("This campaign access mode is currently unavailable.");
+      throw new BadRequestException(
+        "This campaign access mode is currently unavailable.",
+      );
     }
     if (config.premiumOnly && !hasPremium) {
       throw new BadRequestException(
@@ -695,11 +736,22 @@ export class CampaignsService {
     // (additive discriminator — see deriveLogisticsType).
     normalized.logisticsType = this.deriveLogisticsType(normalized);
     this.assertRequiredFieldsForCampaign(normalized);
+    const campaignNumber = await this.nextCampaignNumber();
     const campaign = new this.campaignModel({
       ...normalized,
       brandId: ownerId,
+      campaignNumber,
     });
     return await campaign.save();
+  }
+
+  private async nextCampaignNumber(): Promise<number> {
+    const doc = await this.counterModel.findOneAndUpdate(
+      { _id: "campaign" },
+      { $inc: { seq: 1 } },
+      { new: true, upsert: true },
+    );
+    return doc.seq;
   }
 
   async findByBrandId(brandId: string) {
@@ -800,28 +852,15 @@ export class CampaignsService {
       .sort({ createdAt: -1 })
       .lean();
 
-    // Load influencer once for eligibility filtering
+    // Load influencer once for tier/location eligibility filtering.
+    // Verification is enforced at apply-time (assertCampaignEligible), not here,
+    // so unverified influencers can still browse campaigns.
     let influencer: any = null;
     if (influencerId) {
       influencer = await this.influencerModel
         .findById(influencerId)
         .select("socialMedia location isEmailVerified isMobileVerified")
         .lean();
-      if (
-        !influencer ||
-        influencer.isEmailVerified !== true ||
-        influencer.isMobileVerified !== true
-      ) {
-        return [];
-      }
-      if (
-        await this.hasProfilePhotoVisibilityBlock(
-          influencerId,
-          "Influencer",
-        )
-      ) {
-        return [];
-      }
     }
 
     // Helper: whether influencer has at least one exact-tier match on campaign target platform(s).
@@ -899,16 +938,26 @@ export class CampaignsService {
         if (!hasExactTier) return false;
       }
 
-      // State check
+      // State check (case-insensitive)
       if (c.targetState) {
-        const infState = influencer.location?.state ?? "";
-        if (infState && infState !== c.targetState) return false;
+        const infState = (influencer.location?.state ?? "")
+          .trim()
+          .toLowerCase();
+        const targetState = String(c.targetState || "")
+          .trim()
+          .toLowerCase();
+        if (infState && infState !== targetState) return false;
       }
 
-      // District check
+      // District check (case-insensitive)
       if (c.targetDistrict) {
-        const infDistrict = influencer.location?.district ?? "";
-        if (infDistrict && infDistrict !== c.targetDistrict) return false;
+        const infDistrict = (influencer.location?.district ?? "")
+          .trim()
+          .toLowerCase();
+        const targetDistrict = String(c.targetDistrict || "")
+          .trim()
+          .toLowerCase();
+        if (infDistrict && infDistrict !== targetDistrict) return false;
       }
 
       return true;
@@ -1014,7 +1063,13 @@ export class CampaignsService {
           "rejected",
         ].includes(String(data.status))
       ) {
-        data.status = await this.resolveInitialCampaignStatus(data.status);
+        // Skip re-review resolution when brand resumes a paused campaign.
+        // The original admin approval still stands; no second review needed.
+        const isResumingFromPause =
+          campaign.status === "pending" && String(data.status) === "active";
+        if (!isResumingFromPause) {
+          data.status = await this.resolveInitialCampaignStatus(data.status);
+        }
       }
       const allowed = VALID_TRANSITIONS[campaign.status] || [];
       if (!allowed.includes(data.status)) {
@@ -1102,8 +1157,8 @@ export class CampaignsService {
     return saved;
   }
 
-	  private async notifyMatchingInfluencers(campaign: any): Promise<void> {
-	    const TIER_ORDER = [
+  private async notifyMatchingInfluencers(campaign: any): Promise<void> {
+    const TIER_ORDER = [
       "Starter",
       "Nano",
       "Micro",
@@ -1156,7 +1211,7 @@ export class CampaignsService {
       campaignPlatforms.length;
     if (!hasAnyFilter) return;
 
-	    // ── 1. Build DB-level query ──────────────────────────────────────────────
+    // ── 1. Build DB-level query ──────────────────────────────────────────────
     const blockedRows = await this.profileFlagModel
       .find({
         userType: isPhotographer ? "Photographer" : "Influencer",
@@ -1166,14 +1221,18 @@ export class CampaignsService {
       .select("userId")
       .lean();
     const blockedIds = [
-      ...new Set((blockedRows || []).map((row: any) => String(row.userId)).filter(Boolean)),
+      ...new Set(
+        (blockedRows || [])
+          .map((row: any) => String(row.userId))
+          .filter(Boolean),
+      ),
     ];
-	    const baseQuery: Record<string, any> = {
-	      isDeleted: { $ne: true },
-	      isEmailVerified: true,
-	      isMobileVerified: true,
-	      email: { $exists: true, $ne: "" },
-	    };
+    const baseQuery: Record<string, any> = {
+      isDeleted: { $ne: true },
+      isEmailVerified: true,
+      isMobileVerified: true,
+      email: { $exists: true, $ne: "" },
+    };
     if (blockedIds.length) baseQuery._id = { $nin: blockedIds };
 
     // Location filters (both optional)
@@ -1241,7 +1300,7 @@ export class CampaignsService {
 
     if (!matched.length) return;
 
-	    // ── 4. Resolve sender name and notify matched users ──────────────────────
+    // ── 4. Resolve sender name and notify matched users ──────────────────────
     const brand = (await this.brandModel
       .findById(brandId)
       .select("brandName name")
@@ -1264,46 +1323,48 @@ export class CampaignsService {
       .filter(Boolean)
       .join(", ");
 
-	    const notificationPromises = matched.map((recipient: any) => {
-	      const userRole = isPhotographer ? "photographer" : "influencer";
-	      const body = `${brandName} posted "${title}"${locationLabel ? ` in ${locationLabel}` : ""}.`;
-	      const base = [
-	        this.notificationsService
-	          .createForUser({
-	            userId: String(recipient._id),
-	            userRole,
-	            title: "New open campaign",
-	            body,
-	            url: dashboardPath,
-	          })
-	          .catch(() => {}),
-	        this.pushService
-	          .sendToUser(String(recipient._id), {
-	            title: "New open campaign",
-	            body,
-	            url: dashboardPath,
-	          })
-	          .catch(() => {}),
-	      ];
+    const notificationPromises = matched.map((recipient: any) => {
+      const userRole = isPhotographer ? "photographer" : "influencer";
+      const body = `${brandName} posted "${title}"${locationLabel ? ` in ${locationLabel}` : ""}.`;
+      const base = [
+        this.notificationsService
+          .createForUser({
+            userId: String(recipient._id),
+            userRole,
+            title: "New open campaign",
+            body,
+            url: dashboardPath,
+          })
+          .catch(() => {}),
+        this.pushService
+          .sendToUser(String(recipient._id), {
+            title: "New open campaign",
+            body,
+            url: dashboardPath,
+          })
+          .catch(() => {}),
+      ];
 
-	      if (ENABLE_CAMPAIGN_LIVE_EMAILS && recipient.email) {
-	        const tpl = openCampaignLiveTemplate({
-	          influencerName: recipient.name || "Creator",
-	          campaignTitle: title,
-	          brandName,
-	          location: locationLabel,
-	          campaignUrl,
-	        });
-	        base.push(sendAppEmail({ to: recipient.email, ...tpl }).catch(() => {}));
-	      }
-	      return Promise.allSettled(base);
-	    });
+      if (ENABLE_CAMPAIGN_LIVE_EMAILS && recipient.email) {
+        const tpl = openCampaignLiveTemplate({
+          influencerName: recipient.name || "Creator",
+          campaignTitle: title,
+          brandName,
+          location: locationLabel,
+          campaignUrl,
+        });
+        base.push(
+          sendAppEmail({ to: recipient.email, ...tpl }).catch(() => {}),
+        );
+      }
+      return Promise.allSettled(base);
+    });
 
-	    await Promise.allSettled(notificationPromises);
-	  }
+    await Promise.allSettled(notificationPromises);
+  }
 
-	  private async notifyInvitedUsers(campaign: any): Promise<void> {
-	    const { _id: campaignId, title, brandId, inviteRecipientRole } = campaign;
+  private async notifyInvitedUsers(campaign: any): Promise<void> {
+    const { _id: campaignId, title, brandId, inviteRecipientRole } = campaign;
 
     // Get all active invites for this campaign
     const inviteQueries: any[] = [{ campaignId }];
@@ -1333,11 +1394,11 @@ export class CampaignsService {
         : "/influencer-dashboard/invites";
     const campaignUrl = `${frontendBase}${dashboardPath}`;
 
-	    // Load recipient profiles and notify verified invited users after campaign is live.
-	    const notificationPromises = invites.map(async (invite: any) => {
-	      try {
-	        const recipientModel =
-	          String(invite.recipientRole || "influencer") === "photographer"
+    // Load recipient profiles and notify verified invited users after campaign is live.
+    const notificationPromises = invites.map(async (invite: any) => {
+      try {
+        const recipientModel =
+          String(invite.recipientRole || "influencer") === "photographer"
             ? this.photographerModel
             : this.influencerModel;
 
@@ -1346,41 +1407,41 @@ export class CampaignsService {
           .select("name email isEmailVerified isMobileVerified")
           .lean()) as any;
 
-	        if (
-	          !recipient?._id ||
-	          recipient.isEmailVerified !== true ||
-	          recipient.isMobileVerified !== true
-	        ) {
-	          return;
-	        }
-	        const userRole =
-	          String(invite.recipientRole || "influencer") === "photographer"
-	            ? "photographer"
-	            : "influencer";
-	        const body = `${brandName} invited you to "${title}".`;
+        if (
+          !recipient?._id ||
+          recipient.isEmailVerified !== true ||
+          recipient.isMobileVerified !== true
+        ) {
+          return;
+        }
+        const userRole =
+          String(invite.recipientRole || "influencer") === "photographer"
+            ? "photographer"
+            : "influencer";
+        const body = `${brandName} invited you to "${title}".`;
 
-	        await this.notificationsService
-	          .createForUser({
-	            userId: String(recipient._id),
-	            userRole,
-	            title: "New campaign invite",
-	            body,
-	            url: dashboardPath,
-	          })
-	          .catch(() => {});
+        await this.notificationsService
+          .createForUser({
+            userId: String(recipient._id),
+            userRole,
+            title: "New campaign invite",
+            body,
+            url: dashboardPath,
+          })
+          .catch(() => {});
 
-	        await this.pushService
-	          .sendToUser(String(recipient._id), {
-	            title: "New campaign invite",
-	            body,
-	            url: dashboardPath,
-	          })
-	          .catch(() => {});
+        await this.pushService
+          .sendToUser(String(recipient._id), {
+            title: "New campaign invite",
+            body,
+            url: dashboardPath,
+          })
+          .catch(() => {});
 
-	        if (!ENABLE_CAMPAIGN_LIVE_EMAILS || !recipient?.email) return;
+        if (!ENABLE_CAMPAIGN_LIVE_EMAILS || !recipient?.email) return;
 
-	        const tpl = inviteCampaignLiveTemplate({
-	          recipientName: recipient.name || "Creator",
+        const tpl = inviteCampaignLiveTemplate({
+          recipientName: recipient.name || "Creator",
           campaignTitle: title,
           brandName,
           campaignUrl,
@@ -1389,11 +1450,11 @@ export class CampaignsService {
         return sendAppEmail({ to: recipient.email, ...tpl }).catch(() => {});
       } catch (err) {
         console.error("Failed to notify invited user:", err);
-	      }
-	    });
+      }
+    });
 
-	    await Promise.allSettled(notificationPromises);
-	  }
+    await Promise.allSettled(notificationPromises);
+  }
 
   async remove(id: string, brandId: string) {
     const campaign = await this.campaignModel.findById(id);
