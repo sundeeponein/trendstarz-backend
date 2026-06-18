@@ -146,6 +146,7 @@ export class UsersService {
     const normalized = (brandName || "").trim();
     if (!normalized) return null;
 
+    // 1. Exact brandName match (case-insensitive, hyphens treated as spaces)
     const brand = await this.brandModel
       .findOne({
         brandName: new RegExp(
@@ -157,8 +158,16 @@ export class UsersService {
 
     if (brand) return brand;
 
-    // FIX #21: Use regex query instead of fetching entire collection
-    // Search by slug pattern (kebab-case). This leverages a potential text index if available.
+    // 2. Exact brandUsername match (handles slugs like "carols-cosmetics")
+    const byUsername = await this.brandModel
+      .findOne({
+        brandUsername: new RegExp(`^${this.escapeRegex(normalized)}$`, "i"),
+      })
+      .lean();
+
+    if (byUsername) return byUsername;
+
+    // 3. Slug fallback: slugify the incoming string and match against brandName
     const decoded = this.slugify(normalized);
     const slugRegex = new RegExp(
       `^${decoded}$|^${decoded}-|\\b${decoded}\\b`,
