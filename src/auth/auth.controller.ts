@@ -113,6 +113,15 @@ export class AuthController {
     return this.authService.getPublicSettings();
   }
 
+  @Post("session/opened")
+  @UseGuards(JwtAuthGuard)
+  async markSessionOpened(@Req() req: any) {
+    return this.authService.markSessionOpened(
+      String(req?.user?.userId || req?.user?.sub || ""),
+      String(req?.user?.role || ""),
+    );
+  }
+
   @Post("register-influencer")
   @Throttle({ default: { ttl: 60000, limit: 3 } })
   async registerInfluencer(@Body() body: any, @Res() res: Response) {

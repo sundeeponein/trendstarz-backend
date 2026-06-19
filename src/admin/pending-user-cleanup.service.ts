@@ -66,6 +66,7 @@ export class PendingUserCleanupService {
       firstRegisteredAt: user?.firstRegisteredAt || null,
       createdAt: user?.createdAt || null,
       lastLoginAt: user?.lastLoginAt || null,
+      lastOpenedAt: user?.lastOpenedAt || null,
     };
   }
 
@@ -76,7 +77,7 @@ export class PendingUserCleanupService {
     cutoff.setDate(cutoff.getDate() - days);
     const filter = this.buildPendingUnverifiedAgeFilter(cutoff);
     const projection =
-      "name brandName email phoneNumber status isEmailVerified firstRegisteredAt createdAt lastLoginAt";
+      "name brandName email phoneNumber status isEmailVerified firstRegisteredAt createdAt lastLoginAt lastOpenedAt";
 
     const [
       influencerCount,

@@ -945,6 +945,10 @@ export class CampaignInvitesService {
         ),
       );
 
+      const isAdmin = String(requesterRole || "").toLowerCase() === "admin";
+      if (isAdmin) {
+        return this.attachLatestSubmissions(enriched);
+      }
       return enriched;
     } catch {
       return [];
@@ -2535,18 +2539,20 @@ export class CampaignInvitesService {
       }
     }
 
-    // Check state/district targeting eligibility
+    // Check state/district targeting eligibility (case-insensitive)
     if (campaign.targetState) {
-      const infState = (influencer as any).location?.state ?? "";
-      if (infState && infState !== campaign.targetState) {
+      const infState = ((influencer as any).location?.state ?? "").trim().toLowerCase();
+      const targetState = String(campaign.targetState || "").trim().toLowerCase();
+      if (infState && infState !== targetState) {
         throw new BadRequestException(
           `This campaign is limited to influencers from ${campaign.targetState}.`,
         );
       }
     }
     if (campaign.targetDistrict) {
-      const infDistrict = (influencer as any).location?.district ?? "";
-      if (infDistrict && infDistrict !== campaign.targetDistrict) {
+      const infDistrict = ((influencer as any).location?.district ?? "").trim().toLowerCase();
+      const targetDistrict = String(campaign.targetDistrict || "").trim().toLowerCase();
+      if (infDistrict && infDistrict !== targetDistrict) {
         throw new BadRequestException(
           `This campaign is limited to influencers from ${campaign.targetDistrict}, ${campaign.targetState}.`,
         );

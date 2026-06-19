@@ -6,6 +6,7 @@ import {
   InfluencerSchema,
   PhotographerSchema,
   AppSettingsSchema,
+  CounterSchema,
 } from "../database/schemas/profile.schemas";
 import { CampaignInviteSchema } from "../database/schemas/campaign-invite.schema";
 import { CampaignSubmissionSchema } from "../database/schemas/campaign-submission.schema";
@@ -73,6 +74,7 @@ import { ProfileVerificationModule } from "../profile-verification/profile-verif
         schema: ProfileFlagSchema,
         collection: "profile_flags",
       },
+      { name: "Counter", schema: CounterSchema, collection: "counters" },
     ]),
   ],
   controllers: [
