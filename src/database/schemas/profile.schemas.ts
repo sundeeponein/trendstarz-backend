@@ -43,6 +43,32 @@ const ProfileVerificationFields = {
   },
   adminReviewPending: { type: Boolean, default: false },
   profileModerationNotes: { type: String, default: "" },
+  verificationAdminNotes: { type: String, default: "" },
+  verificationAuditLog: [
+    {
+      action: {
+        type: String,
+        enum: [
+          "submitted",
+          "approved",
+          "rejected",
+          "removed",
+          "status_changed",
+          "notes_updated",
+        ],
+        required: true,
+      },
+      status: {
+        type: String,
+        enum: ["not_submitted", "pending", "approved", "rejected", "removed"],
+        default: "not_submitted",
+      },
+      note: { type: String, default: "" },
+      actorId: { type: String, default: "" },
+      actorRole: { type: String, default: "" },
+      actedAt: { type: Date, default: Date.now },
+    },
+  ],
 };
 
 const LEGACY_VERIFICATION_AUDIT_ACTIONS: Record<string, string> = {
@@ -492,6 +518,10 @@ BrandSchema.index({ status: 1 });
 BrandSchema.index({ brandName: 1 });
 BrandSchema.index({ resetToken: 1 }, { sparse: true });
 BrandSchema.index({ commissionBadge: 1 });
+BrandSchema.pre("validate", function (next) {
+  normalizeVerificationAuditLog(this);
+  next();
+});
 
 export const BrandModel = model("Brand", BrandSchema);
 

@@ -855,23 +855,159 @@ export class AdminUserTableController {
     body: {
       verifiedByTrendStarz?: boolean;
       adminTags?: string[];
+      action?: "pending" | "approve" | "reject" | "remove";
+      notes?: string;
     },
+    @Req() req: any,
   ) {
     const brand = await this.brandModel.findById(id);
     if (!brand) {
       return { message: "Brand not found", id };
     }
 
+    const action = String(body?.action || "").toLowerCase();
+    const notes = String(body?.notes || "").trim();
+    const actorId = String(req?.user?.userId || req?.user?.id || "admin");
+    const actorRole = String(req?.user?.role || "admin");
+
     if (typeof body?.verifiedByTrendStarz === "boolean") {
       brand.verifiedByTrendStarz = !!body.verifiedByTrendStarz;
+    }
+    if (action) {
+      if (action === "approve") {
+        brand.verifiedByTrendStarz = true;
+        brand.verificationDashboardStatus = "Brand Ready";
+      } else if (action === "reject") {
+        brand.verifiedByTrendStarz = false;
+        brand.verificationDashboardStatus = "Action Required";
+      } else if (action === "pending") {
+        brand.verificationDashboardStatus = "Under Review";
+      } else if (action === "remove") {
+        brand.verifiedByTrendStarz = false;
+        brand.verificationDashboardStatus = "Draft";
+      }
+    }
+    if (body?.notes !== undefined) {
+      brand.verificationAdminNotes = notes;
+      brand.profileModerationNotes = notes;
     }
 
     if (Array.isArray(body?.adminTags)) {
       brand.adminTags = this.normalizeAdminTags(body.adminTags);
     }
 
+    if (action || body?.notes !== undefined) {
+      const log = Array.isArray(brand.verificationAuditLog)
+        ? brand.verificationAuditLog
+        : [];
+      log.push({
+        action:
+          action === "approve"
+            ? "approved"
+            : action === "reject"
+              ? "rejected"
+              : action === "remove"
+                ? "removed"
+                : notes
+                  ? "notes_updated"
+                  : "status_changed",
+        status:
+          action === "approve"
+            ? "approved"
+            : action === "reject"
+              ? "rejected"
+              : action === "remove"
+                ? "removed"
+                : "pending",
+        note: notes,
+        actorId,
+        actorRole,
+        actedAt: new Date(),
+      });
+      brand.verificationAuditLog = log.slice(-100);
+    }
+
     const saved = await brand.save();
     return { message: "Brand verification updated", user: saved };
+  }
+
+  @Patch("users/photographer/:id/verification")
+  async updatePhotographerVerification(
+    @Param("id") id: string,
+    @Body()
+    body: {
+      action?: "pending" | "approve" | "reject" | "remove";
+      notes?: string;
+      verifiedByTrendStarz?: boolean;
+      adminTags?: string[];
+    },
+    @Req() req: any,
+  ) {
+    const photographer = await this.photographerModel.findById(id);
+    if (!photographer) {
+      return { message: "Photographer not found", id };
+    }
+
+    const action = String(body?.action || "").toLowerCase();
+    const notes = String(body?.notes || "").trim();
+    const actorId = String(req?.user?.userId || req?.user?.id || "admin");
+    const actorRole = String(req?.user?.role || "admin");
+
+    let status = photographer.verificationStatus || "not_submitted";
+    if (action === "approve") status = "approved";
+    else if (action === "reject") status = "rejected";
+    else if (action === "remove") status = "removed";
+    else if (action === "pending") status = "pending";
+
+    if (action) {
+      photographer.verificationStatus = status;
+      photographer.verifiedByTrendStarz = status === "approved";
+      photographer.verificationDashboardStatus =
+        status === "approved"
+          ? "Verified Creator"
+          : status === "rejected"
+            ? "Action Required"
+            : status === "pending"
+              ? "Under Review"
+              : "Draft";
+    }
+    if (typeof body?.verifiedByTrendStarz === "boolean") {
+      photographer.verifiedByTrendStarz = !!body.verifiedByTrendStarz;
+    }
+    if (body?.notes !== undefined) {
+      photographer.verificationAdminNotes = notes;
+      photographer.profileModerationNotes = notes;
+    }
+    if (Array.isArray(body?.adminTags)) {
+      photographer.adminTags = this.normalizeAdminTags(body.adminTags);
+    }
+
+    if (action || body?.notes !== undefined) {
+      const log = Array.isArray(photographer.verificationAuditLog)
+        ? photographer.verificationAuditLog
+        : [];
+      log.push({
+        action:
+          action === "approve"
+            ? "approved"
+            : action === "reject"
+              ? "rejected"
+              : action === "remove"
+                ? "removed"
+                : notes
+                  ? "notes_updated"
+                  : "status_changed",
+        status,
+        note: notes,
+        actorId,
+        actorRole,
+        actedAt: new Date(),
+      });
+      photographer.verificationAuditLog = log.slice(-100);
+    }
+
+    const saved = await photographer.save();
+    return { message: "Photographer verification updated", user: saved };
   }
 
   @Patch("users/:type/:id/social-media/:idx")

@@ -1010,11 +1010,18 @@ export class ProfileVerificationService {
           : action === "reject"
             ? "rejected"
             : action;
+    const auditStatus =
+      action === "reject"
+        ? "rejected"
+        : action === "request_changes"
+          ? "pending"
+          : "approved";
     await profileModel.findByIdAndUpdate(userId, {
       $set: {
         verificationDashboardStatus: nextStatus,
         adminReviewPending: false,
         profileModerationNotes: notes,
+        verificationAdminNotes: notes,
         ...(action === "approve" || action === "approve_warning"
           ? { verifiedByTrendStarz: true, verificationStatus: "approved" }
           : {}),
@@ -1023,12 +1030,7 @@ export class ProfileVerificationService {
       $push: {
         verificationAuditLog: {
           action: auditAction,
-          status:
-            action === "reject"
-              ? "rejected"
-              : action === "request_changes"
-                ? "pending"
-                : "approved",
+          status: auditStatus,
           note: notes,
           actorId: String(actor?.userId || actor?.id || ""),
           actorRole: "admin",
