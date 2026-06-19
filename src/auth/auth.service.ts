@@ -124,25 +124,6 @@ export class AuthService {
     return null;
   }
 
-  private modelForRole(role: TrendstarzRole | string | null | undefined): Model<any> | null {
-    const normalized = String(role || "").toLowerCase();
-    if (normalized === "admin") return this.userModel;
-    if (normalized === "influencer") return this.influencerModel;
-    if (normalized === "brand") return this.brandModel;
-    if (normalized === "photographer") return this.photographerModel;
-    return null;
-  }
-
-  async markSessionOpened(userId: string, role: TrendstarzRole | string) {
-    const model = this.modelForRole(role);
-    if (!model || !userId) {
-      throw new BadRequestException("Invalid session user.");
-    }
-    const now = new Date();
-    await model.updateOne({ _id: userId }, { $set: { lastOpenedAt: now } });
-    return { success: true, lastOpenedAt: now };
-  }
-
   private activateAfterEmailOwnership(
     user: any,
     role: TrendstarzRole | null,
@@ -618,7 +599,7 @@ export class AuthService {
 
   private modelForRole(role: string): Model<any> | null {
     const normalized = String(role || "").toLowerCase();
-    if (normalized === "admin" || normalized === "user") return this.userModel;
+    if (normalized === "admin" || normalized === "subadmin" || normalized === "user") return this.userModel;
     if (normalized === "influencer") return this.influencerModel;
     if (normalized === "brand") return this.brandModel;
     if (normalized === "photographer") return this.photographerModel;

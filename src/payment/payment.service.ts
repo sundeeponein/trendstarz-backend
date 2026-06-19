@@ -324,23 +324,30 @@ export class PaymentService {
   async getAdminSummary() {
     const rows = await this.paymentModel
       .find({ ...this.subscriptionPurposeFilter() })
-      .select("amount status refundStatus paymentStatus")
+      .select("amount status refundStatus paymentStatus gatewayProvider paymentMethod")
       .lean();
+
+    const amountInRupees = (row: any) => {
+      const amount = Number(row?.amount || 0);
+      return row?.gatewayProvider === "razorpay" || row?.paymentMethod === "razorpay"
+        ? amount / 100
+        : amount;
+    };
 
     const pending = rows
       .filter((row: any) => row.status === "pending")
-      .reduce((sum: number, row: any) => sum + Number(row.amount || 0), 0);
+      .reduce((sum: number, row: any) => sum + amountInRupees(row), 0);
     const received = rows
       .filter((row: any) =>
         row.status === "approved",
       )
-      .reduce((sum: number, row: any) => sum + Number(row.amount || 0), 0);
+      .reduce((sum: number, row: any) => sum + amountInRupees(row), 0);
     const rejected = rows
       .filter((row: any) => row.status === "rejected")
-      .reduce((sum: number, row: any) => sum + Number(row.amount || 0), 0);
+      .reduce((sum: number, row: any) => sum + amountInRupees(row), 0);
     const refunded = rows
       .filter((row: any) => row.refundStatus === "processed" || row.paymentStatus === "refunded")
-      .reduce((sum: number, row: any) => sum + Number(row.amount || 0), 0);
+      .reduce((sum: number, row: any) => sum + amountInRupees(row), 0);
 
     return {
       success: true,
