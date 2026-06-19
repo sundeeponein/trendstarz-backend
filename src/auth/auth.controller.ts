@@ -375,4 +375,28 @@ export class AuthController {
         .json({ message: err.message || "Failed to change password." });
     }
   }
+
+  @Post("session/opened")
+  @UseGuards(JwtAuthGuard)
+  async markSessionOpened(@Req() req: any) {
+    const userId = req?.user?.userId || req?.user?.sub || req?.user?.id;
+    const role = req?.user?.role;
+    return this.authService.markSessionOpened(
+      String(userId || ""),
+      String(role || ""),
+    );
+  }
+
+  @Post("community/joined")
+  @UseGuards(JwtAuthGuard)
+  async markCommunityJoined(@Req() req: any, @Body() body: any) {
+    const userId = req?.user?.userId || req?.user?.sub || req?.user?.id;
+    const role = req?.user?.role;
+    return this.authService.markCommunityJoined(
+      String(userId || ""),
+      String(role || ""),
+      String(body?.communityName || ""),
+      String(body?.communityState || ""),
+    );
+  }
 }

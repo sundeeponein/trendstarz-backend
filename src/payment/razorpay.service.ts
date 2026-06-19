@@ -4,21 +4,14 @@ import * as crypto from "crypto";
 import axios, { AxiosRequestConfig } from "axios";
 
 /**
- * @future-only RazorpayService
+ * RazorpayService
  *
- * This service is preserved for the automated payment phase.
- * It is NOT wired into any active campaign payment flow.
+ * Active pay-in flow:
+ *  - subscription collections use Razorpay Checkout order + signature verify
+ *  - campaign collections use Razorpay Checkout order + signature verify
  *
- * Current MVP flow: brand pays manually via UPI/QR, admin verifies UTR,
- * admin pays influencer via UPI. All handled in PaymentsPayoutsService.
- *
- * When to activate:
- *  1. Set CampaignTransaction.gateway = 'razorpay'
- *  2. Call createOrder() from PaymentsPayoutsService.submitPaymentProof()
- *  3. Verify webhook signature via verifySignature()
- *  4. Auto-capture: trigger markPayoutPaid() on successful Razorpay webhook
- *
- * Do NOT remove this service. It is registered in PaymentModule.
+ * Payouts remain manual by default. RazorpayX helpers are retained behind
+ * AUTO_PAYOUT_ENABLED for a later operational mode.
  */
 @Injectable()
 export class RazorpayService {
@@ -49,10 +42,8 @@ export class RazorpayService {
   }
 
   /**
-   * @future-only
-   * Create a Razorpay order for automated payment capture.
+   * Create a Razorpay Checkout order.
    * amount must be in paise (₹1 = 100 paise).
-   * NOT USED in MVP — manual UPI flow is active instead.
    */
   async createOrder(
     amountPaise: number,
@@ -76,9 +67,7 @@ export class RazorpayService {
   }
 
   /**
-   * @future-only
-   * Verify the Razorpay payment signature after automated capture.
-   * NOT USED in MVP — manual UTR verification by admin is active instead.
+   * Verify Razorpay Checkout signature after successful payment.
    */
   verifySignature(
     orderId: string,
@@ -95,9 +84,7 @@ export class RazorpayService {
   }
 
   /**
-   * @future-only
    * Fetch Razorpay order details for server-side status verification.
-   * NOT USED in MVP — admin manually confirms UTR instead.
    */
   async fetchOrder(orderId: string): Promise<any> {
     const razorpay = this.getClient();

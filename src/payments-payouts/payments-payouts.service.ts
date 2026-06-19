@@ -27,9 +27,12 @@ type FeeSettings = {
 @Injectable()
 export class PaymentsPayoutsService {
   private readonly logger = new Logger(PaymentsPayoutsService.name);
+  private static readonly PAYOUT_SETTLEMENT_MODE = String(
+    process.env.PAYOUT_SETTLEMENT_MODE || "manual",
+  ).toLowerCase();
   private static readonly AUTO_PAYOUT_ENABLED =
-    String(process.env.AUTO_PAYOUT_ENABLED || "false").toLowerCase() ===
-    "true";
+    PaymentsPayoutsService.PAYOUT_SETTLEMENT_MODE === "razorpayx" &&
+    String(process.env.AUTO_PAYOUT_ENABLED || "false").toLowerCase() === "true";
   private static readonly AUTO_PAYOUT_RETRY_LIMIT = Math.max(
     Number(process.env.AUTO_PAYOUT_RETRY_LIMIT || 3),
     0,
@@ -1003,9 +1006,8 @@ export class PaymentsPayoutsService {
       process.env.RAZORPAY_KEY_ID && process.env.RAZORPAY_KEY_SECRET
     );
     const hasRazorpayX = this.razorpayService.isPayoutsConfigured();
-    const autoPayoutEnabled =
-      String(process.env.AUTO_PAYOUT_ENABLED || "false").toLowerCase() ===
-      "true";
+    const payoutSettlementMode = PaymentsPayoutsService.PAYOUT_SETTLEMENT_MODE;
+    const autoPayoutEnabled = PaymentsPayoutsService.AUTO_PAYOUT_ENABLED;
 
     const missing: string[] = [];
     if (!process.env.RAZORPAY_KEY_ID) missing.push("RAZORPAY_KEY_ID");
@@ -1027,7 +1029,7 @@ export class PaymentsPayoutsService {
           razorpayPaymentGateway:
             "Required for subscription and campaign collection checkout",
           razorpayX:
-            "Required for automated payout transfer to creator bank/UPI",
+            "Optional; not used while payout settlement mode is manual",
         },
         registrationSubscriptions: {
           manual: {
@@ -1057,11 +1059,14 @@ export class PaymentsPayoutsService {
             manual: {
               enabled: true,
               path: "/api/campaign-transactions/:id/mark-paid",
+              settlementMode: "manual",
+              verification: "Admin reviews completed campaign, sends payout manually, then enters UTR.",
             },
             razorpayAuto: {
               enabled: autoPayoutEnabled && hasRazorpayX,
               path: "/api/campaign-transactions/admin/auto-payout/run + cron + /api/campaign-transactions/webhooks/razorpayx",
               requires: [
+                "PAYOUT_SETTLEMENT_MODE=razorpayx",
                 "AUTO_PAYOUT_ENABLED=true",
                 "RAZORPAYX_KEY_ID",
                 "RAZORPAYX_KEY_SECRET",
@@ -1073,6 +1078,7 @@ export class PaymentsPayoutsService {
         },
         autoPayout: {
           enabled: autoPayoutEnabled,
+          settlementMode: payoutSettlementMode,
           gatewayConfigured: hasRazorpayX,
           cron: process.env.AUTO_PAYOUT_CRON || "0 */10 * * * *",
           retryLimit: Number(process.env.AUTO_PAYOUT_RETRY_LIMIT || 3),
@@ -1102,7 +1108,7 @@ export class PaymentsPayoutsService {
       String(tx.gateway || "manual_upi") !== "manual_upi"
     ) {
       throw new BadRequestException(
-        "This transaction is configured for auto settlement via payment gateway. Manual mark-paid is disabled.",
+        "This collection is configured for Razorpay verification. Manual collection verification is disabled.",
       );
     }
     tx.collectionStatus = "verified";
@@ -1399,7 +1405,7 @@ export class PaymentsPayoutsService {
       return {
         success: false,
         message:
-          "Auto payout is disabled. Set AUTO_PAYOUT_ENABLED=true to enable gateway transfers.",
+          "Auto payout is disabled. Current payout settlement mode is manual.",
         processed: 0,
         queued: 0,
         skipped: 0,

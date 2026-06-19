@@ -90,10 +90,15 @@ export const UserSchema = new Schema(
     email: { type: String, required: true, unique: true },
     firebaseUid: { type: String, default: null, index: true },
     password: { type: String, required: true },
-    role: { type: String, enum: ["admin", "user"], default: "user" },
+    role: { type: String, enum: ["admin", "subadmin", "user"], default: "user" },
     firstRegisteredAt: { type: Date, default: Date.now },
     lastLoginAt: { type: Date, default: null },
     lastOpenedAt: { type: Date, default: null },
+    communityJoined: { type: Boolean, default: false },
+    communityState: { type: String, default: "" },
+    communityName: { type: String, default: "" },
+    communityJoinedAt: { type: Date, default: null },
+    communityJoinedDate: { type: Date, default: null },
     isEmailVerified: { type: Boolean, default: false },
     isMobileVerified: { type: Boolean, default: false },
     ...ProfileVerificationFields,
@@ -120,6 +125,11 @@ export const InfluencerSchema = new Schema(
     firstRegisteredAt: { type: Date, default: Date.now },
     lastLoginAt: { type: Date, default: null },
     lastOpenedAt: { type: Date, default: null },
+    communityJoined: { type: Boolean, default: false },
+    communityState: { type: String, default: "" },
+    communityName: { type: String, default: "" },
+    communityJoinedAt: { type: Date, default: null },
+    communityJoinedDate: { type: Date, default: null },
     profileImages: [
       {
         url: { type: String, required: true },
@@ -215,6 +225,19 @@ export const InfluencerSchema = new Schema(
         ],
       },
     ],
+    socialMediaEditLog: [
+      {
+        platformIdx: { type: Number },
+        platform: { type: String },
+        oldHandle: { type: String },
+        newHandle: { type: String },
+        oldTier: { type: String },
+        newTier: { type: String },
+        changedBy: { type: String },
+        changedByName: { type: String },
+        changedAt: { type: Date, default: Date.now },
+      },
+    ],
     collaborationAvailability: {
       enabled: { type: Boolean, default: false },
       collaborationTypes: [{ type: String }],
@@ -231,6 +254,7 @@ export const InfluencerSchema = new Schema(
       source: { type: String },
       audience: { type: String },
       referrerPath: { type: String },
+      referrerUrl: { type: String },
       capturedAt: { type: Date },
     },
     profileTraffic: {
@@ -319,6 +343,19 @@ export const BrandSchema = new Schema(
         ],
       },
     ],
+    socialMediaEditLog: [
+      {
+        platformIdx: { type: Number },
+        platform: { type: String },
+        oldHandle: { type: String },
+        newHandle: { type: String },
+        oldTier: { type: String },
+        newTier: { type: String },
+        changedBy: { type: String },
+        changedByName: { type: String },
+        changedAt: { type: Date, default: Date.now },
+      },
+    ],
     googleMapAddress: { type: String },
     password: { type: String, required: true },
     brandName: { type: String, required: true },
@@ -335,6 +372,11 @@ export const BrandSchema = new Schema(
     firstRegisteredAt: { type: Date, default: Date.now },
     lastLoginAt: { type: Date, default: null },
     lastOpenedAt: { type: Date, default: null },
+    communityJoined: { type: Boolean, default: false },
+    communityState: { type: String, default: "" },
+    communityName: { type: String, default: "" },
+    communityJoinedAt: { type: Date, default: null },
+    communityJoinedDate: { type: Date, default: null },
     brandLogo: [
       {
         url: { type: String, required: true },
@@ -384,6 +426,7 @@ export const BrandSchema = new Schema(
       source: { type: String },
       audience: { type: String },
       referrerPath: { type: String },
+      referrerUrl: { type: String },
       capturedAt: { type: Date },
     },
     profileTraffic: {
@@ -467,6 +510,11 @@ export const PhotographerSchema = new Schema(
     firstRegisteredAt: { type: Date, default: Date.now },
     lastLoginAt: { type: Date, default: null },
     lastOpenedAt: { type: Date, default: null },
+    communityJoined: { type: Boolean, default: false },
+    communityState: { type: String, default: "" },
+    communityName: { type: String, default: "" },
+    communityJoinedAt: { type: Date, default: null },
+    communityJoinedDate: { type: Date, default: null },
     profileImages: [
       {
         url: { type: String, required: true },
@@ -503,6 +551,19 @@ export const PhotographerSchema = new Schema(
         followersCount: { type: Number },
       },
     ],
+    socialMediaEditLog: [
+      {
+        platformIdx: { type: Number },
+        platform: { type: String },
+        oldHandle: { type: String },
+        newHandle: { type: String },
+        oldTier: { type: String },
+        newTier: { type: String },
+        changedBy: { type: String },
+        changedByName: { type: String },
+        changedAt: { type: Date, default: Date.now },
+      },
+    ],
     collaborationAvailability: {
       enabled: { type: Boolean, default: false },
       availableFor: [{ type: String }],
@@ -531,6 +592,7 @@ export const PhotographerSchema = new Schema(
       source: { type: String },
       audience: { type: String },
       referrerPath: { type: String },
+      referrerUrl: { type: String },
       capturedAt: { type: Date },
     },
     profileTraffic: {
@@ -739,6 +801,23 @@ export const DistrictSchema = new Schema({
 });
 DistrictSchema.index({ state: 1 });
 export const DistrictModel = model("District", DistrictSchema);
+
+export const WhatsAppCommunitySchema = new Schema(
+  {
+    state: { type: String, required: true, trim: true },
+    stateKey: { type: String, required: true, trim: true, index: true },
+    communityName: { type: String, required: true, trim: true },
+    communityLink: { type: String, required: true, trim: true },
+    qrCode: { type: String, default: "", trim: true },
+    isActive: { type: Boolean, default: true },
+  },
+  { timestamps: true },
+);
+WhatsAppCommunitySchema.index({ stateKey: 1 }, { unique: true });
+export const WhatsAppCommunityModel = model(
+  "WhatsAppCommunity",
+  WhatsAppCommunitySchema,
+);
 
 export const SocialMediaSchema = new Schema({
   name: { type: String, required: true },

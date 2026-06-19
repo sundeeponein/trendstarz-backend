@@ -9,7 +9,8 @@ import {
 export class RolesGuard implements CanActivate {
   canActivate(context: ExecutionContext): boolean {
     const request = context.switchToHttp().getRequest();
-    if (request.user?.role !== "admin") {
+    const role = request.user?.role;
+    if (role !== "admin" && role !== "subadmin") {
       throw new ForbiddenException("Admin access only");
     }
     return true;
