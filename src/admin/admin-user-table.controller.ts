@@ -1337,6 +1337,54 @@ export class AdminUserTableController {
     return { message: "Contact verification updated", user: saved };
   }
 
+  @Patch("users/:type/:id/community-status")
+  async updateCommunityStatus(
+    @Param("type") type: string,
+    @Param("id") id: string,
+    @Body() body: { communityJoined?: boolean },
+  ) {
+    const normalizedType = String(type || "").toLowerCase();
+    if (
+      normalizedType !== "influencer" &&
+      normalizedType !== "brand" &&
+      normalizedType !== "photographer"
+    ) {
+      throw new BadRequestException("Unsupported user type");
+    }
+
+    if (typeof body?.communityJoined !== "boolean") {
+      throw new BadRequestException("communityJoined is required");
+    }
+
+    const model =
+      normalizedType === "influencer"
+        ? this.influencerModel
+        : normalizedType === "brand"
+          ? this.brandModel
+          : this.photographerModel;
+
+    const patch = body.communityJoined
+      ? {
+          communityJoined: true,
+          communityJoinedAt: new Date(),
+          communityJoinedDate: new Date(),
+        }
+      : {
+          communityJoined: false,
+          communityName: "",
+          communityState: "",
+          communityJoinedAt: null,
+          communityJoinedDate: null,
+        };
+
+    const user = await model.findByIdAndUpdate(id, { $set: patch }, { new: true });
+    if (!user) {
+      throw new NotFoundException("User not found");
+    }
+
+    return { message: "Community status updated", user };
+  }
+
   // PATCH endpoint to directly update brandLogo and products for a brand
   @Patch("brands/:id/images")
   async patchBrandImages(
