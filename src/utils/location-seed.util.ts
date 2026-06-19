@@ -18,6 +18,8 @@ type ConfigLocation = {
 
 function readConfigLocations(): ConfigLocation[] {
   const possiblePaths = [
+    path.join(__dirname, "../../assets/locations.json"),
+    path.join(process.cwd(), "assets/locations.json"),
     path.join(__dirname, "../../assets/admin-config.json"),
     path.join(process.cwd(), "assets/admin-config.json"),
   ];
@@ -26,6 +28,7 @@ function readConfigLocations(): ConfigLocation[] {
     if (!fs.existsSync(configPath)) continue;
     try {
       const parsed = JSON.parse(fs.readFileSync(configPath, "utf-8"));
+      if (Array.isArray(parsed)) return parsed;
       return Array.isArray(parsed?.locations) ? parsed.locations : [];
     } catch {
       return [];

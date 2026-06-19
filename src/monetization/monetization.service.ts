@@ -112,6 +112,7 @@ export class MonetizationService {
       premiumDuration,
       status: "pending",
       paymentMethod: "razorpay",
+      gatewayProvider: "razorpay",
       purpose: "subscription",
       orderId: order.orderId,
       paymentStatus: "created",
@@ -187,7 +188,8 @@ export class MonetizationService {
       amount: Math.round(grossAmount * 100),
       premiumDuration: "1m",
       status: "pending",
-      paymentMethod: "upi",
+      paymentMethod: "razorpay",
+      gatewayProvider: "razorpay",
       purpose: "invite_unlock",
       orderId: order.orderId,
       paymentStatus: "created",
@@ -277,8 +279,16 @@ export class MonetizationService {
       throw new BadRequestException("Invalid payment signature");
     }
 
-    const payment: any = await this.paymentModel.findOne({ orderId: input.orderId });
+    const payment: any = await this.paymentModel.findOne({
+      orderId: input.orderId,
+      userId: toObjectId(input.userId),
+      purpose: input.paymentType === "subscription" ? "subscription" : "invite_unlock",
+    });
     if (!payment) throw new NotFoundException("Payment order not found");
+
+    if (payment.paymentStatus === "captured" && payment.status === "approved") {
+      return { success: true, paymentId: input.paymentId || payment.paymentId };
+    }
 
     payment.paymentId = input.paymentId;
     payment.paymentStatus = "captured";
