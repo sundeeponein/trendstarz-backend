@@ -241,6 +241,7 @@ export const InfluencerSchema = new Schema(
       source: { type: String },
       audience: { type: String },
       referrerPath: { type: String },
+      referrerUrl: { type: String },
       capturedAt: { type: Date },
     },
     profileTraffic: {
@@ -399,6 +400,7 @@ export const BrandSchema = new Schema(
       source: { type: String },
       audience: { type: String },
       referrerPath: { type: String },
+      referrerUrl: { type: String },
       capturedAt: { type: Date },
     },
     profileTraffic: {
@@ -551,6 +553,7 @@ export const PhotographerSchema = new Schema(
       source: { type: String },
       audience: { type: String },
       referrerPath: { type: String },
+      referrerUrl: { type: String },
       capturedAt: { type: Date },
     },
     profileTraffic: {

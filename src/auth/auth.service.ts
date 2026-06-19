@@ -1303,6 +1303,8 @@ export class AuthService {
       audience: data?.signupAttribution?.audience || data?.audience || null,
       referrerPath:
         data?.signupAttribution?.referrerPath || data?.referrerPath || null,
+      referrerUrl:
+        data?.signupAttribution?.referrerUrl || data?.referrerUrl || null,
       capturedAt: new Date(),
     };
 
@@ -1476,6 +1478,8 @@ export class AuthService {
       audience: data?.signupAttribution?.audience || data?.audience || null,
       referrerPath:
         data?.signupAttribution?.referrerPath || data?.referrerPath || null,
+      referrerUrl:
+        data?.signupAttribution?.referrerUrl || data?.referrerUrl || null,
       capturedAt: new Date(),
     };
     const brand = new this.brandModel({
@@ -1636,6 +1640,8 @@ export class AuthService {
       audience: data?.signupAttribution?.audience || data?.audience || null,
       referrerPath:
         data?.signupAttribution?.referrerPath || data?.referrerPath || null,
+      referrerUrl:
+        data?.signupAttribution?.referrerUrl || data?.referrerUrl || null,
       capturedAt: new Date(),
     };
 
