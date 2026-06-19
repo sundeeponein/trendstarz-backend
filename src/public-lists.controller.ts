@@ -11,6 +11,11 @@ import {
   visibleCollaborationOptionConfig,
   visibleCreatorTypeConfig,
 } from "./utils/collaboration-options.util";
+import {
+  normalizeCommunityStateKey,
+  readWhatsAppCommunityConfig,
+  seedMissingWhatsAppCommunitiesFromConfig,
+} from "./utils/whatsapp-community-config.util";
 
 @Controller("tiers")
 export class TiersController {
@@ -173,6 +178,31 @@ export class DistrictsController {
 
     const districts = await this.districtModel.find(filter).lean().limit(1000);
     return districts.length ? districts : [];
+  }
+}
+
+@Controller("public/whatsapp-community")
+export class PublicWhatsAppCommunityController {
+  constructor(
+    @InjectModel("WhatsAppCommunity")
+    private readonly whatsappCommunityModel: Model<any>,
+  ) {}
+
+  @Get()
+  async getByState(@Query("state") state?: string) {
+    const stateKey = normalizeCommunityStateKey(state);
+    if (!stateKey) return { success: true, data: null };
+    await seedMissingWhatsAppCommunitiesFromConfig(
+      this.whatsappCommunityModel,
+    );
+    const community = await this.whatsappCommunityModel
+      .findOne({ stateKey, isActive: { $ne: false } })
+      .lean();
+    if (community) return { success: true, data: community };
+    const fallback = readWhatsAppCommunityConfig().find(
+      (item) => item.stateKey === stateKey && item.isActive !== false,
+    );
+    return { success: true, data: fallback || null };
   }
 }
 

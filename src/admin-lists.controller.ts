@@ -31,6 +31,10 @@ import {
   normalizeCollaborationOptionConfig,
   normalizeCreatorTypeConfig,
 } from "./utils/collaboration-options.util";
+import {
+  normalizeCommunityStateKey,
+  seedMissingWhatsAppCommunitiesFromConfig,
+} from "./utils/whatsapp-community-config.util";
 import { PendingUserCleanupService } from "./admin/pending-user-cleanup.service";
 
 interface VisibilityItem {
@@ -174,6 +178,7 @@ export class AdminListsController {
     @InjectModel("Category") private readonly categoryModel: Model<any>,
     @InjectModel("SocialMedia") private readonly socialMediaModel: Model<any>,
     @InjectModel("Language") private readonly languageModel: Model<any>,
+    @InjectModel("User") private readonly userModel: Model<any>,
     @InjectModel("Influencer") private readonly influencerModel: Model<any>,
     @InjectModel("Brand") private readonly brandModel: Model<any>,
     @InjectModel("Photographer") private readonly photographerModel: Model<any>,
@@ -181,6 +186,8 @@ export class AdminListsController {
     @InjectModel("CampaignInvite")
     private readonly campaignInviteModel: Model<any>,
     @InjectModel("AppSettings") private readonly appSettingsModel: Model<any>,
+    @InjectModel("WhatsAppCommunity")
+    private readonly whatsappCommunityModel: Model<any>,
     private readonly pendingUserCleanupService: PendingUserCleanupService,
   ) {
     // Load plans-config.json on initialization
@@ -343,6 +350,37 @@ export class AdminListsController {
     merged.campaignTypeConfigDefaults = getCampaignTypeConfigDefaults();
     merged.campaignAccessModeConfigDefaults = getCampaignAccessModeConfigDefaults();
     return merged;
+  }
+
+  private async getCommunityJoinedCounts(): Promise<Map<string, number>> {
+    const models = [
+      this.userModel,
+      this.influencerModel,
+      this.brandModel,
+      this.photographerModel,
+    ];
+    const results = await Promise.all(
+      models.map((model) =>
+        model
+          .aggregate([
+            {
+              $match: {
+                communityJoined: true,
+                communityName: { $exists: true, $nin: ["", null] },
+              },
+            },
+            { $group: { _id: "$communityName", count: { $sum: 1 } } },
+          ])
+          .exec(),
+      ),
+    );
+    const counts = new Map<string, number>();
+    for (const group of results.flat()) {
+      const key = String(group?._id || "").trim();
+      if (!key) continue;
+      counts.set(key, (counts.get(key) || 0) + Number(group?.count || 0));
+    }
+    return counts;
   }
 
   @Patch("settings")
@@ -766,6 +804,87 @@ export class AdminListsController {
 
     const saved = await campaign.save();
     return { success: true, campaign: saved };
+  }
+
+  @Get("whatsapp-communities")
+  async getWhatsAppCommunities() {
+    await seedMissingWhatsAppCommunitiesFromConfig(
+      this.whatsappCommunityModel,
+    );
+    const [items, joinedCounts] = await Promise.all([
+      this.whatsappCommunityModel
+        .find({})
+        .sort({ state: 1, communityName: 1 })
+        .lean()
+        .limit(500),
+      this.getCommunityJoinedCounts(),
+    ]);
+    const data = items.map((item: any) => ({
+      ...item,
+      joinedUserCount: joinedCounts.get(String(item?.communityName || "").trim()) || 0,
+    }));
+    return { success: true, data };
+  }
+
+  @Post("whatsapp-communities")
+  async createWhatsAppCommunity(@Body() body: any) {
+    const state = String(body?.state || "").trim();
+    const communityName = String(body?.communityName || body?.groupName || "").trim();
+    const communityLink = String(body?.communityLink || body?.whatsappLink || "").trim();
+    const stateKey = normalizeCommunityStateKey(state);
+    if (!stateKey || !communityName || !communityLink) {
+      throw new BadRequestException(
+        "State, community name, and WhatsApp link are required.",
+      );
+    }
+    const saved = await this.whatsappCommunityModel.findOneAndUpdate(
+      { stateKey },
+      {
+        $set: {
+          state,
+          stateKey,
+          communityName,
+          communityLink,
+          isActive: body?.isActive !== false,
+        },
+      },
+      { new: true, upsert: true, setDefaultsOnInsert: true },
+    );
+    return { success: true, data: saved };
+  }
+
+  @Patch("whatsapp-communities/:id")
+  async updateWhatsAppCommunity(@Param("id") id: string, @Body() body: any) {
+    const state = String(body?.state || "").trim();
+    const communityName = String(body?.communityName || body?.groupName || "").trim();
+    const communityLink = String(body?.communityLink || body?.whatsappLink || "").trim();
+    const stateKey = normalizeCommunityStateKey(state);
+    if (!stateKey || !communityName || !communityLink) {
+      throw new BadRequestException(
+        "State, community name, and WhatsApp link are required.",
+      );
+    }
+    const updated = await this.whatsappCommunityModel.findByIdAndUpdate(
+      id,
+      {
+        $set: {
+          state,
+          stateKey,
+          communityName,
+          communityLink,
+          isActive: body?.isActive !== false,
+        },
+      },
+      { new: true },
+    );
+    if (!updated) throw new BadRequestException("Community not found");
+    return { success: true, data: updated };
+  }
+
+  @Delete("whatsapp-communities/:id")
+  async deleteWhatsAppCommunity(@Param("id") id: string) {
+    await this.whatsappCommunityModel.findByIdAndDelete(id);
+    return { success: true };
   }
   // Debug endpoint to log influencer and brand data
   @Get("debug-users")

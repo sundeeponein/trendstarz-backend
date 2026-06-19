@@ -597,6 +597,63 @@ export class AuthService {
     private readonly firebaseAdminService: FirebaseAdminService,
   ) {}
 
+  private modelForRole(role: string): Model<any> | null {
+    const normalized = String(role || "").toLowerCase();
+    if (normalized === "admin" || normalized === "user") return this.userModel;
+    if (normalized === "influencer") return this.influencerModel;
+    if (normalized === "brand") return this.brandModel;
+    if (normalized === "photographer") return this.photographerModel;
+    return null;
+  }
+
+  async markSessionOpened(userId: string, role: string) {
+    const model = this.modelForRole(role);
+    if (!model || !userId) {
+      throw new BadRequestException("Invalid user session.");
+    }
+    const lastOpenedAt = new Date();
+    await model.updateOne({ _id: userId }, { $set: { lastOpenedAt } });
+    return { success: true, lastOpenedAt };
+  }
+
+  async markCommunityJoined(
+    userId: string,
+    role: string,
+    communityName: string,
+    communityState = "",
+  ) {
+    const model = this.modelForRole(role);
+    if (!model || !userId) {
+      throw new BadRequestException("Invalid user session.");
+    }
+    const name = String(communityName || "").trim();
+    const state = String(communityState || "").trim();
+    if (!name) {
+      throw new BadRequestException("Community name is required.");
+    }
+    const communityJoinedAt = new Date();
+    await model.updateOne(
+      { _id: userId },
+      {
+        $set: {
+          communityJoined: true,
+          communityState: state,
+          communityName: name,
+          communityJoinedAt,
+          communityJoinedDate: communityJoinedAt,
+        },
+      },
+    );
+    return {
+      success: true,
+      communityJoined: true,
+      communityState: state,
+      communityName: name,
+      communityJoinedAt,
+      communityJoinedDate: communityJoinedAt,
+    };
+  }
+
   private normalizePhone(value: unknown): string {
     if (value === null || value === undefined) return "";
     if (typeof value !== "string" && typeof value !== "number") return "";
@@ -949,7 +1006,7 @@ export class AuthService {
       const token = jwt.sign(
         { userId: adminUser._id, email: adminUser.email, role: adminUser.role },
         getJwtSecret(),
-        { expiresIn: "7d" },
+        { expiresIn: "90d" },
       );
       return {
         token,
@@ -1014,7 +1071,7 @@ export class AuthService {
       const token = jwt.sign(
         { userId: influencer._id, email: influencer.email, role: "influencer" },
         getJwtSecret(),
-        { expiresIn: "7d" },
+        { expiresIn: "90d" },
       );
       return {
         token,
@@ -1066,7 +1123,7 @@ export class AuthService {
       const token = jwt.sign(
         { userId: brand._id, email: brand.email, role: "brand" },
         getJwtSecret(),
-        { expiresIn: "7d" },
+        { expiresIn: "90d" },
       );
       return {
         token,
@@ -1131,7 +1188,7 @@ export class AuthService {
           role: "photographer",
         },
         getJwtSecret(),
-        { expiresIn: "7d" },
+        { expiresIn: "90d" },
       );
       return {
         token,

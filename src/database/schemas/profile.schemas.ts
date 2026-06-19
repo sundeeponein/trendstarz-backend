@@ -93,6 +93,12 @@ export const UserSchema = new Schema(
     role: { type: String, enum: ["admin", "user"], default: "user" },
     firstRegisteredAt: { type: Date, default: Date.now },
     lastLoginAt: { type: Date, default: null },
+    lastOpenedAt: { type: Date, default: null },
+    communityJoined: { type: Boolean, default: false },
+    communityState: { type: String, default: "" },
+    communityName: { type: String, default: "" },
+    communityJoinedAt: { type: Date, default: null },
+    communityJoinedDate: { type: Date, default: null },
     isEmailVerified: { type: Boolean, default: false },
     isMobileVerified: { type: Boolean, default: false },
     ...ProfileVerificationFields,
@@ -118,6 +124,12 @@ export const InfluencerSchema = new Schema(
     ...ProfileVerificationFields,
     firstRegisteredAt: { type: Date, default: Date.now },
     lastLoginAt: { type: Date, default: null },
+    lastOpenedAt: { type: Date, default: null },
+    communityJoined: { type: Boolean, default: false },
+    communityState: { type: String, default: "" },
+    communityName: { type: String, default: "" },
+    communityJoinedAt: { type: Date, default: null },
+    communityJoinedDate: { type: Date, default: null },
     profileImages: [
       {
         url: { type: String, required: true },
@@ -332,6 +344,12 @@ export const BrandSchema = new Schema(
     ...ProfileVerificationFields,
     firstRegisteredAt: { type: Date, default: Date.now },
     lastLoginAt: { type: Date, default: null },
+    lastOpenedAt: { type: Date, default: null },
+    communityJoined: { type: Boolean, default: false },
+    communityState: { type: String, default: "" },
+    communityName: { type: String, default: "" },
+    communityJoinedAt: { type: Date, default: null },
+    communityJoinedDate: { type: Date, default: null },
     brandLogo: [
       {
         url: { type: String, required: true },
@@ -463,6 +481,12 @@ export const PhotographerSchema = new Schema(
     ...ProfileVerificationFields,
     firstRegisteredAt: { type: Date, default: Date.now },
     lastLoginAt: { type: Date, default: null },
+    lastOpenedAt: { type: Date, default: null },
+    communityJoined: { type: Boolean, default: false },
+    communityState: { type: String, default: "" },
+    communityName: { type: String, default: "" },
+    communityJoinedAt: { type: Date, default: null },
+    communityJoinedDate: { type: Date, default: null },
     profileImages: [
       {
         url: { type: String, required: true },
@@ -735,6 +759,23 @@ export const DistrictSchema = new Schema({
 });
 DistrictSchema.index({ state: 1 });
 export const DistrictModel = model("District", DistrictSchema);
+
+export const WhatsAppCommunitySchema = new Schema(
+  {
+    state: { type: String, required: true, trim: true },
+    stateKey: { type: String, required: true, trim: true, index: true },
+    communityName: { type: String, required: true, trim: true },
+    communityLink: { type: String, required: true, trim: true },
+    qrCode: { type: String, default: "", trim: true },
+    isActive: { type: Boolean, default: true },
+  },
+  { timestamps: true },
+);
+WhatsAppCommunitySchema.index({ stateKey: 1 }, { unique: true });
+export const WhatsAppCommunityModel = model(
+  "WhatsAppCommunity",
+  WhatsAppCommunitySchema,
+);
 
 export const SocialMediaSchema = new Schema({
   name: { type: String, required: true },

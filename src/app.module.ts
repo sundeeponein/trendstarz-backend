@@ -15,6 +15,7 @@ import {
   SocialMediaController,
   TiersController,
   LanguagesController,
+  PublicWhatsAppCommunityController,
   PublicSupportContactController,
   PublicCampaignTypeConfigsController,
   EquipmentOptionsController,
@@ -40,6 +41,7 @@ import {
   TierSchema,
   AppSettingsSchema,
   CampaignSchema,
+  WhatsAppCommunitySchema,
 } from "./database/schemas/profile.schemas";
 import { PaymentSchema } from "./database/schemas/payment.schema";
 import { CampaignInviteSchema } from "./database/schemas/campaign-invite.schema";
@@ -126,6 +128,11 @@ import { ProfileVerificationModule } from "./profile-verification/profile-verifi
         collection: "campaigns",
       },
       {
+        name: "WhatsAppCommunity",
+        schema: WhatsAppCommunitySchema,
+        collection: "whatsappcommunities",
+      },
+      {
         name: "ProfileFlag",
         schema: ProfileFlagSchema,
         collection: "profile_flags",
@@ -153,6 +160,7 @@ import { ProfileVerificationModule } from "./profile-verification/profile-verifi
     SocialMediaController,
     TiersController,
     LanguagesController,
+    PublicWhatsAppCommunityController,
     PublicSupportContactController,
     PublicCampaignTypeConfigsController,
     EquipmentOptionsController,
