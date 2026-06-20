@@ -1051,7 +1051,12 @@ export class AdminUserTableController {
     if (body.tier !== undefined) sm.tier = String(body.tier).trim();
 
     if (!Array.isArray(user.socialMediaEditLog)) user.socialMediaEditLog = [];
-    user.socialMediaEditLog.push(logEntry);
+    const existingIdx = user.socialMediaEditLog.findIndex((e: any) => e.platformIdx === index);
+    if (existingIdx >= 0) {
+      user.socialMediaEditLog[existingIdx] = logEntry;
+    } else {
+      user.socialMediaEditLog.push(logEntry);
+    }
 
     const saved = await user.save();
     return { message: "Social media updated", user: saved };
