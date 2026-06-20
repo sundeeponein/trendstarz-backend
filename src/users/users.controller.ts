@@ -443,4 +443,12 @@ export class UsersController {
     const userId = req.user?.userId || req.user?.sub || req.user?.id;
     return this.usersService.updateBrandProfile(userId, body);
   }
+
+  @UseGuards(JwtAuthGuard)
+  @Patch("influencer-profile/admin-social-notifications/dismiss")
+  async dismissAdminSocialNotifications(@Req() req: any) {
+    const userId = req.user?.userId || req.user?.sub || req.user?.id;
+    await this.usersService.dismissAdminSocialNotifications(userId);
+    return { message: "Notifications dismissed" };
+  }
 }

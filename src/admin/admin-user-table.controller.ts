@@ -1058,6 +1058,25 @@ export class AdminUserTableController {
       user.socialMediaEditLog.push(logEntry);
     }
 
+    if (!Array.isArray(user.adminSocialNotifications)) user.adminSocialNotifications = [];
+    const notifEntry = {
+      platformIdx: index,
+      platform: logEntry.platform,
+      oldHandle: logEntry.oldHandle,
+      newHandle: logEntry.newHandle,
+      oldTier: logEntry.oldTier,
+      newTier: logEntry.newTier,
+      changedByName: logEntry.changedByName,
+      changedAt: logEntry.changedAt,
+      seen: false,
+    };
+    const existingNotifIdx = user.adminSocialNotifications.findIndex((e: any) => e.platformIdx === index);
+    if (existingNotifIdx >= 0) {
+      user.adminSocialNotifications[existingNotifIdx] = notifEntry;
+    } else {
+      user.adminSocialNotifications.push(notifEntry);
+    }
+
     const saved = await user.save();
     return { message: "Social media updated", user: saved };
   }

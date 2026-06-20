@@ -2224,6 +2224,7 @@ export class UsersService {
       googleMapAddress: user.googleMapAddress || "",
       profileImages: user.profileImages || [],
       socialMedia: user.socialMedia || [],
+      adminSocialNotifications: (user.adminSocialNotifications || []).filter((n: any) => !n.seen),
       collaborationAvailability: user.collaborationAvailability || null,
       contact: user.contact || { whatsapp: false, email: false, call: false },
       isPremium,
@@ -2242,6 +2243,13 @@ export class UsersService {
       isEmailVerified: user.isEmailVerified || false,
       isMobileVerified: user.isMobileVerified || false,
     };
+  }
+
+  async dismissAdminSocialNotifications(userId: string): Promise<void> {
+    await this.influencerModel.updateOne(
+      { _id: userId },
+      { $set: { "adminSocialNotifications.$[].seen": true } },
+    );
   }
 
   async getBrandProfileById(userId: string) {
