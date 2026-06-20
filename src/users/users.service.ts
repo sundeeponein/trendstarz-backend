@@ -1274,6 +1274,9 @@ export class UsersService {
   }
 
   async registerBrand(dto: BrandProfileDto) {
+    if (Array.isArray(dto.categories) && dto.categories.length > 5) {
+      dto.categories = dto.categories.slice(0, 5);
+    }
     try {
       if (dto.brandLogo && dto.brandLogo.length) {
         const uploadedImages = [];
@@ -2568,6 +2571,10 @@ export class UsersService {
           }
         }
       }
+    }
+
+    if (Array.isArray(update.categories) && update.categories.length > 5) {
+      update.categories = update.categories.slice(0, 5);
     }
 
     const allowedFields = [
