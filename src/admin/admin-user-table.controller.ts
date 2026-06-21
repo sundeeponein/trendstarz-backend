@@ -1142,6 +1142,11 @@ export class AdminUserTableController {
     }
 
     if (hasEmail) {
+      if (!body.isEmailVerified && user.isEmailVerified === true) {
+        throw new BadRequestException(
+          "This email is already verified and cannot be unverified.",
+        );
+      }
       user.isEmailVerified = !!body.isEmailVerified;
       user.emailVerifiedAt = body.isEmailVerified
         ? user.emailVerifiedAt || new Date()
