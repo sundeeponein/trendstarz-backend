@@ -1,8 +1,8 @@
 {
   "plans": [
     {
-      "name": "Influencer Free",
-      "code": "influencer-free",
+      "name": "Influencer Starter",
+      "code": "influencer-starter",
       "userType": "INFLUENCER",
       "price": {
         "monthly": 0,
@@ -224,8 +224,8 @@
       "sortOrder": 1
     },
     {
-      "name": "Brand Free",
-      "code": "brand-free",
+      "name": "Brand Starter",
+      "code": "brand-starter",
       "userType": "BRAND",
       "price": {
         "monthly": 0,
@@ -467,8 +467,8 @@
       "sortOrder": 1
     },
     {
-      "name": "Photographer Free",
-      "code": "photographer-free",
+      "name": "Photographer Starter",
+      "code": "photographer-starter",
       "userType": "PHOTOGRAPHER",
       "price": {
         "monthly": 0,
