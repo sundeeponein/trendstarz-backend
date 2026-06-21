@@ -561,7 +561,7 @@ export class AdminListsController {
             },
           })
           .select(
-            "_id campaignId influencerId photographerId recipientRole status selectedPostDate updatedAt acceptedAt agreedAmount agreedAmountPaise counterOffer",
+            "_id campaignId influencerId photographerId recipientRole status selectedPlatform selectedContentType selectedPostDate updatedAt acceptedAt agreedAmount agreedAmountPaise counterOffer",
           )
           .lean()
       : [];
@@ -615,6 +615,8 @@ export class AdminListsController {
         participantRole:
           recipientRole === "photographer" ? "photographer" : "influencer",
         status: String(invite?.status || "pending").toLowerCase(),
+        selectedPlatform: String((invite as any)?.selectedPlatform || ""),
+        selectedContentType: String((invite as any)?.selectedContentType || ""),
         selectedPostDate: invite?.selectedPostDate || null,
         acceptedAt: invite?.acceptedAt || null,
         agreedAmount: Number((invite as any)?.agreedAmount || 0),
