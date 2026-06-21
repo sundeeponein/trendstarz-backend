@@ -306,6 +306,7 @@ export class AdminListsController {
       },
       campaignApprovalMode: "manual",
       collaborationApprovalMode: "manual",
+      paymentGatewayMode: "razorpay_fallback",
       platformFeeEnabled: false,
       platformFeePercent: commissionDefaults.platformFeePercent,
       gstPercent: commissionDefaults.gstPercent,
@@ -394,6 +395,15 @@ export class AdminListsController {
         );
       }
       next.campaignApprovalMode = mode;
+    }
+    if (next.paymentGatewayMode !== undefined) {
+      const mode = String(next.paymentGatewayMode || "").trim();
+      if (!["manual", "razorpay_fallback", "razorpay_only"].includes(mode)) {
+        throw new BadRequestException(
+          "paymentGatewayMode must be manual, razorpay_fallback, or razorpay_only",
+        );
+      }
+      next.paymentGatewayMode = mode;
     }
     if (next.collaborationApprovalMode !== undefined) {
       const mode = String(next.collaborationApprovalMode || "").trim();

@@ -91,6 +91,10 @@ export class RazorpayService {
     return await (razorpay.orders.fetch as any)(orderId);
   }
 
+  isCheckoutConfigured(): boolean {
+    return !!(process.env.RAZORPAY_KEY_ID && process.env.RAZORPAY_KEY_SECRET);
+  }
+
   private getRazorpayXCredentials() {
     const keyId =
       process.env.RAZORPAYX_KEY_ID || process.env.RAZORPAY_KEY_ID || "";

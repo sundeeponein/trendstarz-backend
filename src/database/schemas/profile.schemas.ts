@@ -792,6 +792,11 @@ export const AppSettingsSchema = new Schema({
     enum: ["manual", "auto_live"],
     default: "manual",
   },
+  paymentGatewayMode: {
+    type: String,
+    enum: ["manual", "razorpay_fallback", "razorpay_only"],
+    default: "razorpay_fallback",
+  },
   platformFeeEnabled: { type: Boolean, default: false },
   platformFeePercent: { type: Number, default: 5 },
   platformCommissionPercent: { type: Number, default: 12 },

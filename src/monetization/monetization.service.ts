@@ -85,6 +85,7 @@ export class MonetizationService {
     userRole: UserRole;
     planId: string;
     billingCycle: "monthly" | "quarterly" | "yearly";
+    finalAmount?: number;
   }) {
     const plan: any = await this.plansService.planModel.findById(input.planId).lean();
     if (!plan) throw new NotFoundException("Plan not found");
@@ -95,10 +96,27 @@ export class MonetizationService {
         : input.billingCycle === "quarterly"
           ? "3m"
           : "1m";
-    const amount = Number(plan?.price?.[input.billingCycle] ?? 0);
-    if (amount <= 0) throw new BadRequestException("Invalid plan amount");
+    const basePrice = Number(plan?.price?.[input.billingCycle] ?? 0);
+    if (basePrice <= 0) throw new BadRequestException("Invalid plan amount");
+    // Frontend computes the discounted total (plan offer % and/or coupon) the same way
+    // the manual UPI flow does — accept it here too, but never above the plan's base price.
+    const amount =
+      typeof input.finalAmount === "number" && input.finalAmount >= 0 && input.finalAmount <= basePrice
+        ? input.finalAmount
+        : basePrice;
 
     const amountPaise = Math.round(amount * 100);
+
+    // Retrying/refreshing the payment page calls this again — drop any earlier pending
+    // razorpay order for this user's subscription so it doesn't pile up as orphaned
+    // "pending" rows (razorpay payments are auto-verified, never manually reviewed).
+    await this.paymentModel.deleteMany({
+      userId: toObjectId(input.userId),
+      purpose: "subscription",
+      paymentMethod: "razorpay",
+      status: "pending",
+    });
+
     const order = await this.razorpayService.createOrder(amountPaise, {
       userId: input.userId,
       premiumDuration,

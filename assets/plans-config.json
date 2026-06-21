@@ -200,9 +200,19 @@
           "value": 7
         },
         {
-          "key": "discountOnInfluencerPro",
-          "label": "Discount on Influencer Pro plan (%)",
-          "value": 25
+          "key": "discountMonthly",
+          "label": "Monthly Discount (%)",
+          "value": 0
+        },
+        {
+          "key": "discountQuarterly",
+          "label": "Quarterly Discount (%)",
+          "value": 0
+        },
+        {
+          "key": "discountYearly",
+          "label": "Yearly Discount (%)",
+          "value": 0
         }
       ],
       "discountLabel": "Limited Time Offer",
@@ -433,9 +443,19 @@
           "value": 7
         },
         {
-          "key": "discountOnBrandPro",
-          "label": "Discount on Brand Pro plan (%)",
-          "value": 25
+          "key": "discountMonthly",
+          "label": "Monthly Discount (%)",
+          "value": 0
+        },
+        {
+          "key": "discountQuarterly",
+          "label": "Quarterly Discount (%)",
+          "value": 0
+        },
+        {
+          "key": "discountYearly",
+          "label": "Yearly Discount (%)",
+          "value": 0
         }
       ],
       "discountLabel": "Limited Time Offer",
@@ -646,9 +666,19 @@
           "value": 7
         },
         {
-          "key": "discountOnPhotographerPro",
-          "label": "Discount on Photographer Pro plan (%)",
-          "value": 25
+          "key": "discountMonthly",
+          "label": "Monthly Discount (%)",
+          "value": 0
+        },
+        {
+          "key": "discountQuarterly",
+          "label": "Quarterly Discount (%)",
+          "value": 0
+        },
+        {
+          "key": "discountYearly",
+          "label": "Yearly Discount (%)",
+          "value": 0
         }
       ],
       "discountLabel": "Limited Time Offer",

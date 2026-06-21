@@ -40,7 +40,7 @@ export class MonetizationController {
   createSubscriptionOrder(
     @Req() req: any,
     @Body()
-    body: { planId: string; billingCycle: "monthly" | "quarterly" | "yearly" },
+    body: { planId: string; billingCycle: "monthly" | "quarterly" | "yearly"; finalAmount?: number },
   ) {
     const userId = req.user?.userId;
     const role = this.normalizeUserRole(req.user?.role);
@@ -49,6 +49,7 @@ export class MonetizationController {
       userRole: role,
       planId: body.planId,
       billingCycle: body.billingCycle,
+      finalAmount: body.finalAmount,
     });
   }
 

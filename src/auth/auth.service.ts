@@ -1718,6 +1718,11 @@ export class AuthService {
       otpVerificationEnabled: !!settings?.otpVerificationEnabled,
       // Campaign payment UPI shown to brands on the payment screen
       paymentUpiId: settings?.paymentUpiId || "trendstarzin@kotak",
+      // Premium upgrade payment method gating
+      paymentGatewayMode: settings?.paymentGatewayMode || "razorpay_fallback",
+      razorpayConfigured: !!(
+        process.env.RAZORPAY_KEY_ID && process.env.RAZORPAY_KEY_SECRET
+      ),
       showSearchLink: settings?.showSearchLink !== false,
       showRegisterInfluencerLink:
         settings?.showRegisterInfluencerLink !== false,
