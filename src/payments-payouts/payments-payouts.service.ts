@@ -1145,6 +1145,7 @@ export class PaymentsPayoutsService {
         .lean();
       if (invite && invite.status === "accepted") {
         update.status = "payment_confirmed";
+        update.paymentConfirmedAt = new Date();
         paymentConfirmedRecipientId = String(invite.influencerId || "");
         paymentConfirmedRecipientRole =
           String(invite?.recipientRole || "")

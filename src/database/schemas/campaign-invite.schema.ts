@@ -63,6 +63,8 @@ export const CampaignInviteSchema = new Schema({
     responderId: { type: String },
   },
   acceptedAt: { type: Date },
+  // When the campaign owner/payment flow confirmed the collaboration and work could begin.
+  paymentConfirmedAt: { type: Date },
   completedAt: { type: Date },
   paidOutAt: { type: Date },
   // Contact preference snapshot at acceptance time.

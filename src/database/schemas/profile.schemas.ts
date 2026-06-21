@@ -1130,6 +1130,7 @@ export const CampaignInviteSchema = new Schema(
       default: "pending",
     },
     selectedPlatform: { type: String, default: null }, // platform the influencer will post on
+    paymentConfirmedAt: { type: Date, default: null },
     // Shipping address captured from the creator at acceptance time for Product Collabs.
     // Required server-side when campaign.campaignType === 'product' && campaign.productShippingRequired === true.
     shippingAddress: {
