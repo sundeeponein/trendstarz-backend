@@ -2,11 +2,17 @@ import { Schema, Types, model } from "mongoose";
 
 const ProfileVerificationFields = {
   emailVerifiedAt: { type: Date, default: null },
+  // Snapshot of the last email that was actually verified, kept when the user
+  // changes their email so admins can see what changed (fraud/support signal).
+  previousVerifiedEmail: { type: String, default: "" },
   mobileVerified: { type: Boolean, default: false },
   mobileVerifiedAt: { type: Date, default: null },
   mobileVerificationMethod: { type: String, default: "" },
   mobileVerificationDate: { type: Date, default: null },
   mobileVerifiedBy: { type: String, default: "" },
+  // Snapshot of the last mobile number that was actually verified, kept when
+  // the user changes their number so admins can see what changed (fraud/support signal).
+  previousVerifiedMobile: { type: String, default: "" },
   identityVerified: { type: Boolean, default: false },
   identityVerifiedAt: { type: Date, default: null },
   identityConfirmed: { type: Boolean, default: false },

@@ -297,7 +297,7 @@ export class PhotographersService {
     return safe;
   }
 
-  async updateProfile(userId: string, data: any) {
+  async updateProfile(userId: string, data: any, localAuthBypass = false) {
     const allowedFields = [
       "name",
       "username",
@@ -376,19 +376,24 @@ export class PhotographersService {
 
     const current: any = await this.photographerModel
       .findById(userId)
-      .select("phoneNumber email isMobileVerified profileImages")
+      .select("phoneNumber email isMobileVerified isEmailVerified profileImages")
       .lean();
     if (!current) throw new NotFoundException("Photographer not found");
 
     if (Object.prototype.hasOwnProperty.call(update, "phoneNumber")) {
       const existingPhone = this.normalizePhone(current.phoneNumber);
       const incomingPhone = this.normalizePhone(update.phoneNumber);
+      // Verified numbers can be changed, but verification doesn't carry over —
+      // the new number must be re-verified (manual call, or OTP if enabled).
       if (current.isMobileVerified && existingPhone !== incomingPhone) {
-        throw new BadRequestException(
-          "Mobile number is verified by TrendStarz Team. Contact support to change it.",
-        );
-      }
-      if (existingPhone !== incomingPhone) {
+        update.previousVerifiedMobile = existingPhone;
+        update.isMobileVerified = false;
+        update.mobileVerified = false;
+        update.mobileVerifiedAt = null;
+        update.mobileVerificationDate = null;
+        update.mobileVerificationMethod = "";
+        update.mobileVerifiedBy = "";
+      } else if (existingPhone !== incomingPhone) {
         update.isMobileVerified = false;
       }
     }
@@ -397,7 +402,17 @@ export class PhotographersService {
       const existingEmail = this.normalizeEmail(current.email);
       const incomingEmail = this.normalizeEmail(update.email);
       if (existingEmail !== incomingEmail) {
-        update.isEmailVerified = false;
+        if (current.isEmailVerified) {
+          update.previousVerifiedEmail = existingEmail;
+        }
+        if (localAuthBypass) {
+          // Local dev convenience: mirrors the registration/login bypass —
+          // no real email provider locally, so trust the change immediately.
+          update.isEmailVerified = true;
+          update.emailVerifiedAt = new Date();
+        } else {
+          update.isEmailVerified = false;
+        }
       }
     }
 

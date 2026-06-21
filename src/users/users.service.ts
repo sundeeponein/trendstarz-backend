@@ -2316,7 +2316,11 @@ export class UsersService {
     };
   }
 
-  async updateInfluencerProfile(userId: string, update: any) {
+  async updateInfluencerProfile(
+    userId: string,
+    update: any,
+    localAuthBypass = false,
+  ) {
     if (update.password) delete update.password;
 
     // Cleanup old images if profileImages is being replaced
@@ -2436,12 +2440,17 @@ export class UsersService {
     if (Object.prototype.hasOwnProperty.call(updateData, "phoneNumber")) {
       const existingPhone = this.normalizePhone(userDoc.phoneNumber);
       const incomingPhone = this.normalizePhone(updateData.phoneNumber);
+      // Verified numbers can be changed, but verification doesn't carry over —
+      // the new number must be re-verified (manual call, or OTP if enabled).
       if (userDoc.isMobileVerified && existingPhone !== incomingPhone) {
-        throw new BadRequestException(
-          "Mobile number is verified by TrendStarz Team. Contact support to change it.",
-        );
-      }
-      if (existingPhone !== incomingPhone) {
+        userDoc.set("previousVerifiedMobile", existingPhone);
+        userDoc.set("isMobileVerified", false);
+        userDoc.set("mobileVerified", false);
+        userDoc.set("mobileVerifiedAt", null);
+        userDoc.set("mobileVerificationDate", null);
+        userDoc.set("mobileVerificationMethod", "");
+        userDoc.set("mobileVerifiedBy", "");
+      } else if (existingPhone !== incomingPhone) {
         userDoc.set("isMobileVerified", false);
       }
     }
@@ -2450,7 +2459,17 @@ export class UsersService {
       const existingEmail = this.normalizeEmail(userDoc.email);
       const incomingEmail = this.normalizeEmail(updateData.email);
       if (existingEmail !== incomingEmail) {
-        userDoc.set("isEmailVerified", false);
+        if (userDoc.isEmailVerified) {
+          userDoc.set("previousVerifiedEmail", existingEmail);
+        }
+        if (localAuthBypass) {
+          // Local dev convenience: mirrors the registration/login bypass —
+          // no real email provider locally, so trust the change immediately.
+          userDoc.set("isEmailVerified", true);
+          userDoc.set("emailVerifiedAt", new Date());
+        } else {
+          userDoc.set("isEmailVerified", false);
+        }
       }
     }
 
@@ -2512,7 +2531,11 @@ export class UsersService {
     }
     return { message: "Profile updated", user: updated };
   }
-  async updateBrandProfile(userId: string, update: any) {
+  async updateBrandProfile(
+    userId: string,
+    update: any,
+    localAuthBypass = false,
+  ) {
     if (update.password) delete update.password;
 
     // Cleanup old brandLogo images if replaced
@@ -2612,19 +2635,24 @@ export class UsersService {
 
     const existingBrand: any = await this.brandModel
       .findById(userId)
-      .select("phoneNumber email isMobileVerified")
+      .select("phoneNumber email isMobileVerified isEmailVerified")
       .lean();
     if (!existingBrand) return { message: "Brand not found", userId };
 
     if (Object.prototype.hasOwnProperty.call(updateData, "phoneNumber")) {
       const existingPhone = this.normalizePhone(existingBrand.phoneNumber);
       const incomingPhone = this.normalizePhone(updateData.phoneNumber);
+      // Verified numbers can be changed, but verification doesn't carry over —
+      // the new number must be re-verified (manual call, or OTP if enabled).
       if (existingBrand.isMobileVerified && existingPhone !== incomingPhone) {
-        throw new BadRequestException(
-          "Mobile number is verified by TrendStarz Team. Contact support to change it.",
-        );
-      }
-      if (existingPhone !== incomingPhone) {
+        updateData.previousVerifiedMobile = existingPhone;
+        updateData.isMobileVerified = false;
+        updateData.mobileVerified = false;
+        updateData.mobileVerifiedAt = null;
+        updateData.mobileVerificationDate = null;
+        updateData.mobileVerificationMethod = "";
+        updateData.mobileVerifiedBy = "";
+      } else if (existingPhone !== incomingPhone) {
         updateData.isMobileVerified = false;
       }
     }
@@ -2633,7 +2661,17 @@ export class UsersService {
       const existingEmail = this.normalizeEmail(existingBrand.email);
       const incomingEmail = this.normalizeEmail(updateData.email);
       if (existingEmail !== incomingEmail) {
-        updateData.isEmailVerified = false;
+        if (existingBrand.isEmailVerified) {
+          updateData.previousVerifiedEmail = existingEmail;
+        }
+        if (localAuthBypass) {
+          // Local dev convenience: mirrors the registration/login bypass —
+          // no real email provider locally, so trust the change immediately.
+          updateData.isEmailVerified = true;
+          updateData.emailVerifiedAt = new Date();
+        } else {
+          updateData.isEmailVerified = false;
+        }
       }
     }
 

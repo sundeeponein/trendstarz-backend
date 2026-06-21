@@ -23,6 +23,7 @@ import { getJwtSecret } from "../auth/jwt-secret";
 import { DailyUsageGuard } from "../monetization/guards/daily-usage.guard";
 import { UsageLimit } from "../monetization/decorators/usage-limit.decorator";
 import { PlansService } from "../plans/plans.service";
+import { isLocalAuthBypassRequest } from "../utils/local-auth-bypass.util";
 
 /** Decode JWT from request without throwing. Returns userId or null. */
 function extractOptionalViewerId(req: any): string | null {
@@ -427,7 +428,11 @@ export class UsersController {
   @Patch("influencer-profile")
   async updateInfluencerProfile(@Req() req: any, @Body() body: any) {
     const userId = req.user?.userId || req.user?.sub || req.user?.id;
-    return this.usersService.updateInfluencerProfile(userId, body);
+    return this.usersService.updateInfluencerProfile(
+      userId,
+      body,
+      isLocalAuthBypassRequest(req),
+    );
   }
 
   @UseGuards(JwtAuthGuard)
@@ -441,7 +446,11 @@ export class UsersController {
   @Patch("brand-profile")
   async updateBrandProfile(@Req() req: any, @Body() body: any) {
     const userId = req.user?.userId || req.user?.sub || req.user?.id;
-    return this.usersService.updateBrandProfile(userId, body);
+    return this.usersService.updateBrandProfile(
+      userId,
+      body,
+      isLocalAuthBypassRequest(req),
+    );
   }
 
   @UseGuards(JwtAuthGuard)

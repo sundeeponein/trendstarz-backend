@@ -17,6 +17,7 @@ import { Model } from "mongoose";
 import * as jwt from "jsonwebtoken";
 import { getJwtSecret } from "../auth/jwt-secret";
 import { PlansService } from "../plans/plans.service";
+import { isLocalAuthBypassRequest } from "../utils/local-auth-bypass.util";
 
 function extractOptionalViewerId(req: any): string | null {
   try {
@@ -277,6 +278,10 @@ export class PhotographersController {
   @Patch("me/profile")
   @UseGuards(JwtAuthGuard)
   async updateMyProfile(@Req() req: any, @Body() body: any) {
-    return this.photographersService.updateProfile(req.user.userId, body);
+    return this.photographersService.updateProfile(
+      req.user.userId,
+      body,
+      isLocalAuthBypassRequest(req),
+    );
   }
 }

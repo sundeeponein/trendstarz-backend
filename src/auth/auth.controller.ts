@@ -24,6 +24,7 @@ import { AuthService } from "./auth.service";
 import { CloudinaryService } from "../cloudinary.service";
 import { JwtAuthGuard } from "./jwt-auth.guard";
 import { Throttle } from "@nestjs/throttler";
+import { isLocalAuthBypassRequest } from "../utils/local-auth-bypass.util";
 import {
   LoginDto,
   ForgotPasswordDto,
@@ -47,18 +48,7 @@ export class AuthController {
   }
 
   private isLocalAuthBypassRequest(req: any): boolean {
-    if (process.env.NODE_ENV === "production") return false;
-    const host = String(
-      req?.get?.("host") || req?.hostname || "",
-    ).toLowerCase();
-    return (
-      host.startsWith("localhost:") ||
-      host === "localhost" ||
-      host.startsWith("127.0.0.1:") ||
-      host === "127.0.0.1" ||
-      host.startsWith("[::1]:") ||
-      host === "::1"
-    );
+    return isLocalAuthBypassRequest(req);
   }
 
   private formatRegistrationError(err: any, fallbackMessage: string) {
