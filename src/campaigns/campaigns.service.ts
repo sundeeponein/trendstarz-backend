@@ -4,6 +4,7 @@ import {
   NotFoundException,
 } from "@nestjs/common";
 import { InjectModel } from "@nestjs/mongoose";
+import { Cron, CronExpression } from "@nestjs/schedule";
 import { Model, Types } from "mongoose";
 import { PlansService } from "../plans/plans.service";
 import { CloudinaryService } from "../cloudinary.service";
@@ -75,6 +76,54 @@ export class CampaignsService {
     private readonly pushService: PushService,
     private readonly notificationsService: NotificationsService,
   ) {}
+
+  // Safety net for the manual "Mark Complete" action: once a campaign's timeline
+  // has ended and none of its invites still have active work in flight, close it
+  // out automatically so campaigns don't sit in Active/EXPIRED indefinitely.
+  @Cron(CronExpression.EVERY_HOUR)
+  async autoCompleteExpiredCampaignsCron() {
+    await this.autoCompleteExpiredCampaigns();
+  }
+
+  async autoCompleteExpiredCampaigns() {
+    const now = new Date();
+    const candidates = await this.campaignModel
+      .find({
+        status: "active",
+        $or: [{ endDate: { $lte: now } }, { timelineEnd: { $lte: now } }],
+      })
+      .select("_id")
+      .lean();
+
+    const blockingStatuses = [
+      "accepted",
+      "payment_confirmed",
+      "working",
+      "submitted",
+      "disputed",
+    ];
+
+    let completedCount = 0;
+    for (const candidate of candidates) {
+      const campaignId = candidate._id;
+      const hasActiveWork = await this.campaignInviteModel
+        .findOne({
+          campaignId: { $in: [campaignId, String(campaignId)] },
+          status: { $in: blockingStatuses },
+        })
+        .select("_id")
+        .lean();
+      if (hasActiveWork) continue;
+
+      await this.campaignModel.updateOne(
+        { _id: campaignId, status: "active" },
+        { $set: { status: "completed" } },
+      );
+      completedCount++;
+    }
+
+    return { success: true, checked: candidates.length, completedCount };
+  }
 
   private async resolveInitialCampaignStatus(
     status: unknown,

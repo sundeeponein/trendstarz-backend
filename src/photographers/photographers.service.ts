@@ -476,6 +476,13 @@ export class PhotographersService {
       });
     }
 
+    // Recompute from the live array — the stored singular field is legacy
+    // and goes stale the moment profileImages[0] changes (re-upload/recrop).
+    docs = docs.map((d: any) => ({
+      ...d,
+      profileImage: d?.profileImages?.[0]?.url || null,
+    }));
+
     const hasManualLocationFilter = !!String(query.location || "").trim();
     const useSmartPriority =
       !!query.smartLocationPriority && !hasManualLocationFilter;
@@ -560,9 +567,16 @@ export class PhotographersService {
     if (await this.hasOpenPublicProfileBlock(doc._id)) return null;
     const hideGallery = await this.hasOpenGalleryBlock(doc._id);
     const allowContact = await this.canViewPhotographerContact(doc, viewerId);
+    const visibleProfileImages = this.visibleProfileImages(
+      doc.profileImages,
+      hideGallery,
+    );
     return {
       ...doc,
-      profileImages: this.visibleProfileImages(doc.profileImages, hideGallery),
+      profileImages: visibleProfileImages,
+      // Recompute from the live array — the stored singular field is legacy
+      // and goes stale the moment profileImages[0] changes (re-upload/recrop).
+      profileImage: visibleProfileImages[0]?.url || null,
       email: allowContact && doc?.isEmailVerified ? doc.email : undefined,
       phoneNumber:
         allowContact && doc?.isMobileVerified ? doc.phoneNumber : undefined,
@@ -587,6 +601,9 @@ export class PhotographersService {
     const allowContact = await this.canViewPhotographerContact(doc, viewerId);
     return {
       ...doc,
+      // Recompute from the live array — the stored singular field is legacy
+      // and goes stale the moment profileImages[0] changes (re-upload/recrop).
+      profileImage: doc?.profileImages?.[0]?.url || null,
       email: allowContact && doc?.isEmailVerified ? doc.email : undefined,
       phoneNumber:
         allowContact && doc?.isMobileVerified ? doc.phoneNumber : undefined,

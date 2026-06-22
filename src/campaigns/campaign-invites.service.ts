@@ -947,7 +947,8 @@ export class CampaignInvitesService {
 
       const isAdmin = String(requesterRole || "").toLowerCase() === "admin";
       if (isAdmin) {
-        return this.attachLatestSubmissions(enriched);
+        const withSubmissions = await this.attachLatestSubmissions(enriched);
+        return this.attachLatestPayouts(withSubmissions);
       }
       return enriched;
     } catch {
@@ -1139,6 +1140,39 @@ export class CampaignInvitesService {
     return (invites || []).map((invite: any) => ({
       ...invite,
       latestSubmission: byInviteId.get(String(invite?._id || "")) || null,
+    }));
+  }
+
+  private async attachLatestPayouts(invites: any[]): Promise<any[]> {
+    const inviteIds = (invites || [])
+      .map((invite: any) => String(invite?._id || ""))
+      .filter(Boolean);
+    if (!inviteIds.length) return invites || [];
+
+    const inviteObjectIds = inviteIds
+      .filter((id) => Types.ObjectId.isValid(id))
+      .map((id) => new Types.ObjectId(id));
+    const txQuery: any = {
+      $or: [{ inviteId: { $in: inviteIds } }],
+    };
+    if (inviteObjectIds.length) {
+      txQuery.$or.push({ inviteId: { $in: inviteObjectIds } });
+    }
+
+    const transactions: any[] = await this.campaignTransactionModel
+      .find(txQuery)
+      .select("inviteId payoutStatus payoutInitiatedAt payoutSettledAt")
+      .lean();
+
+    const byInviteId = new Map<string, any>();
+    for (const tx of transactions || []) {
+      const key = String(tx?.inviteId || "");
+      if (key) byInviteId.set(key, tx);
+    }
+
+    return (invites || []).map((invite: any) => ({
+      ...invite,
+      latestPayout: byInviteId.get(String(invite?._id || "")) || null,
     }));
   }
 

@@ -185,6 +185,10 @@ export class AdminListsController {
     @InjectModel("Campaign") private readonly campaignModel: Model<any>,
     @InjectModel("CampaignInvite")
     private readonly campaignInviteModel: Model<any>,
+    @InjectModel("CampaignSubmission")
+    private readonly campaignSubmissionModel: Model<any>,
+    @InjectModel("CampaignTransaction")
+    private readonly campaignTransactionModel: Model<any>,
     @InjectModel("AppSettings") private readonly appSettingsModel: Model<any>,
     @InjectModel("WhatsAppCommunity")
     private readonly whatsappCommunityModel: Model<any>,
@@ -566,6 +570,31 @@ export class AdminListsController {
           .lean()
       : [];
 
+    const [submissionRows, transactionRows] = campaignIds.length
+      ? await Promise.all([
+          this.campaignSubmissionModel
+            .find({ campaignId: { $in: [...campaignIds, ...campaignIdKeys] } })
+            .select("inviteId status reviewedAt autoCompletedAt submittedAt")
+            .sort({ submittedAt: -1 })
+            .lean(),
+          this.campaignTransactionModel
+            .find({ campaignId: { $in: [...campaignIds, ...campaignIdKeys] } })
+            .select("inviteId payoutStatus payoutInitiatedAt payoutSettledAt")
+            .lean(),
+        ])
+      : [[], []];
+    // Sorted by submittedAt desc above, so the first one set per inviteId is the latest.
+    const submissionByInvite = new Map<string, any>();
+    for (const sub of submissionRows) {
+      const key = String((sub as any)?.inviteId || "");
+      if (key && !submissionByInvite.has(key)) submissionByInvite.set(key, sub);
+    }
+    const transactionByInvite = new Map<string, any>();
+    for (const tx of transactionRows) {
+      const key = String((tx as any)?.inviteId || "");
+      if (key) transactionByInvite.set(key, tx);
+    }
+
     const progressStatuses = new Set([
       "accepted",
       "payment_confirmed",
@@ -609,8 +638,11 @@ export class AdminListsController {
 
       const progressRows = inviteProgressByCampaign.get(key) || [];
       const counter = (invite as any)?.counterOffer || {};
+      const inviteIdKey = String(invite?._id || "");
+      const submission = submissionByInvite.get(inviteIdKey) || null;
+      const transaction = transactionByInvite.get(inviteIdKey) || null;
       progressRows.push({
-        inviteId: String(invite?._id || ""),
+        inviteId: inviteIdKey,
         participantId: recipientId,
         participantRole:
           recipientRole === "photographer" ? "photographer" : "influencer",
@@ -628,6 +660,15 @@ export class AdminListsController {
         counterRequestedAmount: Number(counter?.requestedAmount || 0),
         counterRequestedAmountPaise: Number(counter?.requestedAmountPaise || 0),
         updatedAt: invite?.updatedAt || null,
+        // Host (campaign owner) approval of the participant's submitted post.
+        postSubmissionStatus: submission?.status || null,
+        postApproved: submission?.status === "approved",
+        postApprovedAt:
+          submission?.reviewedAt || submission?.autoCompletedAt || null,
+        // Payout to the participant for this invite.
+        payoutStatus: transaction?.payoutStatus || null,
+        payoutDate: transaction?.payoutSettledAt || null,
+        payoutInitiatedAt: transaction?.payoutInitiatedAt || null,
       });
       inviteProgressByCampaign.set(key, progressRows);
     }
@@ -734,9 +775,11 @@ export class AdminListsController {
                 brandUsername: null,
                 email: photographer.email,
                 verifiedByTrendStarz: !!photographer.verifiedByTrendStarz,
+                // profileImages[0] is the live source of truth; profileImage is a
+                // legacy field that can go stale after a re-upload/recrop.
                 profileImage:
-                  photographer.profileImage ||
                   photographer.profileImages?.[0]?.url ||
+                  photographer.profileImage ||
                   null,
               }
             : null
@@ -760,7 +803,7 @@ export class AdminListsController {
     @Param("id") id: string,
     @Body()
     body: {
-      action?: "approve" | "reject" | "needs_changes";
+      action?: "approve" | "reject" | "needs_changes" | "complete";
       moderationNote?: string;
     },
     @Req() req: any,
@@ -777,11 +820,18 @@ export class AdminListsController {
       approve: "active",
       reject: "rejected",
       needs_changes: "needs_changes",
+      complete: "completed",
     };
     const nextStatus = map[action];
     if (!nextStatus) {
       throw new BadRequestException(
-        "action must be approve, reject, or needs_changes",
+        "action must be approve, reject, needs_changes, or complete",
+      );
+    }
+
+    if (action === "complete" && campaign.status !== "active") {
+      throw new BadRequestException(
+        `Cannot complete a campaign from status '${campaign.status}'. Only active campaigns can be marked complete.`,
       );
     }
 

@@ -1448,12 +1448,16 @@ export class UsersService {
             inf._id,
             "Influencer",
           );
+          const visibleProfileImages = this.visibleInfluencerProfileImages(
+            inf?.profileImages,
+            hideGallery,
+          );
           return {
             ...inf,
-            profileImages: this.visibleInfluencerProfileImages(
-              inf?.profileImages,
-              hideGallery,
-            ),
+            profileImages: visibleProfileImages,
+            // Recompute from the live array — the stored singular field is legacy
+            // and goes stale the moment profileImages[0] changes (re-upload/recrop).
+            profileImage: visibleProfileImages[0]?.url || null,
             isPremium: this.isCurrentlyPremium(inf),
             ageRange: this.computeAgeRangeFromDob(inf?.dateOfBirth),
             socialMedia: allowSocialLinks ? inf?.socialMedia || [] : [],
@@ -1548,12 +1552,16 @@ export class UsersService {
           "Influencer",
         );
         const ageRange = this.computeAgeRangeFromDob(inf?.dateOfBirth);
+        const visibleProfileImages = this.visibleInfluencerProfileImages(
+          inf?.profileImages,
+          hideGallery,
+        );
         return {
           ...inf,
-          profileImages: this.visibleInfluencerProfileImages(
-            inf?.profileImages,
-            hideGallery,
-          ),
+          profileImages: visibleProfileImages,
+          // Recompute from the live array — the stored singular field is legacy
+          // and goes stale the moment profileImages[0] changes (re-upload/recrop).
+          profileImage: visibleProfileImages[0]?.url || null,
           isPremium,
           socialMedia: allowSocialLinks ? inf?.socialMedia || [] : [],
           socialMediaRestricted: !allowSocialLinks,
@@ -1749,15 +1757,18 @@ export class UsersService {
       promotionalPrice,
       profileTraffic,
     } = user;
+    const visibleProfileImages =
+      hideGallery && Array.isArray(profileImages)
+        ? profileImages.slice(0, 1)
+        : profileImages || [];
     return {
       _id,
       name,
       username: userUsername,
-      profileImage,
-      profileImages:
-        hideGallery && Array.isArray(profileImages)
-          ? profileImages.slice(0, 1)
-          : profileImages || [],
+      // Recompute from the live array — the stored singular field is legacy
+      // and goes stale the moment profileImages[0] changes (re-upload/recrop).
+      profileImage: visibleProfileImages[0]?.url || profileImage || null,
+      profileImages: visibleProfileImages,
       email: allowContact && user?.isEmailVerified ? email : undefined,
       phoneNumber:
         allowContact && user?.isMobileVerified ? phoneNumber : undefined,
@@ -1819,15 +1830,18 @@ export class UsersService {
       collaborationAvailability,
       profileTraffic,
     } = user;
+    const visibleProfileImagesById =
+      hideGallery && Array.isArray(profileImages)
+        ? profileImages.slice(0, 1)
+        : profileImages || [];
     return {
       _id,
       name,
       username,
-      profileImage,
-      profileImages:
-        hideGallery && Array.isArray(profileImages)
-          ? profileImages.slice(0, 1)
-          : profileImages || [],
+      // Recompute from the live array — the stored singular field is legacy
+      // and goes stale the moment profileImages[0] changes (re-upload/recrop).
+      profileImage: visibleProfileImagesById[0]?.url || profileImage || null,
+      profileImages: visibleProfileImagesById,
       email: allowContact && user?.isEmailVerified ? email : undefined,
       phoneNumber:
         allowContact && user?.isMobileVerified ? phoneNumber : undefined,

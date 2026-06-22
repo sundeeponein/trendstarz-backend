@@ -319,14 +319,17 @@ export class ProfileVerificationService {
 
   private profileImageItems(profile: any): any[] {
     const items: any[] = [];
-    if (this.hasText(profile?.profileImage)) {
+    // profileImages[0]/brandLogo[0] is the live source of truth; profileImage is
+    // a legacy field that can go stale after a re-upload/recrop, so it only
+    // contributes as a fallback when the live array is empty.
+    for (const img of profile?.profileImages || profile?.brandLogo || []) {
+      items.push(img);
+    }
+    if (!items.length && this.hasText(profile?.profileImage)) {
       items.push({
         url: String(profile.profileImage),
         public_id: profile?.profileImagePublicId,
       });
-    }
-    for (const img of profile?.profileImages || profile?.brandLogo || []) {
-      items.push(img);
     }
     return items;
   }

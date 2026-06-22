@@ -46,6 +46,7 @@ import {
 import { PaymentSchema } from "./database/schemas/payment.schema";
 import { CampaignInviteSchema } from "./database/schemas/campaign-invite.schema";
 import { CampaignSubmissionSchema } from "./database/schemas/campaign-submission.schema";
+import { CampaignTransactionSchema } from "./database/schemas/campaign-transaction.schema";
 import { ProfileFlagSchema } from "./database/schemas/profile-flag.schema";
 
 import { AuthService } from "./auth/auth.service";
@@ -126,6 +127,11 @@ import { ProfileVerificationModule } from "./profile-verification/profile-verifi
         name: "Campaign",
         schema: CampaignSchema,
         collection: "campaigns",
+      },
+      {
+        name: "CampaignTransaction",
+        schema: CampaignTransactionSchema,
+        collection: "campaigntransactions",
       },
       {
         name: "WhatsAppCommunity",
