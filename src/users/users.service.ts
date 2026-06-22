@@ -2297,6 +2297,7 @@ export class UsersService {
     return {
       _id: user._id?.toString() || user.id?.toString() || "",
       brandName: user.brandName,
+      description: user.description || "",
       contactPersonName: user.contactPersonName || "",
       foundedYear: user.foundedYear || null,
       companySize: user.companySize || "",
@@ -2616,6 +2617,7 @@ export class UsersService {
 
     const allowedFields = [
       "brandName",
+      "description",
       "contactPersonName",
       "foundedYear",
       "companySize",

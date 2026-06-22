@@ -417,6 +417,7 @@ export const BrandSchema = new Schema(
     googleMapAddress: { type: String },
     password: { type: String, required: true },
     brandName: { type: String, required: true },
+    description: { type: String, default: "" },
     contactPersonName: { type: String, default: "" },
     foundedYear: { type: Number, default: null },
     companySize: { type: String, default: "" },
