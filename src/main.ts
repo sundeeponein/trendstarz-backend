@@ -34,30 +34,10 @@ async function bootstrap() {
   const app = await NestFactory.create(AppModule, new ExpressAdapter(server));
   logMemory("after NestFactory.create");
 
-  // Serve static files for local image uploads from backend/assets
-  server.use('/assets', express.static(path.resolve(process.cwd(), 'assets')));
-
-
-
-  // Set global API prefix for all routes
-  app.setGlobalPrefix("api");
-
-  // Standardize API responses
-  app.useGlobalInterceptors(new ResponseInterceptor());
-
-  // Validate and strip unknown fields from all request bodies globally.
-  app.useGlobalPipes(
-    new ValidationPipe({
-      whitelist: true, // Strip properties not in the DTO
-      forbidNonWhitelisted: false, // Don't hard-reject (untyped bodies on other endpoints still pass)
-      transform: true, // Auto-transform primitives (e.g., @Transform decorators in DTOs)
-    }),
-  );
-
-  // Security headers
-  app.use(helmet());
-
-  // Restrict CORS to trusted origins (configurable via environment variable)
+  // Restrict CORS to trusted origins (configurable via environment variable).
+  // Must be registered before the static /assets middleware below — express.static
+  // terminates matching requests itself, so any middleware registered after it
+  // never runs for those requests and would never get CORS headers attached.
   const corsOrigins = (
     process.env.CORS_ORIGINS ||
     "https://trendstarz.in,https://www.trendstarz.in,http://localhost:4200,http://127.0.0.1:4200"
@@ -80,6 +60,27 @@ async function bootstrap() {
     },
     credentials: true,
   });
+
+  // Serve static files for local image uploads from backend/assets
+  server.use('/assets', express.static(path.resolve(process.cwd(), 'assets')));
+
+  // Set global API prefix for all routes
+  app.setGlobalPrefix("api");
+
+  // Standardize API responses
+  app.useGlobalInterceptors(new ResponseInterceptor());
+
+  // Validate and strip unknown fields from all request bodies globally.
+  app.useGlobalPipes(
+    new ValidationPipe({
+      whitelist: true, // Strip properties not in the DTO
+      forbidNonWhitelisted: false, // Don't hard-reject (untyped bodies on other endpoints still pass)
+      transform: true, // Auto-transform primitives (e.g., @Transform decorators in DTOs)
+    }),
+  );
+
+  // Security headers
+  app.use(helmet());
 
   logMemory("before app.listen");
   const port = process.env.PORT || 3000;

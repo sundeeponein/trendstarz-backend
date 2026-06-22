@@ -1569,4 +1569,38 @@ export class AdminUserTableController {
     await brand.save();
     return { message: "Brand images updated", brand };
   }
+
+  // PATCH endpoint to directly update profileImages for an influencer (e.g. admin recrop)
+  @Patch("influencers/:id/images")
+  async patchInfluencerImages(
+    @Param("id") id: string,
+    @Body() body: { profileImages?: any[] },
+  ) {
+    const influencer = await this.influencerModel.findById(id);
+    if (!influencer) {
+      return { message: "Influencer not found", id };
+    }
+    if (body.profileImages) {
+      influencer.profileImages = body.profileImages;
+    }
+    await influencer.save();
+    return { message: "Influencer images updated", influencer };
+  }
+
+  // PATCH endpoint to directly update profileImages for a photographer (e.g. admin recrop)
+  @Patch("photographers/:id/images")
+  async patchPhotographerImages(
+    @Param("id") id: string,
+    @Body() body: { profileImages?: any[] },
+  ) {
+    const photographer = await this.photographerModel.findById(id);
+    if (!photographer) {
+      return { message: "Photographer not found", id };
+    }
+    if (body.profileImages) {
+      photographer.profileImages = body.profileImages;
+    }
+    await photographer.save();
+    return { message: "Photographer images updated", photographer };
+  }
 }
