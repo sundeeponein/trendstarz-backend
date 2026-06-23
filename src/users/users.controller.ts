@@ -296,6 +296,8 @@ export class UsersController {
     @Query("viewerState") viewerState?: string,
     @Query("viewerDistrict") viewerDistrict?: string,
     @Query("smartLocationPriority") smartLocationPriority?: string,
+    @Query("category") category?: string,
+    @Query("q") q?: string,
     @Query("countSearch") countSearch?: string,
     @Query("countReason") countReason?: string,
     @Req() req?: Request,
@@ -326,6 +328,8 @@ export class UsersController {
         viewerState,
         viewerDistrict,
         smartLocationPriority: smartPriority,
+        category,
+        q,
       },
     );
 

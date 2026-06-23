@@ -1350,6 +1350,8 @@ export class UsersService {
       viewerState?: string;
       viewerDistrict?: string;
       smartLocationPriority?: boolean;
+      category?: string;
+      q?: string;
     },
   ) {
     const skip = (page - 1) * limit;
@@ -1358,6 +1360,8 @@ export class UsersService {
     const creatorTypeFilter = String(options?.creatorType || "").trim();
     const viewerState = String(options?.viewerState || "").trim();
     const viewerDistrict = String(options?.viewerDistrict || "").trim();
+    const categoryFilter = String(options?.category || "").trim();
+    const searchQuery = String(options?.q || "").trim();
     const hasManualLocationFilter = !!stateFilter || !!districtFilter;
     const useSmartLocationPriority =
       !!options?.smartLocationPriority && !hasManualLocationFilter;
@@ -1394,6 +1398,21 @@ export class UsersService {
         `^${this.escapeRegex(creatorTypeFilter)}$`,
         "i",
       );
+    }
+    if (categoryFilter) {
+      baseFilter.categories = new RegExp(
+        `^${this.escapeRegex(categoryFilter)}$`,
+        "i",
+      );
+    }
+    if (searchQuery) {
+      const re = new RegExp(this.escapeRegex(searchQuery), "i");
+      baseFilter.$or = [
+        { name: re },
+        { username: re },
+        { "location.state": re },
+        { categories: re },
+      ];
     }
 
     if (lite) {
