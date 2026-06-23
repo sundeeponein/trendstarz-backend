@@ -6,6 +6,7 @@ import { MonetizationService } from "./monetization.service";
 import { PlanFeatureGuard } from "./guards/plan-feature.guard";
 import { DailyUsageGuard } from "./guards/daily-usage.guard";
 import { RazorpayService } from "../payment/razorpay.service";
+import { PaymentModule } from "../payment/payment.module";
 import { PlansModule } from "../plans/plans.module";
 import { CampaignsModule } from "../campaigns/campaigns.module";
 import { AppSettingsSchema, CampaignSchema } from "../database/schemas/profile.schemas";
@@ -19,6 +20,7 @@ import { SocialProfileClickSchema } from "../database/schemas/social-profile-cli
 @Module({
   imports: [
     PlansModule,
+    PaymentModule,
     CampaignsModule,
     MongooseModule.forFeature([
       { name: "AppSettings", schema: AppSettingsSchema, collection: "appsettings" },

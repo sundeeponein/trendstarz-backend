@@ -7,6 +7,7 @@ import { InjectModel } from "@nestjs/mongoose";
 import { Model, Types } from "mongoose";
 import * as crypto from "crypto";
 import { RazorpayService } from "../payment/razorpay.service";
+import { PaymentService } from "../payment/payment.service";
 import { PlansService } from "../plans/plans.service";
 import { CampaignInvitesService } from "../campaigns/campaign-invites.service";
 
@@ -35,6 +36,7 @@ export class MonetizationService {
     @InjectModel("UsageCounter") private readonly usageModel: Model<any>,
     @InjectModel("SocialProfileClick") private readonly socialClickModel: Model<any>,
     private readonly razorpayService: RazorpayService,
+    private readonly paymentService: PaymentService,
     private readonly plansService: PlansService,
     private readonly invitesService: CampaignInvitesService,
   ) {}
@@ -368,15 +370,21 @@ export class MonetizationService {
           : paymentUserType === "Photographer"
             ? "Photographer"
             : "Influencer";
+      const premiumDuration =
+        billingCycle === "yearly" ? "1y" : billingCycle === "quarterly" ? "3m" : "1m";
       if (planId) {
         await this.plansService.activateSubscription(
           input.userId,
           normalizedUserType,
           planId,
-          billingCycle === "yearly" ? "1y" : billingCycle === "quarterly" ? "3m" : "1m",
+          premiumDuration,
           "payment",
         );
       }
+      // Mirror the subscription record onto the user's own profile doc —
+      // isPremium there (not the subscriptions collection) drives the
+      // Pro badge and all visibility gating.
+      await this.paymentService.confirmUpgrade(input.userId, premiumDuration);
     }
 
     return { success: true, paymentId: input.paymentId };
