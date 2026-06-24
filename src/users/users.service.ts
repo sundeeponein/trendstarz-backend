@@ -1417,7 +1417,7 @@ export class UsersService {
 
     if (lite) {
       const selection =
-        "name username profileImage profileImages categories influencerCategory creatorTypes verificationStatus verifiedByTrendStarz location socialMedia collaborationAvailability adminTags isPremium premiumEnd promotionalPrice dateOfBirth";
+        "name username profileImage profileImages categories influencerCategory creatorTypes verificationStatus verifiedByTrendStarz location socialMedia collaborationAvailability adminTags isPremium premiumEnd promotionalPrice dateOfBirth firstRegisteredAt createdAt lastLoginAt";
       const [rows, total] = useSmartLocationPriority
         ? await Promise.all([
             this.influencerModel.find(baseFilter).select(selection).lean(),
@@ -1904,7 +1904,7 @@ export class UsersService {
         this.brandModel
           .find(filter)
           .select(
-            "brandName brandLogo categories location isPremium premiumEnd promotionalPrice adminTags socialMedia",
+            "brandName brandLogo categories location isPremium premiumEnd promotionalPrice adminTags socialMedia verifiedByTrendStarz",
           )
           .sort({ updatedAt: -1 })
           .skip(skip)
