@@ -219,44 +219,52 @@ export class CampaignsService {
       normalized.timelineEnd = normalized.endDate;
     }
 
+    if (normalized.startDate) {
+      const today = new Date();
+      today.setUTCHours(0, 0, 0, 0);
+      const minStart = new Date(today.getTime() + 3 * 24 * 60 * 60 * 1000);
+      if (new Date(normalized.startDate) < minStart) {
+        throw new BadRequestException(
+          "Start date must be at least 3 days from today",
+        );
+      }
+    }
+
     if (normalized.startDate && normalized.endDate) {
       if (new Date(normalized.endDate) < new Date(normalized.startDate)) {
         throw new BadRequestException(
           "End date must be on or after start date",
         );
       }
-    }
-
-    if (data.acceptanceDeadline !== undefined) {
-      if (data.acceptanceDeadline === null || data.acceptanceDeadline === "") {
-        normalized.acceptanceDeadline = null;
-      } else {
-        const deadline = new Date(data.acceptanceDeadline);
-        if (Number.isNaN(deadline.getTime())) {
-          throw new BadRequestException("acceptanceDeadline is invalid");
-        }
-        normalized.acceptanceDeadline = deadline;
-      }
-    }
-
-    const acceptanceDeadline = normalized.acceptanceDeadline;
-    if (acceptanceDeadline) {
+      const maxDurationMs = 15 * 24 * 60 * 60 * 1000;
       if (
-        normalized.startDate &&
-        acceptanceDeadline < new Date(normalized.startDate)
+        new Date(normalized.endDate).getTime() -
+          new Date(normalized.startDate).getTime() >
+        maxDurationMs
       ) {
         throw new BadRequestException(
-          "acceptanceDeadline cannot be before campaign start date",
+          "Campaign duration cannot exceed 15 days",
         );
       }
-      if (
-        normalized.endDate &&
-        acceptanceDeadline > new Date(normalized.endDate)
-      ) {
-        throw new BadRequestException(
-          "acceptanceDeadline cannot be after campaign end date",
-        );
-      }
+    }
+
+    // Acceptance deadline is always derived automatically — end of day, one
+    // day before the campaign start date — for both invite-only and open
+    // campaigns. Any client-supplied value is ignored; it's only recomputed
+    // when startDate is part of this create/update payload.
+    if (normalized.startDate) {
+      const start = new Date(normalized.startDate);
+      normalized.acceptanceDeadline = new Date(
+        Date.UTC(
+          start.getUTCFullYear(),
+          start.getUTCMonth(),
+          start.getUTCDate() - 1,
+          23,
+          59,
+          59,
+          999,
+        ),
+      );
     }
 
     if (data.campaignType) {
