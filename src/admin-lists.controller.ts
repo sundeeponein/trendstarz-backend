@@ -803,7 +803,7 @@ export class AdminListsController {
     @Param("id") id: string,
     @Body()
     body: {
-      action?: "approve" | "reject" | "needs_changes" | "complete";
+      action?: "approve" | "reject" | "needs_changes";
       moderationNote?: string;
     },
     @Req() req: any,
@@ -816,22 +816,18 @@ export class AdminListsController {
     const action = String(body?.action || "")
       .trim()
       .toLowerCase();
+    // Marking a campaign complete is a host action (or the auto-complete cron
+    // once the timeline ends with no work in flight) — admin moderation only
+    // covers the approve/reject/needs_changes review workflow.
     const map: Record<string, string> = {
       approve: "active",
       reject: "rejected",
       needs_changes: "needs_changes",
-      complete: "completed",
     };
     const nextStatus = map[action];
     if (!nextStatus) {
       throw new BadRequestException(
-        "action must be approve, reject, needs_changes, or complete",
-      );
-    }
-
-    if (action === "complete" && campaign.status !== "active") {
-      throw new BadRequestException(
-        `Cannot complete a campaign from status '${campaign.status}'. Only active campaigns can be marked complete.`,
+        "action must be approve, reject, or needs_changes",
       );
     }
 
