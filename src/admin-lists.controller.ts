@@ -520,6 +520,7 @@ export class AdminListsController {
       "rejected",
       "active",
       "completed",
+      "cancelled",
       "draft",
       "pending",
       "all",
@@ -863,6 +864,102 @@ export class AdminListsController {
 
     const saved = await campaign.save();
     return { success: true, campaign: saved };
+  }
+
+  private assertAdminOverrideReason(reason: unknown): string {
+    const trimmed = String(reason || "").trim();
+    if (trimmed.length < 10) {
+      throw new BadRequestException(
+        "Please provide a reason for this override (at least 10 characters).",
+      );
+    }
+    return trimmed;
+  }
+
+  /**
+   * Emergency admin override: force a stuck/problem active campaign straight
+   * to completed, bypassing the normal host "End campaign" action and the
+   * auto-complete cron's in-flight-work check. Use sparingly.
+   */
+  @Patch("campaigns/:id/force-complete")
+  async forceCompleteCampaign(
+    @Param("id") id: string,
+    @Body() body: { reason?: string },
+    @Req() req: any,
+  ) {
+    const campaign = await this.campaignModel.findById(id);
+    if (!campaign) {
+      throw new BadRequestException("Campaign not found");
+    }
+    if (campaign.status !== "active") {
+      throw new BadRequestException(
+        `Only active campaigns can be force-completed (current status: '${campaign.status}').`,
+      );
+    }
+    const reason = this.assertAdminOverrideReason(body?.reason);
+    const adminId = String(req?.user?.userId || req?.user?.id || "admin");
+    const now = new Date();
+
+    campaign.status = "completed";
+    campaign.completedBy = "admin";
+    campaign.completedAt = now;
+    campaign.adminOverrideAction = "force_complete";
+    campaign.adminOverrideReason = reason;
+    campaign.adminOverrideBy = adminId;
+    campaign.adminOverrideAt = now;
+
+    const saved = await campaign.save();
+    return { success: true, campaign: saved };
+  }
+
+  /**
+   * Emergency admin override: cancel a campaign's still-pending/unconfirmed
+   * invites (pending/invited/counter_sent/accepted). Invites already paid or
+   * in progress (payment_confirmed/working/submitted/etc.) are left untouched
+   * — this stops new acceptances, it doesn't pull the rug out from under
+   * creators who are already being paid.
+   */
+  @Patch("campaigns/:id/cancel-participation")
+  async cancelCampaignParticipation(
+    @Param("id") id: string,
+    @Body() body: { reason?: string },
+    @Req() req: any,
+  ) {
+    const campaign = await this.campaignModel.findById(id);
+    if (!campaign) {
+      throw new BadRequestException("Campaign not found");
+    }
+    if (campaign.status !== "active") {
+      throw new BadRequestException(
+        `Only active campaigns can have participation cancelled (current status: '${campaign.status}').`,
+      );
+    }
+    const reason = this.assertAdminOverrideReason(body?.reason);
+    const adminId = String(req?.user?.userId || req?.user?.id || "admin");
+    const now = new Date();
+
+    const cancellableStatuses = [
+      "pending",
+      "invited",
+      "counter_sent",
+      "accepted",
+    ];
+    const { modifiedCount } = await this.campaignInviteModel.updateMany(
+      {
+        campaignId: { $in: [campaign._id, String(campaign._id)] },
+        status: { $in: cancellableStatuses },
+      },
+      { $set: { status: "withdrawn" } },
+    );
+
+    campaign.status = "cancelled";
+    campaign.adminOverrideAction = "cancel_participation";
+    campaign.adminOverrideReason = reason;
+    campaign.adminOverrideBy = adminId;
+    campaign.adminOverrideAt = now;
+
+    const saved = await campaign.save();
+    return { success: true, campaign: saved, cancelledInvites: modifiedCount };
   }
 
   @Get("whatsapp-communities")

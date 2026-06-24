@@ -1024,12 +1024,29 @@ export const CampaignSchema = new Schema(
         "active",
         "rejected",
         "completed",
+        "cancelled",
       ],
       default: "draft",
     },
     moderationNote: { type: String, default: "" },
     moderatedBy: { type: String, default: "" },
     moderatedAt: { type: Date, default: null },
+    // Who/what actually completed the campaign — distinguishes a host's manual
+    // "End campaign" from the hourly auto-complete safety-net cron from an
+    // admin emergency override (see force-complete below).
+    completedBy: { type: String, enum: ["host", "auto", "admin"], default: null },
+    completedAt: { type: Date, default: null },
+    // Emergency admin-only overrides (force-complete / cancel-participation).
+    // Kept separate from the moderation fields above since these apply to
+    // live/active campaigns, not the approve/reject review workflow.
+    adminOverrideAction: {
+      type: String,
+      enum: ["force_complete", "cancel_participation"],
+      default: null,
+    },
+    adminOverrideReason: { type: String, default: "" },
+    adminOverrideBy: { type: String, default: "" },
+    adminOverrideAt: { type: Date, default: null },
     budgetMin: { type: Number },
     budgetMax: { type: Number },
     pricePerInfluencer: { type: Number }, // paise

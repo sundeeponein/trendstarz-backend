@@ -117,7 +117,7 @@ export class CampaignsService {
 
       await this.campaignModel.updateOne(
         { _id: campaignId, status: "active" },
-        { $set: { status: "completed" } },
+        { $set: { status: "completed", completedBy: "auto", completedAt: now } },
       );
       completedCount++;
     }
@@ -1141,6 +1141,12 @@ export class CampaignsService {
         throw new BadRequestException(
           `Cannot transition from '${campaign.status}' to '${data.status}'`,
         );
+      }
+      // This update path is the brand/host's own campaign endpoint (ownership
+      // is checked above), so any manual completion through here is by the host.
+      if (data.status === "completed") {
+        data.completedBy = "host";
+        data.completedAt = new Date();
       }
     }
 
