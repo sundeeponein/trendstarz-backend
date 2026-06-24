@@ -720,11 +720,19 @@ export class CampaignsService {
     );
     const persistedOwnerType: CampaignOwnerType =
       ownerType === "influencer" ? "brand" : ownerType;
-    const ownerProfile = await this.loadOwnerVerificationProfile(
-      ownerId,
-      persistedOwnerType,
-    );
-    this.assertOwnerCanPost(ownerProfile);
+    // Drafts aren't posted or sent to anyone yet, so don't gate them behind
+    // email/mobile verification — only enforce it once the campaign is
+    // actually being submitted/published.
+    const requestedStatus = String(data?.status || "")
+      .trim()
+      .toLowerCase();
+    if (requestedStatus !== "draft") {
+      const ownerProfile = await this.loadOwnerVerificationProfile(
+        ownerId,
+        persistedOwnerType,
+      );
+      this.assertOwnerCanPost(ownerProfile);
+    }
     // Lazy load PlansService to avoid circular dep
     const caps = await this.plansService.getUserPlanCapabilities(ownerId);
     const settings = await this.appSettingsModel.findOne({}).lean().exec();
