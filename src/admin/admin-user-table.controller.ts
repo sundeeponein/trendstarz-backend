@@ -81,6 +81,56 @@ export class AdminUserTableController {
     return byUserId;
   }
 
+  // Mirrors the "Social Profile & Creator Tier" checklist item in
+  // profile-verification.service.ts — kept in sync so the table's quick
+  // badge and the detailed verification panel never disagree for the same user.
+  private static readonly SOCIAL_TIER_FLAG_CODES = [
+    "SOCIAL_LINK_MISSING",
+    "SOCIAL_LINK_BROKEN",
+    "SOCIAL_LINK_PRIVATE",
+    "SOCIAL_LINK_MISMATCH",
+    "SOCIAL_LINK_DUPLICATE",
+    "FOLLOWER_COUNT_MISMATCH",
+    "TIER_MISMATCH",
+  ];
+
+  // Mirrors the "Profile Photo" checklist item's visibility-block flag set
+  // (quality + safety codes) in profile-verification.service.ts.
+  private static readonly PROFILE_PHOTO_ACTION_FLAG_CODES = [
+    "PROFILE_PHOTO_QUALITY",
+    "PROFILE_PHOTO_PENDING_REVIEW",
+    "PROFILE_PHOTO_MISSING",
+    "PROFILE_PHOTO_GROUP",
+    "PROFILE_PHOTO_BLURRY",
+    "PROFILE_PHOTO_LOGO",
+    "PROFILE_PHOTO_LOW_QUALITY",
+    "FACE_NOT_VISIBLE",
+    "PROFILE_PHOTO_SCREENSHOT",
+    "PROFILE_PHOTO_POLICY",
+    "PROFILE_PHOTO_CELEBRITY",
+    "PROFILE_PHOTO_CONTACT_INFO",
+    "PROFILE_PHOTO_QR_CODE",
+  ];
+
+  /** Batched (one query for the whole list) so listing users doesn't fire a flag lookup per row. */
+  private async loadUserIdsWithOpenFlags(
+    userIds: string[],
+    flagCodes: string[],
+  ): Promise<Set<string>> {
+    if (!userIds.length) return new Set<string>();
+    const rows = await this.flagModel
+      .find({
+        userId: { $in: userIds },
+        status: "Open",
+        flagCode: { $in: flagCodes },
+      })
+      .select("userId")
+      .lean();
+    return new Set(
+      (rows || []).map((r: any) => String(r?.userId || "")).filter(Boolean),
+    );
+  }
+
   private toRegex(value?: string) {
     if (!value) return null;
     const trimmed = String(value).trim();
@@ -574,11 +624,21 @@ export class AdminUserTableController {
       .limit(paging.limit)
       .lean()
       .exec();
-    const latestPayments = await this.loadLatestPaymentsByUserIds(
-      influencers.map((u: any) => String(u?._id || "")).filter(Boolean),
+    const influencerIds = influencers.map((u: any) => String(u?._id || "")).filter(Boolean);
+    const latestPayments = await this.loadLatestPaymentsByUserIds(influencerIds);
+    const socialTierFlagged = await this.loadUserIdsWithOpenFlags(
+      influencerIds,
+      AdminUserTableController.SOCIAL_TIER_FLAG_CODES,
+    );
+    const photoFlagged = await this.loadUserIdsWithOpenFlags(
+      influencerIds,
+      AdminUserTableController.PROFILE_PHOTO_ACTION_FLAG_CODES,
     );
     for (const u of influencers as any[]) {
-      u.latestPayment = latestPayments.get(String(u?._id || "")) || null;
+      const id = String(u?._id || "");
+      u.latestPayment = latestPayments.get(id) || null;
+      u.socialTierActionRequired = socialTierFlagged.has(id);
+      u.profilePhotoActionRequired = photoFlagged.has(id);
     }
     return influencers;
   }
@@ -616,8 +676,15 @@ export class AdminUserTableController {
       .limit(paging.limit)
       .lean()
       .exec();
-    const latestPayments = await this.loadLatestPaymentsByUserIds(
-      brands.map((b: any) => String(b?._id || "")).filter(Boolean),
+    const brandIds = brands.map((b: any) => String(b?._id || "")).filter(Boolean);
+    const latestPayments = await this.loadLatestPaymentsByUserIds(brandIds);
+    const socialTierFlagged = await this.loadUserIdsWithOpenFlags(
+      brandIds,
+      AdminUserTableController.SOCIAL_TIER_FLAG_CODES,
+    );
+    const photoFlagged = await this.loadUserIdsWithOpenFlags(
+      brandIds,
+      AdminUserTableController.PROFILE_PHOTO_ACTION_FLAG_CODES,
     );
     for (const b of brands as any[]) {
       if (!b.brandLogo) b.brandLogo = [];
@@ -625,7 +692,10 @@ export class AdminUserTableController {
       if (b.promotionalPrice === undefined && b.price !== undefined) {
         b.promotionalPrice = b.price;
       }
-      b.latestPayment = latestPayments.get(String(b?._id || "")) || null;
+      const id = String(b?._id || "");
+      b.latestPayment = latestPayments.get(id) || null;
+      b.socialTierActionRequired = socialTierFlagged.has(id);
+      b.profilePhotoActionRequired = photoFlagged.has(id);
     }
     return brands;
   }
@@ -662,11 +732,21 @@ export class AdminUserTableController {
       .limit(paging.limit)
       .lean()
       .exec();
-    const latestPayments = await this.loadLatestPaymentsByUserIds(
-      photographers.map((p: any) => String(p?._id || "")).filter(Boolean),
+    const photographerIds = photographers.map((p: any) => String(p?._id || "")).filter(Boolean);
+    const latestPayments = await this.loadLatestPaymentsByUserIds(photographerIds);
+    const socialTierFlagged = await this.loadUserIdsWithOpenFlags(
+      photographerIds,
+      AdminUserTableController.SOCIAL_TIER_FLAG_CODES,
+    );
+    const photoFlagged = await this.loadUserIdsWithOpenFlags(
+      photographerIds,
+      AdminUserTableController.PROFILE_PHOTO_ACTION_FLAG_CODES,
     );
     for (const p of photographers as any[]) {
-      p.latestPayment = latestPayments.get(String(p?._id || "")) || null;
+      const id = String(p?._id || "");
+      p.latestPayment = latestPayments.get(id) || null;
+      p.socialTierActionRequired = socialTierFlagged.has(id);
+      p.profilePhotoActionRequired = photoFlagged.has(id);
     }
 
     return photographers;
@@ -1193,6 +1273,19 @@ export class AdminUserTableController {
       user.paymentVerifiedAt = paymentVerified
         ? user.paymentVerifiedAt || new Date()
         : null;
+    }
+    // These three were previously only ever resolved/opened as ProfileFlag
+    // records below — the boolean field on the user document itself was
+    // never written, so the response (and any list re-fetch) kept handing
+    // the frontend a stale value, overwriting whatever the admin just set.
+    if (hasProfilePhoto) {
+      user.profilePhotoVerified = !!body.profilePhotoVerified;
+    }
+    if (hasCreatorTier) {
+      user.creatorTierVerified = !!body.creatorTierVerified;
+    }
+    if (hasGallery) {
+      user.galleryImagesVerified = !!body.galleryImagesVerified;
     }
 
     const saved = await user.save();

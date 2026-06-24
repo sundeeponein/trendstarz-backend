@@ -29,6 +29,13 @@ const ProfileVerificationFields = {
   paymentVerifiedAt: { type: Date, default: null },
   panVerified: { type: Boolean, default: false },
   panVerifiedAt: { type: Date, default: null },
+  // Admin-set verification flags. The real source of truth for these three
+  // is the ProfileFlag-derived checklist (see profile-verification.service.ts),
+  // but the explicit toggle action also persists a direct boolean here so it
+  // survives a plain document save/fetch instead of silently no-op-ing.
+  profilePhotoVerified: { type: Boolean, default: false },
+  creatorTierVerified: { type: Boolean, default: false },
+  galleryImagesVerified: { type: Boolean, default: false },
   lastReviewedAt: { type: Date, default: null },
   reviewedBy: { type: String, default: "" },
   profileCompletion: { type: Number, default: 0, min: 0, max: 100 },
