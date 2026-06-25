@@ -1911,14 +1911,46 @@ export class UsersService {
       await this.publicProfileBlockedIds("Photographer"),
     );
 
-    const [totalInfluencers, verifiedInfluencers, totalPhotographers] =
-      await Promise.all([
-        this.influencerModel.countDocuments(influencerFilter),
-        this.influencerModel.countDocuments(verifiedInfluencerFilter),
-        this.photographerModel.countDocuments(photographerFilter),
-      ]);
+    const verifiedPhotographerFilter = {
+      ...photographerFilter,
+      $or: [{ verifiedByTrendStarz: true }, { verificationStatus: "approved" }],
+    };
 
-    return { totalInfluencers, verifiedInfluencers, totalPhotographers };
+    const brandFilter: any = { status: "accepted" };
+    this.applyExcludedIds(
+      brandFilter,
+      await this.publicProfileBlockedIds("Brand"),
+    );
+
+    const verifiedBrandFilter = {
+      ...brandFilter,
+      verifiedByTrendStarz: true,
+    };
+
+    const [
+      totalInfluencers,
+      verifiedInfluencers,
+      totalPhotographers,
+      verifiedPhotographers,
+      totalBrands,
+      verifiedBrands,
+    ] = await Promise.all([
+      this.influencerModel.countDocuments(influencerFilter),
+      this.influencerModel.countDocuments(verifiedInfluencerFilter),
+      this.photographerModel.countDocuments(photographerFilter),
+      this.photographerModel.countDocuments(verifiedPhotographerFilter),
+      this.brandModel.countDocuments(brandFilter),
+      this.brandModel.countDocuments(verifiedBrandFilter),
+    ]);
+
+    return {
+      totalInfluencers,
+      verifiedInfluencers,
+      totalPhotographers,
+      verifiedPhotographers,
+      totalBrands,
+      verifiedBrands,
+    };
   }
 
   async getBrands(
