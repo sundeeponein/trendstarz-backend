@@ -285,6 +285,11 @@ export class UsersController {
     return this.usersService.trackBrandProfileClick(brandName);
   }
 
+  @Get("platform-stats")
+  async getPlatformStats() {
+    return this.usersService.getPlatformStats();
+  }
+
   @Get("influencers")
   async getInfluencers(
     @Query("page") page?: string,

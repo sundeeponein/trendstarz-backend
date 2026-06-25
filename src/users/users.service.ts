@@ -1889,6 +1889,38 @@ export class UsersService {
     };
   }
 
+  async getPlatformStats() {
+    const influencerFilter: any = { status: "accepted" };
+    this.applyPublicDiscoveryEligibilityFilter(influencerFilter);
+    this.applyExcludedIds(
+      influencerFilter,
+      await this.publicProfileBlockedIds("Influencer"),
+    );
+
+    const verifiedInfluencerFilter = {
+      ...influencerFilter,
+      $or: [{ verifiedByTrendStarz: true }, { verificationStatus: "approved" }],
+    };
+
+    const photographerFilter: any = {
+      status: "accepted",
+      isDeleted: { $ne: true },
+    };
+    this.applyExcludedIds(
+      photographerFilter,
+      await this.publicProfileBlockedIds("Photographer"),
+    );
+
+    const [totalInfluencers, verifiedInfluencers, totalPhotographers] =
+      await Promise.all([
+        this.influencerModel.countDocuments(influencerFilter),
+        this.influencerModel.countDocuments(verifiedInfluencerFilter),
+        this.photographerModel.countDocuments(photographerFilter),
+      ]);
+
+    return { totalInfluencers, verifiedInfluencers, totalPhotographers };
+  }
+
   async getBrands(
     page = 1,
     limit = 20,
