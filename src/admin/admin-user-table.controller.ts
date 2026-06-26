@@ -949,11 +949,17 @@ export class AdminUserTableController {
     const notes = String(body?.notes || "").trim();
     const actorId = String(req?.user?.userId || req?.user?.id || "admin");
     const actorRole = String(req?.user?.role || "admin");
+    let status = brand.verificationStatus || "not_submitted";
+    if (action === "approve") status = "approved";
+    else if (action === "reject") status = "rejected";
+    else if (action === "remove") status = "removed";
+    else if (action === "pending") status = "pending";
 
     if (typeof body?.verifiedByTrendStarz === "boolean") {
       brand.verifiedByTrendStarz = !!body.verifiedByTrendStarz;
     }
     if (action) {
+      brand.verificationStatus = status;
       if (action === "approve") {
         brand.verifiedByTrendStarz = true;
         brand.verificationDashboardStatus = "Brand Ready";
@@ -992,13 +998,7 @@ export class AdminUserTableController {
                   ? "notes_updated"
                   : "status_changed",
         status:
-          action === "approve"
-            ? "approved"
-            : action === "reject"
-              ? "rejected"
-              : action === "remove"
-                ? "removed"
-                : "pending",
+          action ? status : "pending",
         note: notes,
         actorId,
         actorRole,

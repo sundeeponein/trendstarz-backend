@@ -6,6 +6,7 @@ import {
 import { InjectModel } from "@nestjs/mongoose";
 import { Model, Types } from "mongoose";
 import { CloudinaryService } from "../cloudinary.service";
+import { PlansService } from "../plans/plans.service";
 import { normalizeCollaborationAvailability } from "../utils/collaboration-availability.util";
 import {
   PROFILE_SELECTION_LIMITS,
@@ -65,6 +66,7 @@ export class PhotographersService {
     @InjectModel("State") private readonly stateModel: Model<any>,
     @InjectModel("District") private readonly districtModel: Model<any>,
     private readonly cloudinaryService: CloudinaryService,
+    private readonly plansService: PlansService,
   ) {}
 
   private async canViewPhotographerContact(
@@ -567,6 +569,7 @@ export class PhotographersService {
     if (await this.hasOpenPublicProfileBlock(doc._id)) return null;
     const hideGallery = await this.hasOpenGalleryBlock(doc._id);
     const allowContact = await this.canViewPhotographerContact(doc, viewerId);
+    const allowSocial = await this.plansService.canViewSocialLinks(viewerId);
     const visibleProfileImages = this.visibleProfileImages(
       doc.profileImages,
       hideGallery,
@@ -583,6 +586,8 @@ export class PhotographersService {
       portfolio: allowContact ? doc.portfolio : undefined,
       contact: allowContact ? doc.contact : undefined,
       contactRestricted: !allowContact,
+      socialMedia: allowSocial ? doc.socialMedia || [] : [],
+      socialMediaRestricted: !allowSocial,
     };
   }
 
@@ -599,6 +604,7 @@ export class PhotographersService {
     }
     const doc: any = rawDoc;
     const allowContact = await this.canViewPhotographerContact(doc, viewerId);
+    const allowSocial = await this.plansService.canViewSocialLinks(viewerId);
     return {
       ...doc,
       // Recompute from the live array — the stored singular field is legacy
@@ -610,6 +616,8 @@ export class PhotographersService {
       portfolio: allowContact ? doc.portfolio : undefined,
       contact: allowContact ? doc.contact : undefined,
       contactRestricted: !allowContact,
+      socialMedia: allowSocial ? doc.socialMedia || [] : [],
+      socialMediaRestricted: !allowSocial,
     };
   }
 }

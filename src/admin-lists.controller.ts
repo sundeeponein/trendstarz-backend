@@ -714,7 +714,7 @@ export class AdminListsController {
     );
     const brands = await this.brandModel
       .find({ _id: { $in: brandIds } })
-      .select("brandName brandUsername email verifiedByTrendStarz")
+      .select("brandName brandUsername email verifiedByTrendStarz verificationStatus")
       .lean();
     const brandMap = new Map(brands.map((b: any) => [String(b._id), b]));
     const photographers = await this.photographerModel
@@ -791,6 +791,7 @@ export class AdminListsController {
                 brandUsername: brand.brandUsername,
                 email: brand.email,
                 verifiedByTrendStarz: !!brand.verifiedByTrendStarz,
+                verificationStatus: brand.verificationStatus || "not_submitted",
               }
             : null,
       };

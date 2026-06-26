@@ -10,6 +10,7 @@ import {
   InfluencerSchema,
   BrandSchema,
   PhotographerSchema,
+  CampaignSchema,
 } from "../database/schemas/profile.schemas";
 import { CampaignInviteSchema } from "../database/schemas/campaign-invite.schema";
 import { ProfileFlagSchema } from "../database/schemas/profile-flag.schema";
@@ -37,6 +38,11 @@ import { FirebaseAdminService } from "../utils/firebase-admin.service";
         name: "CampaignInvite",
         schema: CampaignInviteSchema,
         collection: "campaigninvites",
+      },
+      {
+        name: "Campaign",
+        schema: CampaignSchema,
+        collection: "campaigns",
       },
       {
         name: "UsageCounter",

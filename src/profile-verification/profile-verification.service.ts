@@ -335,15 +335,19 @@ export class ProfileVerificationService {
   }
 
   private galleryImageItems(profile: any): any[] {
-    const items: any[] = [];
-    for (const img of profile?.galleryImages || profile?.products || []) {
-      items.push(img);
-    }
+    // profileImages[1:]/products is the live gallery the user actually manages
+    // from their edit screen. The legacy `galleryImages` field is no longer
+    // written by any current flow (only cleared on plan downgrade), so stale
+    // leftover entries in it must not be treated as the user's gallery —
+    // otherwise users see flags for "screenshots" they can't see or remove.
     const profileImages = Array.isArray(profile?.profileImages)
       ? profile.profileImages
       : [];
-    if (profileImages.length > 1) items.push(...profileImages.slice(1));
-    return items;
+    if (profileImages.length > 1) return profileImages.slice(1);
+    if (Array.isArray(profile?.products) && profile.products.length) {
+      return [...profile.products];
+    }
+    return [];
   }
 
   private galleryImageUrls(profile: any): string[] {
@@ -469,7 +473,7 @@ export class ProfileVerificationService {
     return Math.max(0, Math.min(100, score));
   }
 
-  private qualityFromFlags(flags: any[]): {
+  private qualityFromFlags(flags: any[], baseScore = 0): {
     score: number;
     label: string;
     status: string;
@@ -479,7 +483,7 @@ export class ProfileVerificationService {
       if (flag.severity === "Medium") return sum + 10;
       return sum + 5;
     }, 0);
-    const score = Math.max(0, Math.min(100, 100 - penalty));
+    const score = Math.max(0, Math.min(100, Number(baseScore || 0) - penalty));
     const label =
       score <= 40
         ? "Poor"
@@ -739,6 +743,46 @@ export class ProfileVerificationService {
     if (new Set(normalizedPortfolio).size !== normalizedPortfolio.length)
       await add("PORTFOLIO_DUPLICATE");
 
+    if (!portfolio.length) {
+      // Content-specific gallery flags can't apply to an empty gallery — there are no
+      // images left to be a screenshot/duplicate/watermark/low-quality. Clear any stale
+      // ones (including admin-set) so moderation doesn't show a flag reason for images
+      // that no longer exist; PORTFOLIO_MISSING (added above) is the only valid reason.
+      await this.flagModel.updateMany(
+        {
+          userId: String(userId),
+          userType,
+          status: "Open",
+          flagCode: {
+            $in: [
+              "PORTFOLIO_SCREENSHOT",
+              "PORTFOLIO_LOW_QUALITY",
+              "PORTFOLIO_DUPLICATE",
+              "PORTFOLIO_WATERMARK",
+            ],
+          },
+        },
+        {
+          $set: {
+            status: "Resolved",
+            reviewedBy: "AUTO",
+            reviewedAt: new Date(),
+            reviewNotes:
+              "Automatically resolved: gallery has no images for this flag to apply to.",
+          },
+          $push: {
+            auditLog: {
+              action: "auto_resolved",
+              actorId: "AUTO",
+              actorRole: "system",
+              note: "Gallery is empty; content-specific flag no longer applies.",
+              actedAt: new Date(),
+            },
+          },
+        },
+      );
+    }
+
     if (!this.isEmailVerified(profile)) await add("EMAIL_NOT_VERIFIED");
     if (!this.isMobileVerified(profile)) await add("MOBILE_NOT_VERIFIED");
     await this.flagModel.updateMany(
@@ -786,7 +830,7 @@ export class ProfileVerificationService {
     const visibleActionFlags = flags.filter(
       (flag) => !HIDDEN_ACTION_FLAG_CODES.has(String(flag.flagCode || "")),
     );
-    const quality = this.qualityFromFlags(qualityFlags);
+    const quality = this.qualityFromFlags(qualityFlags, completion);
     const status =
       completion < 40
         ? "Draft"
@@ -937,7 +981,10 @@ export class ProfileVerificationService {
           name: user.name || user.brandName || user.email,
           email: user.email,
           profileCompletion: user.profileCompletion || 0,
-          profileQualityScore: user.profileQualityScore ?? 100,
+          profileQualityScore: Math.min(
+            Number(user.profileQualityScore ?? 0),
+            Number(user.profileCompletion ?? user.profileQualityScore ?? 0),
+          ),
           verificationStatus: user.verificationDashboardStatus || "Draft",
           documentStatus: user.verificationStatus || "",
           openFlagsCount: countMap.get(String(user._id)) || 0,

@@ -728,6 +728,7 @@ export class UsersService {
     @InjectModel("Photographer") private readonly photographerModel: Model<any>,
     @InjectModel("CampaignInvite")
     private readonly campaignInviteModel: Model<any>,
+    @InjectModel("Campaign") private readonly campaignModel: Model<any>,
     @InjectModel("ProfileFlag") private readonly profileFlagModel: Model<any>,
     private readonly plansService: PlansService,
   ) {}
@@ -940,25 +941,7 @@ export class UsersService {
     if (!brand) return false;
     if (!viewerId) return false;
     if (String(brand._id) === String(viewerId)) return true;
-    return this.canViewerOpenSocialLinks(viewerId);
-  }
-
-  private async canViewerOpenSocialLinks(
-    viewerId?: string | null,
-  ): Promise<boolean> {
-    if (!viewerId) return false;
-    const caps = await this.plansService.getUserPlanCapabilities(
-      String(viewerId),
-    );
-    const hasSocialFeature = (caps?.features || []).some((f: any) => {
-      const key = String(f?.key || "");
-      const enabled = !!f?.value;
-      return (
-        enabled &&
-        (key === "socialMediaVisibility" || key === "viewSocialLinks")
-      );
-    });
-    return hasSocialFeature;
+    return this.plansService.canViewSocialLinks(viewerId);
   }
 
   /** Throw if the user has already reached their maxImages plan limit */
@@ -1016,6 +999,8 @@ export class UsersService {
       languages,
       contact,
       profileTraffic,
+      verificationStatus,
+      verifiedByTrendStarz,
     } = user;
     return {
       _id,
@@ -1038,6 +1023,8 @@ export class UsersService {
       languages,
       contact: allowAccess ? contact : undefined,
       contactRestricted: !allowAccess,
+      verificationStatus: verificationStatus || "not_submitted",
+      verifiedByTrendStarz: !!verifiedByTrendStarz,
       profileTraffic: profileTraffic || {
         impressions: 0,
         clicks: 0,
@@ -1375,7 +1362,7 @@ export class UsersService {
     };
 
     const baseFilter: any = { status: "accepted" };
-    const allowSocialLinks = await this.canViewerOpenSocialLinks(viewerId);
+    const allowSocialLinks = await this.plansService.canViewSocialLinks(viewerId);
     this.applyPublicDiscoveryEligibilityFilter(baseFilter);
     this.applyExcludedIds(
       baseFilter,
@@ -1750,7 +1737,7 @@ export class UsersService {
     const [allowContact, allowGender, allowSocial] = await Promise.all([
       this.canViewInfluencerContact(user, viewerId),
       this.canViewInfluencerGender(user, viewerId),
-      this.canViewerOpenSocialLinks(viewerId),
+      this.plansService.canViewSocialLinks(viewerId),
     ]);
     const hideGallery = await this.hasOpenGalleryBlock(user._id, "Influencer");
     const isPremium = this.isCurrentlyPremium(user);
@@ -1823,7 +1810,7 @@ export class UsersService {
     const [allowContact, allowGender, allowSocial] = await Promise.all([
       this.canViewInfluencerContact(user, viewerId),
       this.canViewInfluencerGender(user, viewerId),
-      this.canViewerOpenSocialLinks(viewerId),
+      this.plansService.canViewSocialLinks(viewerId),
     ]);
     const hideGallery = await this.hasOpenGalleryBlock(user._id, "Influencer");
     const isPremium = this.isCurrentlyPremium(user);
@@ -1924,7 +1911,7 @@ export class UsersService {
 
     const verifiedBrandFilter = {
       ...brandFilter,
-      verifiedByTrendStarz: true,
+      $or: [{ verifiedByTrendStarz: true }, { verificationStatus: "approved" }],
     };
 
     const [
@@ -1934,6 +1921,7 @@ export class UsersService {
       verifiedPhotographers,
       totalBrands,
       verifiedBrands,
+      totalCampaigns,
     ] = await Promise.all([
       this.influencerModel.countDocuments(influencerFilter),
       this.influencerModel.countDocuments(verifiedInfluencerFilter),
@@ -1941,6 +1929,7 @@ export class UsersService {
       this.photographerModel.countDocuments(verifiedPhotographerFilter),
       this.brandModel.countDocuments(brandFilter),
       this.brandModel.countDocuments(verifiedBrandFilter),
+      this.campaignModel.countDocuments({}),
     ]);
 
     return {
@@ -1950,6 +1939,7 @@ export class UsersService {
       verifiedPhotographers,
       totalBrands,
       verifiedBrands,
+      totalCampaigns,
     };
   }
 
@@ -1968,7 +1958,7 @@ export class UsersService {
         this.brandModel
           .find(filter)
           .select(
-            "brandName brandLogo categories location isPremium premiumEnd promotionalPrice adminTags socialMedia verifiedByTrendStarz",
+            "brandName brandLogo categories location isPremium premiumEnd promotionalPrice adminTags socialMedia verifiedByTrendStarz verificationStatus",
           )
           .sort({ updatedAt: -1 })
           .skip(skip)

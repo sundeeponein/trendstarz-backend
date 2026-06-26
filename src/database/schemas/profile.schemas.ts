@@ -39,8 +39,8 @@ const ProfileVerificationFields = {
   lastReviewedAt: { type: Date, default: null },
   reviewedBy: { type: String, default: "" },
   profileCompletion: { type: Number, default: 0, min: 0, max: 100 },
-  profileQualityScore: { type: Number, default: 100, min: 0, max: 100 },
-  profileQualityLabel: { type: String, default: "Premium Verified" },
+  profileQualityScore: { type: Number, default: 0, min: 0, max: 100 },
+  profileQualityLabel: { type: String, default: "Not Calculated" },
   verificationDashboardStatus: {
     type: String,
     enum: [

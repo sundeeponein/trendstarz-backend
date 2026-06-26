@@ -339,6 +339,27 @@ export class PlansService {
     return feature ? feature.value === true : false;
   }
 
+  /**
+   * Reusable, role-agnostic gate for whether a viewer may open another profile's
+   * social media links/handles. Guests (no viewerId) are always denied; logged-in
+   * viewers are gated on their own plan's socialMediaVisibility/viewSocialLinks
+   * feature (Free plans typically have it off, Premium/Pro plans on). Used by
+   * Influencer, Brand, and Photographer public-profile lookups alike so the
+   * Guest/Free/Premium rule stays in one place instead of being copied per role.
+   */
+  async canViewSocialLinks(viewerId?: string | null): Promise<boolean> {
+    if (!viewerId) return false;
+    const caps = await this.getUserPlanCapabilities(String(viewerId));
+    return (caps?.features || []).some((f: any) => {
+      const key = String(f?.key || "");
+      const enabled = !!f?.value;
+      return (
+        enabled &&
+        (key === "socialMediaVisibility" || key === "viewSocialLinks")
+      );
+    });
+  }
+
   /** Get a numeric limit for a user */
   async getLimit(userId: string, limitKey: string): Promise<number> {
     const caps = await this.getUserPlanCapabilities(userId);
