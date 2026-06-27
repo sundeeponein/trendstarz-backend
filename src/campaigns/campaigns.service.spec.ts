@@ -3,6 +3,10 @@ import { getModelToken } from "@nestjs/mongoose";
 import { BadRequestException, NotFoundException } from "@nestjs/common";
 import { CampaignsService } from "./campaigns.service";
 import { PlansService } from "../plans/plans.service";
+import { CloudinaryService } from "../cloudinary.service";
+import { PushService } from "../push/push.service";
+import { NotificationsService } from "../notifications/notifications.service";
+import { ProfileVerificationService } from "../profile-verification/profile-verification.service";
 
 describe("CampaignsService", () => {
   let service: CampaignsService;
@@ -25,9 +29,18 @@ describe("CampaignsService", () => {
     _id: "507f1f77bcf86cd799439012",
     brandName: "Test Brand",
     brandUsername: "testbrand",
+    status: "accepted",
+    isEmailVerified: true,
+    isMobileVerified: true,
+    verifiedByTrendStarz: true,
+    verificationStatus: "approved",
+    brandLogo: "https://example.com/logo.png",
+    location: { state: "Karnataka", district: "Bengaluru" },
   };
 
   beforeEach(async () => {
+    jest.useFakeTimers().setSystemTime(new Date("2026-06-27T00:00:00.000Z"));
+
     const mockCampaignModel: any = jest
       .fn()
       .mockImplementation((data: any) => ({
@@ -83,6 +96,16 @@ describe("CampaignsService", () => {
       deleteMany: jest.fn().mockResolvedValue({ deletedCount: 0 }),
     };
 
+    const mockProfileFlagModel: any = {
+      countDocuments: jest.fn().mockResolvedValue(0),
+    };
+
+    const mockCounterModel: any = {
+      findOneAndUpdate: jest.fn().mockReturnValue({
+        lean: jest.fn().mockResolvedValue({ seq: 1 }),
+      }),
+    };
+
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         CampaignsService,
@@ -92,7 +115,19 @@ describe("CampaignsService", () => {
         { provide: getModelToken("Influencer"), useValue: mockInfluencerModel },
         { provide: getModelToken("Photographer"), useValue: mockPhotographerModel },
         { provide: getModelToken("AppSettings"), useValue: mockAppSettingsModel },
+        { provide: getModelToken("ProfileFlag"), useValue: mockProfileFlagModel },
+        { provide: getModelToken("Counter"), useValue: mockCounterModel },
         { provide: PlansService, useValue: mockPlansService },
+        { provide: CloudinaryService, useValue: {} },
+        { provide: PushService, useValue: {} },
+        { provide: NotificationsService, useValue: {} },
+        {
+          provide: ProfileVerificationService,
+          useValue: {
+            isProfileComplete: jest.fn().mockReturnValue(true),
+            isAdminApproved: jest.fn().mockReturnValue(true),
+          },
+        },
       ],
     }).compile();
 
@@ -101,6 +136,10 @@ describe("CampaignsService", () => {
     campaignInviteModel = module.get(getModelToken("CampaignInvite"));
     brandModel = module.get(getModelToken("Brand"));
     plansService = module.get(PlansService);
+  });
+
+  afterEach(() => {
+    jest.useRealTimers();
   });
 
   describe("create", () => {
@@ -151,6 +190,57 @@ describe("CampaignsService", () => {
           requestKind: "photographer_collaboration",
         }),
       );
+    });
+
+    it("should allow a draft campaign that starts exactly 3 days from today", async () => {
+      const result = await service.create(mockBrand._id, {
+        title: "Three day start",
+        description: "Valid campaign date window",
+        status: "draft",
+        timelineStart: "2026-06-30",
+        timelineEnd: "2026-07-15",
+        minInfluencers: 1,
+        maxInfluencers: 1,
+      });
+
+      expect(result).toBeDefined();
+      expect(campaignModel).toHaveBeenCalledWith(
+        expect.objectContaining({
+          startDate: new Date("2026-06-30"),
+          endDate: new Date("2026-07-15"),
+          timelineStart: new Date("2026-06-30"),
+          timelineEnd: new Date("2026-07-15"),
+          acceptanceDeadline: new Date("2026-06-29T23:59:59.999Z"),
+        }),
+      );
+    });
+
+    it("should reject a campaign that starts before 3 days from today", async () => {
+      await expect(
+        service.create(mockBrand._id, {
+          title: "Too soon",
+          description: "Invalid campaign date window",
+          status: "draft",
+          timelineStart: "2026-06-29",
+          timelineEnd: "2026-07-01",
+          minInfluencers: 1,
+          maxInfluencers: 1,
+        }),
+      ).rejects.toThrow("Start date must be at least 3 days from today");
+    });
+
+    it("should reject a campaign duration over 15 days", async () => {
+      await expect(
+        service.create(mockBrand._id, {
+          title: "Too long",
+          description: "Invalid campaign date window",
+          status: "draft",
+          timelineStart: "2026-06-30",
+          timelineEnd: "2026-07-16",
+          minInfluencers: 1,
+          maxInfluencers: 1,
+        }),
+      ).rejects.toThrow("Campaign duration cannot exceed 15 days");
     });
   });
 
