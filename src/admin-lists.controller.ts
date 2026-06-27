@@ -250,24 +250,24 @@ export class AdminListsController {
     };
   }
 
-  private applyAdminUserStatusFilter(filter: Record<string, any>, status?: string) {
-    const normalizedStatus = String(status || "").trim().toLowerCase();
+  private applyAdminUserStatusFilter(
+    filter: Record<string, any>,
+    status?: string,
+  ) {
+    const normalizedStatus = String(status || "")
+      .trim()
+      .toLowerCase();
     if (normalizedStatus === "deleted") {
       filter.$and = [
         {
-          $or: [
-            { isDeleted: { $in: [true, "true"] } },
-            { status: "deleted" },
-          ],
+          $or: [{ isDeleted: { $in: [true, "true"] } }, { status: "deleted" }],
         },
       ];
       return;
     }
 
     filter.isDeleted = { $nin: [true, "true"] };
-    filter.status = normalizedStatus
-      ? normalizedStatus
-      : { $ne: "deleted" };
+    filter.status = normalizedStatus ? normalizedStatus : { $ne: "deleted" };
   }
 
   @Get("settings")
@@ -353,7 +353,8 @@ export class AdminListsController {
       merged.campaignAccessModeConfigs,
     );
     merged.campaignTypeConfigDefaults = getCampaignTypeConfigDefaults();
-    merged.campaignAccessModeConfigDefaults = getCampaignAccessModeConfigDefaults();
+    merged.campaignAccessModeConfigDefaults =
+      getCampaignAccessModeConfigDefaults();
     return merged;
   }
 
@@ -506,55 +507,155 @@ export class AdminListsController {
     );
   }
 
+  /**
+   * Maps each status TAB (what the admin UI shows) to the raw DB `status`
+   * values that belong to it — mirrors `normalizeReviewStatus()` in
+   * campaign-review.component.ts so legacy aliases (e.g. "pending") still
+   * land in the right tab when filtering server-side.
+   */
+  private static readonly CAMPAIGN_STATUS_TAB_ALIASES: Record<
+    string,
+    string[]
+  > = {
+    pending_review: ["pending_review", "pending"],
+    needs_changes: ["needs_changes", "needschange", "changes_requested"],
+    rejected: ["rejected", "reject"],
+    active: ["active", "approved", "live"],
+    completed: ["completed"],
+    cancelled: ["cancelled"],
+    draft: ["draft"],
+  };
+
   @Get("campaigns")
   async getCampaignsForApproval(
     @Query("status") status?: string,
     @Query("ownerType") ownerType?: string,
+    @Query("page") page?: string,
+    @Query("limit") limit?: string,
+    @Query("q") q?: string,
+    @Query("dateFrom") dateFrom?: string,
+    @Query("dateTo") dateTo?: string,
   ) {
     const normalized = String(status || "pending_review")
       .trim()
       .toLowerCase();
-    const allowed = new Set([
-      "pending_review",
-      "needs_changes",
-      "rejected",
-      "active",
-      "completed",
-      "cancelled",
-      "draft",
-      "pending",
-      "all",
-    ]);
+    const statusAliases = AdminListsController.CAMPAIGN_STATUS_TAB_ALIASES;
 
-    const filter: any = {};
-    if (allowed.has(normalized) && normalized !== "all") {
-      filter.status = normalized;
-    }
-
+    // ownerType-only conditions — used both for the status-tab counters (which
+    // must stay scoped to the whole queue, not the active status/search/date
+    // filters) and as the base for the actual paginated query below.
+    const ownerAndConditions: any[] = [];
     const normalizedOwnerType = String(ownerType || "")
       .trim()
       .toLowerCase();
     if (normalizedOwnerType === "photographer") {
       // Photographer queue should include explicit ownerType plus legacy rows keyed by createdByRole.
-      filter.$or = [
-        { ownerType: "photographer" },
-        { createdByRole: "photographer" },
-      ];
+      ownerAndConditions.push({
+        $or: [{ ownerType: "photographer" }, { createdByRole: "photographer" }],
+      });
     } else if (normalizedOwnerType === "brand") {
       // Brand queue should include legacy rows where ownerType was not persisted.
-      filter.$or = [
-        { ownerType: "brand" },
-        { ownerType: { $exists: false } },
-        { ownerType: null },
-        { ownerType: "" },
-      ];
+      ownerAndConditions.push({
+        $or: [
+          { ownerType: "brand" },
+          { ownerType: { $exists: false } },
+          { ownerType: null },
+          { ownerType: "" },
+        ],
+      });
+    }
+    const ownerScopeFilter = ownerAndConditions.length
+      ? { $and: ownerAndConditions }
+      : {};
+
+    const [statusCountRows, newPendingCount] = await Promise.all([
+      this.campaignModel.aggregate([
+        { $match: ownerScopeFilter },
+        { $group: { _id: "$status", count: { $sum: 1 } } },
+      ]),
+      this.campaignModel.countDocuments({
+        $and: [
+          ...ownerAndConditions,
+          { status: { $in: statusAliases.pending_review } },
+          { createdAt: { $gt: new Date(Date.now() - 86400000) } },
+        ],
+      }),
+    ]);
+    const rawStatusCounts = new Map<string, number>(
+      statusCountRows.map((row: any) => [String(row?._id || ""), row.count]),
+    );
+    const countForTab = (tab: string) =>
+      (statusAliases[tab] || [tab]).reduce(
+        (sum, alias) => sum + (rawStatusCounts.get(alias) || 0),
+        0,
+      );
+    const statusCounts = {
+      pending_review: countForTab("pending_review"),
+      needs_changes: countForTab("needs_changes"),
+      rejected: countForTab("rejected"),
+      active: countForTab("active"),
+      completed: countForTab("completed"),
+      all: statusCountRows.reduce(
+        (sum: number, row: any) => sum + row.count,
+        0,
+      ),
+    };
+
+    // Full filter for the actual paginated fetch: ownerType + active status tab + search + date range.
+    const andConditions: any[] = [...ownerAndConditions];
+    if (normalized !== "all" && statusAliases[normalized]) {
+      andConditions.push({ status: { $in: statusAliases[normalized] } });
     }
 
-    const campaigns = await this.campaignModel
-      .find(filter)
-      .sort({ updatedAt: -1, createdAt: -1 })
-      .limit(300)
-      .lean();
+    const searchQuery = String(q || "").trim();
+    if (searchQuery) {
+      const escaped = searchQuery.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      const regex = new RegExp(escaped, "i");
+      const [matchingBrands, matchingPhotographers] = await Promise.all([
+        normalizedOwnerType === "photographer"
+          ? Promise.resolve([])
+          : this.brandModel.find({ brandName: regex }).select("_id").lean(),
+        normalizedOwnerType === "brand"
+          ? Promise.resolve([])
+          : this.photographerModel.find({ name: regex }).select("_id").lean(),
+      ]);
+      const ownerIds = [
+        ...matchingBrands.map((b: any) => b._id),
+        ...matchingPhotographers.map((p: any) => p._id),
+      ];
+      andConditions.push({
+        $or: [
+          { title: regex },
+          { campaignTitle: regex },
+          ...(ownerIds.length ? [{ brandId: { $in: ownerIds } }] : []),
+        ],
+      });
+    }
+
+    const fromDate = String(dateFrom || "").trim();
+    const toDate = String(dateTo || "").trim();
+    if (fromDate || toDate) {
+      const range: any = {};
+      if (fromDate) range.$gte = new Date(`${fromDate}T00:00:00`);
+      if (toDate) range.$lte = new Date(`${toDate}T23:59:59.999`);
+      andConditions.push({ createdAt: range });
+    }
+
+    const filter: any = andConditions.length ? { $and: andConditions } : {};
+
+    const pageNum = Math.max(1, Number(page) || 1);
+    const pageSize = Math.min(200, Math.max(1, Number(limit) || 10));
+    const skip = (pageNum - 1) * pageSize;
+
+    const [campaigns, total] = await Promise.all([
+      this.campaignModel
+        .find(filter)
+        .sort({ updatedAt: -1, createdAt: -1 })
+        .skip(skip)
+        .limit(pageSize)
+        .lean(),
+      this.campaignModel.countDocuments(filter),
+    ]);
 
     const campaignIds = campaigns.map((c: any) => c?._id).filter(Boolean);
     const campaignIdKeys = campaignIds.map((id: any) => String(id));
@@ -714,7 +815,9 @@ export class AdminListsController {
     );
     const brands = await this.brandModel
       .find({ _id: { $in: brandIds } })
-      .select("brandName brandUsername email verifiedByTrendStarz verificationStatus")
+      .select(
+        "brandName brandUsername email verifiedByTrendStarz verificationStatus",
+      )
       .lean();
     const brandMap = new Map(brands.map((b: any) => [String(b._id), b]));
     const photographers = await this.photographerModel
@@ -797,7 +900,15 @@ export class AdminListsController {
       };
     });
 
-    return { success: true, data: rows };
+    return {
+      success: true,
+      data: rows,
+      total,
+      page: pageNum,
+      limit: pageSize,
+      statusCounts,
+      newPendingCount,
+    };
   }
 
   @Patch("campaigns/:id/moderation")
@@ -965,9 +1076,7 @@ export class AdminListsController {
 
   @Get("whatsapp-communities")
   async getWhatsAppCommunities() {
-    await seedMissingWhatsAppCommunitiesFromConfig(
-      this.whatsappCommunityModel,
-    );
+    await seedMissingWhatsAppCommunitiesFromConfig(this.whatsappCommunityModel);
     const [items, joinedCounts] = await Promise.all([
       this.whatsappCommunityModel
         .find({})
@@ -978,7 +1087,8 @@ export class AdminListsController {
     ]);
     const data = items.map((item: any) => ({
       ...item,
-      joinedUserCount: joinedCounts.get(String(item?.communityName || "").trim()) || 0,
+      joinedUserCount:
+        joinedCounts.get(String(item?.communityName || "").trim()) || 0,
     }));
     return { success: true, data };
   }
@@ -986,8 +1096,12 @@ export class AdminListsController {
   @Post("whatsapp-communities")
   async createWhatsAppCommunity(@Body() body: any) {
     const state = String(body?.state || "").trim();
-    const communityName = String(body?.communityName || body?.groupName || "").trim();
-    const communityLink = String(body?.communityLink || body?.whatsappLink || "").trim();
+    const communityName = String(
+      body?.communityName || body?.groupName || "",
+    ).trim();
+    const communityLink = String(
+      body?.communityLink || body?.whatsappLink || "",
+    ).trim();
     const stateKey = normalizeCommunityStateKey(state);
     if (!stateKey || !communityName || !communityLink) {
       throw new BadRequestException(
@@ -1013,8 +1127,12 @@ export class AdminListsController {
   @Patch("whatsapp-communities/:id")
   async updateWhatsAppCommunity(@Param("id") id: string, @Body() body: any) {
     const state = String(body?.state || "").trim();
-    const communityName = String(body?.communityName || body?.groupName || "").trim();
-    const communityLink = String(body?.communityLink || body?.whatsappLink || "").trim();
+    const communityName = String(
+      body?.communityName || body?.groupName || "",
+    ).trim();
+    const communityLink = String(
+      body?.communityLink || body?.whatsappLink || "",
+    ).trim();
     const stateKey = normalizeCommunityStateKey(state);
     if (!stateKey || !communityName || !communityLink) {
       throw new BadRequestException(

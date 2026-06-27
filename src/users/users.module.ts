@@ -18,6 +18,7 @@ import { UsageCounterSchema } from "../database/schemas/usage-counter.schema";
 import { PlansModule } from "../plans/plans.module";
 import { MonetizationModule } from "../monetization/monetization.module";
 import { FirebaseAdminService } from "../utils/firebase-admin.service";
+import { PhotographersModule } from "../photographers/photographers.module";
 
 @Module({
   imports: [
@@ -57,6 +58,7 @@ import { FirebaseAdminService } from "../utils/firebase-admin.service";
     ]),
     PlansModule,
     MonetizationModule,
+    PhotographersModule,
   ],
   controllers: [UsersController, BrandsController, InfluencersController],
   providers: [UsersService, CloudinaryService, FirebaseAdminService],

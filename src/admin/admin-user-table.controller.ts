@@ -900,6 +900,7 @@ export class AdminUserTableController {
 
     influencer.verificationStatus = status;
     influencer.verifiedByTrendStarz = status === "approved";
+    if (status === "approved") influencer.approvedAt = new Date();
     influencer.verificationAdminNotes = notes;
 
     const log = Array.isArray(influencer.verificationAuditLog)
@@ -957,11 +958,13 @@ export class AdminUserTableController {
 
     if (typeof body?.verifiedByTrendStarz === "boolean") {
       brand.verifiedByTrendStarz = !!body.verifiedByTrendStarz;
+      if (body.verifiedByTrendStarz) brand.approvedAt = new Date();
     }
     if (action) {
       brand.verificationStatus = status;
       if (action === "approve") {
         brand.verifiedByTrendStarz = true;
+        brand.approvedAt = new Date();
         brand.verificationDashboardStatus = "Brand Ready";
       } else if (action === "reject") {
         brand.verifiedByTrendStarz = false;
@@ -1042,6 +1045,7 @@ export class AdminUserTableController {
     if (action) {
       photographer.verificationStatus = status;
       photographer.verifiedByTrendStarz = status === "approved";
+      if (status === "approved") photographer.approvedAt = new Date();
       photographer.verificationDashboardStatus =
         status === "approved"
           ? "Verified Creator"
@@ -1053,6 +1057,7 @@ export class AdminUserTableController {
     }
     if (typeof body?.verifiedByTrendStarz === "boolean") {
       photographer.verifiedByTrendStarz = !!body.verifiedByTrendStarz;
+      if (body.verifiedByTrendStarz) photographer.approvedAt = new Date();
     }
     if (body?.notes !== undefined) {
       photographer.verificationAdminNotes = notes;

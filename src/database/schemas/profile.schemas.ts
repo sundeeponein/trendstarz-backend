@@ -216,6 +216,10 @@ export const InfluencerSchema = new Schema(
     verificationDisclaimerAccepted: { type: Boolean, default: false },
     verificationAdminNotes: { type: String, default: "" },
     verifiedByTrendStarz: { type: Boolean, default: false },
+    // Set once when an admin approves the profile (action: "approve"/"approve_warning").
+    // Lets "recently approved" queries sort/filter at the DB level instead of
+    // scanning verificationAuditLog, independent of total collection size.
+    approvedAt: { type: Date, default: null, index: true },
     verificationAuditLog: [
       {
         action: {
@@ -503,6 +507,10 @@ export const BrandSchema = new Schema(
     },
     promotionalPrice: { type: Number },
     verifiedByTrendStarz: { type: Boolean, default: false },
+    // Set once when an admin approves the profile (action: "approve"/"approve_warning").
+    // Lets "recently approved" queries sort/filter at the DB level instead of
+    // scanning verificationAuditLog, independent of total collection size.
+    approvedAt: { type: Date, default: null, index: true },
     // Payout details (used for pay_to_join campaigns where brand receives money)
     payout: {
       upiId: { type: String, default: "" },
@@ -741,6 +749,10 @@ export const PhotographerSchema = new Schema(
     verificationDisclaimerAccepted: { type: Boolean, default: false },
     verificationAdminNotes: { type: String, default: "" },
     verifiedByTrendStarz: { type: Boolean, default: false },
+    // Set once when an admin approves the profile (action: "approve"/"approve_warning").
+    // Lets "recently approved" queries sort/filter at the DB level instead of
+    // scanning verificationAuditLog, independent of total collection size.
+    approvedAt: { type: Date, default: null, index: true },
     verificationAuditLog: [
       {
         action: {

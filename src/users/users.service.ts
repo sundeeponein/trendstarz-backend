@@ -16,6 +16,10 @@ import {
 } from "../utils/profile-selection-limits.util";
 import { normalizeSocialMediaList } from "../utils/social-handle.util";
 import { consumeOtpVerificationToken } from "../otp/otp.controller";
+import {
+  applyEligiblePublicProfileFilter,
+  fetchFeaturedProfiles,
+} from "../utils/profile-eligibility.util";
 
 const USE_LOCAL_IMAGES = process.env.USE_LOCAL_IMAGES === "true";
 const LOCAL_IMAGE_DIR = path.resolve(__dirname, "../../assets/local-images");
@@ -1941,6 +1945,40 @@ export class UsersService {
       verifiedBrands,
       totalCampaigns,
     };
+  }
+
+  private static readonly FEATURED_INFLUENCER_FIELDS =
+    "name username profileImage profileImages categories influencerCategory creatorTypes professionalStatus isPremium promotionalPrice verificationStatus verifiedByTrendStarz location socialMedia lastLoginAt lastOpenedAt updatedAt createdAt approvedAt";
+
+  private static readonly FEATURED_BRAND_FIELDS =
+    "brandName brandUsername brandLogo categories isPremium promotionalPrice verificationStatus verifiedByTrendStarz location adminTags lastLoginAt lastOpenedAt updatedAt createdAt approvedAt";
+
+  /** Eligible-only, weighted-random selection for the Welcome Page "Featured Influencers" section. */
+  async getFeaturedInfluencers(limit = 8) {
+    const filter: any = {};
+    applyEligiblePublicProfileFilter(filter);
+    this.applyExcludedIds(filter, await this.publicProfileBlockedIds("Influencer"));
+    const profiles = await fetchFeaturedProfiles(
+      this.influencerModel,
+      filter,
+      UsersService.FEATURED_INFLUENCER_FIELDS,
+      limit,
+    );
+    return profiles.map(({ approvedAt, ...rest }: any) => rest);
+  }
+
+  /** Eligible-only, weighted-random selection for the Welcome Page "Featured Brands" section. */
+  async getFeaturedBrands(limit = 6) {
+    const filter: any = {};
+    applyEligiblePublicProfileFilter(filter);
+    this.applyExcludedIds(filter, await this.publicProfileBlockedIds("Brand"));
+    const profiles = await fetchFeaturedProfiles(
+      this.brandModel,
+      filter,
+      UsersService.FEATURED_BRAND_FIELDS,
+      limit,
+    );
+    return profiles.map(({ approvedAt, ...rest }: any) => rest);
   }
 
   async getBrands(

@@ -13,6 +13,10 @@ import {
   normalizeSelectionList,
 } from "../utils/profile-selection-limits.util";
 import { normalizeSocialMediaList } from "../utils/social-handle.util";
+import {
+  applyEligiblePublicProfileFilter,
+  fetchFeaturedProfiles,
+} from "../utils/profile-eligibility.util";
 
 const PROFILE_PHOTO_VISIBILITY_BLOCK_FLAG_CODES = [
   "PROFILE_PHOTO_PENDING_REVIEW",
@@ -55,6 +59,9 @@ const PUBLIC_PROFILE_VISIBILITY_BLOCK_FLAG_CODES = [
   ...SOCIAL_TIER_VISIBILITY_BLOCK_FLAG_CODES,
   ...LOCATION_VISIBILITY_BLOCK_FLAG_CODES,
 ];
+
+const FEATURED_PHOTOGRAPHER_FIELDS =
+  "name username profileImage profileImages location skills pricing equipment socialMedia portfolio isPremium verifiedByTrendStarz verificationStatus socialMediaRestricted lastLoginAt lastOpenedAt updatedAt createdAt approvedAt";
 
 @Injectable()
 export class PhotographersService {
@@ -142,6 +149,37 @@ export class PhotographersService {
       .select("_id")
       .lean();
     return !!row;
+  }
+
+  private async blockedPhotographerIds(): Promise<string[]> {
+    const rows = await this.profileFlagModel
+      .find({
+        userType: "Photographer",
+        status: "Open",
+        flagCode: { $in: PUBLIC_PROFILE_VISIBILITY_BLOCK_FLAG_CODES },
+      })
+      .select("userId")
+      .lean();
+    return [
+      ...new Set(
+        (rows || []).map((row: any) => String(row.userId)).filter(Boolean),
+      ),
+    ];
+  }
+
+  /** Eligible-only, weighted-random selection for the Welcome Page "Featured Photo/Videographers" section. */
+  async getFeaturedPhotographers(limit = 6) {
+    const filter: any = {};
+    applyEligiblePublicProfileFilter(filter);
+    const blocked = await this.blockedPhotographerIds();
+    if (blocked.length) filter._id = { $nin: blocked };
+    const profiles = await fetchFeaturedProfiles(
+      this.photographerModel,
+      filter,
+      FEATURED_PHOTOGRAPHER_FIELDS,
+      limit,
+    );
+    return profiles.map(({ approvedAt, ...rest }: any) => rest);
   }
 
   private async hasOpenGalleryBlock(userId: any): Promise<boolean> {

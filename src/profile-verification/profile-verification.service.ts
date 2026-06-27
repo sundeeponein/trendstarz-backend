@@ -1073,7 +1073,11 @@ export class ProfileVerificationService {
         profileModerationNotes: notes,
         verificationAdminNotes: notes,
         ...(action === "approve" || action === "approve_warning"
-          ? { verifiedByTrendStarz: true, verificationStatus: "approved" }
+          ? {
+              verifiedByTrendStarz: true,
+              verificationStatus: "approved",
+              approvedAt: new Date(),
+            }
           : {}),
         ...(action === "reject" ? { verificationStatus: "rejected" } : {}),
       },

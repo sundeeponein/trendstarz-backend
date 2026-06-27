@@ -23,6 +23,7 @@ import { getJwtSecret } from "../auth/jwt-secret";
 import { DailyUsageGuard } from "../monetization/guards/daily-usage.guard";
 import { UsageLimit } from "../monetization/decorators/usage-limit.decorator";
 import { PlansService } from "../plans/plans.service";
+import { PhotographersService } from "../photographers/photographers.service";
 import { isLocalAuthBypassRequest } from "../utils/local-auth-bypass.util";
 
 /** Decode JWT from request without throwing. Returns userId or null. */
@@ -86,6 +87,7 @@ export class UsersController {
   constructor(
     private readonly usersService: UsersService,
     private readonly plansService: PlansService,
+    private readonly photographersService: PhotographersService,
     @InjectModel("UsageCounter") private readonly usageModel: Model<any>,
   ) {}
 
@@ -288,6 +290,28 @@ export class UsersController {
   @Get("platform-stats")
   async getPlatformStats() {
     return this.usersService.getPlatformStats();
+  }
+
+  /**
+   * Welcome Page "Featured" sections — eligible-only (accepted + verified +
+   * approved), weighted-random selection (60% recently active / 20% recently
+   * approved / 20% random). Identical for Guest, Registered, and Premium
+   * viewers; this is a marketing surface, not the gated Search directory.
+   */
+  @Get("featured-profiles")
+  async getFeaturedProfiles(
+    @Query("influencerLimit") influencerLimit?: string,
+    @Query("brandLimit") brandLimit?: string,
+    @Query("photographerLimit") photographerLimit?: string,
+  ) {
+    const [influencers, brands, photographers] = await Promise.all([
+      this.usersService.getFeaturedInfluencers(Number(influencerLimit) || 8),
+      this.usersService.getFeaturedBrands(Number(brandLimit) || 6),
+      this.photographersService.getFeaturedPhotographers(
+        Number(photographerLimit) || 6,
+      ),
+    ]);
+    return { influencers, brands, photographers };
   }
 
   @Get("influencers")
