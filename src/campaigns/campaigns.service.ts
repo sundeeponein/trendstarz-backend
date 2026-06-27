@@ -25,6 +25,10 @@ import {
   PROFILE_SELECTION_LIMITS,
   normalizeSelectionList,
 } from "../utils/profile-selection-limits.util";
+import {
+  ProfileVerificationService,
+  ProfileUserType,
+} from "../profile-verification/profile-verification.service";
 
 const VALID_TRANSITIONS: Record<string, string[]> = {
   draft: ["pending", "pending_review", "active", "needs_changes"],
@@ -79,6 +83,7 @@ export class CampaignsService {
     private readonly cloudinaryService: CloudinaryService,
     private readonly pushService: PushService,
     private readonly notificationsService: NotificationsService,
+    private readonly profileVerificationService: ProfileVerificationService,
   ) {}
 
   // Safety net for the manual "Mark Complete" action: once a campaign's timeline
@@ -166,23 +171,49 @@ export class CampaignsService {
     ownerId: string,
     ownerType: CampaignOwnerType,
   ) {
-    const select = "isEmailVerified isMobileVerified";
+    const select =
+      "status isEmailVerified isMobileVerified profileImages brandLogo location socialMedia products galleryImages portfolio verificationStatus verifiedByTrendStarz";
     if (ownerType === "photographer") {
       return this.photographerModel.findById(ownerId).select(select).lean();
     }
     return this.brandModel.findById(ownerId).select(select).lean();
   }
 
-  private assertOwnerCanPost(profile: any) {
-    if (
-      profile?.isEmailVerified === true &&
-      profile?.isMobileVerified === true
-    ) {
-      return;
+  /**
+   * Campaign eligibility for the OWNER (Brand/Photographer posting a
+   * campaign) — same bar as the recipient side (assertCampaignEligible in
+   * profile-verification.service.ts): verified email/mobile, a complete
+   * profile, and admin approval. Campaigns involve real work and payment, so
+   * this is deliberately stricter than just being searchable.
+   */
+  private assertOwnerCanPost(profile: any, ownerType: CampaignOwnerType) {
+    if (profile?.status !== "accepted") {
+      throw new BadRequestException(
+        "Your account is not active. Contact support before posting or sending campaign invitations.",
+      );
     }
-    throw new BadRequestException(
-      "Verify both email and mobile before posting or sending campaign invitations.",
-    );
+    if (
+      profile?.isEmailVerified !== true ||
+      profile?.isMobileVerified !== true
+    ) {
+      throw new BadRequestException(
+        "Verify both email and mobile before posting or sending campaign invitations.",
+      );
+    }
+    const userType: ProfileUserType =
+      ownerType === "photographer" ? "Photographer" : "Brand";
+    if (!this.profileVerificationService.isProfileComplete(profile, userType)) {
+      throw new BadRequestException(
+        userType === "Brand"
+          ? "Complete your company profile (logo and location) before posting or sending campaign invitations."
+          : "Complete your profile (photo, location, social tier, and portfolio) before posting or sending campaign invitations.",
+      );
+    }
+    if (!this.profileVerificationService.isAdminApproved(profile)) {
+      throw new BadRequestException(
+        "Admin approval is required before posting or sending campaign invitations.",
+      );
+    }
   }
 
   private async hasProfilePhotoVisibilityBlock(
@@ -743,7 +774,7 @@ export class CampaignsService {
         ownerId,
         persistedOwnerType,
       );
-      this.assertOwnerCanPost(ownerProfile);
+      this.assertOwnerCanPost(ownerProfile, persistedOwnerType);
     }
     // Lazy load PlansService to avoid circular dep
     const caps = await this.plansService.getUserPlanCapabilities(ownerId);

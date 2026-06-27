@@ -14,12 +14,17 @@ import {
 import { JwtAuthGuard } from "../auth/jwt-auth.guard";
 import { RolesGuard } from "../auth/roles.guard";
 import { InjectModel } from "@nestjs/mongoose";
-import { Model } from "mongoose";
+import { Model, Types } from "mongoose";
 import { Payment } from "../database/schemas/payment.schema";
 import { EarlyAccessAssignmentService } from "./early-access-assignment.service";
 import { FirebaseAdminService } from "../utils/firebase-admin.service";
 import * as bcrypt from "bcryptjs";
 import * as crypto from "crypto";
+import {
+  applySearchEligibilityFilter,
+  applyApprovedEligibilityFilter,
+} from "../utils/profile-eligibility.util";
+import { PROFILE_PHOTO_SAFETY_FLAG_CODES } from "../profile-verification/profile-verification.service";
 
 @Controller("admin")
 @UseGuards(JwtAuthGuard, RolesGuard)
@@ -180,10 +185,19 @@ export class AdminUserTableController {
     filter.status = normalizedStatus ? normalizedStatus : { $ne: "deleted" };
   }
 
-  private applyContactVerificationFilter(
+  /**
+   * Same dropdown as before (email/mobile pending combos), merged with the
+   * Verification Funnel's later stages (search_eligible/admin_approved/
+   * featured_eligible/campaign_eligible) instead of adding a second, redundant
+   * filter control — reuses the exact eligibility functions the funnel widget
+   * and the real Search/Welcome/Campaign checks use, so "show me Search
+   * Eligible users" here can never drift from what Search actually shows.
+   */
+  private async applyContactVerificationFilter(
     filter: Record<string, any>,
-    verification?: string,
-  ) {
+    verification: string | undefined,
+    role: { userType: string; photoField: string; requireSocialTier: boolean },
+  ): Promise<void> {
     const normalized = String(verification || "")
       .trim()
       .toLowerCase();
@@ -216,6 +230,43 @@ export class AdminUserTableController {
     if (normalized === "both_verified") {
       filter.isEmailVerified = true;
       filter.isMobileVerified = true;
+      return;
+    }
+
+    if (normalized === "search_eligible") {
+      filter.status = "accepted";
+      applySearchEligibilityFilter(filter, {
+        photoField: role.photoField,
+        requireSocialTier: role.requireSocialTier,
+      });
+      const blocked = await this.blockedFromPublicIds(role.userType);
+      if (blocked.length) filter._id = { $nin: this.toExcludedIdValues(blocked) };
+      return;
+    }
+    if (normalized === "admin_approved") {
+      filter.status = "accepted";
+      filter.isEmailVerified = true;
+      filter.isMobileVerified = true;
+      filter.$and = [
+        ...(Array.isArray(filter.$and) ? filter.$and : []),
+        { $or: [{ verifiedByTrendStarz: true }, { verificationStatus: "approved" }] },
+      ];
+      return;
+    }
+    if (normalized === "featured_eligible" || normalized === "campaign_eligible") {
+      filter.status = "accepted";
+      applyApprovedEligibilityFilter(filter, {
+        photoField: role.photoField,
+        requireSocialTier: role.requireSocialTier,
+      });
+      const [blockedFromPublic, photoSafetyBlocked] = await Promise.all([
+        this.blockedFromPublicIds(role.userType),
+        normalized === "campaign_eligible"
+          ? this.photoSafetyBlockedIds(role.userType)
+          : Promise.resolve([] as string[]),
+      ]);
+      const blocked = [...new Set([...blockedFromPublic, ...photoSafetyBlocked])];
+      if (blocked.length) filter._id = { $nin: this.toExcludedIdValues(blocked) };
     }
   }
 
@@ -624,7 +675,11 @@ export class AdminUserTableController {
     const paging = this.getPaging(page, limit);
     const filter: any = {};
     this.applyAdminUserStatusFilter(filter, status);
-    this.applyContactVerificationFilter(filter, verification);
+    await this.applyContactVerificationFilter(filter, verification, {
+      userType: "Influencer",
+      photoField: "profileImages",
+      requireSocialTier: true,
+    });
     const qRegex = this.toRegex(q);
     if (qRegex) {
       filter.$or = [
@@ -693,7 +748,11 @@ export class AdminUserTableController {
     const paging = this.getPaging(page, limit);
     const filter: any = {};
     this.applyAdminUserStatusFilter(filter, status);
-    this.applyContactVerificationFilter(filter, verification);
+    await this.applyContactVerificationFilter(filter, verification, {
+      userType: "Brand",
+      photoField: "brandLogo",
+      requireSocialTier: false,
+    });
     const qRegex = this.toRegex(q);
     if (qRegex) {
       filter.$or = [
@@ -767,7 +826,11 @@ export class AdminUserTableController {
     const paging = this.getPaging(page, limit);
     const filter: any = {};
     this.applyAdminUserStatusFilter(filter, status);
-    this.applyContactVerificationFilter(filter, verification);
+    await this.applyContactVerificationFilter(filter, verification, {
+      userType: "Photographer",
+      photoField: "profileImages",
+      requireSocialTier: true,
+    });
     const qRegex = this.toRegex(q);
     if (qRegex) {
       filter.$or = [
@@ -822,6 +885,152 @@ export class AdminUserTableController {
     }
 
     return photographers;
+  }
+
+  /**
+   * "Blocked from public visibility" — the same flag-code set
+   * users.service.ts's publicProfileBlockedIds() uses, reconstructed here
+   * from this controller's own already-defined constants (photo
+   * quality+safety, social tier, location) instead of cross-importing a
+   * private helper from a different service.
+   */
+  /** `_id` is ObjectId-typed but ProfileFlag.userId is stored as a string — $nin needs both forms to actually exclude anything. */
+  private toExcludedIdValues(ids: string[]): any[] {
+    return ids.flatMap((id) => {
+      const value = String(id || "").trim();
+      if (!value) return [];
+      return Types.ObjectId.isValid(value)
+        ? [value, new Types.ObjectId(value)]
+        : [value];
+    });
+  }
+
+  private async blockedFromPublicIds(userType: string): Promise<string[]> {
+    return this.flagModel.distinct("userId", {
+      userType,
+      status: "Open",
+      flagCode: {
+        $in: [
+          ...AdminUserTableController.PROFILE_PHOTO_ACTION_FLAG_CODES,
+          ...AdminUserTableController.SOCIAL_TIER_FLAG_CODES,
+          ...AdminUserTableController.LOCATION_ACTION_FLAG_CODES,
+        ],
+      },
+    });
+  }
+
+  private async photoSafetyBlockedIds(userType: string): Promise<string[]> {
+    return this.flagModel.distinct("userId", {
+      userType,
+      status: "Open",
+      flagCode: { $in: Array.from(PROFILE_PHOTO_SAFETY_FLAG_CODES) },
+    });
+  }
+
+  /**
+   * Registration → Campaign-eligible funnel, per role and combined. Each
+   * stage reuses the exact same filter-building functions the real
+   * Search/Welcome/Campaign eligibility checks use (profile-eligibility.util.ts),
+   * so this widget can never silently drift from what users actually
+   * experience — it's a read of the same rules, not a parallel copy.
+   */
+  @Get("verification-funnel")
+  async getVerificationFunnel() {
+    const roles: Array<{
+      key: "influencer" | "brand" | "photographer";
+      userType: string;
+      model: Model<any>;
+      photoField: string;
+      requireSocialTier: boolean;
+    }> = [
+      { key: "influencer", userType: "Influencer", model: this.influencerModel, photoField: "profileImages", requireSocialTier: true },
+      { key: "brand", userType: "Brand", model: this.brandModel, photoField: "brandLogo", requireSocialTier: false },
+      { key: "photographer", userType: "Photographer", model: this.photographerModel, photoField: "profileImages", requireSocialTier: true },
+    ];
+
+    const combined = {
+      registered: 0,
+      active: 0,
+      emailVerified: 0,
+      mobileVerified: 0,
+      searchEligible: 0,
+      adminApproved: 0,
+      featuredEligible: 0,
+      campaignEligible: 0,
+    };
+    const byRole: Record<string, typeof combined> = {};
+
+    for (const role of roles) {
+      const [blockedFromPublicRaw, photoSafetyBlockedRaw] = await Promise.all([
+        this.blockedFromPublicIds(role.userType),
+        this.photoSafetyBlockedIds(role.userType),
+      ]);
+      const blockedFromPublic = this.toExcludedIdValues(blockedFromPublicRaw);
+      const campaignBlocked = this.toExcludedIdValues([
+        ...new Set([...blockedFromPublicRaw, ...photoSafetyBlockedRaw]),
+      ]);
+
+      const searchFilter: any = { status: "accepted" };
+      applySearchEligibilityFilter(searchFilter, {
+        photoField: role.photoField,
+        requireSocialTier: role.requireSocialTier,
+      });
+      const searchFilterVisible = {
+        ...searchFilter,
+        _id: { $nin: blockedFromPublic },
+      };
+
+      const approvedFilter: any = { status: "accepted" };
+      applyApprovedEligibilityFilter(approvedFilter, {
+        photoField: role.photoField,
+        requireSocialTier: role.requireSocialTier,
+      });
+
+      const featuredFilter = { ...approvedFilter, _id: { $nin: blockedFromPublic } };
+      const campaignFilter = { ...approvedFilter, _id: { $nin: campaignBlocked } };
+
+      const [
+        registered,
+        active,
+        emailVerified,
+        mobileVerified,
+        searchEligible,
+        adminApproved,
+        featuredEligible,
+        campaignEligible,
+      ] = await Promise.all([
+        role.model.countDocuments({}),
+        role.model.countDocuments({ status: "accepted" }),
+        role.model.countDocuments({ status: "accepted", isEmailVerified: true }),
+        role.model.countDocuments({ status: "accepted", isEmailVerified: true, isMobileVerified: true }),
+        role.model.countDocuments(searchFilterVisible),
+        role.model.countDocuments({
+          status: "accepted",
+          isEmailVerified: true,
+          isMobileVerified: true,
+          $or: [{ verifiedByTrendStarz: true }, { verificationStatus: "approved" }],
+        }),
+        role.model.countDocuments(featuredFilter),
+        role.model.countDocuments(campaignFilter),
+      ]);
+
+      const stageCounts = {
+        registered,
+        active,
+        emailVerified,
+        mobileVerified,
+        searchEligible,
+        adminApproved,
+        featuredEligible,
+        campaignEligible,
+      };
+      byRole[role.key] = stageCounts;
+      (Object.keys(combined) as Array<keyof typeof combined>).forEach((stage) => {
+        combined[stage] += stageCounts[stage];
+      });
+    }
+
+    return { combined, byRole };
   }
 
   @Patch("users/:type/:id/tags")
@@ -1363,6 +1572,25 @@ export class AdminUserTableController {
     }
     if (hasGallery) {
       user.galleryImagesVerified = !!body.galleryImagesVerified;
+    }
+
+    // Unverifying any checklist sub-item demotes the overall approval —
+    // a profile can't keep showing "Verified" publicly while admin has just
+    // flagged one of its parts as needing fix. Re-verifying a sub-item does
+    // NOT auto-restore "approved" — that still requires an explicit Approve
+    // action, so admin always makes the final call on the overall status.
+    const anyJustUnverified =
+      (hasMobile && !user.isMobileVerified) ||
+      (hasLocation && !user.locationVerified) ||
+      (hasPayment && !user.paymentVerified) ||
+      (hasProfilePhoto && !user.profilePhotoVerified) ||
+      (hasCreatorTier && !user.creatorTierVerified) ||
+      (hasGallery && !user.galleryImagesVerified);
+    if (anyJustUnverified) {
+      user.verificationStatus = "pending";
+      user.verifiedByTrendStarz = false;
+      user.adminReviewPending = true;
+      user.verificationDashboardStatus = "Action Required";
     }
 
     const saved = await user.save();

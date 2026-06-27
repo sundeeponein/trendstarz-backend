@@ -14,7 +14,8 @@ import {
 } from "../utils/profile-selection-limits.util";
 import { normalizeSocialMediaList } from "../utils/social-handle.util";
 import {
-  applyEligiblePublicProfileFilter,
+  applySearchEligibilityFilter,
+  applyApprovedEligibilityFilter,
   fetchFeaturedProfilesByScore,
 } from "../utils/profile-eligibility.util";
 
@@ -173,7 +174,7 @@ export class PhotographersService {
   /** Eligible-only, weighted-score selection for the Welcome Page "Featured Photo/Videographers" section. */
   async getFeaturedPhotographers(limit = 6) {
     const filter: any = {};
-    applyEligiblePublicProfileFilter(filter);
+    applyApprovedEligibilityFilter(filter, { photoField: "profileImages", requireSocialTier: true });
     const blocked = await this.blockedPhotographerIds();
     if (blocked.length) {
       filter._id = {
@@ -214,25 +215,12 @@ export class PhotographersService {
     return !!row;
   }
 
+  /** Photographer Search eligibility — see applySearchEligibilityFilter for the shared rule. */
   private applyPublicDiscoveryEligibilityFilter(filter: any): void {
-    filter.isEmailVerified = true;
-    filter.isMobileVerified = true;
-    filter.$and = [
-      ...(Array.isArray(filter.$and) ? filter.$and : []),
-      { "profileImages.0": { $exists: true } },
-      { "location.state": { $exists: true, $nin: ["", null] } },
-      {
-        socialMedia: {
-          $elemMatch: {
-            handle: { $exists: true, $nin: ["", null] },
-            $or: [
-              { tier: { $exists: true, $nin: ["", null] } },
-              { followersCount: { $gt: 0 } },
-            ],
-          },
-        },
-      },
-    ];
+    applySearchEligibilityFilter(filter, {
+      photoField: "profileImages",
+      requireSocialTier: true,
+    });
   }
 
   private visibleProfileImages(

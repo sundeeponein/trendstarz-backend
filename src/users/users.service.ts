@@ -17,7 +17,8 @@ import {
 import { normalizeSocialMediaList } from "../utils/social-handle.util";
 import { consumeOtpVerificationToken } from "../otp/otp.controller";
 import {
-  applyEligiblePublicProfileFilter,
+  applySearchEligibilityFilter,
+  applyApprovedEligibilityFilter,
   fetchFeaturedProfilesByScore,
 } from "../utils/profile-eligibility.util";
 
@@ -787,25 +788,20 @@ export class UsersService {
     return !!row;
   }
 
+  /** Influencer Search eligibility — see applySearchEligibilityFilter for the shared rule. */
   private applyPublicDiscoveryEligibilityFilter(filter: any): void {
-    filter.isEmailVerified = true;
-    filter.isMobileVerified = true;
-    filter.$and = [
-      ...(Array.isArray(filter.$and) ? filter.$and : []),
-      { "profileImages.0": { $exists: true } },
-      { "location.state": { $exists: true, $nin: ["", null] } },
-      {
-        socialMedia: {
-          $elemMatch: {
-            handle: { $exists: true, $nin: ["", null] },
-            $or: [
-              { tier: { $exists: true, $nin: ["", null] } },
-              { followersCount: { $gt: 0 } },
-            ],
-          },
-        },
-      },
-    ];
+    applySearchEligibilityFilter(filter, {
+      photoField: "profileImages",
+      requireSocialTier: true,
+    });
+  }
+
+  /** Brand Search eligibility — same bar as Influencer/Photographer, minus the social-tier requirement. */
+  private applyBrandDiscoveryEligibilityFilter(filter: any): void {
+    applySearchEligibilityFilter(filter, {
+      photoField: "brandLogo",
+      requireSocialTier: false,
+    });
   }
 
   private visibleInfluencerProfileImages(
@@ -1968,7 +1964,7 @@ export class UsersService {
   /** Eligible-only, weighted-score selection for the Welcome Page "Featured Influencers" section. */
   async getFeaturedInfluencers(limit = 8) {
     const filter: any = {};
-    applyEligiblePublicProfileFilter(filter);
+    applyApprovedEligibilityFilter(filter, { photoField: "profileImages", requireSocialTier: true });
     this.applyExcludedIds(filter, await this.publicProfileBlockedIds("Influencer"));
     return fetchFeaturedProfilesByScore(
       this.influencerModel,
@@ -1988,7 +1984,7 @@ export class UsersService {
   /** Eligible-only, weighted-score selection for the Welcome Page "Featured Brands" section. */
   async getFeaturedBrands(limit = 6) {
     const filter: any = {};
-    applyEligiblePublicProfileFilter(filter);
+    applyApprovedEligibilityFilter(filter, { photoField: "brandLogo", requireSocialTier: false });
     this.applyExcludedIds(filter, await this.publicProfileBlockedIds("Brand"));
     return fetchFeaturedProfilesByScore(
       this.brandModel,
@@ -2013,6 +2009,7 @@ export class UsersService {
   ) {
     const skip = (page - 1) * limit;
     const filter: any = { status: "accepted" };
+    this.applyBrandDiscoveryEligibilityFilter(filter);
     this.applyExcludedIds(filter, await this.publicProfileBlockedIds("Brand"));
 
     if (lite) {

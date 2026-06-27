@@ -1,31 +1,72 @@
 /**
- * Single source of truth for "is this profile eligible to be shown publicly"
- * (Welcome Page featured sections, and — later — Search Page discovery).
- * A profile is eligible only when ALL of:
- *   - status = "accepted"
- *   - isDeleted is not true (covers deleted/suspended)
- *   - isEmailVerified = true
- *   - isMobileVerified = true
- *   - verificationStatus = "approved" OR verifiedByTrendStarz = true
- *   - profile visibility is public (no such field exists on the schemas yet —
- *     once one is added, gate it here so every caller picks it up for free)
+ * Three deliberately different eligibility tiers, in increasing strictness:
  *
- * Mutates `filter` in place and returns it, so it composes with callers that
- * already build up a filter object (matches the existing
- * `applyPublicDiscoveryEligibilityFilter` / `applyExcludedIds` convention).
+ *   1. Search (discovery)   — "can this profile be found?"        applySearchEligibilityFilter
+ *   2. Welcome (featured)   — "does TrendStarZ recommend this?"   applyApprovedEligibilityFilter
+ *   3. Campaign eligibility — same bar as (2); see buildEligibility
+ *      in profile-verification.service.ts for the per-profile boolean version.
+ *
+ * Search deliberately excludes admin approval — completing a quality profile
+ * makes someone discoverable immediately, without waiting on manual review.
+ * Welcome and Campaign both require approval on top of everything Search
+ * requires, since they represent a TrendStarZ endorsement / real business
+ * interaction rather than self-serve discovery.
  */
-export function applyEligiblePublicProfileFilter(
+export interface SearchEligibilityOptions {
+  /** Field holding the primary photo array — "profileImages" for Influencer/Photographer, "brandLogo" for Brand. */
+  photoField?: string;
+  /** Influencer/Photographer need a social handle + tier/followers to be discoverable; Brand does not. Defaults to true. */
+  requireSocialTier?: boolean;
+}
+
+/**
+ * "Can this profile be discovered?" — Search Page eligibility. Mutates
+ * `filter` in place and returns it, so it composes with callers that already
+ * build up a filter object (matches the existing `applyExcludedIds` convention).
+ */
+export function applySearchEligibilityFilter(
   filter: Record<string, any> = {},
+  options: SearchEligibilityOptions = {},
 ): Record<string, any> {
+  const photoField = options.photoField || "profileImages";
   filter.status = "accepted";
   filter.isDeleted = { $ne: true };
   filter.isEmailVerified = true;
   filter.isMobileVerified = true;
+  const andConditions: any[] = [
+    ...(Array.isArray(filter.$and) ? filter.$and : []),
+    { [`${photoField}.0`]: { $exists: true } },
+    { "location.state": { $exists: true, $nin: ["", null] } },
+  ];
+  if (options.requireSocialTier !== false) {
+    andConditions.push({
+      socialMedia: {
+        $elemMatch: {
+          handle: { $exists: true, $nin: ["", null] },
+          $or: [
+            { tier: { $exists: true, $nin: ["", null] } },
+            { followersCount: { $gt: 0 } },
+          ],
+        },
+      },
+    });
+  }
+  filter.$and = andConditions;
+  return filter;
+}
+
+/**
+ * "Is this profile recommended by TrendStarZ?" — Welcome/Featured eligibility.
+ * Everything Search requires, plus admin approval.
+ */
+export function applyApprovedEligibilityFilter(
+  filter: Record<string, any> = {},
+  options: SearchEligibilityOptions = {},
+): Record<string, any> {
+  applySearchEligibilityFilter(filter, options);
   filter.$and = [
     ...(Array.isArray(filter.$and) ? filter.$and : []),
-    {
-      $or: [{ verificationStatus: "approved" }, { verifiedByTrendStarz: true }],
-    },
+    { $or: [{ verificationStatus: "approved" }, { verifiedByTrendStarz: true }] },
   ];
   return filter;
 }

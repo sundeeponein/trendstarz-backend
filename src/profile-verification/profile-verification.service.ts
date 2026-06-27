@@ -8,7 +8,7 @@ import { InjectModel } from "@nestjs/mongoose";
 import { Model, Types } from "mongoose";
 
 type ProfileRole = "influencer" | "brand" | "photographer" | "admin";
-type ProfileUserType = "Influencer" | "Brand" | "Photographer" | "User";
+export type ProfileUserType = "Influencer" | "Brand" | "Photographer" | "User";
 
 const TIER_RANGES: Record<string, [number, number]> = {
   Starter: [0, 100],
@@ -169,7 +169,7 @@ const PROFILE_PHOTO_QUALITY_FLAG_CODES = new Set<string>([
 ]);
 
 // Identity/trust safety violations — hide from search AND block campaign invites
-const PROFILE_PHOTO_SAFETY_FLAG_CODES = new Set<string>([
+export const PROFILE_PHOTO_SAFETY_FLAG_CODES = new Set<string>([
   "PROFILE_PHOTO_POLICY",
   "PROFILE_PHOTO_CELEBRITY",
   "PROFILE_PHOTO_CONTACT_INFO",
@@ -363,6 +363,53 @@ export class ProfileVerificationService {
     const urls: string[] = this.galleryImageUrls(profile);
     if (this.hasText(profile?.portfolio)) urls.push(String(profile.portfolio));
     return urls;
+  }
+
+  /** Mirrors the Search/Welcome eligibility socialMedia $elemMatch (handle + tier-or-followers). */
+  private hasSocialTier(profile: any): boolean {
+    const list = Array.isArray(profile?.socialMedia) ? profile.socialMedia : [];
+    return list.some(
+      (sm: any) =>
+        this.hasText(sm?.handle) &&
+        (this.hasText(sm?.tier) || Number(sm?.followersCount || 0) > 0),
+    );
+  }
+
+  /** Public — also used by CampaignsService to gate a Brand/Photographer posting a campaign. */
+  isAdminApproved(profile: any): boolean {
+    return (
+      profile?.verifiedByTrendStarz === true ||
+      String(profile?.verificationStatus || "").toLowerCase() === "approved"
+    );
+  }
+
+  /**
+   * "Profile Complete" / "Company Profile Complete" / "Portfolio Uploaded" —
+   * the role-specific completeness bar for Campaign eligibility. Deliberately
+   * mirrors Search/Welcome eligibility's photo+location(+social-tier) bar
+   * (see applySearchEligibilityFilter in profile-eligibility.util.ts) so the
+   * three eligibility tiers stay easy to reason about: Search = this bar;
+   * Welcome/Campaign = this bar + admin approval.
+   *
+   * Public — also used by CampaignsService to gate a Brand/Photographer
+   * posting a campaign, so "can this owner post" and "can this profile be
+   * invited/accept" share one definition of "complete" per role.
+   */
+  isProfileComplete(profile: any, userType: ProfileUserType): boolean {
+    const hasPhoto = this.profileImageUrls(profile).length > 0;
+    const hasLoc = this.hasLocation(profile);
+    if (userType === "Brand") {
+      return hasPhoto && hasLoc;
+    }
+    if (userType === "Photographer") {
+      return (
+        hasPhoto &&
+        hasLoc &&
+        this.hasSocialTier(profile) &&
+        this.portfolioUrls(profile).length > 0
+      );
+    }
+    return hasPhoto && hasLoc && this.hasSocialTier(profile);
   }
 
   private looksLikeScreenshot(url: string): boolean {
@@ -868,36 +915,69 @@ export class ProfileVerificationService {
         createdAt: flag.createdAt,
       })),
       flags,
-      campaignEligibility: this.buildEligibility(profile, flags),
-      campaignStatus: this.buildCampaignStatus(profile, flags),
+      campaignEligibility: this.buildEligibility(profile, flags, userType),
+      campaignStatus: this.buildCampaignStatus(profile, flags, userType),
     };
   }
 
-  buildEligibility(profile: any, flags: any[]) {
+  /**
+   * Campaign eligibility — deliberately the strictest of the three tiers
+   * (Search < Welcome/Featured = Campaign). Campaigns involve real work and
+   * payment, so on top of everything Welcome/Featured requires (profile
+   * completeness + admin approval), email/mobile verification and photo
+   * safety violations are hard blockers here too.
+   */
+  buildEligibility(profile: any, flags: any[], userType: ProfileUserType) {
     const blockers: string[] = [];
     const hasOpen = (code: string) =>
       flags.some((flag) => flag.flagCode === code && flag.status === "Open");
+    if (profile?.status !== "accepted") blockers.push("Account is not active");
     if (!this.isEmailVerified(profile)) blockers.push("Email not verified");
     if (!this.isMobileVerified(profile)) blockers.push("Mobile not verified");
     // Only safety violations block campaign invites
     if ([...PROFILE_PHOTO_SAFETY_FLAG_CODES].some((code) => hasOpen(code))) {
       blockers.push(PROFILE_PHOTO_SAFETY_MESSAGE);
     }
+    if (!this.isProfileComplete(profile, userType)) {
+      blockers.push(
+        userType === "Brand"
+          ? "Company profile is incomplete (logo and location required)"
+          : userType === "Photographer"
+            ? "Profile is incomplete (photo, location, social tier, and portfolio required)"
+            : "Profile is incomplete (photo, location, and social tier required)",
+      );
+    }
+    if (!this.isAdminApproved(profile)) {
+      blockers.push("Admin approval is required before campaign participation");
+    }
     return { eligible: blockers.length === 0, blockers };
   }
 
-  buildCampaignStatus(profile: any, flags: any[]): "eligible" | "profile_update_required" | "restricted" {
+  buildCampaignStatus(
+    profile: any,
+    flags: any[],
+    userType: ProfileUserType,
+  ): "eligible" | "profile_update_required" | "restricted" {
     const hasOpen = (code: string) =>
       flags.some((flag) => flag.flagCode === code && flag.status === "Open");
-    // Restricted: email/mobile unverified or safety violation
+    // Restricted: account inactive, email/mobile unverified, safety violation, or not yet admin-approved
+    if (profile?.status !== "accepted") {
+      return "restricted";
+    }
     if (!this.isEmailVerified(profile) || !this.isMobileVerified(profile)) {
       return "restricted";
     }
     if ([...PROFILE_PHOTO_SAFETY_FLAG_CODES].some((code) => hasOpen(code))) {
       return "restricted";
     }
-    // Profile update required: photo quality issues hide from discovery
+    if (!this.isAdminApproved(profile)) {
+      return "restricted";
+    }
+    // Profile update required: photo quality issues, or an incomplete profile
     if ([...PROFILE_PHOTO_VISIBILITY_BLOCK_FLAG_CODES].some((code) => hasOpen(code))) {
+      return "profile_update_required";
+    }
+    if (!this.isProfileComplete(profile, userType)) {
       return "profile_update_required";
     }
     return "eligible";
