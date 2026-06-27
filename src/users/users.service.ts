@@ -6,7 +6,7 @@ import { CloudinaryService } from "../cloudinary.service";
 import { InfluencerProfileDto, BrandProfileDto } from "./dto/profile.dto";
 import * as bcrypt from "bcryptjs";
 import { InjectModel } from "@nestjs/mongoose";
-import { Model } from "mongoose";
+import { Model, Types } from "mongoose";
 import { PlansService } from "../plans/plans.service";
 import { normalizeCollaborationAvailability } from "../utils/collaboration-availability.util";
 import { FirebaseAdminService } from "../utils/firebase-admin.service";
@@ -18,7 +18,7 @@ import { normalizeSocialMediaList } from "../utils/social-handle.util";
 import { consumeOtpVerificationToken } from "../otp/otp.controller";
 import {
   applyEligiblePublicProfileFilter,
-  fetchFeaturedProfiles,
+  fetchFeaturedProfilesByScore,
 } from "../utils/profile-eligibility.util";
 
 const USE_LOCAL_IMAGES = process.env.USE_LOCAL_IMAGES === "true";
@@ -818,7 +818,15 @@ export class UsersService {
 
   private applyExcludedIds(filter: any, ids: string[]) {
     if (!ids.length) return;
-    filter._id = { ...(filter._id || {}), $nin: ids };
+    const excluded = ids.flatMap((id) => {
+      const value = String(id || "").trim();
+      if (!value) return [];
+      return Types.ObjectId.isValid(value)
+        ? [value, new Types.ObjectId(value)]
+        : [value];
+    });
+    if (!excluded.length) return;
+    filter._id = { ...(filter._id || {}), $nin: excluded };
   }
 
   private getPrimaryImageKey(images: any): string {
@@ -853,6 +861,10 @@ export class UsersService {
             "PROFILE_PHOTO_LOGO",
             "PROFILE_PHOTO_LOW_QUALITY",
             "FACE_NOT_VISIBLE",
+            "PROFILE_PHOTO_POLICY",
+            "PROFILE_PHOTO_CELEBRITY",
+            "PROFILE_PHOTO_CONTACT_INFO",
+            "PROFILE_PHOTO_QR_CODE",
           ],
         },
       },
@@ -1948,37 +1960,49 @@ export class UsersService {
   }
 
   private static readonly FEATURED_INFLUENCER_FIELDS =
-    "name username profileImage profileImages categories influencerCategory creatorTypes professionalStatus isPremium promotionalPrice verificationStatus verifiedByTrendStarz location socialMedia lastLoginAt lastOpenedAt updatedAt createdAt approvedAt";
+    "name username profileImage profileImages categories influencerCategory creatorTypes professionalStatus isPremium promotionalPrice verificationStatus verifiedByTrendStarz location socialMedia";
 
   private static readonly FEATURED_BRAND_FIELDS =
-    "brandName brandUsername brandLogo categories isPremium promotionalPrice verificationStatus verifiedByTrendStarz location adminTags lastLoginAt lastOpenedAt updatedAt createdAt approvedAt";
+    "brandName brandUsername brandLogo categories isPremium promotionalPrice verificationStatus verifiedByTrendStarz location adminTags";
 
-  /** Eligible-only, weighted-random selection for the Welcome Page "Featured Influencers" section. */
+  /** Eligible-only, weighted-score selection for the Welcome Page "Featured Influencers" section. */
   async getFeaturedInfluencers(limit = 8) {
     const filter: any = {};
     applyEligiblePublicProfileFilter(filter);
     this.applyExcludedIds(filter, await this.publicProfileBlockedIds("Influencer"));
-    const profiles = await fetchFeaturedProfiles(
+    return fetchFeaturedProfilesByScore(
       this.influencerModel,
       filter,
       UsersService.FEATURED_INFLUENCER_FIELDS,
       limit,
+      {
+        from: "campaigninvites",
+        matchField: "influencerId",
+        statusIn: ["accepted", "payment_confirmed", "working", "submitted", "completed"],
+        dateField: "updatedAt",
+        windowDays: 30,
+      },
     );
-    return profiles.map(({ approvedAt, ...rest }: any) => rest);
   }
 
-  /** Eligible-only, weighted-random selection for the Welcome Page "Featured Brands" section. */
+  /** Eligible-only, weighted-score selection for the Welcome Page "Featured Brands" section. */
   async getFeaturedBrands(limit = 6) {
     const filter: any = {};
     applyEligiblePublicProfileFilter(filter);
     this.applyExcludedIds(filter, await this.publicProfileBlockedIds("Brand"));
-    const profiles = await fetchFeaturedProfiles(
+    return fetchFeaturedProfilesByScore(
       this.brandModel,
       filter,
       UsersService.FEATURED_BRAND_FIELDS,
       limit,
+      {
+        from: "campaigns",
+        matchField: "brandId",
+        statusIn: ["active", "completed"],
+        dateField: "createdAt",
+        windowDays: 60,
+      },
     );
-    return profiles.map(({ approvedAt, ...rest }: any) => rest);
   }
 
   async getBrands(

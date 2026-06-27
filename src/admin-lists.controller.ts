@@ -250,26 +250,6 @@ export class AdminListsController {
     };
   }
 
-  private applyAdminUserStatusFilter(
-    filter: Record<string, any>,
-    status?: string,
-  ) {
-    const normalizedStatus = String(status || "")
-      .trim()
-      .toLowerCase();
-    if (normalizedStatus === "deleted") {
-      filter.$and = [
-        {
-          $or: [{ isDeleted: { $in: [true, "true"] } }, { status: "deleted" }],
-        },
-      ];
-      return;
-    }
-
-    filter.isDeleted = { $nin: [true, "true"] };
-    filter.status = normalizedStatus ? normalizedStatus : { $ne: "deleted" };
-  }
-
   @Get("settings")
   async getSettings() {
     // Get commission defaults from plans-config
@@ -1208,64 +1188,6 @@ export class AdminListsController {
       };
     }
     return { message: "User not found", id };
-  }
-
-  // Admin dashboard endpoints for influencers and brands
-  @Get("influencers")
-  async getAllInfluencers(@Query("status") status?: string) {
-    const filter: any = {};
-    this.applyAdminUserStatusFilter(filter, status);
-    const docs = await this.influencerModel
-      .find(filter)
-      .sort({ firstRegisteredAt: -1, createdAt: -1, _id: -1 })
-      .lean()
-      .limit(1000);
-    const now = new Date();
-    const normalized = (docs || []).map((doc: any) => {
-      const hasActivePremium =
-        !!doc?.isPremium &&
-        (!doc?.premiumEnd || new Date(doc.premiumEnd) >= now);
-      return { ...doc, isPremium: hasActivePremium };
-    });
-    return { success: true, data: normalized };
-  }
-
-  @Get("brands")
-  async getAllBrands(@Query("status") status?: string) {
-    const filter: any = {};
-    this.applyAdminUserStatusFilter(filter, status);
-    const docs = await this.brandModel
-      .find(filter)
-      .sort({ firstRegisteredAt: -1, createdAt: -1, _id: -1 })
-      .lean()
-      .limit(1000);
-    const now = new Date();
-    const normalized = (docs || []).map((doc: any) => {
-      const hasActivePremium =
-        !!doc?.isPremium &&
-        (!doc?.premiumEnd || new Date(doc.premiumEnd) >= now);
-      return { ...doc, isPremium: hasActivePremium };
-    });
-    return { success: true, data: normalized };
-  }
-
-  @Get("photographers")
-  async getAllPhotographers(@Query("status") status?: string) {
-    const filter: any = {};
-    this.applyAdminUserStatusFilter(filter, status);
-    const docs = await this.photographerModel
-      .find(filter)
-      .sort({ firstRegisteredAt: -1, createdAt: -1, _id: -1 })
-      .lean()
-      .limit(1000);
-    const now = new Date();
-    const normalized = (docs || []).map((doc: any) => {
-      const hasActivePremium =
-        !!doc?.isPremium &&
-        (!doc?.premiumEnd || new Date(doc.premiumEnd) >= now);
-      return { ...doc, isPremium: hasActivePremium };
-    });
-    return { success: true, data: normalized };
   }
 
   @Patch("states/:id")

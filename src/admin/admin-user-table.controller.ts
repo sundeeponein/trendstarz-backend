@@ -112,6 +112,27 @@ export class AdminUserTableController {
     "PROFILE_PHOTO_QR_CODE",
   ];
 
+  private static readonly LOCATION_ACTION_FLAG_CODES = [
+    "LOCATION_MISSING",
+    "LOCATION_MISMATCH",
+    "INTERNATIONAL_LOCATION",
+  ];
+
+  private static readonly GALLERY_ACTION_FLAG_CODES = [
+    "PORTFOLIO_MISSING",
+    "PORTFOLIO_SCREENSHOT",
+    "PORTFOLIO_LOW_QUALITY",
+    "PORTFOLIO_DUPLICATE",
+    "PORTFOLIO_WATERMARK",
+  ];
+
+  private static readonly PAYMENT_ACTION_FLAG_CODES = [
+    "PAYMENT_MISSING",
+    "PAYMENT_PENDING",
+    "PAYMENT_FAILED",
+    "PAN_MISSING",
+  ];
+
   /** Batched (one query for the whole list) so listing users doesn't fire a flag lookup per row. */
   private async loadUserIdsWithOpenFlags(
     userIds: string[],
@@ -634,11 +655,28 @@ export class AdminUserTableController {
       influencerIds,
       AdminUserTableController.PROFILE_PHOTO_ACTION_FLAG_CODES,
     );
+    const locationFlagged = await this.loadUserIdsWithOpenFlags(
+      influencerIds,
+      AdminUserTableController.LOCATION_ACTION_FLAG_CODES,
+    );
+    const galleryFlagged = await this.loadUserIdsWithOpenFlags(
+      influencerIds,
+      AdminUserTableController.GALLERY_ACTION_FLAG_CODES,
+    );
+    const paymentFlagged = await this.loadUserIdsWithOpenFlags(
+      influencerIds,
+      AdminUserTableController.PAYMENT_ACTION_FLAG_CODES,
+    );
+    const now = new Date();
     for (const u of influencers as any[]) {
       const id = String(u?._id || "");
+      u.isPremium = !!u?.isPremium && (!u?.premiumEnd || new Date(u.premiumEnd) >= now);
       u.latestPayment = latestPayments.get(id) || null;
       u.socialTierActionRequired = socialTierFlagged.has(id);
       u.profilePhotoActionRequired = photoFlagged.has(id);
+      u.locationActionRequired = locationFlagged.has(id);
+      u.galleryActionRequired = galleryFlagged.has(id);
+      u.paymentActionRequired = paymentFlagged.has(id);
     }
     return influencers;
   }
@@ -686,16 +724,33 @@ export class AdminUserTableController {
       brandIds,
       AdminUserTableController.PROFILE_PHOTO_ACTION_FLAG_CODES,
     );
+    const locationFlagged = await this.loadUserIdsWithOpenFlags(
+      brandIds,
+      AdminUserTableController.LOCATION_ACTION_FLAG_CODES,
+    );
+    const galleryFlagged = await this.loadUserIdsWithOpenFlags(
+      brandIds,
+      AdminUserTableController.GALLERY_ACTION_FLAG_CODES,
+    );
+    const paymentFlagged = await this.loadUserIdsWithOpenFlags(
+      brandIds,
+      AdminUserTableController.PAYMENT_ACTION_FLAG_CODES,
+    );
+    const brandsNow = new Date();
     for (const b of brands as any[]) {
       if (!b.brandLogo) b.brandLogo = [];
       if (!b.products) b.products = [];
       if (b.promotionalPrice === undefined && b.price !== undefined) {
         b.promotionalPrice = b.price;
       }
+      b.isPremium = !!b?.isPremium && (!b?.premiumEnd || new Date(b.premiumEnd) >= brandsNow);
       const id = String(b?._id || "");
       b.latestPayment = latestPayments.get(id) || null;
       b.socialTierActionRequired = socialTierFlagged.has(id);
       b.profilePhotoActionRequired = photoFlagged.has(id);
+      b.locationActionRequired = locationFlagged.has(id);
+      b.galleryActionRequired = galleryFlagged.has(id);
+      b.paymentActionRequired = paymentFlagged.has(id);
     }
     return brands;
   }
@@ -742,11 +797,28 @@ export class AdminUserTableController {
       photographerIds,
       AdminUserTableController.PROFILE_PHOTO_ACTION_FLAG_CODES,
     );
+    const locationFlagged = await this.loadUserIdsWithOpenFlags(
+      photographerIds,
+      AdminUserTableController.LOCATION_ACTION_FLAG_CODES,
+    );
+    const galleryFlagged = await this.loadUserIdsWithOpenFlags(
+      photographerIds,
+      AdminUserTableController.GALLERY_ACTION_FLAG_CODES,
+    );
+    const paymentFlagged = await this.loadUserIdsWithOpenFlags(
+      photographerIds,
+      AdminUserTableController.PAYMENT_ACTION_FLAG_CODES,
+    );
+    const photographersNow = new Date();
     for (const p of photographers as any[]) {
       const id = String(p?._id || "");
+      p.isPremium = !!p?.isPremium && (!p?.premiumEnd || new Date(p.premiumEnd) >= photographersNow);
       p.latestPayment = latestPayments.get(id) || null;
       p.socialTierActionRequired = socialTierFlagged.has(id);
       p.profilePhotoActionRequired = photoFlagged.has(id);
+      p.locationActionRequired = locationFlagged.has(id);
+      p.galleryActionRequired = galleryFlagged.has(id);
+      p.paymentActionRequired = paymentFlagged.has(id);
     }
 
     return photographers;

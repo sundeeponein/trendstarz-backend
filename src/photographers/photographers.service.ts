@@ -15,7 +15,7 @@ import {
 import { normalizeSocialMediaList } from "../utils/social-handle.util";
 import {
   applyEligiblePublicProfileFilter,
-  fetchFeaturedProfiles,
+  fetchFeaturedProfilesByScore,
 } from "../utils/profile-eligibility.util";
 
 const PROFILE_PHOTO_VISIBILITY_BLOCK_FLAG_CODES = [
@@ -28,6 +28,9 @@ const PROFILE_PHOTO_VISIBILITY_BLOCK_FLAG_CODES = [
   "PROFILE_PHOTO_LOGO",
   "PROFILE_PHOTO_LOW_QUALITY",
   "FACE_NOT_VISIBLE",
+  "PROFILE_PHOTO_POLICY",
+  "PROFILE_PHOTO_CONTACT_INFO",
+  "PROFILE_PHOTO_QR_CODE",
 ];
 
 const SOCIAL_TIER_VISIBILITY_BLOCK_FLAG_CODES = [
@@ -61,7 +64,7 @@ const PUBLIC_PROFILE_VISIBILITY_BLOCK_FLAG_CODES = [
 ];
 
 const FEATURED_PHOTOGRAPHER_FIELDS =
-  "name username profileImage profileImages location skills pricing equipment socialMedia portfolio isPremium verifiedByTrendStarz verificationStatus socialMediaRestricted lastLoginAt lastOpenedAt updatedAt createdAt approvedAt";
+  "name username profileImage profileImages location skills pricing equipment socialMedia portfolio isPremium verifiedByTrendStarz verificationStatus socialMediaRestricted";
 
 @Injectable()
 export class PhotographersService {
@@ -167,19 +170,35 @@ export class PhotographersService {
     ];
   }
 
-  /** Eligible-only, weighted-random selection for the Welcome Page "Featured Photo/Videographers" section. */
+  /** Eligible-only, weighted-score selection for the Welcome Page "Featured Photo/Videographers" section. */
   async getFeaturedPhotographers(limit = 6) {
     const filter: any = {};
     applyEligiblePublicProfileFilter(filter);
     const blocked = await this.blockedPhotographerIds();
-    if (blocked.length) filter._id = { $nin: blocked };
-    const profiles = await fetchFeaturedProfiles(
+    if (blocked.length) {
+      filter._id = {
+        $nin: blocked.flatMap((id) => {
+          const value = String(id || "").trim();
+          if (!value) return [];
+          return Types.ObjectId.isValid(value)
+            ? [value, new Types.ObjectId(value)]
+            : [value];
+        }),
+      };
+    }
+    return fetchFeaturedProfilesByScore(
       this.photographerModel,
       filter,
       FEATURED_PHOTOGRAPHER_FIELDS,
       limit,
+      {
+        from: "campaigninvites",
+        matchField: "photographerId",
+        statusIn: ["accepted", "payment_confirmed", "working", "submitted", "completed"],
+        dateField: "updatedAt",
+        windowDays: 30,
+      },
     );
-    return profiles.map(({ approvedAt, ...rest }: any) => rest);
   }
 
   private async hasOpenGalleryBlock(userId: any): Promise<boolean> {
@@ -242,6 +261,9 @@ export class PhotographersService {
             "PROFILE_PHOTO_LOGO",
             "PROFILE_PHOTO_LOW_QUALITY",
             "FACE_NOT_VISIBLE",
+            "PROFILE_PHOTO_POLICY",
+            "PROFILE_PHOTO_CONTACT_INFO",
+            "PROFILE_PHOTO_QR_CODE",
           ],
         },
       },
