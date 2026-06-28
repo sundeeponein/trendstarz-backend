@@ -26,6 +26,7 @@ import {
   normalizeSelectionList,
 } from "../utils/profile-selection-limits.util";
 import {
+  PROFILE_PHOTO_SAFETY_FLAG_CODES,
   ProfileVerificationService,
   ProfileUserType,
 } from "../profile-verification/profile-verification.service";
@@ -212,6 +213,24 @@ export class CampaignsService {
     if (!this.profileVerificationService.isAdminApproved(profile)) {
       throw new BadRequestException(
         "Admin approval is required before posting or sending campaign invitations.",
+      );
+    }
+  }
+
+  private async assertOwnerPhotoSafetyClear(
+    ownerId: string,
+    ownerType: CampaignOwnerType,
+  ) {
+    const userType = ownerType === "photographer" ? "Photographer" : "Brand";
+    const count = await this.profileFlagModel.countDocuments({
+      userId: String(ownerId),
+      userType,
+      status: "Open",
+      flagCode: { $in: [...PROFILE_PHOTO_SAFETY_FLAG_CODES] },
+    });
+    if (count > 0) {
+      throw new BadRequestException(
+        "Resolve profile photo policy issues before posting or sending campaign invitations.",
       );
     }
   }
@@ -775,6 +794,7 @@ export class CampaignsService {
         persistedOwnerType,
       );
       this.assertOwnerCanPost(ownerProfile, persistedOwnerType);
+      await this.assertOwnerPhotoSafetyClear(ownerId, persistedOwnerType);
     }
     // Lazy load PlansService to avoid circular dep
     const caps = await this.plansService.getUserPlanCapabilities(ownerId);
@@ -1233,6 +1253,23 @@ export class CampaignsService {
       ...(campaign.toObject ? campaign.toObject() : campaign),
       ...normalized,
     };
+    const finalStatus = String(
+      mergedForValidation?.status || campaign.status || "",
+    )
+      .trim()
+      .toLowerCase();
+    if (
+      ["active", "pending", "pending_review", "needs_changes"].includes(
+        finalStatus,
+      )
+    ) {
+      const ownerProfile = await this.loadOwnerVerificationProfile(
+        brandId,
+        campaignOwnerType,
+      );
+      this.assertOwnerCanPost(ownerProfile, campaignOwnerType);
+      await this.assertOwnerPhotoSafetyClear(brandId, campaignOwnerType);
+    }
     const mergedMax = Number(mergedForValidation?.maxInfluencers || 0);
     if (!Number.isFinite(mergedMax) || mergedMax <= 0) {
       throw new BadRequestException(

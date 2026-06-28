@@ -661,7 +661,9 @@ export class AdminListsController {
             .lean(),
           this.campaignTransactionModel
             .find({ campaignId: { $in: [...campaignIds, ...campaignIdKeys] } })
-            .select("inviteId payoutStatus payoutInitiatedAt payoutSettledAt")
+            .select(
+              "inviteId payoutStatus payoutInitiatedAt payoutSettledAt payoutUtr payoutTransferId recipientPayout",
+            )
             .lean(),
         ])
       : [[], []];
@@ -751,6 +753,9 @@ export class AdminListsController {
         payoutStatus: transaction?.payoutStatus || null,
         payoutDate: transaction?.payoutSettledAt || null,
         payoutInitiatedAt: transaction?.payoutInitiatedAt || null,
+        payoutUtr: transaction?.payoutUtr || null,
+        payoutTransferId: transaction?.payoutTransferId || null,
+        payoutAmountPaise: Number(transaction?.recipientPayout || 0),
       });
       inviteProgressByCampaign.set(key, progressRows);
     }

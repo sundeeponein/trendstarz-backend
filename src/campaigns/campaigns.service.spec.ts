@@ -14,6 +14,7 @@ describe("CampaignsService", () => {
   let campaignInviteModel: any;
   let brandModel: any;
   let plansService: any;
+  let profileFlagModel: any;
 
   const mockCampaign = {
     _id: "507f1f77bcf86cd799439011",
@@ -135,6 +136,7 @@ describe("CampaignsService", () => {
     campaignModel = module.get(getModelToken("Campaign"));
     campaignInviteModel = module.get(getModelToken("CampaignInvite"));
     brandModel = module.get(getModelToken("Brand"));
+    profileFlagModel = module.get(getModelToken("ProfileFlag"));
     plansService = module.get(PlansService);
   });
 
@@ -242,6 +244,22 @@ describe("CampaignsService", () => {
         }),
       ).rejects.toThrow("Campaign duration cannot exceed 15 days");
     });
+
+    it("should block posting when the owner has an open profile photo safety flag", async () => {
+      profileFlagModel.countDocuments.mockResolvedValueOnce(1);
+
+      await expect(
+        service.create(mockBrand._id, {
+          title: "Unsafe owner photo",
+          description: "Owner must resolve policy issue first",
+          status: "active",
+          minInfluencers: 1,
+          maxInfluencers: 1,
+        }),
+      ).rejects.toThrow(
+        "Resolve profile photo policy issues before posting or sending campaign invitations.",
+      );
+    });
   });
 
   describe("findByBrandId", () => {
@@ -319,6 +337,23 @@ describe("CampaignsService", () => {
         status: "active",
       });
       expect(campaign.save).toHaveBeenCalled();
+    });
+
+    it("should block publishing a draft when the owner has an open profile photo safety flag", async () => {
+      const campaign = {
+        ...mockCampaign,
+        status: "draft",
+        save: jest.fn(),
+      };
+      campaignModel.findById.mockResolvedValue(campaign);
+      profileFlagModel.countDocuments.mockResolvedValueOnce(1);
+
+      await expect(
+        service.update(mockCampaign._id, mockBrand._id, { status: "active" }),
+      ).rejects.toThrow(
+        "Resolve profile photo policy issues before posting or sending campaign invitations.",
+      );
+      expect(campaign.save).not.toHaveBeenCalled();
     });
   });
 
