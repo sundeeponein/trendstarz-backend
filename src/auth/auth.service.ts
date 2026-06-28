@@ -1715,6 +1715,8 @@ export class AuthService {
       submissionAutoCompleteGraceHours:
         settings?.submissionAutoCompleteGraceHours ?? 48,
       payoutReleaseWaitHours: settings?.payoutReleaseWaitHours ?? 24,
+      minCampaignStartDays: settings?.minCampaignStartDays ?? 3,
+      maxCampaignDurationDays: settings?.maxCampaignDurationDays ?? 15,
       otpVerificationEnabled: !!settings?.otpVerificationEnabled,
       // Campaign payment UPI shown to brands on the payment screen
       paymentUpiId: settings?.paymentUpiId || "trendstarzin@kotak",

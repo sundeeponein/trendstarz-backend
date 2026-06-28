@@ -249,8 +249,10 @@ export class CampaignsService {
     return count > 0;
   }
 
-  private normalizeCampaignPayload(data: any) {
+  private normalizeCampaignPayload(data: any, settings?: any) {
     const normalized: any = { ...data };
+    const minStartDays = Number(settings?.minCampaignStartDays ?? 3);
+    const maxDurationDays = Number(settings?.maxCampaignDurationDays ?? 15);
 
     if (data.campaignMode !== undefined && data.campaignMode !== null) {
       const mode = String(data.campaignMode);
@@ -276,10 +278,10 @@ export class CampaignsService {
     if (normalized.startDate) {
       const today = new Date();
       today.setUTCHours(0, 0, 0, 0);
-      const minStart = new Date(today.getTime() + 3 * 24 * 60 * 60 * 1000);
+      const minStart = new Date(today.getTime() + minStartDays * 24 * 60 * 60 * 1000);
       if (new Date(normalized.startDate) < minStart) {
         throw new BadRequestException(
-          "Start date must be at least 3 days from today",
+          `Start date must be at least ${minStartDays} days from today`,
         );
       }
     }
@@ -290,14 +292,14 @@ export class CampaignsService {
           "End date must be on or after start date",
         );
       }
-      const maxDurationMs = 15 * 24 * 60 * 60 * 1000;
+      const maxDurationMs = maxDurationDays * 24 * 60 * 60 * 1000;
       if (
         new Date(normalized.endDate).getTime() -
           new Date(normalized.startDate).getTime() >
         maxDurationMs
       ) {
         throw new BadRequestException(
-          "Campaign duration cannot exceed 15 days",
+          `Campaign duration cannot exceed ${maxDurationDays} days`,
         );
       }
     }
@@ -819,7 +821,7 @@ export class CampaignsService {
       caps.hasPremium,
       settings,
     );
-    const normalized = this.normalizeCampaignPayload(data);
+    const normalized = this.normalizeCampaignPayload(data, settings);
     if (
       !Number.isFinite(Number(normalized.maxInfluencers)) ||
       Number(normalized.maxInfluencers) <= 0
@@ -1231,7 +1233,7 @@ export class CampaignsService {
       "photographer"
         ? "photographer"
         : "brand";
-    const normalized = this.normalizeCampaignPayload(data);
+    const normalized = this.normalizeCampaignPayload(data, settings);
     const inviteRecipientRole = this.normalizeInviteRecipientRole(
       data?.inviteRecipientRole ?? campaign.inviteRecipientRole,
       campaignOwnerType,

@@ -290,6 +290,8 @@ export class AdminListsController {
       },
       campaignApprovalMode: "manual",
       collaborationApprovalMode: "manual",
+      minCampaignStartDays: 3,
+      maxCampaignDurationDays: 15,
       paymentGatewayMode: "razorpay_fallback",
       platformFeeEnabled: false,
       platformFeePercent: commissionDefaults.platformFeePercent,
@@ -433,6 +435,24 @@ export class AdminListsController {
         );
       }
       next[key] = Math.round(hours * 100) / 100;
+    }
+    if (next.minCampaignStartDays !== undefined) {
+      const days = Number(next.minCampaignStartDays);
+      if (!Number.isFinite(days) || days < 0 || days > 30) {
+        throw new BadRequestException(
+          "minCampaignStartDays must be a number between 0 and 30",
+        );
+      }
+      next.minCampaignStartDays = Math.floor(days);
+    }
+    if (next.maxCampaignDurationDays !== undefined) {
+      const days = Number(next.maxCampaignDurationDays);
+      if (!Number.isFinite(days) || days < 1 || days > 365) {
+        throw new BadRequestException(
+          "maxCampaignDurationDays must be a number between 1 and 365",
+        );
+      }
+      next.maxCampaignDurationDays = Math.floor(days);
     }
     for (const key of [
       "platformFeePercent",

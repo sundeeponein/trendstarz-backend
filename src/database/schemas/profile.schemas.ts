@@ -873,6 +873,10 @@ export const AppSettingsSchema = new Schema({
     type: [Schema.Types.Mixed],
     default: () => [],
   },
+  // Minimum number of days a campaign's start date must be from today.
+  minCampaignStartDays: { type: Number, default: 3 },
+  // Maximum allowed campaign duration (start to end date), in days.
+  maxCampaignDurationDays: { type: Number, default: 15 },
 });
 export const AppSettingsModel = model("AppSettings", AppSettingsSchema);
 
