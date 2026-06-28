@@ -563,7 +563,6 @@ export class ProfileVerificationService {
     const hasOpenFlag = (code: string) =>
       flags.some((flag) => flag.flagCode === code && flag.status === "Open");
     const galleryCount = this.galleryImageUrls(profile).length;
-    const verificationStatus = String(profile?.verificationStatus || "");
     const items = [
       {
         label: "Email Verified",
@@ -633,9 +632,7 @@ export class ProfileVerificationService {
       },
       {
         label: "Admin Review Pending",
-        status: ["pending", "not_submitted"].includes(verificationStatus)
-          ? "Pending"
-          : "Verified",
+        status: this.isAdminApproved(profile) ? "Verified" : "Pending",
       },
     ];
     return items;
