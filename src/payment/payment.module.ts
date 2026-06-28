@@ -11,6 +11,7 @@ import {
 } from "../database/schemas/profile.schemas";
 import { PlansModule } from "../plans/plans.module";
 import { NotificationsModule } from "../notifications/notifications.module";
+import { PushModule } from "../push/push.module";
 
 @Module({
   imports: [
@@ -22,6 +23,7 @@ import { NotificationsModule } from "../notifications/notifications.module";
     ]),
     PlansModule,
     NotificationsModule,
+    PushModule,
   ],
   controllers: [PaymentController],
   providers: [PaymentService, RazorpayService],

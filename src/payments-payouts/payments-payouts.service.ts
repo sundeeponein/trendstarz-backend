@@ -1209,7 +1209,7 @@ export class PaymentsPayoutsService {
             paymentConfirmedRecipientRole === "photographer"
               ? "/photographer-dashboard"
               : "/influencer-dashboard",
-        })
+        }, 'payment')
         .catch(() => {
           /* non-critical */
         });
@@ -1258,6 +1258,15 @@ export class PaymentsPayoutsService {
           /* ignore */
         });
 
+      this.pushService
+        .sendToUser(String(tx.payerId), {
+          title: "Payment Verified",
+          body: "Your campaign payment is verified and influencers can now start work.",
+          url: "/campaign-management",
+        }, 'payment')
+        .catch(() => {
+          /* non-critical */
+        });
       this.notificationsService
         .createForUser({
           userId: String(tx.payerId),
@@ -1789,18 +1798,28 @@ export class PaymentsPayoutsService {
     const counterpartId =
       userRole === "brand" ? String(tx.recipientId) : String(tx.payerId);
     const counterpartRole = userRole === "brand" ? tx.recipientRole : "brand";
+    const disputeRaisedUrl =
+      counterpartRole === "brand"
+        ? "/transactions"
+        : counterpartRole === "photographer"
+          ? "/photographer-dashboard"
+          : "/influencer-dashboard";
+    this.pushService
+      .sendToUser(counterpartId, {
+        title: "Dispute Raised",
+        body: "A dispute was raised on a campaign transaction involving you.",
+        url: disputeRaisedUrl,
+      }, 'payment')
+      .catch(() => {
+        /* non-critical */
+      });
     this.notificationsService
       .createForUser({
         userId: counterpartId,
         userRole: counterpartRole,
         title: "Dispute Raised",
         body: "A dispute was raised on a campaign transaction involving you.",
-        url:
-          counterpartRole === "brand"
-            ? "/transactions"
-            : counterpartRole === "photographer"
-              ? "/photographer-dashboard"
-              : "/influencer-dashboard",
+        url: disputeRaisedUrl,
       })
       .catch(() => {
         /* non-critical */
@@ -1864,6 +1883,19 @@ export class PaymentsPayoutsService {
       outcome === "release_to_influencer"
         ? "Dispute resolved. Payout released to influencer."
         : "Dispute resolved. Payment will be refunded to brand.";
+    const recipientUrl =
+      tx.recipientRole === "photographer"
+        ? "/photographer-dashboard"
+        : "/influencer-dashboard";
+    this.pushService
+      .sendToUser(String(tx.payerId), {
+        title: "Dispute Resolved",
+        body: resolutionMessage,
+        url: "/transactions",
+      }, 'payment')
+      .catch(() => {
+        /* non-critical */
+      });
     this.notificationsService
       .createForUser({
         userId: String(tx.payerId),
@@ -1875,16 +1907,22 @@ export class PaymentsPayoutsService {
       .catch(() => {
         /* non-critical */
       });
+    this.pushService
+      .sendToUser(String(tx.recipientId), {
+        title: "Dispute Resolved",
+        body: resolutionMessage,
+        url: recipientUrl,
+      }, 'payment')
+      .catch(() => {
+        /* non-critical */
+      });
     this.notificationsService
       .createForUser({
         userId: String(tx.recipientId),
         userRole: tx.recipientRole,
         title: "Dispute Resolved",
         body: resolutionMessage,
-        url:
-          tx.recipientRole === "photographer"
-            ? "/photographer-dashboard"
-            : "/influencer-dashboard",
+        url: recipientUrl,
       })
       .catch(() => {
         /* non-critical */

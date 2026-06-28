@@ -1,6 +1,11 @@
-import { Body, Controller, Delete, Get, Post, Req, UseGuards } from "@nestjs/common";
+import { Body, Controller, Delete, Get, Patch, Post, Req, UseGuards } from "@nestjs/common";
 import { PushService } from "./push.service";
 import { JwtAuthGuard } from "../auth/jwt-auth.guard";
+
+function detectDeviceType(userAgent: string | undefined): "web" | "mobile" {
+  if (!userAgent) return "web";
+  return /Mobi|Android|iPhone|iPad|iPod/i.test(userAgent) ? "mobile" : "web";
+}
 
 @Controller("push")
 export class PushController {
@@ -27,10 +32,12 @@ export class PushController {
     },
   ) {
     const userId: string = req.user?.userId || req.user?.sub;
+    const deviceType = detectDeviceType(req.headers?.["user-agent"]);
     return this.pushService.subscribe(
       userId,
       body.userRole || "influencer",
       body.subscription,
+      deviceType,
     );
   }
 
@@ -39,5 +46,30 @@ export class PushController {
   @UseGuards(JwtAuthGuard)
   unsubscribe(@Body() body: { endpoint: string }) {
     return this.pushService.unsubscribe(body.endpoint);
+  }
+
+  /** Get the logged-in user's account-level push preference (device + category). */
+  @Get("preferences")
+  @UseGuards(JwtAuthGuard)
+  getPreferences(@Req() req: any) {
+    const userId: string = req.user?.userId || req.user?.sub;
+    return this.pushService.getPreferences(userId);
+  }
+
+  /** Update the logged-in user's account-level push preference (device + category). */
+  @Patch("preferences")
+  @UseGuards(JwtAuthGuard)
+  setPreferences(
+    @Req() req: any,
+    @Body()
+    body: {
+      webEnabled?: boolean;
+      mobileEnabled?: boolean;
+      campaignEnabled?: boolean;
+      paymentEnabled?: boolean;
+    },
+  ) {
+    const userId: string = req.user?.userId || req.user?.sub;
+    return this.pushService.setPreferences(userId, body);
   }
 }

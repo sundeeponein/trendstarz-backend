@@ -1484,7 +1484,7 @@ export class CampaignsService {
             title: "New open campaign",
             body,
             url: dashboardPath,
-          })
+          }, 'campaign')
           .catch(() => {}),
       ];
 
@@ -1578,7 +1578,7 @@ export class CampaignsService {
             title: "New campaign invite",
             body,
             url: dashboardPath,
-          })
+          }, 'campaign')
           .catch(() => {});
 
         if (!ENABLE_CAMPAIGN_LIVE_EMAILS || !recipient?.email) return;

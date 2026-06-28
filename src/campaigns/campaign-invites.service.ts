@@ -890,7 +890,7 @@ export class CampaignInvitesService {
               recipientRole === "photographer"
                 ? "/photographer-dashboard"
                 : "/influencer-dashboard",
-          })
+          }, 'campaign')
           .catch(() => {
             /* non-critical */
           });
@@ -1700,7 +1700,7 @@ export class CampaignInvitesService {
         title: "Campaign Marked Disputed",
         body: "A brand reported an issue on your campaign collaboration.",
         url: "/influencer-dashboard",
-      })
+      }, 'campaign')
       .catch(() => {
         /* non-critical */
       });
@@ -2227,7 +2227,7 @@ export class CampaignInvitesService {
             title: "Invite Accepted ✅",
             body: `${recipient?.name || `A ${recipientRole}`} accepted your invite for "${campaign?.title || "your campaign"}"`,
             url: "/campaign-management",
-          })
+          }, 'campaign')
           .catch(() => {
             /* non-critical */
           });
@@ -2259,7 +2259,7 @@ export class CampaignInvitesService {
             title: "Counter offer received",
             body: `Recipient requested ₹${requested.toLocaleString("en-IN")} for ${selectedLabel}.`,
             url: "/campaign-management",
-          })
+          }, 'campaign')
           .catch(() => {
             /* non-critical */
           });
@@ -2341,7 +2341,7 @@ export class CampaignInvitesService {
             recipientRole === "photographer"
               ? "/campaign-management"
               : "/influencer-dashboard",
-        })
+        }, 'campaign')
         .catch(() => {
           /* non-critical */
         });
@@ -2423,7 +2423,7 @@ export class CampaignInvitesService {
           recipientRole === "photographer"
             ? "/campaign-management"
             : "/influencer-dashboard",
-      })
+      }, 'campaign')
       .catch(() => {
         /* non-critical */
       });
@@ -2634,7 +2634,7 @@ export class CampaignInvitesService {
       title: "New Campaign Application 📩",
       body: `${(influencer as any).fullName || "An influencer"} applied to your campaign "${campaign.title}".`,
       url: "/brand/campaigns",
-    });
+    }, 'campaign');
     this.notificationsService
       .createForUser({
         userId: String(campaign.brandId),
@@ -2833,6 +2833,15 @@ export class CampaignInvitesService {
     const submissionOwner = await this.resolveSenderProfile(
       String(invite.brandId),
     );
+    this.pushService
+      .sendToUser(String(invite.brandId), {
+        title: "Post Submitted",
+        body: "An influencer submitted content for your review.",
+        url: "/campaign-management",
+      }, 'campaign')
+      .catch(() => {
+        /* non-critical */
+      });
     this.notificationsService
       .createForUser({
         userId: String(invite.brandId),
@@ -2986,7 +2995,7 @@ export class CampaignInvitesService {
             title: "Post Approved! 🎉",
             body: `Your post for "${campaign.title || "the campaign"}" was approved. Payout is being processed.`,
             url: "/influencer-dashboard",
-          })
+          }, 'campaign')
           .catch(() => {
             /* non-critical */
           });
@@ -3059,7 +3068,7 @@ export class CampaignInvitesService {
           title: "Submission Disputed",
           body: `Your submission for "${campaign.title || "the campaign"}" was marked disputed by brand.`,
           url: "/influencer-dashboard",
-        })
+        }, 'campaign')
         .catch(() => {
           /* non-critical */
         });

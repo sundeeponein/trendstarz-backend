@@ -3,6 +3,7 @@ import { getModelToken } from "@nestjs/mongoose";
 import { PaymentService } from "./payment.service";
 import { PlansService } from "../plans/plans.service";
 import { NotificationsService } from "../notifications/notifications.service";
+import { PushService } from "../push/push.service";
 
 describe("PaymentService", () => {
   let service: PaymentService;
@@ -73,6 +74,10 @@ describe("PaymentService", () => {
       createForUser: jest.fn().mockResolvedValue({}),
     };
 
+    const mockPushService = {
+      sendToUser: jest.fn().mockResolvedValue({ sent: 0, failed: 0 }),
+    };
+
     const mockPlansService = {
       findProPlanForUserType: jest
         .fn()
@@ -89,6 +94,7 @@ describe("PaymentService", () => {
         { provide: getModelToken("Photographer"), useValue: mockPhotographerModel },
         { provide: PlansService, useValue: mockPlansService },
         { provide: NotificationsService, useValue: mockNotificationsService },
+        { provide: PushService, useValue: mockPushService },
       ],
     }).compile();
 

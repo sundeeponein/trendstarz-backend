@@ -4,6 +4,7 @@ import { Model } from "mongoose";
 import { Payment } from "../database/schemas/payment.schema";
 import { PlansService } from "../plans/plans.service";
 import { NotificationsService } from "../notifications/notifications.service";
+import { PushService } from "../push/push.service";
 
 @Injectable()
 export class PaymentService {
@@ -14,6 +15,7 @@ export class PaymentService {
     @InjectModel("Photographer") private readonly photographerModel: Model<any>,
     public readonly plansService: PlansService,
     private readonly notificationsService: NotificationsService,
+    private readonly pushService: PushService,
   ) {}
 
   private subscriptionPurposeFilter() {
@@ -172,6 +174,15 @@ export class PaymentService {
       : normalizedUserType === "photographer"
         ? "photographer"
         : "influencer";
+    this.pushService
+      .sendToUser(String(payment.userId), {
+        title: "Payment Approved",
+        body: "Your payment was approved and premium plan is now active.",
+        url: "/payment-history",
+      }, 'payment')
+      .catch(() => {
+        /* non-critical */
+      });
     this.notificationsService
       .createForUser({
         userId: String(payment.userId),
@@ -281,6 +292,15 @@ export class PaymentService {
       : normalizedUserType === "photographer"
         ? "photographer"
         : "influencer";
+    this.pushService
+      .sendToUser(String(payment.userId), {
+        title: "Premium Payment Refunded",
+        body: "Your premium payment was marked as refunded by TrendStarz support.",
+        url: "/payment-history",
+      }, 'payment')
+      .catch(() => {
+        /* non-critical */
+      });
     this.notificationsService
       .createForUser({
         userId: String(payment.userId),
