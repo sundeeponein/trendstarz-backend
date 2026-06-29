@@ -1243,18 +1243,13 @@ export class AdminUserTableController {
     }
     if (action) {
       brand.verificationStatus = status;
+      // profileTier is a profile-quality tier, recomputed
+      // by getDashboard() — admin approval must never set it directly.
       if (action === "approve") {
         brand.verifiedByTrendStarz = true;
         brand.approvedAt = new Date();
-        brand.verificationDashboardStatus = "Brand Ready";
-      } else if (action === "reject") {
+      } else if (action === "reject" || action === "remove") {
         brand.verifiedByTrendStarz = false;
-        brand.verificationDashboardStatus = "Action Required";
-      } else if (action === "pending") {
-        brand.verificationDashboardStatus = "Under Review";
-      } else if (action === "remove") {
-        brand.verifiedByTrendStarz = false;
-        brand.verificationDashboardStatus = "Draft";
       }
     }
     if (body?.notes !== undefined) {
@@ -1327,14 +1322,8 @@ export class AdminUserTableController {
       photographer.verificationStatus = status;
       photographer.verifiedByTrendStarz = status === "approved";
       if (status === "approved") photographer.approvedAt = new Date();
-      photographer.verificationDashboardStatus =
-        status === "approved"
-          ? "Verified Creator"
-          : status === "rejected"
-            ? "Action Required"
-            : status === "pending"
-              ? "Under Review"
-              : "Draft";
+      // profileTier is a profile-quality tier, recomputed
+      // by getDashboard() — admin approval must never set it directly.
     }
     if (typeof body?.verifiedByTrendStarz === "boolean") {
       photographer.verifiedByTrendStarz = !!body.verifiedByTrendStarz;
@@ -1590,7 +1579,8 @@ export class AdminUserTableController {
       user.verificationStatus = "pending";
       user.verifiedByTrendStarz = false;
       user.adminReviewPending = true;
-      user.verificationDashboardStatus = "Action Required";
+      // profileTier is a profile-quality tier, recomputed
+      // by getDashboard() — admin approval must never set it directly.
     }
 
     const saved = await user.save();

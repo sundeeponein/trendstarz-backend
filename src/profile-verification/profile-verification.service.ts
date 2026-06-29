@@ -383,6 +383,22 @@ export class ProfileVerificationService {
     );
   }
 
+  /** Display label for the real admin-approval state (verificationStatus), distinct from the profileTier quality label. */
+  private verificationStatusLabel(profile: any): string {
+    if (this.isAdminApproved(profile)) return "Approved";
+    const raw = String(profile?.verificationStatus || "not_submitted").toLowerCase();
+    switch (raw) {
+      case "pending":
+        return "Under Review";
+      case "rejected":
+        return "Rejected";
+      case "removed":
+        return "Removed";
+      default:
+        return "Pending";
+    }
+  }
+
   /**
    * "Profile Complete" / "Company Profile Complete" / "Portfolio Uploaded" —
    * the role-specific completeness bar for Campaign eligibility. Deliberately
@@ -531,6 +547,8 @@ export class ProfileVerificationService {
       return sum + 5;
     }, 0);
     const score = Math.max(0, Math.min(100, Number(baseScore || 0) - penalty));
+    // These tiers describe profile data quality only — never admin approval.
+    // See isAdminApproved() / isTrendstarzVerified for the actual approval gate.
     const label =
       score <= 40
         ? "Poor"
@@ -540,7 +558,7 @@ export class ProfileVerificationService {
             ? "Good"
             : score <= 95
               ? "Brand Ready"
-              : "Premium Verified";
+              : "Outstanding Profile";
     const hasActionRequired = flags.some((flag) => {
       const code = String(flag?.flagCode || "");
       return (
@@ -550,12 +568,12 @@ export class ProfileVerificationService {
     });
     const status =
       hasActionRequired || score <= 60
-        ? "Action Required"
+        ? "Needs Attention"
         : score <= 80
-          ? "Verified Creator"
+          ? "Good Profile"
           : score <= 95
             ? "Brand Ready"
-            : "Premium Verified";
+            : "Outstanding Profile";
     return { score, label, status };
   }
 
@@ -875,7 +893,7 @@ export class ProfileVerificationService {
       (flag) => !HIDDEN_ACTION_FLAG_CODES.has(String(flag.flagCode || "")),
     );
     const quality = this.qualityFromFlags(qualityFlags, completion);
-    const status =
+    const tier =
       completion < 40
         ? "Draft"
         : profile?.adminReviewPending
@@ -886,7 +904,7 @@ export class ProfileVerificationService {
         profileCompletion: completion,
         profileQualityScore: quality.score,
         profileQualityLabel: quality.label,
-        verificationDashboardStatus: status,
+        profileTier: tier,
         mobileVerified: this.isMobileVerified(profile),
       },
     });
@@ -898,7 +916,14 @@ export class ProfileVerificationService {
       profileCompletion: completion,
       profileQualityScore: quality.score,
       profileQualityLabel: quality.label,
-      verificationStatus: status,
+      // Profile data-quality tier — never admin approval. See
+      // verificationStatus/isTrendstarzVerified below for that.
+      profileTier: tier,
+      // The real admin-approval state, independent of the tier above —
+      // same source isAdminApproved()/campaign eligibility uses, so a
+      // screen can show both without one implying the other.
+      verificationStatus: this.verificationStatusLabel(profile),
+      isTrendstarzVerified: this.isAdminApproved(profile),
       verificationChecks: this.verificationChecks(profile),
       verificationBadges: this.verificationBadges(profile),
       checklist: this.checklist(profile, flags, userType),
@@ -996,7 +1021,7 @@ export class ProfileVerificationService {
     await this.modelForUserType(userType).findByIdAndUpdate(userId, {
       $set: {
         adminReviewPending: true,
-        verificationDashboardStatus: "Under Review",
+        profileTier: "Under Review",
       },
     });
     return this.getDashboard(userId, role);
@@ -1026,10 +1051,10 @@ export class ProfileVerificationService {
       if (statusFilter && statusFilter !== "all") {
         if (statusFilter === "Pending Review") filter.adminReviewPending = true;
         else if (statusFilter === "Action Required")
-          filter.verificationDashboardStatus = "Action Required";
+          filter.profileTier = "Needs Attention";
         else if (statusFilter === "Verified") {
-          filter.verificationDashboardStatus = {
-            $in: ["Verified Creator", "Brand Ready", "Premium Verified"],
+          filter.profileTier = {
+            $in: ["Good Profile", "Brand Ready", "Outstanding Profile"],
           };
         } else if (statusFilter === "Rejected")
           filter.verificationStatus = "rejected";
@@ -1037,7 +1062,7 @@ export class ProfileVerificationService {
       const users = await model
         .find(filter)
         .select(
-          "name brandName email profileCompletion profileQualityScore verificationDashboardStatus verificationStatus adminReviewPending status updatedAt",
+          "name brandName email profileCompletion profileQualityScore profileTier verificationStatus adminReviewPending status updatedAt",
         )
         .sort({ updatedAt: -1 })
         .lean();
@@ -1062,8 +1087,8 @@ export class ProfileVerificationService {
             Number(user.profileQualityScore ?? 0),
             Number(user.profileCompletion ?? user.profileQualityScore ?? 0),
           ),
-          verificationStatus: user.verificationDashboardStatus || "Draft",
-          documentStatus: user.verificationStatus || "",
+          profileTier: user.profileTier || "Draft",
+          verificationStatus: user.verificationStatus || "",
           openFlagsCount: countMap.get(String(user._id)) || 0,
           adminReviewPending: !!user.adminReviewPending,
           updatedAt: user.updatedAt,
@@ -1105,14 +1130,14 @@ export class ProfileVerificationService {
     this.assertAdmin(actor);
     const action = String(body?.action || "").trim();
     const notes = String(body?.notes || "").trim();
-    const statusByAction: Record<string, string> = {
-      approve: "Verified Creator",
-      approve_warning: "Brand Ready",
-      request_changes: "Action Required",
-      reject: "Action Required",
-    };
-    const nextStatus = statusByAction[action];
-    if (!nextStatus) throw new BadRequestException("Invalid moderation action");
+    const validActions = new Set([
+      "approve",
+      "approve_warning",
+      "request_changes",
+      "reject",
+    ]);
+    if (!validActions.has(action))
+      throw new BadRequestException("Invalid moderation action");
     const profileModel = this.modelForUserType(userType);
     const legacyAuditActions: Array<{ from: string; to: string }> = [
       { from: "approve", to: "approved" },
@@ -1145,7 +1170,6 @@ export class ProfileVerificationService {
           : "approved";
     await profileModel.findByIdAndUpdate(userId, {
       $set: {
-        verificationDashboardStatus: nextStatus,
         adminReviewPending: false,
         profileModerationNotes: notes,
         verificationAdminNotes: notes,

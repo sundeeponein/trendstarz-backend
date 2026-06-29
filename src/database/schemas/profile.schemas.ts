@@ -41,15 +41,16 @@ const ProfileVerificationFields = {
   profileCompletion: { type: Number, default: 0, min: 0, max: 100 },
   profileQualityScore: { type: Number, default: 0, min: 0, max: 100 },
   profileQualityLabel: { type: String, default: "Not Calculated" },
-  verificationDashboardStatus: {
+  /** Profile data-quality tier only — never admin approval. See verificationStatus/verifiedByTrendStarz for that. */
+  profileTier: {
     type: String,
     enum: [
       "Draft",
       "Under Review",
-      "Action Required",
-      "Verified Creator",
+      "Needs Attention",
+      "Good Profile",
       "Brand Ready",
-      "Premium Verified",
+      "Outstanding Profile",
     ],
     default: "Draft",
     index: true,
