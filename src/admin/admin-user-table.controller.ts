@@ -232,6 +232,18 @@ export class AdminUserTableController {
       filter.isMobileVerified = true;
       return;
     }
+    if (normalized === "admin_review_pending") {
+      filter.$and = [
+        ...(Array.isArray(filter.$and) ? filter.$and : []),
+        {
+          $or: [
+            { verificationStatus: "pending" },
+            { adminReviewPending: true },
+          ],
+        },
+      ];
+      return;
+    }
 
     if (normalized === "search_eligible") {
       filter.status = "accepted";
@@ -251,6 +263,10 @@ export class AdminUserTableController {
         ...(Array.isArray(filter.$and) ? filter.$and : []),
         { $or: [{ verifiedByTrendStarz: true }, { verificationStatus: "approved" }] },
       ];
+      return;
+    }
+    if (normalized === "admin_review_rejected") {
+      filter.verificationStatus = "rejected";
       return;
     }
     if (normalized === "featured_eligible" || normalized === "campaign_eligible") {

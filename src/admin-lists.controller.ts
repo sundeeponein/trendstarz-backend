@@ -594,6 +594,7 @@ export class AdminListsController {
       needs_changes: countForTab("needs_changes"),
       rejected: countForTab("rejected"),
       active: countForTab("active"),
+      draft: countForTab("draft"),
       completed: countForTab("completed"),
       all: statusCountRows.reduce(
         (sum: number, row: any) => sum + row.count,
