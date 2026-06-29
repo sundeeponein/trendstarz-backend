@@ -221,6 +221,20 @@ export class PlansService {
     else if (duration === "1y") end.setFullYear(end.getFullYear() + 1);
     const billingCycle = this.durationToBillingCycle(duration);
 
+    // Admin-configurable bonus duration (e.g. "pay 1 month, get 2" promos),
+    // set per-cycle in Admin → Plans → Pricing & Discounts. Same mechanism as
+    // the existing discount offers — no separate fee/plan type needed.
+    const bonusKey =
+      billingCycle === "monthly"
+        ? "bonusMonthsMonthly"
+        : billingCycle === "quarterly"
+          ? "bonusMonthsQuarterly"
+          : "bonusMonthsYearly";
+    const bonusMonths = Number(
+      (plan.offers || []).find((o: any) => o.key === bonusKey)?.value || 0,
+    );
+    if (bonusMonths > 0) end.setMonth(end.getMonth() + bonusMonths);
+
     const subscription = await this.subscriptionModel.create({
       userId: new Types.ObjectId(userId),
       userType: this.normalizeUserType(userType),
