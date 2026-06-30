@@ -68,6 +68,10 @@ export class PlansService {
         dto?.founderOfferForNewUsers ?? existing?.founderOfferForNewUsers ?? true,
       founderOfferForExistingUsers:
         dto?.founderOfferForExistingUsers ?? existing?.founderOfferForExistingUsers ?? true,
+      founderOfferAudienceCap:
+        dto?.founderOfferAudienceCap ?? existing?.founderOfferAudienceCap ?? 0,
+      founderOfferEndsAt:
+        dto?.founderOfferEndsAt ?? existing?.founderOfferEndsAt ?? null,
       price: {
         monthly: dto?.price?.monthly ?? existing?.price?.monthly ?? 0,
         quarterly: dto?.price?.quarterly ?? existing?.price?.quarterly ?? 0,
@@ -90,6 +94,18 @@ export class PlansService {
         yearly: plan?.price?.yearly ?? 0,
       },
       features: Array.isArray(plan?.features) ? plan.features : [],
+      founderOfferAudienceCap: Number(plan?.founderOfferAudienceCap || 0),
+      founderOfferEndsAt: plan?.founderOfferEndsAt ?? null,
+    };
+  }
+
+  private async withFounderOfferAudienceStats(plan: any) {
+    const normalized = this.normalizePlanDocument(plan);
+    if (!normalized?.userType) return normalized;
+    const count = await this.modelForUserType(normalized.userType).countDocuments({});
+    return {
+      ...normalized,
+      founderOfferAudienceCount: count,
     };
   }
 
@@ -133,6 +149,15 @@ export class PlansService {
       .lean();
     const registeredAt = (user as any)?.firstRegisteredAt || (user as any)?.createdAt;
     const windowDays = Number(plan?.founderOfferWindowDays ?? 7);
+    const endsAt = plan?.founderOfferEndsAt ? new Date(plan.founderOfferEndsAt) : null;
+    if (endsAt && Number.isFinite(endsAt.getTime()) && endsAt < new Date()) {
+      return false;
+    }
+    const audienceCap = Number(plan?.founderOfferAudienceCap || 0);
+    if (audienceCap > 0) {
+      const audienceCount = await model.countDocuments({});
+      if (audienceCount >= audienceCap) return false;
+    }
     let isNew = true;
     if (registeredAt) {
       const elapsedDays =
@@ -153,14 +178,14 @@ export class PlansService {
       .lean();
     return {
       success: true,
-      plans: plans.map((plan: any) => this.normalizePlanDocument(plan)),
+      plans: await Promise.all(plans.map((plan: any) => this.withFounderOfferAudienceStats(plan))),
     };
   }
 
   async getById(id: string) {
     const plan = await this.planModel.findById(id).lean();
     if (!plan) throw new NotFoundException("Plan not found");
-    return { success: true, plan: this.normalizePlanDocument(plan) };
+    return { success: true, plan: await this.withFounderOfferAudienceStats(plan) };
   }
 
   async create(dto: any) {
@@ -168,7 +193,7 @@ export class PlansService {
     const plan = await this.planModel.create({
       ...normalized,
     });
-    return { success: true, plan: this.normalizePlanDocument(plan.toObject()) };
+    return { success: true, plan: await this.withFounderOfferAudienceStats(plan.toObject()) };
   }
 
   async replaceAllFromConfig(configPlans: any[]) {
@@ -208,6 +233,8 @@ export class PlansService {
             founderOfferWindowDays: normalized.founderOfferWindowDays ?? existing.founderOfferWindowDays ?? 7,
             founderOfferForNewUsers: normalized.founderOfferForNewUsers ?? existing.founderOfferForNewUsers ?? true,
             founderOfferForExistingUsers: normalized.founderOfferForExistingUsers ?? existing.founderOfferForExistingUsers ?? true,
+            founderOfferAudienceCap: normalized.founderOfferAudienceCap ?? existing.founderOfferAudienceCap ?? 0,
+            founderOfferEndsAt: normalized.founderOfferEndsAt ?? existing.founderOfferEndsAt ?? null,
             policies: normalized.policies ?? existing.policies,
             highlight: normalized.highlight ?? existing.highlight,
             isActive: normalized.isActive ?? existing.isActive,
@@ -218,7 +245,7 @@ export class PlansService {
       )
       .lean();
     if (!plan) throw new NotFoundException("Plan not found");
-    return { success: true, plan: this.normalizePlanDocument(plan) };
+    return { success: true, plan: await this.withFounderOfferAudienceStats(plan) };
   }
 
   async remove(id: string) {
@@ -239,7 +266,7 @@ export class PlansService {
       .lean();
     return {
       success: true,
-      plans: plans.map((plan: any) => this.normalizePlanDocument(plan)),
+      plans: await Promise.all(plans.map((plan: any) => this.withFounderOfferAudienceStats(plan))),
     };
   }
 

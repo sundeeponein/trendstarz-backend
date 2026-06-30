@@ -96,6 +96,15 @@ export class CampaignInvitesService {
     return Number.isFinite(hours) && hours >= 0 ? hours : 48;
   }
 
+  private getHostAutoCompleteAt(submission: any, waitHours = 24): Date | null {
+    const submittedAtRaw =
+      submission?.submittedAt || submission?.updatedAt || submission?.createdAt;
+    if (!submittedAtRaw) return null;
+    const submittedAt = new Date(submittedAtRaw);
+    if (Number.isNaN(submittedAt.getTime())) return null;
+    return new Date(submittedAt.getTime() + waitHours * 60 * 60 * 1000);
+  }
+
   private async autoCompleteSubmission(
     submission: any,
     invite: any,
@@ -636,11 +645,13 @@ export class CampaignInvitesService {
 
   async autoApproveStaleSubmissions() {
     const waitHours = await this.getSubmissionApprovalWaitHours();
-    const graceHours = await this.getSubmissionAutoCompleteGraceHours();
-    const totalHours = waitHours + graceHours;
-    const cutoff = new Date(Date.now() - totalHours * 60 * 60 * 1000);
+    const cutoff = new Date(Date.now() - waitHours * 60 * 60 * 1000);
     const staleSubmissions = await this.submissionModel
-      .find({ status: "submitted", submittedAt: { $lte: cutoff } })
+      .find({
+        status: "submitted",
+        hostAutoCompleteEnabled: true,
+        submittedAt: { $lte: cutoff },
+      })
       .lean();
 
     let autoApprovedCount = 0;
@@ -663,8 +674,7 @@ export class CampaignInvitesService {
       success: true,
       autoApprovedCount,
       waitHours,
-      graceHours,
-      totalHours,
+      totalHours: waitHours,
     };
   }
 
@@ -1124,7 +1134,7 @@ export class CampaignInvitesService {
     const submissions: any[] = await this.submissionModel
       .find(submissionQuery)
       .select(
-        "inviteId postUrl postType postPlatform status submittedAt reviewedAt autoCompletedAt createdAt updatedAt brandFeedback disputeIssueReason disputeReason disputeEvidenceUrl",
+        "inviteId postUrl postType postPlatform status submittedAt reviewedAt autoCompletedAt hostAutoCompleteEnabled hostAutoCompleteEnabledAt createdAt updatedAt brandFeedback disputeIssueReason disputeReason disputeEvidenceUrl",
       )
       .sort({ submittedAt: -1, createdAt: -1 })
       .lean();
@@ -2897,6 +2907,50 @@ export class CampaignInvitesService {
     return { success: true, submissions };
   }
 
+  async setSubmissionAutoComplete(
+    inviteId: string,
+    brandId: string,
+    enabled: boolean,
+  ) {
+    const invite = await this.inviteModel.findById(inviteId);
+    if (!invite) throw new NotFoundException("Invite not found");
+
+    const campaign: any = await this.campaignModel.findById(invite.campaignId);
+    if (!campaign) throw new NotFoundException("Campaign not found");
+    if (String(campaign.brandId) !== brandId) {
+      const brand = await this.brandModel.findById(brandId).lean();
+      const brandUsername =
+        brand && typeof brand === "object" && "brandUsername" in brand
+          ? (brand as any).brandUsername
+          : undefined;
+      if (!brandUsername || String(campaign.brandId) !== brandUsername) {
+        throw new BadRequestException("Not your campaign");
+      }
+    }
+
+    const submission = await this.submissionModel.findOne({ inviteId });
+    if (!submission) throw new NotFoundException("Submission not found");
+    if (String(submission.status || "").toLowerCase() !== "submitted") {
+      throw new BadRequestException(
+        "Auto-complete can only be changed while the post is under review.",
+      );
+    }
+
+    submission.hostAutoCompleteEnabled = !!enabled;
+    submission.hostAutoCompleteEnabledAt = enabled ? new Date() : null;
+    await submission.save();
+
+    const autoCompleteAt = submission.hostAutoCompleteEnabled
+      ? this.getHostAutoCompleteAt(submission, await this.getSubmissionApprovalWaitHours())
+      : null;
+
+    return {
+      success: true,
+      submission,
+      autoCompleteAt,
+    };
+  }
+
   async reviewSubmission(
     inviteId: string,
     brandId: string,
@@ -2933,7 +2987,6 @@ export class CampaignInvitesService {
     const now = new Date();
     if (action === "approve" || action === "dispute") {
       const waitHours = await this.getSubmissionApprovalWaitHours();
-      const graceHours = await this.getSubmissionAutoCompleteGraceHours();
       const submittedAtRaw =
         submission.submittedAt || submission.updatedAt || submission.createdAt;
 
@@ -2949,9 +3002,6 @@ export class CampaignInvitesService {
       const unlockAt = new Date(
         submittedAt.getTime() + waitHours * 60 * 60 * 1000,
       );
-      const autoCompleteAt = new Date(
-        unlockAt.getTime() + graceHours * 60 * 60 * 1000,
-      );
       if (
         Number.isNaN(submittedAt.getTime()) ||
         now.getTime() < unlockAt.getTime()
@@ -2962,7 +3012,10 @@ export class CampaignInvitesService {
             : `Review period active. Issues can be raised after ${waitHours} hours from submission. Unlocks at: ${unlockAt.toUTCString()}`,
         );
       }
-      if (now.getTime() >= autoCompleteAt.getTime()) {
+      if (
+        submission.hostAutoCompleteEnabled &&
+        now.getTime() >= unlockAt.getTime()
+      ) {
         await this.autoCompleteSubmission(submission, invite, now);
         return { success: true, submission, autoCompleted: true };
       }

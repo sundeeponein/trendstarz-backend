@@ -38,6 +38,8 @@ export const CampaignSubmissionSchema = new Schema(
     submittedAt: { type: Date },
     reviewedAt: { type: Date },
     autoCompletedAt: { type: Date },
+    hostAutoCompleteEnabled: { type: Boolean, default: false },
+    hostAutoCompleteEnabledAt: { type: Date },
 
     status: {
       type: String,
@@ -71,6 +73,8 @@ export interface CampaignSubmission extends Document {
   submittedAt?: Date;
   reviewedAt?: Date;
   autoCompletedAt?: Date;
+  hostAutoCompleteEnabled?: boolean;
+  hostAutoCompleteEnabledAt?: Date;
   status: "draft" | "submitted" | "approved" | "rejected" | "disputed";
   brandFeedback?: string;
   disputeIssueReason?: string;

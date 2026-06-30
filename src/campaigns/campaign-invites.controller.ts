@@ -398,6 +398,21 @@ export class CampaignInvitesController {
   }
 
   @UseGuards(JwtAuthGuard)
+  @Patch(":id/auto-complete")
+  async setSubmissionAutoComplete(
+    @Param("id") id: string,
+    @Req() req: any,
+    @Body() body: { enabled?: boolean },
+  ) {
+    const brandId = this.requesterId(req);
+    return this.invitesService.setSubmissionAutoComplete(
+      id,
+      brandId,
+      body.enabled === true,
+    );
+  }
+
+  @UseGuards(JwtAuthGuard)
   @Patch(":id/review")
   async reviewSubmission(
     @Param("id") id: string,

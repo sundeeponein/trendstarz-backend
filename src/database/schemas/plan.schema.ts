@@ -59,6 +59,9 @@ export const PlanSchema = new Schema(
     /** Audience targeting — "new" means registered within founderOfferWindowDays of now. Both default true (show to everyone), matching pre-targeting behavior. */
     founderOfferForNewUsers: { type: Boolean, default: true },
     founderOfferForExistingUsers: { type: Boolean, default: true },
+    /** Optional launch controls: cap 0 = unlimited, end date empty = no fixed expiry. */
+    founderOfferAudienceCap: { type: Number, default: 0 },
+    founderOfferEndsAt: { type: Date, default: null },
     policies: {
       imageRetentionDaysAfterExpiry: { type: Number, default: 45 },
     },
