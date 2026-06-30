@@ -368,6 +368,17 @@ export class AuthController {
     );
   }
 
+  @Post("founder-offer/seen")
+  @UseGuards(JwtAuthGuard)
+  async markFounderOfferSeen(@Req() req: any) {
+    const userId = req?.user?.userId || req?.user?.sub || req?.user?.id;
+    const role = req?.user?.role;
+    return this.authService.markFounderOfferSeen(
+      String(userId || ""),
+      String(role || ""),
+    );
+  }
+
   @Post("community/joined")
   @UseGuards(JwtAuthGuard)
   async markCommunityJoined(@Req() req: any, @Body() body: any) {

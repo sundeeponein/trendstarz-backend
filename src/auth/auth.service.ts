@@ -616,6 +616,20 @@ export class AuthService {
     return { success: true, lastOpenedAt };
   }
 
+  /** Marks the first-login Founder Launch Offer modal as shown so it never re-shows full-screen for this user again. */
+  async markFounderOfferSeen(userId: string, role: string) {
+    const model = this.modelForRole(role);
+    if (!model || !userId) {
+      throw new BadRequestException("Invalid user session.");
+    }
+    const founderOfferSeenAt = new Date();
+    await model.updateOne(
+      { _id: userId, founderOfferSeenAt: null },
+      { $set: { founderOfferSeenAt } },
+    );
+    return { success: true, founderOfferSeenAt };
+  }
+
   async markCommunityJoined(
     userId: string,
     role: string,

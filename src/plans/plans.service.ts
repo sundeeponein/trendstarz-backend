@@ -60,6 +60,10 @@ export class PlansService {
       userType,
       discountLabel:
         dto?.discountLabel ?? existing?.discountLabel ?? "",
+      founderOfferName:
+        dto?.founderOfferName ?? existing?.founderOfferName ?? "Founder Launch Offer",
+      founderOfferWindowDays:
+        dto?.founderOfferWindowDays ?? existing?.founderOfferWindowDays ?? 7,
       price: {
         monthly: dto?.price?.monthly ?? existing?.price?.monthly ?? 0,
         quarterly: dto?.price?.quarterly ?? existing?.price?.quarterly ?? 0,
@@ -158,6 +162,8 @@ export class PlansService {
             limits: normalized.limits ?? existing.limits,
             offers: normalized.offers ?? existing.offers ?? [],
             discountLabel: normalized.discountLabel ?? existing.discountLabel ?? "",
+            founderOfferName: normalized.founderOfferName ?? existing.founderOfferName ?? "Founder Launch Offer",
+            founderOfferWindowDays: normalized.founderOfferWindowDays ?? existing.founderOfferWindowDays ?? 7,
             policies: normalized.policies ?? existing.policies,
             highlight: normalized.highlight ?? existing.highlight,
             isActive: normalized.isActive ?? existing.isActive,

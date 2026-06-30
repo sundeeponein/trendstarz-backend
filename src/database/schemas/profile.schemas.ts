@@ -165,6 +165,8 @@ export const InfluencerSchema = new Schema(
     firstRegisteredAt: { type: Date, default: Date.now },
     lastLoginAt: { type: Date, default: null },
     lastOpenedAt: { type: Date, default: null },
+    /** First-login Founder Launch Offer modal — set once shown so it never re-shows full-screen after dismissal. */
+    founderOfferSeenAt: { type: Date, default: null },
     communityJoined: { type: Boolean, default: false },
     communityState: { type: String, default: "" },
     communityName: { type: String, default: "" },
@@ -443,6 +445,8 @@ export const BrandSchema = new Schema(
     firstRegisteredAt: { type: Date, default: Date.now },
     lastLoginAt: { type: Date, default: null },
     lastOpenedAt: { type: Date, default: null },
+    /** First-login Founder Launch Offer modal — set once shown so it never re-shows full-screen after dismissal. */
+    founderOfferSeenAt: { type: Date, default: null },
     communityJoined: { type: Boolean, default: false },
     communityState: { type: String, default: "" },
     communityName: { type: String, default: "" },
@@ -589,6 +593,8 @@ export const PhotographerSchema = new Schema(
     firstRegisteredAt: { type: Date, default: Date.now },
     lastLoginAt: { type: Date, default: null },
     lastOpenedAt: { type: Date, default: null },
+    /** First-login Founder Launch Offer modal — set once shown so it never re-shows full-screen after dismissal. */
+    founderOfferSeenAt: { type: Date, default: null },
     communityJoined: { type: Boolean, default: false },
     communityState: { type: String, default: "" },
     communityName: { type: String, default: "" },

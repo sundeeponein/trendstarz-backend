@@ -53,6 +53,9 @@ export const PlanSchema = new Schema(
     limits: { type: [PlanLimitSchema], default: [] },
     offers: { type: [PlanOfferSchema], default: [] },
     discountLabel: { type: String, default: "" },
+    /** First-login Founder Launch Offer popup — title and countdown window, admin-renameable (e.g. "Festival Offer", "New Year Offer"). Pricing itself still comes from price/offers above. */
+    founderOfferName: { type: String, default: "Founder Launch Offer" },
+    founderOfferWindowDays: { type: Number, default: 7 },
     policies: {
       imageRetentionDaysAfterExpiry: { type: Number, default: 45 },
     },
