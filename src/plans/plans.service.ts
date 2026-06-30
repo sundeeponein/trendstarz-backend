@@ -64,6 +64,10 @@ export class PlansService {
         dto?.founderOfferName ?? existing?.founderOfferName ?? "Founder Launch Offer",
       founderOfferWindowDays:
         dto?.founderOfferWindowDays ?? existing?.founderOfferWindowDays ?? 7,
+      founderOfferForNewUsers:
+        dto?.founderOfferForNewUsers ?? existing?.founderOfferForNewUsers ?? true,
+      founderOfferForExistingUsers:
+        dto?.founderOfferForExistingUsers ?? existing?.founderOfferForExistingUsers ?? true,
       price: {
         monthly: dto?.price?.monthly ?? existing?.price?.monthly ?? 0,
         quarterly: dto?.price?.quarterly ?? existing?.price?.quarterly ?? 0,
@@ -100,6 +104,44 @@ export class PlansService {
     const photographer = await this.photographerModel.exists({ _id: objectId });
     if (photographer) return "PHOTOGRAPHER";
     return "INFLUENCER";
+  }
+
+  private modelForUserType(
+    userType: "INFLUENCER" | "BRAND" | "PHOTOGRAPHER",
+  ): Model<any> {
+    if (userType === "BRAND") return this.brandModel;
+    if (userType === "PHOTOGRAPHER") return this.photographerModel;
+    return this.influencerModel;
+  }
+
+  /**
+   * Re-derives Founder Offer eligibility at payment-approval time, mirroring
+   * the frontend's isNewUserForFounderOffer/matchesFounderOfferAudience logic
+   * (founder-offer.util.ts) so the bonus actually granted always matches what
+   * the popup promised at the moment of approval — not at checkout time, since
+   * admin approval can lag behind checkout by days.
+   */
+  private async isEligibleForFounderOffer(
+    userId: string,
+    userType: "INFLUENCER" | "BRAND" | "PHOTOGRAPHER",
+    plan: any,
+  ): Promise<boolean> {
+    const model = this.modelForUserType(userType);
+    const user = await model
+      .findById(userId)
+      .select("firstRegisteredAt createdAt")
+      .lean();
+    const registeredAt = (user as any)?.firstRegisteredAt || (user as any)?.createdAt;
+    const windowDays = Number(plan?.founderOfferWindowDays ?? 7);
+    let isNew = true;
+    if (registeredAt) {
+      const elapsedDays =
+        (Date.now() - new Date(registeredAt).getTime()) / (1000 * 60 * 60 * 24);
+      isNew = elapsedDays <= windowDays;
+    }
+    return isNew
+      ? (plan?.founderOfferForNewUsers ?? true)
+      : (plan?.founderOfferForExistingUsers ?? true);
   }
 
   // ── Admin: CRUD Plans ────────────────────────────────────────────────────
@@ -164,6 +206,8 @@ export class PlansService {
             discountLabel: normalized.discountLabel ?? existing.discountLabel ?? "",
             founderOfferName: normalized.founderOfferName ?? existing.founderOfferName ?? "Founder Launch Offer",
             founderOfferWindowDays: normalized.founderOfferWindowDays ?? existing.founderOfferWindowDays ?? 7,
+            founderOfferForNewUsers: normalized.founderOfferForNewUsers ?? existing.founderOfferForNewUsers ?? true,
+            founderOfferForExistingUsers: normalized.founderOfferForExistingUsers ?? existing.founderOfferForExistingUsers ?? true,
             policies: normalized.policies ?? existing.policies,
             highlight: normalized.highlight ?? existing.highlight,
             isActive: normalized.isActive ?? existing.isActive,
@@ -229,17 +273,37 @@ export class PlansService {
 
     // Admin-configurable bonus duration (e.g. "pay 1 month, get 2" promos),
     // set per-cycle in Admin → Plans → Pricing & Discounts. Same mechanism as
-    // the existing discount offers — no separate fee/plan type needed.
-    const bonusKey =
+    // the existing discount offers — no separate fee/plan type needed. This
+    // "standing" bonus applies to every purchase of this cycle, regardless of
+    // Founder Offer eligibility.
+    const cycleSuffix =
       billingCycle === "monthly"
-        ? "bonusMonthsMonthly"
+        ? "Monthly"
         : billingCycle === "quarterly"
-          ? "bonusMonthsQuarterly"
-          : "bonusMonthsYearly";
+          ? "Quarterly"
+          : "Yearly";
     const bonusMonths = Number(
-      (plan.offers || []).find((o: any) => o.key === bonusKey)?.value || 0,
+      (plan.offers || []).find((o: any) => o.key === `bonusMonths${cycleSuffix}`)
+        ?.value || 0,
     );
     if (bonusMonths > 0) end.setMonth(end.getMonth() + bonusMonths);
+
+    // Founder Offer bonus stacks on top of the standing bonus above, but only
+    // when the user is still eligible at approval time (Admin → Plans →
+    // First-Login Founder Offer Popup → audience checkboxes + window days).
+    const founderBonusMonths = Number(
+      (plan.offers || []).find(
+        (o: any) => o.key === `founderBonusMonths${cycleSuffix}`,
+      )?.value || 0,
+    );
+    if (founderBonusMonths > 0) {
+      const eligible = await this.isEligibleForFounderOffer(
+        userId,
+        this.normalizeUserType(userType),
+        plan,
+      );
+      if (eligible) end.setMonth(end.getMonth() + founderBonusMonths);
+    }
 
     const subscription = await this.subscriptionModel.create({
       userId: new Types.ObjectId(userId),

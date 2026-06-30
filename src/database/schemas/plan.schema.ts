@@ -56,6 +56,9 @@ export const PlanSchema = new Schema(
     /** First-login Founder Launch Offer popup — title and countdown window, admin-renameable (e.g. "Festival Offer", "New Year Offer"). Pricing itself still comes from price/offers above. */
     founderOfferName: { type: String, default: "Founder Launch Offer" },
     founderOfferWindowDays: { type: Number, default: 7 },
+    /** Audience targeting — "new" means registered within founderOfferWindowDays of now. Both default true (show to everyone), matching pre-targeting behavior. */
+    founderOfferForNewUsers: { type: Boolean, default: true },
+    founderOfferForExistingUsers: { type: Boolean, default: true },
     policies: {
       imageRetentionDaysAfterExpiry: { type: Number, default: 45 },
     },

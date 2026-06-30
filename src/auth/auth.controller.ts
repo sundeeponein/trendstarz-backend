@@ -357,6 +357,17 @@ export class AuthController {
     }
   }
 
+  @Get("me/registration")
+  @UseGuards(JwtAuthGuard)
+  async getMyRegistration(@Req() req: any) {
+    const userId = req?.user?.userId || req?.user?.sub || req?.user?.id;
+    const role = req?.user?.role;
+    return this.authService.getMyRegistration(
+      String(userId || ""),
+      String(role || ""),
+    );
+  }
+
   @Post("session/opened")
   @UseGuards(JwtAuthGuard)
   async markSessionOpened(@Req() req: any) {

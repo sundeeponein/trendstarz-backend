@@ -606,6 +606,23 @@ export class AuthService {
     return null;
   }
 
+  /** Lightweight lookup so the live checkout page can show Founder Offer bonus eligibility without loading the full dashboard. */
+  async getMyRegistration(userId: string, role: string) {
+    const model = this.modelForRole(role);
+    if (!model || !userId) {
+      throw new BadRequestException("Invalid user session.");
+    }
+    const user = await model
+      .findById(userId)
+      .select("firstRegisteredAt createdAt")
+      .lean();
+    return {
+      success: true,
+      firstRegisteredAt:
+        (user as any)?.firstRegisteredAt || (user as any)?.createdAt || null,
+    };
+  }
+
   async markSessionOpened(userId: string, role: string) {
     const model = this.modelForRole(role);
     if (!model || !userId) {
