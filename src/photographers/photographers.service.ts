@@ -256,69 +256,36 @@ export class PhotographersService {
       flagCode: { $in: flagCodes },
     });
 
-    await this.profileFlagModel.updateMany(
-      {
-        userId: String(userId),
-        userType: "Photographer",
-        status: "Open",
-        flagCode: { $in: flagCodes },
-      },
-      {
-        $set: {
-          status: "Resolved",
-          reviewedBy: "AUTO",
-          reviewedAt: now,
-          reviewNotes:
-            "Cleared after user re-uploaded profile photo. Pending admin re-review.",
-        },
-        $push: {
-          auditLog: {
-            action: "auto_resolved",
-            actorId: String(userId),
-            actorRole: "user",
-            note: "User uploaded/replaced profile photo after flag.",
-            actedAt: now,
-          },
-        },
-      },
-    );
-
     if (hadOpenFlags > 0) {
-      await this.profileFlagModel.updateOne(
+      await this.profileFlagModel.updateMany(
         {
           userId: String(userId),
           userType: "Photographer",
-          flagCode: "PROFILE_PHOTO_PENDING_REVIEW",
           status: "Open",
+          flagCode: { $in: flagCodes },
         },
         {
-          $setOnInsert: {
-            createdAt: now,
-            auditLog: [
-              {
-                action: "created",
-                actorRole: "user",
-                note: "Re-uploaded after flag — awaiting admin review.",
-                actedAt: now,
-              },
-            ],
-          },
           $set: {
-            category: "Quality",
-            severity: "Low",
-            message:
-              "Profile photo was re-uploaded after a flag. Admin review required before the profile reappears.",
-            createdBy: String(userId),
+            status: "Resolved",
+            reviewedBy: "AUTO",
+            reviewedAt: now,
+            reviewNotes: "Auto-resolved: user re-uploaded profile photo.",
+          },
+          $push: {
+            auditLog: {
+              action: "auto_resolved",
+              actorId: String(userId),
+              actorRole: "user",
+              note: "User re-uploaded profile photo after flag.",
+              actedAt: now,
+            },
           },
         },
-        { upsert: true },
       );
+      // Re-upload after a flag auto-verifies — no pending queue needed.
+      // Only an explicit admin "Unverify" can block again.
       await this.photographerModel.findByIdAndUpdate(userId, {
-        $set: { adminReviewPending: true },
-      });
-    } else {
-      await this.photographerModel.findByIdAndUpdate(userId, {
-        $set: { adminReviewPending: false },
+        $set: { profilePhotoVerified: true, adminReviewPending: false },
       });
     }
   }
@@ -527,6 +494,9 @@ export class PhotographersService {
     ) {
       await this.clearGalleryFlags(userId);
     }
+    if (update.socialMedia) {
+      await this.autoVerifyTierIfFixed(userId, update.socialMedia);
+    }
     const {
       password: _pw,
       resetToken: _rt,
@@ -534,6 +504,61 @@ export class PhotographersService {
       ...safe
     } = updated as any;
     return safe;
+  }
+
+  private async autoVerifyTierIfFixed(userId: string, socialMedia: any[]) {
+    if (!Array.isArray(socialMedia) || socialMedia.length === 0) return;
+    const hasValidEntry = socialMedia.some(
+      (s: any) =>
+        String(s?.handle || "").trim() &&
+        (String(s?.tier || "").trim() || Number(s?.followersCount || 0) > 0),
+    );
+    if (!hasValidEntry) return;
+
+    const tierFlagCodes = [
+      "SOCIAL_LINK_MISSING",
+      "SOCIAL_LINK_BROKEN",
+      "SOCIAL_LINK_PRIVATE",
+      "TIER_MISMATCH",
+      "FOLLOWER_COUNT_MISMATCH",
+    ];
+    const openCount = await this.profileFlagModel.countDocuments({
+      userId: String(userId),
+      userType: "Photographer",
+      status: "Open",
+      flagCode: { $in: tierFlagCodes },
+    });
+    if (openCount === 0) return;
+
+    const now = new Date();
+    await this.profileFlagModel.updateMany(
+      {
+        userId: String(userId),
+        userType: "Photographer",
+        status: "Open",
+        flagCode: { $in: tierFlagCodes },
+      },
+      {
+        $set: {
+          status: "Resolved",
+          reviewedBy: "AUTO",
+          reviewedAt: now,
+          reviewNotes: "Auto-resolved: user updated social tier/handle.",
+        },
+        $push: {
+          auditLog: {
+            action: "auto_resolved",
+            actorId: String(userId),
+            actorRole: "user",
+            note: "User selected a valid social tier after admin unverify.",
+            actedAt: now,
+          },
+        },
+      },
+    );
+    await this.photographerModel.findByIdAndUpdate(userId, {
+      $set: { creatorTierVerified: true },
+    });
   }
 
   async searchPhotographers(query: {

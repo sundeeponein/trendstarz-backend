@@ -741,11 +741,20 @@ export class UsersService {
   private async publicProfileBlockedIds(
     userType: "Influencer" | "Brand" | "Photographer",
   ) {
+    // Social media is optional for Brands — social tier flags are informational
+    // only and must not block a brand from search or campaign-creation.
+    const blockCodes =
+      userType === "Brand"
+        ? [
+            ...PROFILE_PHOTO_VISIBILITY_BLOCK_FLAG_CODES,
+            ...LOCATION_VISIBILITY_BLOCK_FLAG_CODES,
+          ]
+        : PUBLIC_PROFILE_VISIBILITY_BLOCK_FLAG_CODES;
     const rows = await this.profileFlagModel
       .find({
         userType,
         status: "Open",
-        flagCode: { $in: PUBLIC_PROFILE_VISIBILITY_BLOCK_FLAG_CODES },
+        flagCode: { $in: blockCodes },
       })
       .select("userId")
       .lean();
@@ -866,7 +875,7 @@ export class UsersService {
       ...PROFILE_PHOTO_SAFETY_FLAG_CODES,
     ];
 
-    // Check whether the photo was previously flagged BEFORE resolving.
+    // Were there open flags before this upload?
     const hadOpenFlags = await this.profileFlagModel.countDocuments({
       userId: String(userId),
       userType,
@@ -874,79 +883,44 @@ export class UsersService {
       flagCode: { $in: flagCodes },
     });
 
-    // Resolve all existing open photo flags.
-    await this.profileFlagModel.updateMany(
-      {
-        userId: String(userId),
-        userType,
-        status: "Open",
-        flagCode: { $in: flagCodes },
-      },
-      {
-        $set: {
-          status: "Resolved",
-          reviewedBy: "AUTO",
-          reviewedAt: now,
-          reviewNotes:
-            "Cleared after user re-uploaded profile photo. Pending admin re-review.",
-        },
-        $push: {
-          auditLog: {
-            action: "auto_resolved",
-            actorId: String(userId),
-            actorRole: "user",
-            note: "User uploaded/replaced profile photo after flag.",
-            actedAt: now,
-          },
-        },
-      },
-    );
-
-    const model =
-      userType === "Photographer"
-        ? this.photographerModel
-        : this.influencerModel;
-
     if (hadOpenFlags > 0) {
-      // Photo was previously flagged — queue the re-upload for admin review.
-      // User stays blocked until admin clicks Verify on the new photo.
-      await this.profileFlagModel.updateOne(
+      await this.profileFlagModel.updateMany(
         {
           userId: String(userId),
           userType,
-          flagCode: "PROFILE_PHOTO_PENDING_REVIEW",
           status: "Open",
+          flagCode: { $in: flagCodes },
         },
         {
-          $setOnInsert: {
-            createdAt: now,
-            auditLog: [
-              {
-                action: "created",
-                actorRole: "user",
-                note: "Re-uploaded after flag — awaiting admin review.",
-                actedAt: now,
-              },
-            ],
-          },
           $set: {
-            category: "Quality",
-            severity: "Low",
-            message:
-              "Profile photo was re-uploaded after a flag. Admin review required before the profile reappears.",
-            createdBy: String(userId),
+            status: "Resolved",
+            reviewedBy: "AUTO",
+            reviewedAt: now,
+            reviewNotes: "Auto-resolved: user re-uploaded profile photo.",
+          },
+          $push: {
+            auditLog: {
+              action: "auto_resolved",
+              actorId: String(userId),
+              actorRole: "user",
+              note: "User re-uploaded profile photo after flag.",
+              actedAt: now,
+            },
           },
         },
-        { upsert: true },
       );
+      // Re-upload after a flag auto-verifies the photo — no pending queue.
+      // Admin must explicitly click "Unverify" to block again.
+      const model =
+        userType === "Photographer"
+          ? this.photographerModel
+          : this.influencerModel;
       await model.findByIdAndUpdate(userId, {
-        $set: { adminReviewPending: true },
-      });
-    } else {
-      await model.findByIdAndUpdate(userId, {
-        $set: { adminReviewPending: false },
+        $set: { profilePhotoVerified: true, adminReviewPending: false },
       });
     }
+    // If no flags were open this is a clean first-time upload or an update
+    // by an already-clean profile — leave profilePhotoVerified unchanged.
   }
 
   private async clearGalleryFlags(
@@ -988,6 +962,74 @@ export class UsersService {
         },
       },
     );
+  }
+
+  /**
+   * Auto-verify social tier when user provides a valid handle + tier/followers.
+   * Only triggers if admin previously unverified the tier (open tier flag exists).
+   * Once resolved, creatorTierVerified stays true until admin unverifies again.
+   */
+  private async autoVerifyTierIfFixed(
+    userId: string,
+    userType: "Influencer" | "Photographer",
+    socialMedia: any[],
+  ) {
+    if (!Array.isArray(socialMedia) || socialMedia.length === 0) return;
+    const hasValidEntry = socialMedia.some(
+      (s: any) =>
+        String(s?.handle || "").trim() &&
+        (String(s?.tier || "").trim() || Number(s?.followersCount || 0) > 0),
+    );
+    if (!hasValidEntry) return;
+
+    const tierFlagCodes = [
+      "SOCIAL_LINK_MISSING",
+      "SOCIAL_LINK_BROKEN",
+      "SOCIAL_LINK_PRIVATE",
+      "TIER_MISMATCH",
+      "FOLLOWER_COUNT_MISMATCH",
+    ];
+    const openCount = await this.profileFlagModel.countDocuments({
+      userId: String(userId),
+      userType,
+      status: "Open",
+      flagCode: { $in: tierFlagCodes },
+    });
+    if (openCount === 0) return;
+
+    const now = new Date();
+    await this.profileFlagModel.updateMany(
+      {
+        userId: String(userId),
+        userType,
+        status: "Open",
+        flagCode: { $in: tierFlagCodes },
+      },
+      {
+        $set: {
+          status: "Resolved",
+          reviewedBy: "AUTO",
+          reviewedAt: now,
+          reviewNotes: "Auto-resolved: user updated social tier/handle.",
+        },
+        $push: {
+          auditLog: {
+            action: "auto_resolved",
+            actorId: String(userId),
+            actorRole: "user",
+            note: "User selected a valid social tier after admin unverify.",
+            actedAt: now,
+          },
+        },
+      },
+    );
+    const model =
+      userType === "Photographer"
+        ? this.photographerModel
+        : this.influencerModel;
+    await model.findByIdAndUpdate(userId, {
+      $set: { creatorTierVerified: true },
+    });
   }
 
   /** True if the user has an active premium subscription right now. */
@@ -2749,6 +2791,9 @@ export class UsersService {
     }
     if (shouldClearGallery) {
       await this.clearGalleryFlags(userId, "Influencer");
+    }
+    if (updateData.socialMedia) {
+      await this.autoVerifyTierIfFixed(userId, "Influencer", updateData.socialMedia);
     }
     return { message: "Profile updated", user: updated };
   }

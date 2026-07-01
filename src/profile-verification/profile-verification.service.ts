@@ -755,32 +755,37 @@ export class ProfileVerificationService {
     }
     if (!this.hasLocation(profile)) await add("LOCATION_MISSING");
 
-    const socials = Array.isArray(profile?.socialMedia)
-      ? profile.socialMedia
-      : [];
-    if (!socials.length) {
-      await add("SOCIAL_LINK_MISSING");
-    } else {
-      const platforms = new Set<string>();
-      for (const sm of socials) {
-        const platform = String(sm?.platform || "")
-          .trim()
-          .toLowerCase();
-        const handle = String(sm?.handle || "").trim();
-        if (platform && platforms.has(platform))
-          await add("SOCIAL_LINK_DUPLICATE");
-        if (platform) platforms.add(platform);
-        if (!platform || !handle) await add("SOCIAL_LINK_BROKEN");
-        const followers = Number(sm?.followersCount || 0);
-        const expected = followers > 0 ? this.expectedTier(followers) : "";
-        if (
-          expected &&
-          this.hasText(sm?.tier) &&
-          expected !== String(sm.tier).trim()
-        ) {
-          await add("TIER_MISMATCH", {
-            message: `${sm.platform || "Social profile"} has ${followers} followers, expected ${expected} tier.`,
-          });
+    // Social media is optional for Brands — never auto-flag missing/broken social links.
+    // Admin can still manually add a social flag on a Brand profile for informational
+    // purposes, but it will NOT block the brand from search or campaign creation.
+    if (userType !== "Brand") {
+      const socials = Array.isArray(profile?.socialMedia)
+        ? profile.socialMedia
+        : [];
+      if (!socials.length) {
+        await add("SOCIAL_LINK_MISSING");
+      } else {
+        const platforms = new Set<string>();
+        for (const sm of socials) {
+          const platform = String(sm?.platform || "")
+            .trim()
+            .toLowerCase();
+          const handle = String(sm?.handle || "").trim();
+          if (platform && platforms.has(platform))
+            await add("SOCIAL_LINK_DUPLICATE");
+          if (platform) platforms.add(platform);
+          if (!platform || !handle) await add("SOCIAL_LINK_BROKEN");
+          const followers = Number(sm?.followersCount || 0);
+          const expected = followers > 0 ? this.expectedTier(followers) : "";
+          if (
+            expected &&
+            this.hasText(sm?.tier) &&
+            expected !== String(sm.tier).trim()
+          ) {
+            await add("TIER_MISMATCH", {
+              message: `${sm.platform || "Social profile"} has ${followers} followers, expected ${expected} tier.`,
+            });
+          }
         }
       }
     }
@@ -1194,33 +1199,41 @@ export class ProfileVerificationService {
       },
     });
     if (action === "approve" || action === "approve_warning") {
+      const reviewer = String(
+        actor?.name || actor?.email || actor?.userId || "TrendStarz Team",
+      );
+      // Clear ALL open photo flags (quality + policy + pending-review) so the
+      // profile is immediately unblocked from search and campaign invite lists.
       await this.flagModel.updateMany(
         {
           userId: String(userId),
           userType,
           status: "Open",
-          flagCode: "PROFILE_PHOTO_PENDING_REVIEW",
+          flagCode: { $in: Array.from(PROFILE_PHOTO_ADMIN_REVIEW_FLAG_CODES) },
         },
         {
           $set: {
             status: "Resolved",
-            reviewedBy: String(
-              actor?.name || actor?.email || actor?.userId || "TrendStarz Team",
-            ),
+            reviewedBy: reviewer,
             reviewedAt: new Date(),
-            reviewNotes: notes || "Profile photo approved by admin.",
+            reviewNotes: notes || "Profile approved by admin — photo accepted.",
           },
           $push: {
             auditLog: {
               action: "resolved",
               actorId: String(actor?.userId || actor?.id || ""),
               actorRole: "admin",
-              note: notes || "Profile photo approved by admin.",
+              note: notes || "Profile approved by admin.",
               actedAt: new Date(),
             },
           },
         },
       );
+      // Mark photo and tier as verified so re-upload / tier-change auto-verify
+      // from here on — until admin explicitly unverifies either.
+      await profileModel.findByIdAndUpdate(userId, {
+        $set: { profilePhotoVerified: true, creatorTierVerified: true },
+      });
     }
     return this.adminDetail(actor, userType, userId);
   }
