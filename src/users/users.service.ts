@@ -861,17 +861,26 @@ export class UsersService {
     userType: "Influencer" | "Photographer",
   ) {
     const now = new Date();
+    const flagCodes = [
+      ...PROFILE_PHOTO_QUALITY_FLAG_CODES,
+      ...PROFILE_PHOTO_SAFETY_FLAG_CODES,
+    ];
+
+    // Check whether the photo was previously flagged BEFORE resolving.
+    const hadOpenFlags = await this.profileFlagModel.countDocuments({
+      userId: String(userId),
+      userType,
+      status: "Open",
+      flagCode: { $in: flagCodes },
+    });
+
+    // Resolve all existing open photo flags.
     await this.profileFlagModel.updateMany(
       {
         userId: String(userId),
         userType,
         status: "Open",
-        flagCode: {
-          $in: [
-            ...PROFILE_PHOTO_QUALITY_FLAG_CODES,
-            ...PROFILE_PHOTO_SAFETY_FLAG_CODES,
-          ],
-        },
+        flagCode: { $in: flagCodes },
       },
       {
         $set: {
@@ -879,28 +888,65 @@ export class UsersService {
           reviewedBy: "AUTO",
           reviewedAt: now,
           reviewNotes:
-            "Automatically cleared after user uploaded a profile photo with guidelines.",
+            "Cleared after user re-uploaded profile photo. Pending admin re-review.",
         },
         $push: {
           auditLog: {
             action: "auto_resolved",
             actorId: String(userId),
             actorRole: "user",
-            note: "User uploaded/replaced profile photo.",
+            note: "User uploaded/replaced profile photo after flag.",
             actedAt: now,
           },
         },
       },
     );
+
     const model =
       userType === "Photographer"
         ? this.photographerModel
         : this.influencerModel;
-    await model.findByIdAndUpdate(userId, {
-      $set: {
-        adminReviewPending: false,
-      },
-    });
+
+    if (hadOpenFlags > 0) {
+      // Photo was previously flagged — queue the re-upload for admin review.
+      // User stays blocked until admin clicks Verify on the new photo.
+      await this.profileFlagModel.updateOne(
+        {
+          userId: String(userId),
+          userType,
+          flagCode: "PROFILE_PHOTO_PENDING_REVIEW",
+          status: "Open",
+        },
+        {
+          $setOnInsert: {
+            createdAt: now,
+            auditLog: [
+              {
+                action: "created",
+                actorRole: "user",
+                note: "Re-uploaded after flag — awaiting admin review.",
+                actedAt: now,
+              },
+            ],
+          },
+          $set: {
+            category: "Quality",
+            severity: "Low",
+            message:
+              "Profile photo was re-uploaded after a flag. Admin review required before the profile reappears.",
+            createdBy: String(userId),
+          },
+        },
+        { upsert: true },
+      );
+      await model.findByIdAndUpdate(userId, {
+        $set: { adminReviewPending: true },
+      });
+    } else {
+      await model.findByIdAndUpdate(userId, {
+        $set: { adminReviewPending: false },
+      });
+    }
   }
 
   private async clearGalleryFlags(

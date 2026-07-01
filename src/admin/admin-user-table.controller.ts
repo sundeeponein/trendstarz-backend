@@ -1718,6 +1718,9 @@ export class AdminUserTableController {
           profilePhotoFlagCodes,
           "Profile photo verified by admin.",
         );
+        // Clear the pending-review flag on the profile so the user reappears in
+        // search / campaign invite lists after admin verifies the re-uploaded photo.
+        user.adminReviewPending = false;
       } else if (PHOTO_POLICY_CODES.has(photoFlagCode)) {
         // Close all other photo flags first, then open the specific one
         await resolveFlags(

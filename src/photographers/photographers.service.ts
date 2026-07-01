@@ -233,27 +233,35 @@ export class PhotographersService {
 
   private async clearProfilePhotoFlags(userId: string) {
     const now = new Date();
+    const flagCodes = [
+      "PROFILE_PHOTO_PENDING_REVIEW",
+      "PROFILE_PHOTO_QUALITY",
+      "PROFILE_PHOTO_MISSING",
+      "PROFILE_PHOTO_SCREENSHOT",
+      "PROFILE_PHOTO_CELEBRITY",
+      "PROFILE_PHOTO_GROUP",
+      "PROFILE_PHOTO_BLURRY",
+      "PROFILE_PHOTO_LOGO",
+      "PROFILE_PHOTO_LOW_QUALITY",
+      "FACE_NOT_VISIBLE",
+      "PROFILE_PHOTO_POLICY",
+      "PROFILE_PHOTO_CONTACT_INFO",
+      "PROFILE_PHOTO_QR_CODE",
+    ];
+
+    const hadOpenFlags = await this.profileFlagModel.countDocuments({
+      userId: String(userId),
+      userType: "Photographer",
+      status: "Open",
+      flagCode: { $in: flagCodes },
+    });
+
     await this.profileFlagModel.updateMany(
       {
         userId: String(userId),
         userType: "Photographer",
         status: "Open",
-        flagCode: {
-          $in: [
-            "PROFILE_PHOTO_PENDING_REVIEW",
-            "PROFILE_PHOTO_MISSING",
-            "PROFILE_PHOTO_SCREENSHOT",
-            "PROFILE_PHOTO_CELEBRITY",
-            "PROFILE_PHOTO_GROUP",
-            "PROFILE_PHOTO_BLURRY",
-            "PROFILE_PHOTO_LOGO",
-            "PROFILE_PHOTO_LOW_QUALITY",
-            "FACE_NOT_VISIBLE",
-            "PROFILE_PHOTO_POLICY",
-            "PROFILE_PHOTO_CONTACT_INFO",
-            "PROFILE_PHOTO_QR_CODE",
-          ],
-        },
+        flagCode: { $in: flagCodes },
       },
       {
         $set: {
@@ -261,24 +269,58 @@ export class PhotographersService {
           reviewedBy: "AUTO",
           reviewedAt: now,
           reviewNotes:
-            "Automatically cleared after user uploaded a profile photo with guidelines.",
+            "Cleared after user re-uploaded profile photo. Pending admin re-review.",
         },
         $push: {
           auditLog: {
             action: "auto_resolved",
             actorId: String(userId),
             actorRole: "user",
-            note: "User uploaded/replaced profile photo.",
+            note: "User uploaded/replaced profile photo after flag.",
             actedAt: now,
           },
         },
       },
     );
-    await this.photographerModel.findByIdAndUpdate(userId, {
-      $set: {
-        adminReviewPending: false,
-      },
-    });
+
+    if (hadOpenFlags > 0) {
+      await this.profileFlagModel.updateOne(
+        {
+          userId: String(userId),
+          userType: "Photographer",
+          flagCode: "PROFILE_PHOTO_PENDING_REVIEW",
+          status: "Open",
+        },
+        {
+          $setOnInsert: {
+            createdAt: now,
+            auditLog: [
+              {
+                action: "created",
+                actorRole: "user",
+                note: "Re-uploaded after flag — awaiting admin review.",
+                actedAt: now,
+              },
+            ],
+          },
+          $set: {
+            category: "Quality",
+            severity: "Low",
+            message:
+              "Profile photo was re-uploaded after a flag. Admin review required before the profile reappears.",
+            createdBy: String(userId),
+          },
+        },
+        { upsert: true },
+      );
+      await this.photographerModel.findByIdAndUpdate(userId, {
+        $set: { adminReviewPending: true },
+      });
+    } else {
+      await this.photographerModel.findByIdAndUpdate(userId, {
+        $set: { adminReviewPending: false },
+      });
+    }
   }
 
   private async clearGalleryFlags(userId: string) {
