@@ -1171,7 +1171,7 @@ export class CampaignInvitesService {
 
     const transactions: any[] = await this.campaignTransactionModel
       .find(txQuery)
-      .select("inviteId payoutStatus payoutInitiatedAt payoutSettledAt")
+      .select("inviteId payerTotal recipientPayout gateway gatewayOrderId gatewayPaymentId utrNumber payoutStatus payoutGatewayProvider payoutInitiatedAt payoutSettledAt payoutTransferId payoutUtr")
       .lean();
 
     const byInviteId = new Map<string, any>();

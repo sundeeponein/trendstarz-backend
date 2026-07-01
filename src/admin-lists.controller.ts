@@ -683,7 +683,7 @@ export class AdminListsController {
           this.campaignTransactionModel
             .find({ campaignId: { $in: [...campaignIds, ...campaignIdKeys] } })
             .select(
-              "inviteId payoutStatus payoutInitiatedAt payoutSettledAt payoutUtr payoutTransferId recipientPayout",
+              "inviteId gateway gatewayOrderId gatewayPaymentId utrNumber payoutStatus payoutGatewayProvider payoutInitiatedAt payoutSettledAt payoutUtr payoutTransferId recipientPayout",
             )
             .lean(),
         ])
@@ -771,7 +771,12 @@ export class AdminListsController {
         postApprovedAt:
           submission?.reviewedAt || submission?.autoCompletedAt || null,
         // Payout to the participant for this invite.
+        paymentGateway: transaction?.gateway || null,
+        hostPaymentUtr: transaction?.utrNumber || null,
+        hostPaymentGatewayOrderId: transaction?.gatewayOrderId || null,
+        hostPaymentGatewayPaymentId: transaction?.gatewayPaymentId || null,
         payoutStatus: transaction?.payoutStatus || null,
+        payoutGatewayProvider: transaction?.payoutGatewayProvider || null,
         payoutDate: transaction?.payoutSettledAt || null,
         payoutInitiatedAt: transaction?.payoutInitiatedAt || null,
         payoutUtr: transaction?.payoutUtr || null,
