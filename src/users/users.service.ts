@@ -1514,10 +1514,11 @@ export class UsersService {
       );
     }
     if (categoryFilter) {
-      baseFilter.categories = new RegExp(
-        `^${this.escapeRegex(categoryFilter)}$`,
-        "i",
-      );
+      const cats = categoryFilter.split(",").map((c) => c.trim()).filter(Boolean);
+      baseFilter.categories =
+        cats.length === 1
+          ? new RegExp(`^${this.escapeRegex(cats[0])}$`, "i")
+          : { $in: cats.map((c) => new RegExp(`^${this.escapeRegex(c)}$`, "i")) };
     }
     if (searchQuery) {
       const re = new RegExp(this.escapeRegex(searchQuery), "i");
@@ -2382,13 +2383,25 @@ export class UsersService {
       try {
         const proPlan =
           await this.plansService.findProPlanForUserType(userType);
-        await this.plansService.activateSubscription(
+        const subscription = await this.plansService.activateSubscription(
           String(user._id),
           userType,
           String(proPlan._id),
           premiumDuration as "1m" | "3m" | "1y",
           "admin",
         );
+        // Sync legacy premiumEnd to the subscription's actual endDate (which
+        // includes any bonus months) so isCurrentlyPremium() stays accurate.
+        if (subscription?.endDate) {
+          const syncUpdate = { premiumEnd: subscription.endDate };
+          if (userType === "Brand") {
+            await this.brandModel.findByIdAndUpdate(id, syncUpdate);
+          } else if (userType === "Photographer") {
+            await this.photographerModel.findByIdAndUpdate(id, syncUpdate);
+          } else {
+            await this.influencerModel.findByIdAndUpdate(id, syncUpdate);
+          }
+        }
       } catch (e) {
         // Roll back legacy flags to keep user status and capabilities consistent.
         const rollback = {
