@@ -10,7 +10,16 @@ export const CampaignTransactionSchema = new Schema(
     },
     direction: {
       type: String,
-      enum: ["brand_to_influencer", "influencer_to_brand"],
+      enum: [
+        "brand_to_influencer",
+        "brand_to_photographer",
+        "photographer_to_influencer",
+        "photographer_to_photographer",
+        "influencer_to_brand",
+        "photographer_to_brand",
+        "influencer_to_photographer",
+        "influencer_to_influencer",
+      ],
       required: true,
     },
     campaignId: {
@@ -40,6 +49,7 @@ export const CampaignTransactionSchema = new Schema(
     agreedAmount: { type: Number, required: true },
     platformFee: { type: Number, required: true },
     payerTotal: { type: Number, required: true },
+    recipientFee: { type: Number, default: 0 },
     recipientPayout: { type: Number, required: true },
 
     // ── Payment gateway (swap field value to switch provider; no schema change needed) ──
@@ -140,6 +150,7 @@ export interface CampaignTransaction extends Document {
   agreedAmount: number;
   platformFee: number;
   payerTotal: number;
+  recipientFee: number;
   recipientPayout: number;
   gateway: "manual_upi" | "razorpay";
   paymentBatchId?: string;
