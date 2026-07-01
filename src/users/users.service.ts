@@ -759,11 +759,13 @@ export class UsersService {
   private async campaignProfileBlockedIds(
     userType: "Influencer" | "Brand" | "Photographer",
   ) {
+    // Block ALL photo-flagged users from campaign invites — quality flags
+    // (blurry, screenshot, face not visible) and safety/policy flags alike.
     const rows = await this.profileFlagModel
       .find({
         userType,
         status: "Open",
-        flagCode: { $in: PROFILE_PHOTO_SAFETY_FLAG_CODES },
+        flagCode: { $in: PROFILE_PHOTO_VISIBILITY_BLOCK_FLAG_CODES },
       })
       .select("userId")
       .lean();
@@ -866,19 +868,8 @@ export class UsersService {
         status: "Open",
         flagCode: {
           $in: [
-            "PROFILE_PHOTO_PENDING_REVIEW",
-            "PROFILE_PHOTO_MISSING",
-            "PROFILE_PHOTO_SCREENSHOT",
-            "PROFILE_PHOTO_CELEBRITY",
-            "PROFILE_PHOTO_GROUP",
-            "PROFILE_PHOTO_BLURRY",
-            "PROFILE_PHOTO_LOGO",
-            "PROFILE_PHOTO_LOW_QUALITY",
-            "FACE_NOT_VISIBLE",
-            "PROFILE_PHOTO_POLICY",
-            "PROFILE_PHOTO_CELEBRITY",
-            "PROFILE_PHOTO_CONTACT_INFO",
-            "PROFILE_PHOTO_QR_CODE",
+            ...PROFILE_PHOTO_QUALITY_FLAG_CODES,
+            ...PROFILE_PHOTO_SAFETY_FLAG_CODES,
           ],
         },
       },
@@ -1393,22 +1384,25 @@ export class UsersService {
       },
     };
 
-    const baseFilter: any = { status: "accepted" };
+    const baseFilter: any = { status: "accepted", isDeleted: { $ne: true } };
     const allowSocialLinks = await this.plansService.canViewSocialLinks(viewerId);
     if (campaignEligibleOnly) {
-      applyApprovedEligibilityFilter(baseFilter, {
-        photoField: "profileImages",
-        requireSocialTier: true,
-      });
+      // Campaign invite list: only require a registered+email-verified account.
+      // The host is actively choosing to invite this person, so platform-level
+      // quality checks (mobile verified, photo, social tier, admin approval) are
+      // not applied here — those are for discovery/featured surfaces only.
+      baseFilter.isEmailVerified = true;
+      this.applyExcludedIds(
+        baseFilter,
+        await this.campaignProfileBlockedIds("Influencer"),
+      );
     } else {
       this.applyPublicDiscoveryEligibilityFilter(baseFilter);
+      this.applyExcludedIds(
+        baseFilter,
+        await this.publicProfileBlockedIds("Influencer"),
+      );
     }
-    this.applyExcludedIds(
-      baseFilter,
-      campaignEligibleOnly
-        ? await this.campaignProfileBlockedIds("Influencer")
-        : await this.publicProfileBlockedIds("Influencer"),
-    );
     if (stateFilter) {
       baseFilter["location.state"] = new RegExp(
         `^${this.escapeRegex(stateFilter)}$`,
@@ -1438,6 +1432,8 @@ export class UsersService {
       baseFilter.$or = [
         { name: re },
         { username: re },
+        { email: re },
+        { phoneNumber: re },
         { "location.state": re },
         { categories: re },
       ];
