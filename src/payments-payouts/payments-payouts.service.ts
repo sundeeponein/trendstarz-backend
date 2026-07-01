@@ -22,6 +22,9 @@ import { RazorpayService } from "../payment/razorpay.service";
 type FeeSettings = {
   platformFeeEnabled: boolean;
   platformFeePercent: number;
+  brandFeePercent: number;
+  influencerFeePercent: number;
+  photographerFeePercent: number;
 };
 
 @Injectable()
@@ -72,13 +75,31 @@ export class PaymentsPayoutsService {
 
   private async getFeeSettings(): Promise<FeeSettings> {
     const settings: any = await this.appSettingsModel.findOne({}).lean();
+    const globalPercent =
+      typeof settings?.platformFeePercent === "number"
+        ? settings.platformFeePercent
+        : 10;
+    const rolePercent = (field: string) =>
+      typeof settings?.[field] === "number" ? settings[field] : globalPercent;
+    // Creator fees default to 0 (not the global rate) until explicitly enabled.
+    const creatorPercent = (field: string) =>
+      typeof settings?.[field] === "number" ? settings[field] : 0;
     return {
       platformFeeEnabled: !!settings?.platformFeeEnabled,
-      platformFeePercent:
-        typeof settings?.platformFeePercent === "number"
-          ? settings.platformFeePercent
-          : 10,
+      platformFeePercent: globalPercent,
+      brandFeePercent: rolePercent("brandFeePercent"),
+      influencerFeePercent: creatorPercent("influencerFeePercent"),
+      photographerFeePercent: creatorPercent("photographerFeePercent"),
     };
+  }
+
+  private getRoleBaseFeePercent(
+    feeSettings: FeeSettings,
+    payerRole: "brand" | "influencer" | "photographer",
+  ): number {
+    if (payerRole === "photographer") return feeSettings.photographerFeePercent;
+    if (payerRole === "influencer") return feeSettings.influencerFeePercent;
+    return feeSettings.brandFeePercent;
   }
 
   private async getPayoutReleaseWaitHours(): Promise<number> {
@@ -106,12 +127,16 @@ export class PaymentsPayoutsService {
    */
   private async getEffectiveCommissionPercent(
     userId: string,
-    userType: "brand" | "influencer",
+    userType: "brand" | "influencer" | "photographer",
     globalPercent: number,
   ): Promise<number> {
     try {
       const model =
-        userType === "brand" ? this.brandModel : this.influencerModel;
+        userType === "brand"
+          ? this.brandModel
+          : userType === "photographer"
+            ? this.photographerModel
+            : this.influencerModel;
       const user: any = await model.findById(userId).lean();
 
       if (!user || !user.commissionOverride?.enabled) {
@@ -415,27 +440,42 @@ export class PaymentsPayoutsService {
           `Invite ${String(invite?._id?.toString() ?? "")} has no valid agreed payout amount.`,
         );
       }
-      const inviteFee = calc.platformFeeEnabled
-        ? this.roundPercent(
-            inviteAgreedAmount,
-            Number(calc.platformFeePercent || 0),
-          )
-        : 0;
-      const invitePayerTotal =
-        calc.campaignType === "pay_to_join"
-          ? inviteAgreedAmount
-          : inviteAgreedAmount + inviteFee;
-      const inviteRecipientPayout =
-        calc.campaignType === "pay_to_join"
-          ? Math.max(inviteAgreedAmount - inviteFee, 0)
-          : inviteAgreedAmount;
+      const isPayToJoin = calc.campaignType === "pay_to_join";
       const influencerId = String(invite.influencerId);
-      const inviteRecipientRole =
+      const inviteRecipientRole: "influencer" | "photographer" =
         String(invite?.recipientRole || "")
           .trim()
           .toLowerCase() === "photographer"
           ? "photographer"
           : "influencer";
+      // Payer role: creator for pay_to_join (fees default 0 until enabled),
+      // brand for all regular campaigns.
+      const invitePayerRole: "brand" | "influencer" | "photographer" = isPayToJoin
+        ? inviteRecipientRole
+        : "brand";
+      const inviteBaseFeePercent = calc.feeSettings
+        ? this.getRoleBaseFeePercent(calc.feeSettings, invitePayerRole)
+        : Number(calc.platformFeePercent || 0);
+      const invitePayerUserId = isPayToJoin
+        ? String(invite.influencerId || "")
+        : String(campaign.brandId || "");
+      let inviteEffectiveFeePercent = inviteBaseFeePercent;
+      if (calc.platformFeeEnabled && invitePayerUserId && calc.feeSettings) {
+        inviteEffectiveFeePercent = await this.getEffectiveCommissionPercent(
+          invitePayerUserId,
+          invitePayerRole,
+          inviteBaseFeePercent,
+        );
+      }
+      const inviteFee = calc.platformFeeEnabled
+        ? this.roundPercent(inviteAgreedAmount, inviteEffectiveFeePercent)
+        : 0;
+      const invitePayerTotal = isPayToJoin
+        ? inviteAgreedAmount
+        : inviteAgreedAmount + inviteFee;
+      const inviteRecipientPayout = isPayToJoin
+        ? Math.max(inviteAgreedAmount - inviteFee, 0)
+        : inviteAgreedAmount;
       const recipientId =
         calc.campaignType === "pay_to_join"
           ? String(campaign.brandId)
@@ -567,25 +607,40 @@ export class PaymentsPayoutsService {
         "No valid accepted payout amounts found. Set campaign payout or invite agreed amount.",
       );
     }
-    const { platformFeeEnabled, platformFeePercent } =
-      await this.getFeeSettings();
+    const feeSettings = await this.getFeeSettings();
+    const { platformFeeEnabled } = feeSettings;
 
-    // Get effective commission percent after any overrides for the brand (payer)
-    const effectiveCommissionPercent = await this.getEffectiveCommissionPercent(
-      String(campaign.brandId),
-      "brand",
-      platformFeePercent,
-    );
+    const campaignType = campaign.campaignType || "paid_collab";
+    const isPayToJoin = campaignType === "pay_to_join";
+
+    // Determine payer: brand for regular campaigns; creator for pay_to_join.
+    // Use the campaign's declared recipient role to find the creator's user type.
+    const creatorRole: "influencer" | "photographer" =
+      String(campaign.inviteRecipientRole || acceptedInvites[0]?.recipientRole || "influencer")
+        .toLowerCase() === "photographer"
+        ? "photographer"
+        : "influencer";
+
+    const payerUserId = isPayToJoin
+      ? String(acceptedInvites[0]?.influencerId || "")
+      : String(campaign.brandId);
+    const payerUserType: "brand" | "influencer" | "photographer" = isPayToJoin
+      ? creatorRole
+      : "brand";
+
+    const baseFeePercent = this.getRoleBaseFeePercent(feeSettings, payerUserType);
+    const effectiveCommissionPercent = payerUserId
+      ? await this.getEffectiveCommissionPercent(payerUserId, payerUserType, baseFeePercent)
+      : baseFeePercent;
 
     const fee = platformFeeEnabled
       ? this.roundPercent(agreedAmount, effectiveCommissionPercent)
       : 0;
 
-    const campaignType = campaign.campaignType || "paid_collab";
     let payerTotal = agreedAmount;
     let recipientPayoutTotal = agreedAmount;
 
-    if (campaignType === "pay_to_join") {
+    if (isPayToJoin) {
       payerTotal = agreedAmount;
       recipientPayoutTotal = Math.max(agreedAmount - fee, 0);
     } else {
@@ -605,7 +660,8 @@ export class PaymentsPayoutsService {
       payerTotal,
       recipientPayoutTotal,
       platformFeeEnabled,
-      platformFeePercent: effectiveCommissionPercent, // Use effective percent instead of global
+      platformFeePercent: effectiveCommissionPercent,
+      feeSettings,
       trustLabels: [
         "You pay only for accepted recipients",
         "Payment secured by TrendStarz",

@@ -295,6 +295,9 @@ export class AdminListsController {
       paymentGatewayMode: "razorpay_fallback",
       platformFeeEnabled: false,
       platformFeePercent: commissionDefaults.platformFeePercent,
+      brandFeePercent: null,
+      influencerFeePercent: 0,
+      photographerFeePercent: 0,
       gstPercent: commissionDefaults.gstPercent,
       submissionApprovalWaitHours:
         workflowTimingDefaults.submissionApprovalWaitHours,
@@ -454,14 +457,20 @@ export class AdminListsController {
       }
       next.maxCampaignDurationDays = Math.floor(days);
     }
+    const roleSpecificFeeKeys = ["brandFeePercent", "influencerFeePercent", "photographerFeePercent"];
     for (const key of [
       "platformFeePercent",
+      "brandFeePercent",
+      "influencerFeePercent",
+      "photographerFeePercent",
       "gstPercent",
       "earlyAccessCommissionPercent",
       "partnerCommissionPercent",
       "internalTestCommissionPercent",
     ]) {
       if (next[key] === undefined) continue;
+      // Role-specific fee can be null (meaning "use global platformFeePercent")
+      if (roleSpecificFeeKeys.includes(key) && next[key] === null) continue;
       const percent = Number(next[key]);
       if (!Number.isFinite(percent) || percent < 0 || percent > 100) {
         throw new BadRequestException(
@@ -1662,12 +1671,16 @@ export class AdminListsController {
     const normalizedType = String(userType || "")
       .trim()
       .toLowerCase();
-    if (!["influencer", "brand"].includes(normalizedType)) {
-      throw new BadRequestException("userType must be 'influencer' or 'brand'");
+    if (!["influencer", "brand", "photographer"].includes(normalizedType)) {
+      throw new BadRequestException("userType must be 'influencer', 'brand', or 'photographer'");
     }
 
     const model =
-      normalizedType === "influencer" ? this.influencerModel : this.brandModel;
+      normalizedType === "influencer"
+        ? this.influencerModel
+        : normalizedType === "photographer"
+          ? this.photographerModel
+          : this.brandModel;
 
     const user: any = await model
       .findById(userId)
@@ -1724,12 +1737,16 @@ export class AdminListsController {
     const normalizedType = String(userType || "")
       .trim()
       .toLowerCase();
-    if (!["influencer", "brand"].includes(normalizedType)) {
-      throw new BadRequestException("userType must be 'influencer' or 'brand'");
+    if (!["influencer", "brand", "photographer"].includes(normalizedType)) {
+      throw new BadRequestException("userType must be 'influencer', 'brand', or 'photographer'");
     }
 
     const model =
-      normalizedType === "influencer" ? this.influencerModel : this.brandModel;
+      normalizedType === "influencer"
+        ? this.influencerModel
+        : normalizedType === "photographer"
+          ? this.photographerModel
+          : this.brandModel;
 
     // Validate override type
     if (
@@ -1795,6 +1812,9 @@ export class AdminListsController {
       early_access_brand: "Early Access",
       partner_brand: "Partner",
       internal_test_brand: "Internal/Test",
+      early_access_photographer: "Early Access",
+      partner_photographer: "Partner",
+      internal_test_photographer: "Internal/Test",
       launch_partner: "Partner",
       zero_commission_creator: "Early Access",
       zero_commission_brand: "Early Access",
@@ -1849,12 +1869,16 @@ export class AdminListsController {
     const normalizedType = String(userType || "")
       .trim()
       .toLowerCase();
-    if (!["influencer", "brand"].includes(normalizedType)) {
-      throw new BadRequestException("userType must be 'influencer' or 'brand'");
+    if (!["influencer", "brand", "photographer"].includes(normalizedType)) {
+      throw new BadRequestException("userType must be 'influencer', 'brand', or 'photographer'");
     }
 
     const model =
-      normalizedType === "influencer" ? this.influencerModel : this.brandModel;
+      normalizedType === "influencer"
+        ? this.influencerModel
+        : normalizedType === "photographer"
+          ? this.photographerModel
+          : this.brandModel;
 
     const currentUser = await model.findById(userId).select("adminTags").lean();
     if (!currentUser) {
@@ -1900,20 +1924,25 @@ export class AdminListsController {
     const normalizedType = String(userType || "")
       .trim()
       .toLowerCase();
-    if (!["influencer", "brand"].includes(normalizedType)) {
-      throw new BadRequestException("userType must be 'influencer' or 'brand'");
+    if (!["influencer", "brand", "photographer"].includes(normalizedType)) {
+      throw new BadRequestException("userType must be 'influencer', 'brand', or 'photographer'");
     }
 
     const model =
-      normalizedType === "influencer" ? this.influencerModel : this.brandModel;
+      normalizedType === "influencer"
+        ? this.influencerModel
+        : normalizedType === "photographer"
+          ? this.photographerModel
+          : this.brandModel;
+
+    const selectFields =
+      normalizedType === "brand"
+        ? "brandName email commissionBadge commissionOverride"
+        : "name email commissionBadge commissionOverride";
 
     const users = await model
       .find({ commissionBadge: badge })
-      .select(
-        normalizedType === "influencer"
-          ? "name email commissionBadge commissionOverride"
-          : "brandName email commissionBadge commissionOverride",
-      )
+      .select(selectFields)
       .lean();
 
     return {

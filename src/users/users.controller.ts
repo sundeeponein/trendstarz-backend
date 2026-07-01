@@ -327,6 +327,7 @@ export class UsersController {
     @Query("smartLocationPriority") smartLocationPriority?: string,
     @Query("category") category?: string,
     @Query("q") q?: string,
+    @Query("campaignEligible") campaignEligible?: string,
     @Query("countSearch") countSearch?: string,
     @Query("countReason") countReason?: string,
     @Req() req?: Request,
@@ -345,6 +346,9 @@ export class UsersController {
     const smartPriority =
       String(smartLocationPriority || "").toLowerCase() === "1" ||
       String(smartLocationPriority || "").toLowerCase() === "true";
+    const campaignEligibleOnly =
+      String(campaignEligible || "").toLowerCase() === "1" ||
+      String(campaignEligible || "").toLowerCase() === "true";
     const result = await this.usersService.getInfluencers(
       page ? parseInt(page, 10) : undefined,
       limit ? parseInt(limit, 10) : undefined,
@@ -357,6 +361,7 @@ export class UsersController {
         viewerState,
         viewerDistrict,
         smartLocationPriority: smartPriority,
+        campaignEligible: campaignEligibleOnly,
         category,
         q,
       },

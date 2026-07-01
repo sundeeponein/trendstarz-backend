@@ -756,6 +756,24 @@ export class UsersService {
     ];
   }
 
+  private async campaignProfileBlockedIds(
+    userType: "Influencer" | "Brand" | "Photographer",
+  ) {
+    const rows = await this.profileFlagModel
+      .find({
+        userType,
+        status: "Open",
+        flagCode: { $in: PROFILE_PHOTO_SAFETY_FLAG_CODES },
+      })
+      .select("userId")
+      .lean();
+    return [
+      ...new Set(
+        (rows || []).map((row: any) => String(row.userId)).filter(Boolean),
+      ),
+    ];
+  }
+
   private async hasOpenPublicProfileBlock(
     userId: any,
     userType: "Influencer" | "Brand" | "Photographer",
@@ -1349,6 +1367,7 @@ export class UsersService {
       viewerState?: string;
       viewerDistrict?: string;
       smartLocationPriority?: boolean;
+      campaignEligible?: boolean;
       category?: string;
       q?: string;
     },
@@ -1361,6 +1380,7 @@ export class UsersService {
     const viewerDistrict = String(options?.viewerDistrict || "").trim();
     const categoryFilter = String(options?.category || "").trim();
     const searchQuery = String(options?.q || "").trim();
+    const campaignEligibleOnly = !!options?.campaignEligible;
     const hasManualLocationFilter = !!stateFilter || !!districtFilter;
     const useSmartLocationPriority =
       !!options?.smartLocationPriority && !hasManualLocationFilter;
@@ -1375,10 +1395,19 @@ export class UsersService {
 
     const baseFilter: any = { status: "accepted" };
     const allowSocialLinks = await this.plansService.canViewSocialLinks(viewerId);
-    this.applyPublicDiscoveryEligibilityFilter(baseFilter);
+    if (campaignEligibleOnly) {
+      applyApprovedEligibilityFilter(baseFilter, {
+        photoField: "profileImages",
+        requireSocialTier: true,
+      });
+    } else {
+      this.applyPublicDiscoveryEligibilityFilter(baseFilter);
+    }
     this.applyExcludedIds(
       baseFilter,
-      await this.publicProfileBlockedIds("Influencer"),
+      campaignEligibleOnly
+        ? await this.campaignProfileBlockedIds("Influencer")
+        : await this.publicProfileBlockedIds("Influencer"),
     );
     if (stateFilter) {
       baseFilter["location.state"] = new RegExp(
