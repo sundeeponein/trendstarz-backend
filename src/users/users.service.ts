@@ -1387,11 +1387,14 @@ export class UsersService {
     const baseFilter: any = { status: "accepted", isDeleted: { $ne: true } };
     const allowSocialLinks = await this.plansService.canViewSocialLinks(viewerId);
     if (campaignEligibleOnly) {
-      // Campaign invite list: only require a registered+email-verified account.
-      // The host is actively choosing to invite this person, so platform-level
-      // quality checks (mobile verified, photo, social tier, admin approval) are
-      // not applied here — those are for discovery/featured surfaces only.
+      // Campaign invite list: must be email-verified AND admin-approved (or manually
+      // verified by admin). Profile completeness (photo, location, social tier) is
+      // NOT required — manually-verified users may still be building their profile.
       baseFilter.isEmailVerified = true;
+      baseFilter.$or = [
+        { verifiedByTrendStarz: true },
+        { verificationStatus: "approved" },
+      ];
       this.applyExcludedIds(
         baseFilter,
         await this.campaignProfileBlockedIds("Influencer"),
