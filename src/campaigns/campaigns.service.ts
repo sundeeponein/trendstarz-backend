@@ -1156,6 +1156,81 @@ export class CampaignsService {
     return this.campaignModel.findById(id).lean();
   }
 
+  /**
+   * Fields that become immutable once a campaign is approved (active).
+   * These form the "contract" between brand and creators — changing them
+   * after someone has accepted would be a breach of trust.
+   */
+  private readonly LOCKED_ON_APPROVAL = [
+    "title",
+    "campaignType",
+    "platforms",
+    "socialMedia",
+    "pricePerInfluencer",
+    "budgetMin",
+    "budgetMax",
+    "image",
+    "images",
+  ] as const;
+
+  /**
+   * Additional fields locked once any influencer has accepted (confirmed).
+   * These are part of the work agreement — altering them after acceptance
+   * creates a dispute risk.
+   */
+  private readonly LOCKED_ON_ACCEPTANCE = [
+    "description",
+    "deliverables",
+    "specialInstructions",
+    "inviteBenefits",
+    "payToJoinBenefits",
+    "payToJoinInstructions",
+    "productDescription",
+    "timelineStart",
+    "venueName",
+    "venueAddress",
+    "venueCity",
+    "venueDistrict",
+    "venueState",
+    "venueGoogleMapUrl",
+  ] as const;
+
+  private async assertEditableFields(campaign: any, incoming: any): Promise<void> {
+    const status = String(campaign.status || "");
+    const isApproved = status === "active" || status === "completed";
+    if (!isApproved) return; // draft / pending_review / needs_changes → all editable
+
+    // Check fields locked on approval
+    for (const field of this.LOCKED_ON_APPROVAL) {
+      if (!(field in incoming)) continue;
+      const oldVal = JSON.stringify(campaign[field] ?? null);
+      const newVal = JSON.stringify(incoming[field] ?? null);
+      if (oldVal !== newVal) {
+        throw new BadRequestException(
+          `"${field}" cannot be changed after the campaign is approved.`,
+        );
+      }
+    }
+
+    // Check acceptance-locked fields only when someone has actually accepted
+    const acceptedCount = await this.campaignInviteModel.countDocuments({
+      campaignId: campaign._id,
+      status: { $in: ["accepted", "payment_confirmed", "working", "submitted", "completed", "approved"] },
+    });
+    if (acceptedCount === 0) return;
+
+    for (const field of this.LOCKED_ON_ACCEPTANCE) {
+      if (!(field in incoming)) continue;
+      const oldVal = JSON.stringify(campaign[field] ?? null);
+      const newVal = JSON.stringify(incoming[field] ?? null);
+      if (oldVal !== newVal) {
+        throw new BadRequestException(
+          `"${field}" cannot be changed after an influencer has confirmed participation.`,
+        );
+      }
+    }
+  }
+
   async update(id: string, brandId: string, data: any) {
     const campaign = await this.campaignModel.findById(id);
     if (!campaign) throw new NotFoundException("Campaign not found");
@@ -1206,6 +1281,10 @@ export class CampaignsService {
         data.completedAt = new Date();
       }
     }
+
+    // ── Status-based field-lock enforcement ────────────────────────────────
+    await this.assertEditableFields(campaign, data);
+    // ────────────────────────────────────────────────────────────────────────
 
     const caps = await this.plansService.getUserPlanCapabilities(brandId);
     const settings = await this.appSettingsModel.findOne({}).lean().exec();
