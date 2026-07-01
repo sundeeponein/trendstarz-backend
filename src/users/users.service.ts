@@ -1478,10 +1478,11 @@ export class UsersService {
       // Campaign invite list: must be email-verified AND admin-approved (or manually
       // verified by admin). Profile completeness (photo, location, social tier) is
       // NOT required — manually-verified users may still be building their profile.
+      // Use $and so the search-query $or (set below) cannot overwrite this condition.
       baseFilter.isEmailVerified = true;
-      baseFilter.$or = [
-        { verifiedByTrendStarz: true },
-        { verificationStatus: "approved" },
+      baseFilter.$and = [
+        ...(Array.isArray(baseFilter.$and) ? baseFilter.$and : []),
+        { $or: [{ verifiedByTrendStarz: true }, { verificationStatus: "approved" }] },
       ];
       this.applyExcludedIds(
         baseFilter,
@@ -1520,13 +1521,18 @@ export class UsersService {
     }
     if (searchQuery) {
       const re = new RegExp(this.escapeRegex(searchQuery), "i");
-      baseFilter.$or = [
-        { name: re },
-        { username: re },
-        { email: re },
-        { phoneNumber: re },
-        { "location.state": re },
-        { categories: re },
+      baseFilter.$and = [
+        ...(Array.isArray(baseFilter.$and) ? baseFilter.$and : []),
+        {
+          $or: [
+            { name: re },
+            { username: re },
+            { email: re },
+            { phoneNumber: re },
+            { "location.state": re },
+            { categories: re },
+          ],
+        },
       ];
     }
 
