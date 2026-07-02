@@ -295,6 +295,8 @@ export const InfluencerSchema = new Schema(
         changedByName: { type: String },
         changedAt: { type: Date, default: Date.now },
         seen: { type: Boolean, default: false },
+        userAction: { type: String, enum: ["confirmed", "cancelled"] },
+        respondedAt: { type: Date },
       },
     ],
     collaborationAvailability: {
@@ -426,6 +428,8 @@ export const BrandSchema = new Schema(
         changedByName: { type: String },
         changedAt: { type: Date, default: Date.now },
         seen: { type: Boolean, default: false },
+        userAction: { type: String, enum: ["confirmed", "cancelled"] },
+        respondedAt: { type: Date },
       },
     ],
     googleMapAddress: { type: String },
@@ -660,6 +664,8 @@ export const PhotographerSchema = new Schema(
         changedByName: { type: String },
         changedAt: { type: Date, default: Date.now },
         seen: { type: Boolean, default: false },
+        userAction: { type: String, enum: ["confirmed", "cancelled"] },
+        respondedAt: { type: Date },
       },
     ],
     collaborationAvailability: {

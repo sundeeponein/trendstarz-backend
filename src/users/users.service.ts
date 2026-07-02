@@ -326,7 +326,10 @@ export class UsersService {
     user.galleryImages = [];
     if (primaryImage && typeof primaryImage === "object") {
       user.profileImage =
-        user.profileImage || primaryImage.url || primaryImage.secure_url || null;
+        user.profileImage ||
+        primaryImage.url ||
+        primaryImage.secure_url ||
+        null;
       user.profileImagePublicId =
         user.profileImagePublicId ||
         primaryImage.public_id ||
@@ -1127,7 +1130,9 @@ export class UsersService {
       products: hideGallery ? [] : products,
       foundedYear,
       companySize,
-      contactPersonName: allowAccess ? (contactPersonName || undefined) : undefined,
+      contactPersonName: allowAccess
+        ? contactPersonName || undefined
+        : undefined,
       website: allowAccess ? website : undefined,
       googleMapAddress,
       promotionalPrice,
@@ -1475,7 +1480,8 @@ export class UsersService {
     };
 
     const baseFilter: any = { status: "accepted", isDeleted: { $ne: true } };
-    const allowSocialLinks = await this.plansService.canViewSocialLinks(viewerId);
+    const allowSocialLinks =
+      await this.plansService.canViewSocialLinks(viewerId);
     if (campaignEligibleOnly) {
       // Campaign invite list: must be email-verified AND admin-approved (or manually
       // verified by admin). Profile completeness (photo, location, social tier) is
@@ -1484,7 +1490,12 @@ export class UsersService {
       baseFilter.isEmailVerified = true;
       baseFilter.$and = [
         ...(Array.isArray(baseFilter.$and) ? baseFilter.$and : []),
-        { $or: [{ verifiedByTrendStarz: true }, { verificationStatus: "approved" }] },
+        {
+          $or: [
+            { verifiedByTrendStarz: true },
+            { verificationStatus: "approved" },
+          ],
+        },
       ];
       this.applyExcludedIds(
         baseFilter,
@@ -1516,11 +1527,16 @@ export class UsersService {
       );
     }
     if (categoryFilter) {
-      const cats = categoryFilter.split(",").map((c) => c.trim()).filter(Boolean);
+      const cats = categoryFilter
+        .split(",")
+        .map((c) => c.trim())
+        .filter(Boolean);
       baseFilter.categories =
         cats.length === 1
           ? new RegExp(`^${this.escapeRegex(cats[0])}$`, "i")
-          : { $in: cats.map((c) => new RegExp(`^${this.escapeRegex(c)}$`, "i")) };
+          : {
+              $in: cats.map((c) => new RegExp(`^${this.escapeRegex(c)}$`, "i")),
+            };
     }
     if (searchQuery) {
       const re = new RegExp(this.escapeRegex(searchQuery), "i");
@@ -2089,8 +2105,14 @@ export class UsersService {
   /** Eligible-only, weighted-score selection for the Welcome Page "Featured Influencers" section. */
   async getFeaturedInfluencers(limit = 8) {
     const filter: any = {};
-    applyApprovedEligibilityFilter(filter, { photoField: "profileImages", requireSocialTier: true });
-    this.applyExcludedIds(filter, await this.publicProfileBlockedIds("Influencer"));
+    applyApprovedEligibilityFilter(filter, {
+      photoField: "profileImages",
+      requireSocialTier: true,
+    });
+    this.applyExcludedIds(
+      filter,
+      await this.publicProfileBlockedIds("Influencer"),
+    );
     return fetchFeaturedProfilesByScore(
       this.influencerModel,
       filter,
@@ -2099,7 +2121,13 @@ export class UsersService {
       {
         from: "campaigninvites",
         matchField: "influencerId",
-        statusIn: ["accepted", "payment_confirmed", "working", "submitted", "completed"],
+        statusIn: [
+          "accepted",
+          "payment_confirmed",
+          "working",
+          "submitted",
+          "completed",
+        ],
         dateField: "updatedAt",
         windowDays: 30,
       },
@@ -2109,7 +2137,10 @@ export class UsersService {
   /** Eligible-only, weighted-score selection for the Welcome Page "Featured Brands" section. */
   async getFeaturedBrands(limit = 6) {
     const filter: any = {};
-    applyApprovedEligibilityFilter(filter, { photoField: "brandLogo", requireSocialTier: false });
+    applyApprovedEligibilityFilter(filter, {
+      photoField: "brandLogo",
+      requireSocialTier: false,
+    });
     this.applyExcludedIds(filter, await this.publicProfileBlockedIds("Brand"));
     return fetchFeaturedProfilesByScore(
       this.brandModel,
@@ -2324,7 +2355,8 @@ export class UsersService {
     await user.save();
 
     return {
-      message: "User soft deleted; profile image retained and gallery/product media cleaned",
+      message:
+        "User soft deleted; profile image retained and gallery/product media cleaned",
       removedImages: publicIds.length,
     };
   }
@@ -2510,7 +2542,9 @@ export class UsersService {
       googleMapAddress: user.googleMapAddress || "",
       profileImages: user.profileImages || [],
       socialMedia: user.socialMedia || [],
-      adminSocialNotifications: (user.adminSocialNotifications || []).filter((n: any) => !n.seen),
+      adminSocialNotifications: (user.adminSocialNotifications || []).filter(
+        (n: any) => !n.seen,
+      ),
       collaborationAvailability: user.collaborationAvailability || null,
       contact: user.contact || { whatsapp: false, email: false, call: false },
       isPremium,
@@ -2531,11 +2565,16 @@ export class UsersService {
     };
   }
 
-  async dismissAdminSocialNotifications(userId: string): Promise<void> {
-    await this.influencerModel.updateOne(
-      { _id: userId },
-      { $set: { "adminSocialNotifications.$[].seen": true } },
-    );
+  async dismissAdminSocialNotifications(
+    userId: string,
+    action?: "confirmed" | "cancelled",
+  ): Promise<void> {
+    const set: any = { "adminSocialNotifications.$[].seen": true };
+    if (action === "confirmed" || action === "cancelled") {
+      set["adminSocialNotifications.$[].userAction"] = action;
+      set["adminSocialNotifications.$[].respondedAt"] = new Date();
+    }
+    await this.influencerModel.updateOne({ _id: userId }, { $set: set });
   }
 
   async getBrandProfileById(userId: string) {
@@ -2814,7 +2853,11 @@ export class UsersService {
       await this.clearGalleryFlags(userId, "Influencer");
     }
     if (updateData.socialMedia) {
-      await this.autoVerifyTierIfFixed(userId, "Influencer", updateData.socialMedia);
+      await this.autoVerifyTierIfFixed(
+        userId,
+        "Influencer",
+        updateData.socialMedia,
+      );
     }
     return { message: "Profile updated", user: updated };
   }

@@ -493,9 +493,12 @@ export class UsersController {
 
   @UseGuards(JwtAuthGuard)
   @Patch("influencer-profile/admin-social-notifications/dismiss")
-  async dismissAdminSocialNotifications(@Req() req: any) {
+  async dismissAdminSocialNotifications(
+    @Req() req: any,
+    @Body() body?: { action?: "confirmed" | "cancelled" },
+  ) {
     const userId = req.user?.userId || req.user?.sub || req.user?.id;
-    await this.usersService.dismissAdminSocialNotifications(userId);
+    await this.usersService.dismissAdminSocialNotifications(userId, body?.action);
     return { message: "Notifications dismissed" };
   }
 }
