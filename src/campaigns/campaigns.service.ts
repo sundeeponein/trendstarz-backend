@@ -1195,6 +1195,19 @@ export class CampaignsService {
     "venueGoogleMapUrl",
   ] as const;
 
+  private stripMongoIds(val: any): any {
+    if (Array.isArray(val)) return val.map((v) => this.stripMongoIds(v));
+    if (val && typeof val === "object") {
+      const out: any = {};
+      for (const k of Object.keys(val)) {
+        if (k === "_id" || k === "__v") continue;
+        out[k] = this.stripMongoIds(val[k]);
+      }
+      return out;
+    }
+    return val;
+  }
+
   private async assertEditableFields(campaign: any, incoming: any): Promise<void> {
     const status = String(campaign.status || "");
     const isApproved = status === "active" || status === "completed";
@@ -1203,8 +1216,8 @@ export class CampaignsService {
     // Check fields locked on approval
     for (const field of this.LOCKED_ON_APPROVAL) {
       if (!(field in incoming)) continue;
-      const oldVal = JSON.stringify(campaign[field] ?? null);
-      const newVal = JSON.stringify(incoming[field] ?? null);
+      const oldVal = JSON.stringify(this.stripMongoIds(campaign[field] ?? null));
+      const newVal = JSON.stringify(this.stripMongoIds(incoming[field] ?? null));
       if (oldVal !== newVal) {
         throw new BadRequestException(
           `"${field}" cannot be changed after the campaign is approved.`,
@@ -1221,8 +1234,8 @@ export class CampaignsService {
 
     for (const field of this.LOCKED_ON_ACCEPTANCE) {
       if (!(field in incoming)) continue;
-      const oldVal = JSON.stringify(campaign[field] ?? null);
-      const newVal = JSON.stringify(incoming[field] ?? null);
+      const oldVal = JSON.stringify(this.stripMongoIds(campaign[field] ?? null));
+      const newVal = JSON.stringify(this.stripMongoIds(incoming[field] ?? null));
       if (oldVal !== newVal) {
         throw new BadRequestException(
           `"${field}" cannot be changed after an influencer has confirmed participation.`,
