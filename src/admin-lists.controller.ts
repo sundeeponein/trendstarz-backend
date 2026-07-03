@@ -785,6 +785,7 @@ export class AdminListsController {
         postApproved: submission?.status === "approved",
         postApprovedAt:
           submission?.reviewedAt || submission?.autoCompletedAt || null,
+        submittedAt: submission?.submittedAt || null,
         // Payout to the participant for this invite.
         paymentGateway: transaction?.gateway || null,
         hostPaymentUtr: transaction?.utrNumber || null,

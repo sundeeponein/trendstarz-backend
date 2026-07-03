@@ -63,6 +63,8 @@ export class DashboardService {
           inviteId: invite._id,
           inviteStatus: st,
           metrics: invite.analytics,
+          selectedPlatform: invite.selectedPlatform,
+          selectedContentType: invite.selectedContentType,
         });
       }
     }
