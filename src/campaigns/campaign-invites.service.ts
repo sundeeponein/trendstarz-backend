@@ -2985,16 +2985,16 @@ export class CampaignInvitesService {
     if (!submission) throw new NotFoundException("Submission not found");
 
     const now = new Date();
-    if (action === "approve" || action === "dispute") {
+    // A host can flag an issue at any point during the review window — only
+    // "approve" (Mark Completed) is gated behind the review-wait period.
+    if (action === "approve") {
       const waitHours = await this.getSubmissionApprovalWaitHours();
       const submittedAtRaw =
         submission.submittedAt || submission.updatedAt || submission.createdAt;
 
       if (!submittedAtRaw) {
         throw new BadRequestException(
-          action === "approve"
-            ? `Review period active. Completion confirmation unlocks in ${waitHours} hours after influencer submission.`
-            : `Review period active. Issues can be raised after ${waitHours} hours from influencer submission.`,
+          `Review period active. Completion confirmation unlocks in ${waitHours} hours after influencer submission.`,
         );
       }
 
@@ -3007,9 +3007,7 @@ export class CampaignInvitesService {
         now.getTime() < unlockAt.getTime()
       ) {
         throw new BadRequestException(
-          action === "approve"
-            ? `Review period active. Completion confirmation unlocks ${waitHours} hours after submission. Unlocks at: ${unlockAt.toUTCString()}`
-            : `Review period active. Issues can be raised after ${waitHours} hours from submission. Unlocks at: ${unlockAt.toUTCString()}`,
+          `Review period active. Completion confirmation unlocks ${waitHours} hours after submission. Unlocks at: ${unlockAt.toUTCString()}`,
         );
       }
       if (
