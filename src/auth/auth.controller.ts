@@ -222,10 +222,17 @@ export class AuthController {
       limits: { fileSize: 10 * 1024 * 1024 },
     }),
   )
-  async uploadVerification(@UploadedFile() file: Express.Multer.File) {
+  async uploadVerification(
+    @UploadedFile() file: Express.Multer.File,
+    @Body("folder") folder?: string,
+  ) {
+    const targetFolder =
+      typeof folder === "string" && /^[a-zA-Z0-9_-]+$/.test(folder)
+        ? folder
+        : "influencer-verifications";
     const uploaded = await this.cloudinaryService.uploadFile(
       file.path,
-      "influencer-verifications",
+      targetFolder,
       "auto",
     );
 

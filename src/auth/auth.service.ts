@@ -1340,6 +1340,16 @@ export class AuthService {
         data?.utm_source ||
         null,
       audience: data?.signupAttribution?.audience || data?.audience || null,
+      campaign:
+        data?.signupAttribution?.campaign ||
+        data?.campaign ||
+        data?.utm_campaign ||
+        null,
+      content:
+        data?.signupAttribution?.content ||
+        data?.content ||
+        data?.utm_content ||
+        null,
       referrerPath:
         data?.signupAttribution?.referrerPath || data?.referrerPath || null,
       referrerUrl:
@@ -1515,6 +1525,16 @@ export class AuthService {
         data?.utm_source ||
         null,
       audience: data?.signupAttribution?.audience || data?.audience || null,
+      campaign:
+        data?.signupAttribution?.campaign ||
+        data?.campaign ||
+        data?.utm_campaign ||
+        null,
+      content:
+        data?.signupAttribution?.content ||
+        data?.content ||
+        data?.utm_content ||
+        null,
       referrerPath:
         data?.signupAttribution?.referrerPath || data?.referrerPath || null,
       referrerUrl:
@@ -1677,6 +1697,16 @@ export class AuthService {
         data?.utm_source ||
         null,
       audience: data?.signupAttribution?.audience || data?.audience || null,
+      campaign:
+        data?.signupAttribution?.campaign ||
+        data?.campaign ||
+        data?.utm_campaign ||
+        null,
+      content:
+        data?.signupAttribution?.content ||
+        data?.content ||
+        data?.utm_content ||
+        null,
       referrerPath:
         data?.signupAttribution?.referrerPath || data?.referrerPath || null,
       referrerUrl:

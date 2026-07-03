@@ -314,6 +314,8 @@ export const InfluencerSchema = new Schema(
     signupAttribution: {
       source: { type: String },
       audience: { type: String },
+      campaign: { type: String },
+      content: { type: String },
       referrerPath: { type: String },
       referrerUrl: { type: String },
       capturedAt: { type: Date },
@@ -504,6 +506,8 @@ export const BrandSchema = new Schema(
     signupAttribution: {
       source: { type: String },
       audience: { type: String },
+      campaign: { type: String },
+      content: { type: String },
       referrerPath: { type: String },
       referrerUrl: { type: String },
       capturedAt: { type: Date },
@@ -695,6 +699,8 @@ export const PhotographerSchema = new Schema(
     signupAttribution: {
       source: { type: String },
       audience: { type: String },
+      campaign: { type: String },
+      content: { type: String },
       referrerPath: { type: String },
       referrerUrl: { type: String },
       capturedAt: { type: Date },
@@ -1145,6 +1151,38 @@ export const CampaignSchema = new Schema(
     // pay_to_join specific fields
     payToJoinBenefits: { type: String },
     payToJoinInstructions: { type: String },
+    // Campaign Resources — assets/links shared with the influencer once they accept.
+    promotionUrlType: {
+      type: String,
+      enum: [
+        "website",
+        "app_store",
+        "play_store",
+        "instagram",
+        "facebook",
+        "youtube",
+        "whatsapp",
+        "other",
+      ],
+    },
+    promotionUrl: { type: String },
+    suggestedCaption: { type: String },
+    hashtags: { type: String },
+    resourceLogo: {
+      url: { type: String },
+      public_id: { type: String },
+    },
+    resourceImages: [
+      {
+        url: { type: String, required: true },
+        public_id: { type: String, required: true },
+      },
+    ],
+    resourceGuidelines: {
+      url: { type: String },
+      public_id: { type: String },
+      originalName: { type: String },
+    },
   },
   { timestamps: true },
 );
