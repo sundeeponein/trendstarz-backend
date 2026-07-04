@@ -8,6 +8,7 @@ import {
   Query,
   UseGuards,
   Req,
+  BadRequestException,
 } from "@nestjs/common";
 import { JwtAuthGuard } from "../auth/jwt-auth.guard";
 import { RolesGuard } from "../auth/roles.guard";
@@ -58,6 +59,17 @@ export class CampaignInvitesController {
           cb(null, randomUUID() + ext);
         },
       }),
+      fileFilter: (req, file, cb) => {
+        const allowed = ["image/jpeg", "image/jpg", "image/png", "image/webp"];
+        if (!allowed.includes(file.mimetype)) {
+          return cb(
+            new BadRequestException("Only JPG, PNG, or WebP images are allowed"),
+            false,
+          );
+        }
+        cb(null, true);
+      },
+      limits: { fileSize: 10 * 1024 * 1024 },
     }),
   )
   async uploadCampaignProof(

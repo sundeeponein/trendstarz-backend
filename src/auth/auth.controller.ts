@@ -167,6 +167,17 @@ export class AuthController {
           cb(null, `${randomUUID()}${ext}`);
         },
       }),
+      fileFilter: (req, file, cb) => {
+        const allowed = ["image/jpeg", "image/jpg", "image/png", "image/webp"];
+        if (!allowed.includes(file.mimetype)) {
+          return cb(
+            new BadRequestException("Only JPG, PNG, or WebP images are allowed"),
+            false,
+          );
+        }
+        cb(null, true);
+      },
+      limits: { fileSize: 10 * 1024 * 1024 },
     }),
   )
   async uploadImage(
