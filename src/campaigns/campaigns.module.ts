@@ -13,12 +13,16 @@ import { CampaignSubmissionSchema } from "../database/schemas/campaign-submissio
 import { CampaignTransactionSchema } from "../database/schemas/campaign-transaction.schema";
 import { AnalyticsEventSchema } from "../database/schemas/analytics-event.schema";
 import { ProfileFlagSchema } from "../database/schemas/profile-flag.schema";
+import { TrackingLinkSchema } from "../database/schemas/tracking-link.schema";
+import { LinkClickSchema } from "../database/schemas/link-click.schema";
 import { CampaignsController } from "./campaigns.controller";
 import { CampaignsService } from "./campaigns.service";
 import { CampaignInvitesController } from "./campaign-invites.controller";
 import { CampaignInvitesService } from "./campaign-invites.service";
 import { AnalyticsEventsController } from "./analytics-events.controller";
 import { AnalyticsEventsService } from "./analytics-events.service";
+import { TrackingLinksController } from "./tracking-links.controller";
+import { TrackingLinksService } from "./tracking-links.service";
 import { PlansModule } from "../plans/plans.module";
 import { CloudinaryService } from "../cloudinary.service";
 import { PushModule } from "../push/push.module";
@@ -75,17 +79,29 @@ import { ProfileVerificationModule } from "../profile-verification/profile-verif
         collection: "profile_flags",
       },
       { name: "Counter", schema: CounterSchema, collection: "counters" },
+      {
+        name: "TrackingLink",
+        schema: TrackingLinkSchema,
+        collection: "trackinglinks",
+      },
+      {
+        name: "LinkClick",
+        schema: LinkClickSchema,
+        collection: "linkclicks",
+      },
     ]),
   ],
   controllers: [
     CampaignsController,
     CampaignInvitesController,
     AnalyticsEventsController,
+    TrackingLinksController,
   ],
   providers: [
     CampaignsService,
     CampaignInvitesService,
     AnalyticsEventsService,
+    TrackingLinksService,
     CloudinaryService,
   ],
   exports: [CampaignInvitesService],
