@@ -163,11 +163,14 @@ export class TrackingLinksService {
     const campaignRows = campaignIds.length
       ? await this.campaignModel
           .find({ _id: { $in: campaignIds } })
-          .select("campaignNumber")
+          .select("campaignNumber title")
           .lean()
       : [];
     const campaignNumberById = new Map(
       campaignRows.map((c: any) => [String(c._id), c.campaignNumber]),
+    );
+    const campaignTitleById = new Map(
+      campaignRows.map((c: any) => [String(c._id), c.title]),
     );
 
     const brandHostIds = [
@@ -205,13 +208,14 @@ export class TrackingLinksService {
 
     const perCampaign = new Map<
       string,
-      { campaignId: string; campaignNumber?: number; links: number; clicks: number }
+      { campaignId: string; campaignNumber?: number; campaignTitle?: string; links: number; clicks: number }
     >();
     for (const l of links) {
       const key = String(l.campaignId);
       const row = perCampaign.get(key) || {
         campaignId: key,
         campaignNumber: campaignNumberById.get(key),
+        campaignTitle: campaignTitleById.get(key),
         links: 0,
         clicks: 0,
       };
