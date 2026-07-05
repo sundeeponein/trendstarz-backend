@@ -550,6 +550,7 @@ export class AdminListsController {
     @Query("q") q?: string,
     @Query("dateFrom") dateFrom?: string,
     @Query("dateTo") dateTo?: string,
+    @Query("id") id?: string,
   ) {
     const normalized = String(status || "pending_review")
       .trim()
@@ -619,11 +620,16 @@ export class AdminListsController {
 
     // Full filter for the actual paginated fetch: ownerType + active status tab + search + date range.
     const andConditions: any[] = [...ownerAndConditions];
-    if (normalized !== "all" && statusAliases[normalized]) {
+    const directId = String(id || "").trim();
+    if (directId) {
+      // Direct lookup (e.g. deep-linking in from the Disputes page) bypasses the status/search/date filters.
+      andConditions.push({ _id: directId });
+    }
+    if (!directId && normalized !== "all" && statusAliases[normalized]) {
       andConditions.push({ status: { $in: statusAliases[normalized] } });
     }
 
-    const searchQuery = String(q || "").trim();
+    const searchQuery = !directId ? String(q || "").trim() : "";
     if (searchQuery) {
       const escaped = searchQuery.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
       const regex = new RegExp(escaped, "i");
@@ -648,8 +654,8 @@ export class AdminListsController {
       });
     }
 
-    const fromDate = String(dateFrom || "").trim();
-    const toDate = String(dateTo || "").trim();
+    const fromDate = !directId ? String(dateFrom || "").trim() : "";
+    const toDate = !directId ? String(dateTo || "").trim() : "";
     if (fromDate || toDate) {
       const range: any = {};
       if (fromDate) range.$gte = new Date(`${fromDate}T00:00:00`);

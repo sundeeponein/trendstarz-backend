@@ -1615,11 +1615,11 @@ export class CampaignInvitesService {
         .lean();
       const brand: any = await this.brandModel
         .findById(brandId)
-        .select("name")
+        .select("brandName")
         .lean();
       if (influencer?.email) {
         const campaignTitle = campaign?.title || "a campaign";
-        const brandName = brand?.name || "A brand";
+        const brandName = brand?.brandName || "A brand";
         const inviteUrl =
           (process.env.FRONTEND_URL || "https://trendstarz.in").replace(
             /\/$/,
@@ -3094,6 +3094,12 @@ export class CampaignInvitesService {
       await submission.save();
 
       invite.status = "disputed";
+      // Mirror the dispute onto `reportedIssue` too, so this flow lines up with the plain
+      // "report an issue" flow for admin listing/resolving (both key off reportedIssue).
+      invite.reportedIssue = {
+        reason: `${issueReason} — ${issueDescription}`,
+        reportedAt: now,
+      };
       await invite.save();
 
       // Freeze the payout — admin must resolve before money moves.
@@ -3209,11 +3215,11 @@ export class CampaignInvitesService {
     const [campaigns, brands, photographers, influencers] = await Promise.all([
       this.campaignModel
         .find({ _id: { $in: campaignIds } })
-        .select("title campaignType ownerType")
+        .select("title campaignType ownerType campaignNumber")
         .lean(),
       this.brandModel
         .find({ _id: { $in: brandIds } })
-        .select("name email")
+        .select("brandName email")
         .lean(),
       this.photographerModel
         .find({ _id: { $in: brandIds } })
@@ -3226,7 +3232,9 @@ export class CampaignInvitesService {
     ]);
 
     const cMap = new Map(campaigns.map((c: any) => [String(c._id), c]));
-    const bMap = new Map(brands.map((b: any) => [String(b._id), b]));
+    const bMap = new Map(
+      brands.map((b: any) => [String(b._id), { _id: b._id, name: b.brandName, email: b.email }]),
+    );
     const pMap = new Map(photographers.map((p: any) => [String(p._id), p]));
     const iMap = new Map(influencers.map((i: any) => [String(i._id), i]));
 
@@ -3253,8 +3261,13 @@ export class CampaignInvitesService {
   ) {
     const invite = await this.inviteModel.findById(inviteId);
     if (!invite) throw new NotFoundException("Invite not found");
-    if (!invite.reportedIssue?.reportedAt) {
+    // Some disputes predate mirroring onto `reportedIssue` (e.g. ones raised via the
+    // submission-review dispute flow) — fall back to the invite's own disputed status.
+    if (!invite.reportedIssue?.reportedAt && invite.status !== "disputed") {
       throw new BadRequestException("Invite has no reported issue.");
+    }
+    if (!invite.reportedIssue) {
+      invite.reportedIssue = { reason: "", reportedAt: invite.updatedAt || new Date() };
     }
     invite.reportedIssue.resolvedAt = new Date();
     if (body.note) {
