@@ -3186,13 +3186,15 @@ export class CampaignInvitesService {
       filter["reportedIssue.resolvedAt"] = { $in: [null, undefined] };
     }
 
-    const invites = await this.inviteModel
+    const rawInvites = await this.inviteModel
       .find(filter)
       .sort({ "reportedIssue.reportedAt": -1, updatedAt: -1 })
       .limit(limit)
       .lean();
 
-    if (!invites.length) return { invites: [] };
+    if (!rawInvites.length) return { invites: [] };
+
+    const invites = await this.attachLatestSubmissions(rawInvites);
 
     const campaignIds = [
       ...new Set(invites.map((i) => String(i.campaignId)).filter(Boolean)),
