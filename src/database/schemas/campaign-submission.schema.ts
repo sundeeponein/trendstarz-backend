@@ -50,6 +50,8 @@ export const CampaignSubmissionSchema = new Schema(
     disputeIssueReason: { type: String },
     disputeReason: { type: String },
     disputeEvidenceUrl: { type: String },
+    // Number of times the influencer has resubmitted after a dispute. Capped at 1 to avoid endless revision cycles.
+    resubmissionCount: { type: Number, default: 0 },
   },
   { timestamps: true },
 );
@@ -80,5 +82,6 @@ export interface CampaignSubmission extends Document {
   disputeIssueReason?: string;
   disputeReason?: string;
   disputeEvidenceUrl?: string;
+  resubmissionCount?: number;
   createdAt: Date;
 }

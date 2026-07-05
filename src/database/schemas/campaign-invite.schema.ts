@@ -119,6 +119,8 @@ export const CampaignInviteSchema = new Schema({
     reason: { type: String },
     reportedAt: { type: Date },
     resolvedAt: { type: Date },
+    // Set when the influencer contests the dispute itself; pauses the auto-cancel timer and flags it for admin.
+    adminReviewRequestedAt: { type: Date },
   },
   createdAt: { type: Date, default: Date.now },
   updatedAt: { type: Date, default: Date.now },

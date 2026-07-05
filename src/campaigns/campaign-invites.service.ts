@@ -90,6 +90,12 @@ export class CampaignInvitesService {
     return Number.isFinite(hours) && hours >= 0 ? hours : 24;
   }
 
+  private async getDisputeResponseWaitHours(): Promise<number> {
+    const settings: any = await this.appSettingsModel.findOne({}).lean();
+    const hours = Number(settings?.disputeResponseWaitHours ?? 12);
+    return Number.isFinite(hours) && hours >= 0 ? hours : 12;
+  }
+
   private async getSubmissionAutoCompleteGraceHours(): Promise<number> {
     const settings: any = await this.appSettingsModel.findOne({}).lean();
     const hours = Number(settings?.submissionAutoCompleteGraceHours ?? 48);
@@ -1134,7 +1140,7 @@ export class CampaignInvitesService {
     const submissions: any[] = await this.submissionModel
       .find(submissionQuery)
       .select(
-        "inviteId postUrl postType postPlatform status submittedAt reviewedAt autoCompletedAt hostAutoCompleteEnabled hostAutoCompleteEnabledAt createdAt updatedAt brandFeedback disputeIssueReason disputeReason disputeEvidenceUrl",
+        "inviteId postUrl postType postPlatform status submittedAt reviewedAt autoCompletedAt hostAutoCompleteEnabled hostAutoCompleteEnabledAt createdAt updatedAt brandFeedback disputeIssueReason disputeReason disputeEvidenceUrl resubmissionCount",
       )
       .sort({ submittedAt: -1, createdAt: -1 })
       .lean();
@@ -2724,7 +2730,7 @@ export class CampaignInvitesService {
     if (String(invite.influencerId) !== influencerId) {
       throw new BadRequestException("Not your invite");
     }
-    if (!["accepted", "payment_confirmed", "working"].includes(invite.status)) {
+    if (!["accepted", "payment_confirmed", "working", "disputed"].includes(invite.status)) {
       throw new BadRequestException(
         `Can only submit for active invites. Status was: ${invite.status}`,
       );
@@ -2803,30 +2809,55 @@ export class CampaignInvitesService {
 
     const engagementRate = computeEngagementRate(data);
 
-    // One submission per invite for MVP: once submitted, influencer cannot edit URL/type again.
+    // One submission per invite for MVP: once submitted, influencer cannot edit URL/type again —
+    // except a single resubmission allowed after the host disputes it, to fix and repost.
     const existing = await this.submissionModel.findOne({ inviteId });
-    if (existing) {
+    const canResubmit =
+      !!existing &&
+      existing.status === "disputed" &&
+      (existing.resubmissionCount || 0) === 0;
+    if (existing && !canResubmit) {
       throw new BadRequestException(
         "Submission already posted and locked. You cannot change it again.",
       );
     }
 
-    // Create one submission record per invite
     const normalizedSubmissionData = {
       ...data,
       postScreenshotUrl: String(data.postScreenshotUrl || "").trim(),
       insightsScreenshotUrl: String(data.insightsScreenshotUrl || "").trim(),
     };
-    const submission = await this.submissionModel.create({
-      campaignId: String(invite.campaignId),
-      influencerId,
-      inviteId,
-      ...normalizedSubmissionData,
-      postPlatform,
-      engagementRate,
-      submittedAt: new Date(),
-      status: "submitted",
-    });
+
+    let submission: any;
+    if (canResubmit) {
+      // Update the existing (disputed) submission in place — keep the original dispute
+      // fields as context for the host's second review; reset the review-window anchors
+      // so the auto-approve cron/timers don't fire based on the stale original submittedAt.
+      Object.assign(existing, normalizedSubmissionData, {
+        postPlatform,
+        engagementRate,
+        submittedAt: new Date(),
+        reviewedAt: null,
+        hostAutoCompleteEnabled: false,
+        hostAutoCompleteEnabledAt: null,
+        status: "submitted",
+        resubmissionCount: (existing.resubmissionCount || 0) + 1,
+      });
+      await existing.save();
+      submission = existing;
+    } else {
+      // Create one submission record per invite
+      submission = await this.submissionModel.create({
+        campaignId: String(invite.campaignId),
+        influencerId,
+        inviteId,
+        ...normalizedSubmissionData,
+        postPlatform,
+        engagementRate,
+        submittedAt: new Date(),
+        status: "submitted",
+      });
+    }
 
     // Update invite status to submitted
     invite.status = "submitted";
@@ -3065,26 +3096,41 @@ export class CampaignInvitesService {
         console.error("Failed to send approval notification:", e);
       }
     } else {
-      const allowedIssueReasons = new Set([
-        "Missing hashtag",
-        "Missing mention",
-        "Wrong platform",
-        "Wrong content type",
-        "Content removed",
-        "Wrong account",
-        "Other",
-      ]);
-      const issueReason = String(disputeIssueReason || "").trim();
-      const issueDescription = String(disputeReason || "").trim();
-      const evidenceUrl = String(disputeEvidenceUrl || "").trim();
-      if (!allowedIssueReasons.has(issueReason)) {
-        throw new BadRequestException("Issue reason is required");
+      // Only one resubmission is allowed (see submitPost). A second dispute after that
+      // resubmission is a "final rejection" — auto-escalate straight to admin instead of
+      // reopening the influencer's 12h respond-or-resubmit window.
+      const isFinalRejection = (submission.resubmissionCount || 0) >= 1;
+
+      let issueReason = "";
+      let issueDescription = "";
+      let evidenceUrl = "";
+      if (isFinalRejection) {
+        issueReason = String(disputeIssueReason || "").trim();
+        issueDescription = String(feedback || disputeReason || "Resubmission rejected").trim();
+        evidenceUrl = String(disputeEvidenceUrl || "").trim();
+      } else {
+        const allowedIssueReasons = new Set([
+          "Missing hashtag",
+          "Missing mention",
+          "Wrong platform",
+          "Wrong content type",
+          "Content removed",
+          "Wrong account",
+          "Other",
+        ]);
+        issueReason = String(disputeIssueReason || "").trim();
+        issueDescription = String(disputeReason || "").trim();
+        evidenceUrl = String(disputeEvidenceUrl || "").trim();
+        if (!allowedIssueReasons.has(issueReason)) {
+          throw new BadRequestException("Issue reason is required");
+        }
+        if (issueDescription.length < 20) {
+          throw new BadRequestException(
+            "Issue description must be at least 20 characters",
+          );
+        }
       }
-      if (issueDescription.length < 20) {
-        throw new BadRequestException(
-          "Issue description must be at least 20 characters",
-        );
-      }
+
       submission.status = "disputed";
       submission.disputeIssueReason = issueReason;
       submission.disputeReason = issueDescription;
@@ -3097,8 +3143,10 @@ export class CampaignInvitesService {
       // Mirror the dispute onto `reportedIssue` too, so this flow lines up with the plain
       // "report an issue" flow for admin listing/resolving (both key off reportedIssue).
       invite.reportedIssue = {
-        reason: `${issueReason} — ${issueDescription}`,
+        reason: issueReason ? `${issueReason} — ${issueDescription}` : issueDescription,
         reportedAt: now,
+        // Final rejections skip the influencer's response window entirely — straight to admin.
+        adminReviewRequestedAt: isFinalRejection ? now : undefined,
       };
       await invite.save();
 
@@ -3251,6 +3299,90 @@ export class CampaignInvitesService {
     };
   }
 
+  /**
+   * The single place that resolves a dispute's outcome, keeping the invite, its submission,
+   * and every CampaignTransaction row consistent. Used by admin resolution, influencer-initiated
+   * withdrawal, and the auto-cancel cron — so no matter who/what resolves a dispute, all three
+   * documents move together (previously only the invite was ever updated).
+   */
+  private async finalizeDisputeOutcome(
+    inviteId: string,
+    outcome: "pay_influencer" | "refund_host",
+    opts: { resolvedBy: "admin" | "influencer" | "system"; note?: string } = {
+      resolvedBy: "admin",
+    },
+  ) {
+    const invite = await this.inviteModel.findById(inviteId);
+    if (!invite) throw new NotFoundException("Invite not found");
+    // Idempotent/race-safe: if another call already resolved this (e.g. the cron and an
+    // influencer action landing at the same time), no-op rather than double-resolving.
+    if (invite.status !== "disputed") {
+      return { success: true, status: invite.status, skipped: true };
+    }
+
+    const now = new Date();
+    invite.status = outcome === "pay_influencer" ? "completed" : "withdrawn";
+    if (outcome === "pay_influencer") {
+      invite.completedAt = now;
+    } else if (!invite.withdrawnAt) {
+      invite.withdrawnAt = now;
+    }
+    if (!invite.reportedIssue) {
+      invite.reportedIssue = { reason: "", reportedAt: invite.updatedAt || now };
+    }
+    invite.reportedIssue.resolvedAt = now;
+    if (opts.note) {
+      invite.reportedIssue.reason =
+        (invite.reportedIssue.reason || "") +
+        `\n[${opts.resolvedBy} ${now.toISOString()}]: ${opts.note}`;
+    }
+    invite.updatedAt = now;
+    await invite.save();
+
+    const submission = await this.submissionModel.findOne({ inviteId });
+    if (submission) {
+      submission.status = outcome === "pay_influencer" ? "approved" : "rejected";
+      submission.reviewedAt = now;
+      await submission.save();
+    }
+
+    // Guard against ever downgrading a transaction that's already been paid out via the
+    // separate payments-payouts dispute-resolution surface.
+    await this.campaignTransactionModel.updateMany(
+      { inviteId, payoutStatus: { $ne: "paid" } },
+      {
+        $set: {
+          payoutStatus: outcome === "pay_influencer" ? "processing" : "skipped",
+          workStatus: outcome === "pay_influencer" ? "approved" : "disputed",
+          disputeStatus: "resolved",
+          resolveOutcome:
+            outcome === "pay_influencer" ? "release_to_influencer" : "refund_to_brand",
+          resolvedAt: now,
+        },
+      },
+    );
+
+    this.invalidateAttentionCache();
+
+    const title = outcome === "pay_influencer" ? "Dispute Resolved — Payout Released" : "Dispute Resolved — Participation Cancelled";
+    const body =
+      outcome === "pay_influencer"
+        ? "Your dispute was resolved in your favor. Payout is being processed."
+        : "This collaboration has been cancelled. No payout will be made for this submission.";
+    this.pushService
+      .sendToUser(String(invite.influencerId), { title, body, url: "/influencer-dashboard" }, "campaign")
+      .catch(() => {
+        /* non-critical */
+      });
+    this.notificationsService
+      .createForUser({ userId: String(invite.influencerId), userRole: "influencer", title, body, url: "/influencer-dashboard" })
+      .catch(() => {
+        /* non-critical */
+      });
+
+    return { success: true, status: invite.status };
+  }
+
   /** Admin: mark a dispute resolved with optional note + outcome status. */
   async adminResolveDispute(
     inviteId: string,
@@ -3259,6 +3391,21 @@ export class CampaignInvitesService {
       note?: string;
     } = {},
   ) {
+    if (body.outcome === "completed") {
+      return this.finalizeDisputeOutcome(inviteId, "pay_influencer", {
+        resolvedBy: "admin",
+        note: body.note,
+      });
+    }
+    if (body.outcome === "withdrawn") {
+      return this.finalizeDisputeOutcome(inviteId, "refund_host", {
+        resolvedBy: "admin",
+        note: body.note,
+      });
+    }
+
+    // outcome === 'disputed' (close-without-outcome): pure invite-side note append, no
+    // payout/submission change — the dispute stays open pending a real decision later.
     const invite = await this.inviteModel.findById(inviteId);
     if (!invite) throw new NotFoundException("Invite not found");
     // Some disputes predate mirroring onto `reportedIssue` (e.g. ones raised via the
@@ -3269,23 +3416,13 @@ export class CampaignInvitesService {
     if (!invite.reportedIssue) {
       invite.reportedIssue = { reason: "", reportedAt: invite.updatedAt || new Date() };
     }
+    // Matches the pre-refactor behavior: "Close (keep disputed)" removes it from the open
+    // queue (resolvedAt set) without deciding a payout outcome — status stays 'disputed'.
     invite.reportedIssue.resolvedAt = new Date();
     if (body.note) {
       invite.reportedIssue.reason =
         (invite.reportedIssue.reason || "") +
         `\n[admin ${new Date().toISOString()}]: ${body.note}`;
-    }
-    if (
-      body.outcome &&
-      ["completed", "withdrawn", "disputed"].includes(body.outcome)
-    ) {
-      invite.status = body.outcome;
-      if (body.outcome === "completed") {
-        invite.completedAt = new Date();
-      }
-      if (body.outcome === "withdrawn" && !invite.withdrawnAt) {
-        invite.withdrawnAt = new Date();
-      }
     }
     invite.updatedAt = new Date();
     await invite.save();
@@ -3315,6 +3452,85 @@ export class CampaignInvitesService {
     }
     this.invalidateAttentionCache();
     return { success: true, resolved, skipped };
+  }
+
+  /** Influencer: bail out of a disputed collab. No payment, host is marked refunded. No admin needed. */
+  async withdrawFromDispute(inviteId: string, influencerId: string) {
+    const invite = (await this.inviteModel.findById(inviteId).lean()) as any;
+    if (!invite) throw new NotFoundException("Invite not found");
+    if (String(invite.influencerId) !== influencerId) {
+      throw new BadRequestException("Not your invite");
+    }
+    if (invite.status !== "disputed") {
+      throw new BadRequestException("This invite is not currently disputed.");
+    }
+    return this.finalizeDisputeOutcome(inviteId, "refund_host", { resolvedBy: "influencer" });
+  }
+
+  /** Influencer: contest the dispute itself — escalates to admin and pauses the auto-cancel timer. */
+  async requestAdminReviewForDispute(inviteId: string, influencerId: string) {
+    const invite = await this.inviteModel.findById(inviteId);
+    if (!invite) throw new NotFoundException("Invite not found");
+    if (String(invite.influencerId) !== influencerId) {
+      throw new BadRequestException("Not your invite");
+    }
+    if (invite.status !== "disputed") {
+      throw new BadRequestException("This invite is not currently disputed.");
+    }
+    if (!invite.reportedIssue) {
+      invite.reportedIssue = { reason: "", reportedAt: new Date() };
+    }
+    invite.reportedIssue.adminReviewRequestedAt = new Date();
+    invite.updatedAt = new Date();
+    await invite.save();
+    this.invalidateAttentionCache();
+    return { success: true, status: invite.status };
+  }
+
+  /** Auto-cancel disputes the influencer never responded to within the configured window. */
+  async autoCancelExpiredDisputes(): Promise<{ success: boolean; autoCancelledCount: number }> {
+    const waitHours = await this.getDisputeResponseWaitHours();
+    const cutoff = new Date(Date.now() - waitHours * 60 * 60 * 1000);
+
+    const candidates = await this.inviteModel
+      .find({
+        status: "disputed",
+        "reportedIssue.resolvedAt": { $in: [null, undefined] },
+        "reportedIssue.adminReviewRequestedAt": { $in: [null, undefined] },
+        "reportedIssue.reportedAt": { $lte: cutoff },
+      })
+      .select("_id")
+      .lean();
+
+    let autoCancelledCount = 0;
+    for (const candidate of candidates) {
+      // Re-fetch and re-verify per item — protects against a withdraw/admin-review-request
+      // call landing between the bulk find above and this loop iteration.
+      const invite = await this.inviteModel.findById(candidate._id);
+      if (!invite) continue;
+      if (invite.status !== "disputed") continue;
+      if (invite.reportedIssue?.resolvedAt) continue;
+      if (invite.reportedIssue?.adminReviewRequestedAt) continue;
+      const reportedAt = invite.reportedIssue?.reportedAt;
+      if (!reportedAt || new Date(reportedAt).getTime() > cutoff.getTime()) continue;
+
+      await this.finalizeDisputeOutcome(String(invite._id), "refund_host", {
+        resolvedBy: "system",
+        note: `Auto-cancelled: no response within ${waitHours} hours.`,
+      });
+      autoCancelledCount += 1;
+    }
+
+    return { success: true, autoCancelledCount };
+  }
+
+  @Cron(CronExpression.EVERY_HOUR)
+  async autoCancelExpiredDisputesCron() {
+    try {
+      await this.autoCancelExpiredDisputes();
+    } catch (e) {
+      console.error("autoCancelExpiredDisputesCron failed:", e);
+    }
   }
 
   /** Admin: lightweight count of open disputes (for nav badges). */

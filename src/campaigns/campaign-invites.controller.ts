@@ -350,6 +350,18 @@ export class CampaignInvitesController {
   }
 
   @UseGuards(JwtAuthGuard)
+  @Post(":id/withdraw-dispute")
+  async withdrawFromDispute(@Param("id") id: string, @Req() req: any) {
+    return this.invitesService.withdrawFromDispute(id, this.requesterId(req));
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Post(":id/request-admin-review")
+  async requestAdminReviewForDispute(@Param("id") id: string, @Req() req: any) {
+    return this.invitesService.requestAdminReviewForDispute(id, this.requesterId(req));
+  }
+
+  @UseGuards(JwtAuthGuard)
   @Patch(":id/analytics")
   async submitAnalytics(
     @Param("id") id: string,
@@ -473,6 +485,12 @@ export class CampaignInvitesController {
   @Post("admin/auto-approve-stale")
   async autoApproveStale() {
     return this.invitesService.autoApproveStaleSubmissions();
+  }
+
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Post("admin/auto-cancel-disputes")
+  async autoCancelExpiredDisputes() {
+    return this.invitesService.autoCancelExpiredDisputes();
   }
 
   @UseGuards(JwtAuthGuard, RolesGuard)

@@ -857,6 +857,7 @@ export const AppSettingsSchema = new Schema({
   submissionApprovalWaitHours: { type: Number, default: 24 },
   submissionAutoCompleteGraceHours: { type: Number, default: 48 },
   payoutReleaseWaitHours: { type: Number, default: 24 },
+  disputeResponseWaitHours: { type: Number, default: 12 },
   earlyAccessCommissionPercent: { type: Number, default: 0 },
   partnerCommissionPercent: { type: Number, default: 2 },
   internalTestCommissionPercent: { type: Number, default: 0 },
