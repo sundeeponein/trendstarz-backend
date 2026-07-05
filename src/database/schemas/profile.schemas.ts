@@ -1015,6 +1015,12 @@ export const CampaignSchema = new Schema(
       default: "invite_only",
       index: true,
     },
+    // grace_24h = late submissions allowed up to 24h after selectedPostDate; strict = no grace at all.
+    postingDeadlineMode: {
+      type: String,
+      enum: ["grace_24h", "strict"],
+      default: "grace_24h",
+    },
     ownerType: {
       type: String,
       enum: ["brand", "photographer"],

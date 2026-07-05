@@ -52,6 +52,9 @@ export const CampaignSubmissionSchema = new Schema(
     disputeEvidenceUrl: { type: String },
     // Number of times the influencer has resubmitted after a dispute. Capped at 1 to avoid endless revision cycles.
     resubmissionCount: { type: Number, default: 0 },
+    // Set when submittedAt is past the invite's selectedPostDate (+ any grace period).
+    isLate: { type: Boolean, default: false },
+    daysLate: { type: Number, default: 0 },
   },
   { timestamps: true },
 );
@@ -83,5 +86,7 @@ export interface CampaignSubmission extends Document {
   disputeReason?: string;
   disputeEvidenceUrl?: string;
   resubmissionCount?: number;
+  isLate?: boolean;
+  daysLate?: number;
   createdAt: Date;
 }

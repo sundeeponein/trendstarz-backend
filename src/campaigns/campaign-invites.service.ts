@@ -1014,6 +1014,47 @@ export class CampaignInvitesService {
     );
   }
 
+  /**
+   * Once a host ends a campaign, no new forward progress (accept/start work/submit) should
+   * be possible, regardless of any individual invite's selected posting date. Deliberately
+   * separate from `assertCampaignLiveForRecipient` — that one still treats 'completed' as
+   * live for read/contact-unlock purposes; this one is only for actions that create new work.
+   */
+  private assertCampaignNotEnded(campaign: any, action: string) {
+    const status = String(campaign?.status || "").trim().toLowerCase();
+    if (status === "completed") {
+      throw new BadRequestException(
+        `This campaign has ended. You can no longer ${action}.`,
+      );
+    }
+  }
+
+  /**
+   * Single source of truth for the late-submission grace window. Follows the same pure
+   * duration-arithmetic convention already used for `insightsUnlocksAt` (selectedPostDate +
+   * 24h) rather than any calendar-day/timezone logic — selectedPostDate is a UTC-midnight
+   * instant of the chosen date, so a fixed millisecond offset never crosses into the wrong day.
+   */
+  private computeGraceDeadline(
+    invite: any,
+    campaign: any,
+  ): { isLate: boolean; daysLate: number; closesAt: Date } {
+    const ONE_DAY_MS = 24 * 60 * 60 * 1000;
+    const strictDeadline = new Date(
+      new Date(invite.selectedPostDate).getTime() + ONE_DAY_MS,
+    );
+    const closesAt =
+      campaign?.postingDeadlineMode === "strict"
+        ? strictDeadline
+        : new Date(strictDeadline.getTime() + ONE_DAY_MS);
+    const now = Date.now();
+    const isLate = now > strictDeadline.getTime();
+    const daysLate = isLate
+      ? Math.ceil((now - strictDeadline.getTime()) / ONE_DAY_MS)
+      : 0;
+    return { isLate, daysLate, closesAt };
+  }
+
   private toPaiseFromMaybeRupees(value: any): number {
     const n = Number(value || 0);
     if (!Number.isFinite(n) || n <= 0) return 0;
@@ -1370,7 +1411,7 @@ export class CampaignInvitesService {
     const campaign: any = await this.campaignModel
       .findById(invite.campaignId)
       .select(
-        "title platforms socialMedia deliverables specialInstructions image images galleryImages",
+        "title platforms socialMedia deliverables specialInstructions image images galleryImages postingDeadlineMode",
       )
       .lean();
     return { invite: inviteForResponse, campaign };
@@ -1847,6 +1888,7 @@ export class CampaignInvitesService {
       if (!campaign) throw new NotFoundException("Campaign not found");
 
       this.assertCampaignLiveForRecipient(campaign, "accept");
+      this.assertCampaignNotEnded(campaign, "accept");
 
       // Shipping address capture — required when brand is shipping a physical product.
       const requiresShippingAddress =
@@ -2389,6 +2431,7 @@ export class CampaignInvitesService {
         .select("status")
         .lean();
       this.assertCampaignLiveForRecipient(campaign, "accept the counter offer");
+      this.assertCampaignNotEnded(campaign, "accept the counter offer");
       const recipientRole = this.normalizeRecipientRole(invite?.recipientRole);
       const recipientIdForEligibility = String(
         invite?.influencerId || invite?.photographerId || "",
@@ -2697,6 +2740,7 @@ export class CampaignInvitesService {
       .select("status")
       .lean();
     this.assertCampaignLiveForRecipient(campaign, "start work");
+    this.assertCampaignNotEnded(campaign, "start work");
 
     invite.status = "working";
     await invite.save();
@@ -2737,10 +2781,22 @@ export class CampaignInvitesService {
     }
     const campaign: any = await this.campaignModel
       .findById(invite.campaignId)
-      .select("status")
+      .select("status postingDeadlineMode")
       .lean();
     this.assertCampaignLiveForRecipient(campaign, "submit work");
+    this.assertCampaignNotEnded(campaign, "submit work");
     if (!data.postUrl) throw new BadRequestException("Post URL is required");
+
+    // Late-submission handling: allowed within the campaign's grace window, marked late;
+    // blocked entirely once the window (strict or grace) has fully passed.
+    let lateInfo = { isLate: false, daysLate: 0 };
+    if (invite.selectedPostDate) {
+      const deadline = this.computeGraceDeadline(invite, campaign);
+      if (Date.now() > deadline.closesAt.getTime()) {
+        throw new BadRequestException("Submission window has closed.");
+      }
+      lateInfo = { isLate: deadline.isLate, daysLate: deadline.daysLate };
+    }
     // Screenshot is recommended but optional — influencers can submit without one
 
     // Insights (screenshot + metrics) are locked until 24h after the committed post date
@@ -2842,6 +2898,8 @@ export class CampaignInvitesService {
         hostAutoCompleteEnabledAt: null,
         status: "submitted",
         resubmissionCount: (existing.resubmissionCount || 0) + 1,
+        isLate: lateInfo.isLate,
+        daysLate: lateInfo.daysLate,
       });
       await existing.save();
       submission = existing;
@@ -2856,6 +2914,8 @@ export class CampaignInvitesService {
         engagementRate,
         submittedAt: new Date(),
         status: "submitted",
+        isLate: lateInfo.isLate,
+        daysLate: lateInfo.daysLate,
       });
     }
 
@@ -3116,6 +3176,7 @@ export class CampaignInvitesService {
           "Wrong content type",
           "Content removed",
           "Wrong account",
+          "Missed posting deadline",
           "Other",
         ]);
         issueReason = String(disputeIssueReason || "").trim();
@@ -3530,6 +3591,118 @@ export class CampaignInvitesService {
       await this.autoCancelExpiredDisputes();
     } catch (e) {
       console.error("autoCancelExpiredDisputesCron failed:", e);
+    }
+  }
+
+  /**
+   * Closes out an invite that never got a submission — same "no real payout" convention as
+   * `finalizeDisputeOutcome`'s refund_host outcome, but for invites that were never disputed
+   * (source status is accepted/payment_confirmed/working, not disputed).
+   */
+  async expireUnsubmittedInvite(inviteId: string, reason: string) {
+    const invite = await this.inviteModel.findById(inviteId);
+    if (!invite) return { success: true, skipped: true };
+    // Race guard: someone may have just submitted, disputed, or otherwise moved this invite
+    // forward between when it was selected as a candidate and now.
+    if (!["accepted", "payment_confirmed", "working"].includes(invite.status)) {
+      return { success: true, status: invite.status, skipped: true };
+    }
+
+    const now = new Date();
+    invite.status = "withdrawn";
+    if (!invite.withdrawnAt) invite.withdrawnAt = now;
+    invite.withdrawnReason = reason;
+    invite.updatedAt = now;
+    await invite.save();
+
+    await this.campaignTransactionModel.updateMany(
+      { inviteId, payoutStatus: { $ne: "paid" } },
+      {
+        $set: {
+          payoutStatus: "skipped",
+          workStatus: "disputed",
+          disputeStatus: "resolved",
+          resolveOutcome: "refund_to_brand",
+          resolvedAt: now,
+        },
+      },
+    );
+
+    this.invalidateAttentionCache();
+
+    const title = "Participation Closed";
+    const body = `${reason} No payout will be made for this collaboration.`;
+    this.pushService
+      .sendToUser(String(invite.influencerId), { title, body, url: "/influencer-dashboard" }, "campaign")
+      .catch(() => {
+        /* non-critical */
+      });
+    this.notificationsService
+      .createForUser({ userId: String(invite.influencerId), userRole: "influencer", title, body, url: "/influencer-dashboard" })
+      .catch(() => {
+        /* non-critical */
+      });
+
+    return { success: true, status: invite.status };
+  }
+
+  /** Closes out every not-yet-submitted invite for a campaign — called when a host ends it. */
+  async expireUnsubmittedInvitesForCampaign(campaignId: string, reason: string) {
+    const candidates = await this.inviteModel
+      .find({
+        campaignId: { $in: [campaignId, String(campaignId)] },
+        status: { $in: ["accepted", "payment_confirmed", "working"] },
+      })
+      .select("_id")
+      .lean();
+    for (const candidate of candidates) {
+      await this.expireUnsubmittedInvite(String(candidate._id), reason);
+    }
+    return { success: true, expiredCount: candidates.length };
+  }
+
+  /** Auto-expire invites whose posting deadline (+ any grace period) passed with no submission. */
+  async autoExpireUnsubmittedInvites(): Promise<{ success: boolean; autoExpiredCount: number }> {
+    const candidates = await this.inviteModel
+      .find({
+        status: { $in: ["accepted", "payment_confirmed", "working"] },
+        selectedPostDate: { $ne: null },
+      })
+      .select("_id campaignId")
+      .lean();
+
+    let autoExpiredCount = 0;
+    for (const candidate of candidates) {
+      // Re-fetch invite + campaign fresh — protects against a submission/dispute/campaign-end
+      // landing between the bulk find above and this loop iteration.
+      const invite = await this.inviteModel.findById(candidate._id);
+      if (!invite) continue;
+      if (!["accepted", "payment_confirmed", "working"].includes(invite.status)) continue;
+      if (!invite.selectedPostDate) continue;
+      const campaign: any = await this.campaignModel
+        .findById(invite.campaignId)
+        .select("postingDeadlineMode")
+        .lean();
+      if (!campaign) continue;
+      const deadline = this.computeGraceDeadline(invite, campaign);
+      if (Date.now() <= deadline.closesAt.getTime()) continue;
+
+      await this.expireUnsubmittedInvite(
+        String(invite._id),
+        "Posting deadline and grace period expired with no submission.",
+      );
+      autoExpiredCount += 1;
+    }
+
+    return { success: true, autoExpiredCount };
+  }
+
+  @Cron(CronExpression.EVERY_HOUR)
+  async autoExpireUnsubmittedInvitesCron() {
+    try {
+      await this.autoExpireUnsubmittedInvites();
+    } catch (e) {
+      console.error("autoExpireUnsubmittedInvitesCron failed:", e);
     }
   }
 

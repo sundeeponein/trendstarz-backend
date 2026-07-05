@@ -30,6 +30,7 @@ import {
   ProfileVerificationService,
   ProfileUserType,
 } from "../profile-verification/profile-verification.service";
+import { CampaignInvitesService } from "./campaign-invites.service";
 
 const VALID_TRANSITIONS: Record<string, string[]> = {
   draft: ["pending", "pending_review", "active", "needs_changes"],
@@ -85,6 +86,7 @@ export class CampaignsService {
     private readonly pushService: PushService,
     private readonly notificationsService: NotificationsService,
     private readonly profileVerificationService: ProfileVerificationService,
+    private readonly campaignInvitesService: CampaignInvitesService,
   ) {}
 
   // Safety net for the manual "Mark Complete" action: once a campaign's timeline
@@ -262,6 +264,16 @@ export class CampaignsService {
         );
       }
       normalized.campaignMode = mode;
+    }
+
+    if (data.postingDeadlineMode !== undefined && data.postingDeadlineMode !== null) {
+      const mode = String(data.postingDeadlineMode);
+      if (!["grace_24h", "strict"].includes(mode)) {
+        throw new BadRequestException(
+          "postingDeadlineMode must be grace_24h or strict",
+        );
+      }
+      normalized.postingDeadlineMode = mode;
     }
 
     const startDate = data.startDate || data.timelineStart;
@@ -1193,6 +1205,7 @@ export class CampaignsService {
     "venueDistrict",
     "venueState",
     "venueGoogleMapUrl",
+    "postingDeadlineMode",
   ] as const;
 
   private stripMongoIds(val: any): any {
@@ -1389,6 +1402,21 @@ export class CampaignsService {
       } else if (saved.campaignMode === "invite_only") {
         this.notifyInvitedUsers(saved).catch(() => {});
       }
+    }
+
+    if (previousStatus !== "completed" && saved.status === "completed") {
+      // Ending a campaign is an absolute cutoff: anyone still accepted/working with no
+      // submission gets closed out and marked refunded — no admin action needed. Safe
+      // no-op when nothing is pending (e.g. the auto-complete cron, which only ever
+      // reaches 'completed' once no blocking invites remain).
+      this.campaignInvitesService
+        .expireUnsubmittedInvitesForCampaign(
+          String(saved._id),
+          "Campaign ended by host before submission.",
+        )
+        .catch(() => {
+          /* non-critical */
+        });
     }
 
     return saved;
