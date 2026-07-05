@@ -50,6 +50,8 @@ export class TrackingLinksService {
     @InjectModel("LinkClick") private readonly linkClickModel: Model<any>,
     @InjectModel("CampaignInvite") private readonly campaignInviteModel: Model<any>,
     @InjectModel("Campaign") private readonly campaignModel: Model<any>,
+    @InjectModel("Brand") private readonly brandModel: Model<any>,
+    @InjectModel("Photographer") private readonly photographerModel: Model<any>,
   ) {}
 
   private buildTrackingUrl(code: string): string {
@@ -63,11 +65,14 @@ export class TrackingLinksService {
       clickCount: doc.clickCount || 0,
       platform: doc.platform || "",
       contentType: doc.contentType || "",
+      destinationUrl: doc.destinationUrl || "",
+      destinationType: doc.destinationType || "other",
+      moduleType: doc.moduleType || "campaign",
     };
   }
 
-  /** Get-or-create the tracking link for an accepted invite. Callable by the recipient or the campaign host. */
-  async getOrCreateForInvite(inviteId: string, requesterId: string) {
+  /** Get-or-create the tracking link for an accepted invite. Callable by the recipient, the campaign host, or admin. */
+  async getOrCreateForInvite(inviteId: string, requesterId: string, isAdmin = false) {
     const invite: any = await this.campaignInviteModel.findById(inviteId).lean();
     if (!invite) throw new NotFoundException("Invite not found");
 
@@ -81,7 +86,7 @@ export class TrackingLinksService {
     const requester = String(requesterId || "");
     const recipientId = String(invite.influencerId || "");
     const hostId = String(campaign.brandId || "");
-    if (requester !== recipientId && requester !== hostId) {
+    if (!isAdmin && requester !== recipientId && requester !== hostId) {
       throw new ForbiddenException("Not authorized for this invite's tracking link");
     }
 
@@ -118,6 +123,8 @@ export class TrackingLinksService {
       platform: String(invite.selectedPlatform || ""),
       contentType: String(invite.selectedContentType || ""),
       destinationUrl,
+      destinationType: String(campaign.promotionUrlType || "other"),
+      moduleType: "campaign",
     });
 
     return this.toPublicShape(created);
@@ -152,6 +159,40 @@ export class TrackingLinksService {
     const links = await this.trackingLinkModel.find(query).sort({ createdAt: -1 }).lean();
     const linkIds = links.map((l) => l._id);
 
+    const campaignIds = [...new Set(links.map((l) => String(l.campaignId)).filter(Boolean))];
+    const campaignRows = campaignIds.length
+      ? await this.campaignModel
+          .find({ _id: { $in: campaignIds } })
+          .select("campaignNumber")
+          .lean()
+      : [];
+    const campaignNumberById = new Map(
+      campaignRows.map((c: any) => [String(c._id), c.campaignNumber]),
+    );
+
+    const brandHostIds = [
+      ...new Set(
+        links.filter((l) => l.hostType !== "photographer").map((l) => String(l.hostId)).filter(Boolean),
+      ),
+    ];
+    const photographerHostIds = [
+      ...new Set(
+        links.filter((l) => l.hostType === "photographer").map((l) => String(l.hostId)).filter(Boolean),
+      ),
+    ];
+    const [brandHostRows, photographerHostRows] = await Promise.all([
+      brandHostIds.length
+        ? this.brandModel.find({ _id: { $in: brandHostIds } }).select("brandName").lean()
+        : [],
+      photographerHostIds.length
+        ? this.photographerModel.find({ _id: { $in: photographerHostIds } }).select("name").lean()
+        : [],
+    ]);
+    const hostNameById = new Map<string, string>([
+      ...brandHostRows.map((b: any): [string, string] => [String(b._id), b.brandName]),
+      ...photographerHostRows.map((p: any): [string, string] => [String(p._id), p.name]),
+    ]);
+
     const uniqueByLink = await this.linkClickModel.aggregate([
       { $match: { trackingLinkId: { $in: linkIds } } },
       { $group: { _id: { link: "$trackingLinkId", ip: "$ipHash" } } },
@@ -162,10 +203,18 @@ export class TrackingLinksService {
     const totalClicks = links.reduce((sum, l) => sum + (l.clickCount || 0), 0);
     const totalUniqueClicks = uniqueByLink.reduce((sum: number, u: any) => sum + u.uniqueClicks, 0);
 
-    const perCampaign = new Map<string, { campaignId: string; links: number; clicks: number }>();
+    const perCampaign = new Map<
+      string,
+      { campaignId: string; campaignNumber?: number; links: number; clicks: number }
+    >();
     for (const l of links) {
       const key = String(l.campaignId);
-      const row = perCampaign.get(key) || { campaignId: key, links: 0, clicks: 0 };
+      const row = perCampaign.get(key) || {
+        campaignId: key,
+        campaignNumber: campaignNumberById.get(key),
+        links: 0,
+        clicks: 0,
+      };
       row.links += 1;
       row.clicks += l.clickCount || 0;
       perCampaign.set(key, row);
@@ -178,8 +227,10 @@ export class TrackingLinksService {
       .map((l) => ({
         code: l.code,
         campaignId: String(l.campaignId),
+        campaignNumber: campaignNumberById.get(String(l.campaignId)),
         hostId: String(l.hostId),
         hostType: l.hostType,
+        hostName: hostNameById.get(String(l.hostId)) || "",
         recipientId: String(l.recipientId),
         recipientType: l.recipientType,
         platform: l.platform,
@@ -195,6 +246,7 @@ export class TrackingLinksService {
       .map((l) => ({
         code: l.code,
         campaignId: String(l.campaignId),
+        campaignNumber: campaignNumberById.get(String(l.campaignId)),
         recipientId: String(l.recipientId),
         platform: l.platform,
         contentType: l.contentType,

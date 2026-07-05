@@ -15,6 +15,21 @@ export const TrackingLinkSchema = new Schema({
   platform: { type: String, default: "" },
   contentType: { type: String, default: "" },
   destinationUrl: { type: String, required: true },
+  // Matches Campaign.promotionUrlType — what kind of destination this link points at.
+  destinationType: {
+    type: String,
+    enum: ["website", "app_store", "play_store", "instagram", "facebook", "youtube", "whatsapp", "other"],
+    default: "other",
+  },
+  // Not used by anything today — only "campaign" exists. Reserved so referral links,
+  // affiliate links, event registrations etc. can reuse this same collection later
+  // without a schema migration.
+  moduleType: {
+    type: String,
+    enum: ["campaign", "collaboration", "referral"],
+    default: "campaign",
+    index: true,
+  },
   clickCount: { type: Number, default: 0 },
   createdAt: { type: Date, default: Date.now },
 });

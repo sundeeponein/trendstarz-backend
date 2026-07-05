@@ -11,7 +11,8 @@ export class TrackingLinksController {
   @Get("campaign-invites/:inviteId/tracking-link")
   async getMyTrackingLink(@Param("inviteId") inviteId: string, @Req() req: any) {
     const requesterId = req.user?.userId;
-    return this.trackingLinksService.getOrCreateForInvite(inviteId, requesterId);
+    const isAdmin = req.user?.role === "admin" || req.user?.role === "subadmin";
+    return this.trackingLinksService.getOrCreateForInvite(inviteId, requesterId, isAdmin);
   }
 
   // Public — hit by the /r/:code redirect page. No auth: whoever clicked the shared link isn't a logged-in app user.
