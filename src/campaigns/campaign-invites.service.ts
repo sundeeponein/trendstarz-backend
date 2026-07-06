@@ -66,6 +66,15 @@ export class CampaignInvitesService {
     this.attentionCache.clear();
   }
 
+  /** Matches "has an unresolved brand-reported issue" — covers both a plain report and a
+   *  genuine submission-dispute (both mirror onto reportedIssue the same way). */
+  private openReportFilter(): Record<string, any> {
+    return {
+      "reportedIssue.reportedAt": { $ne: null },
+      "reportedIssue.resolvedAt": { $in: [null, undefined] },
+    };
+  }
+
   constructor(
     @InjectModel("CampaignInvite")
     private readonly inviteModel: Model<any>,
@@ -1741,21 +1750,19 @@ export class CampaignInvitesService {
       reason: reason.trim(),
       reportedAt: new Date(),
     };
-    // Move into disputed unless already completed
-    if (
-      invite.status !== "completed" &&
-      invite.status !== "disputed" &&
-      invite.status !== "withdrawn"
-    ) {
-      invite.status = "disputed";
-    }
+    // A report is a flag, not a status transition — the invite keeps showing its real
+    // lifecycle stage (e.g. "Working") to host/admin/influencer; the report is surfaced
+    // as a note on top of that status instead. Resolution happens via the existing admin
+    // Disputes page (which now keys off reportedIssue regardless of invite.status), or
+    // automatically once the influencer submits / the host approves.
     invite.updatedAt = new Date();
     await invite.save();
+    this.invalidateAttentionCache();
 
     this.pushService
       .sendToUser(String(invite.influencerId), {
-        title: "Campaign Marked Disputed",
-        body: "A brand reported an issue on your campaign collaboration.",
+        title: "Host Reported an Issue",
+        body: "A brand flagged an issue on your campaign collaboration.",
         url: "/influencer-dashboard",
       }, 'campaign')
       .catch(() => {
@@ -1765,8 +1772,8 @@ export class CampaignInvitesService {
       .createForUser({
         userId: String(invite.influencerId),
         userRole: "influencer",
-        title: "Campaign Marked Disputed",
-        body: "A brand reported an issue on your campaign collaboration.",
+        title: "Host Reported an Issue",
+        body: "A brand flagged an issue on your campaign collaboration.",
         url: "/influencer-dashboard",
       })
       .catch(() => {
@@ -2919,9 +2926,26 @@ export class CampaignInvitesService {
       });
     }
 
+    // A plain report ("not yet posted") is now moot once the influencer actually submits —
+    // auto-resolve it. Scoped to invite.status !== 'disputed' so this never touches the
+    // genuine post-dispute resubmission path (that dispute stays open until the host's
+    // second review concludes it).
+    if (
+      invite.reportedIssue?.reportedAt &&
+      !invite.reportedIssue?.resolvedAt &&
+      invite.status !== "disputed"
+    ) {
+      const resolvedNow = new Date();
+      invite.reportedIssue.resolvedAt = resolvedNow;
+      invite.reportedIssue.reason =
+        (invite.reportedIssue.reason || "") +
+        `\n[system ${resolvedNow.toISOString()}]: Auto-resolved: influencer submitted a post.`;
+    }
+
     // Update invite status to submitted
     invite.status = "submitted";
     await invite.save();
+    this.invalidateAttentionCache();
 
     await this.campaignTransactionModel.updateMany(
       { inviteId },
@@ -3116,9 +3140,23 @@ export class CampaignInvitesService {
       submission.reviewedAt = now;
       await submission.save();
 
+      // Approving closes out any dangling plain report too — otherwise it'd be left
+      // permanently open on a now-completed invite with nobody able to act on it.
+      if (
+        invite.reportedIssue?.reportedAt &&
+        !invite.reportedIssue?.resolvedAt &&
+        invite.status !== "disputed"
+      ) {
+        invite.reportedIssue.resolvedAt = now;
+        invite.reportedIssue.reason =
+          (invite.reportedIssue.reason || "") +
+          `\n[system ${now.toISOString()}]: Auto-resolved: host approved the submission.`;
+      }
+
       invite.status = "completed";
       invite.completedAt = new Date();
       await invite.save();
+      this.invalidateAttentionCache();
 
       const txs = await this.campaignTransactionModel.find({ inviteId });
       for (const tx of txs) {
@@ -3290,15 +3328,15 @@ export class CampaignInvitesService {
   /** Admin: list disputed invites (open by default; pass status='all' or 'resolved'). */
   async adminListDisputes(opts: { status?: string; limit?: number } = {}) {
     const limit = Math.min(Math.max(opts.limit ?? 100, 1), 500);
-    const filter: any = {};
+    let filter: any = {};
     if (opts.status === "resolved") {
       filter["reportedIssue.resolvedAt"] = { $ne: null };
     } else if (opts.status === "all") {
       filter["reportedIssue.reportedAt"] = { $ne: null };
     } else {
-      // default: open
-      filter.status = "disputed";
-      filter["reportedIssue.resolvedAt"] = { $in: [null, undefined] };
+      // default: open — reportedIssue-driven, not invite.status-driven, so a plain
+      // "report" (which no longer changes invite.status) still shows up here.
+      filter = this.openReportFilter();
     }
 
     const rawInvites = await this.inviteModel
@@ -3377,7 +3415,11 @@ export class CampaignInvitesService {
     if (!invite) throw new NotFoundException("Invite not found");
     // Idempotent/race-safe: if another call already resolved this (e.g. the cron and an
     // influencer action landing at the same time), no-op rather than double-resolving.
-    if (invite.status !== "disputed") {
+    // Also accepts a plain report-only invite (status never changed, but it has an open
+    // reportedIssue) — admin can resolve those via the same "completed"/"withdrawn" buttons.
+    const hasOpenReport =
+      !!invite.reportedIssue?.reportedAt && !invite.reportedIssue?.resolvedAt;
+    if (invite.status !== "disputed" && !hasOpenReport) {
       return { success: true, status: invite.status, skipped: true };
     }
 
@@ -3607,6 +3649,11 @@ export class CampaignInvitesService {
     if (!["accepted", "payment_confirmed", "working"].includes(invite.status)) {
       return { success: true, status: invite.status, skipped: true };
     }
+    // An open host report (e.g. "not yet posted") blocks auto-expiry — it needs a human
+    // decision via the admin Disputes page, not a silent automatic withdrawal.
+    if (invite.reportedIssue?.reportedAt && !invite.reportedIssue?.resolvedAt) {
+      return { success: true, status: invite.status, skipped: true };
+    }
 
     const now = new Date();
     invite.status = "withdrawn";
@@ -3667,6 +3714,7 @@ export class CampaignInvitesService {
       .find({
         status: { $in: ["accepted", "payment_confirmed", "working"] },
         selectedPostDate: { $ne: null },
+        $nor: [this.openReportFilter()],
       })
       .select("_id campaignId")
       .lean();
@@ -3679,6 +3727,7 @@ export class CampaignInvitesService {
       if (!invite) continue;
       if (!["accepted", "payment_confirmed", "working"].includes(invite.status)) continue;
       if (!invite.selectedPostDate) continue;
+      if (invite.reportedIssue?.reportedAt && !invite.reportedIssue?.resolvedAt) continue;
       const campaign: any = await this.campaignModel
         .findById(invite.campaignId)
         .select("postingDeadlineMode")
@@ -3711,10 +3760,7 @@ export class CampaignInvitesService {
     const cacheKey = "admin:disputes:count";
     const cached = this.getCachedAttention<{ count: number }>(cacheKey);
     if (cached) return cached;
-    const count = await this.inviteModel.countDocuments({
-      status: "disputed",
-      "reportedIssue.resolvedAt": { $in: [null, undefined] },
-    });
+    const count = await this.inviteModel.countDocuments(this.openReportFilter());
     const result = { count };
     this.setCachedAttention(cacheKey, result);
     return result;
@@ -3743,13 +3789,15 @@ export class CampaignInvitesService {
     const [disputed, overdue, awaitingFulfillment] = await Promise.all([
       this.inviteModel.countDocuments({
         ...brandFilter,
-        status: "disputed",
-        "reportedIssue.resolvedAt": { $in: [null, undefined] },
+        ...this.openReportFilter(),
       }),
       this.inviteModel.countDocuments({
         ...brandFilter,
         dueDate: { $lt: now, $ne: null },
         status: { $nin: ["completed", "withdrawn", "disputed", "rejected"] },
+        // Keep mutually exclusive with the "disputed" count above — a reported invite
+        // no longer necessarily has status:'disputed', so exclude it explicitly.
+        $nor: [this.openReportFilter()],
       }),
       this.inviteModel.countDocuments({
         ...brandFilter,
@@ -3789,11 +3837,12 @@ export class CampaignInvitesService {
           ...idFilter,
           status: "accepted",
           dueDate: { $lt: now, $ne: null },
+          // Keep mutually exclusive with disputedAgainstMe below.
+          $nor: [this.openReportFilter()],
         }),
         this.inviteModel.countDocuments({
           ...idFilter,
-          status: "disputed",
-          "reportedIssue.resolvedAt": { $in: [null, undefined] },
+          ...this.openReportFilter(),
         }),
       ]);
     const result = { pendingInvites, overdueDeliverables, disputedAgainstMe };

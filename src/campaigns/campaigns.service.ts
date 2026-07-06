@@ -97,14 +97,23 @@ export class CampaignsService {
     await this.autoCompleteExpiredCampaigns();
   }
 
+  private async getCampaignAutoCloseGraceHours(): Promise<number> {
+    const settings: any = await this.appSettingsModel.findOne({}).lean();
+    const hours = Number(settings?.campaignAutoCloseGraceHours ?? 24);
+    return Number.isFinite(hours) && hours >= 0 ? hours : 24;
+  }
+
   async autoCompleteExpiredCampaigns() {
     const now = new Date();
+    const graceHours = await this.getCampaignAutoCloseGraceHours();
+    const graceCutoff = new Date(now.getTime() - graceHours * 60 * 60 * 1000);
+
     const candidates = await this.campaignModel
       .find({
         status: "active",
         $or: [{ endDate: { $lte: now } }, { timelineEnd: { $lte: now } }],
       })
-      .select("_id")
+      .select("_id endDate timelineEnd")
       .lean();
 
     const blockingStatuses = [
@@ -114,10 +123,23 @@ export class CampaignsService {
       "submitted",
       "disputed",
     ];
+    // Subset of the above that means "never submitted" — these are the only ones the grace-
+    // period backstop actually expires. submitted/disputed resolve on their own independent
+    // crons/admin action regardless of the campaign shell's status, so they're left alone.
+    const neverSubmittedStatuses = ["accepted", "payment_confirmed", "working"];
 
     let completedCount = 0;
     for (const candidate of candidates) {
       const campaignId = candidate._id;
+      // Math.max (not ||) across whichever end-date fields exist — a campaign can match the
+      // query above via timelineEnd alone while endDate is still in the future (legacy rows/
+      // partial updates); picking the wrong one would silently defeat the backstop.
+      const endTimes = [candidate.endDate, candidate.timelineEnd]
+        .filter(Boolean)
+        .map((d: any) => new Date(d).getTime());
+      const referenceEnd = endTimes.length ? Math.max(...endTimes) : now.getTime();
+      const pastGrace = referenceEnd <= graceCutoff.getTime();
+
       const hasActiveWork = await this.campaignInviteModel
         .findOne({
           campaignId: { $in: [campaignId, String(campaignId)] },
@@ -125,13 +147,39 @@ export class CampaignsService {
         })
         .select("_id")
         .lean();
-      if (hasActiveWork) continue;
 
-      await this.campaignModel.updateOne(
+      if (hasActiveWork) {
+        if (!pastGrace) continue;
+        try {
+          await this.campaignInvitesService.expireUnsubmittedInvitesForCampaign(
+            String(campaignId),
+            "Campaign's grace period ended with no submission.",
+          );
+        } catch (e) {
+          console.error(
+            "autoCompleteExpiredCampaigns: grace-period expiry failed",
+            campaignId,
+            e,
+          );
+          continue; // retry next hour — never lock 'completed' over a failed cleanup
+        }
+        // Re-verify only the never-submitted set — if expiry partially failed and one of
+        // these is still stuck, don't complete yet (would orphan it with no way back).
+        const stillBlocking = await this.campaignInviteModel
+          .findOne({
+            campaignId: { $in: [campaignId, String(campaignId)] },
+            status: { $in: neverSubmittedStatuses },
+          })
+          .select("_id")
+          .lean();
+        if (stillBlocking) continue;
+      }
+
+      const result = await this.campaignModel.updateOne(
         { _id: campaignId, status: "active" },
         { $set: { status: "completed", completedBy: "auto", completedAt: now } },
       );
-      completedCount++;
+      if (result.modifiedCount) completedCount++;
     }
 
     return { success: true, checked: candidates.length, completedCount };

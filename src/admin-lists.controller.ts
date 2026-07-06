@@ -251,6 +251,10 @@ export class AdminListsController {
         typeof timing.disputeResponseWaitHours === "number"
           ? timing.disputeResponseWaitHours
           : 12,
+      campaignAutoCloseGraceHours:
+        typeof timing.campaignAutoCloseGraceHours === "number"
+          ? timing.campaignAutoCloseGraceHours
+          : 24,
     };
   }
 
@@ -312,6 +316,7 @@ export class AdminListsController {
         workflowTimingDefaults.submissionAutoCompleteGraceHours,
       payoutReleaseWaitHours: workflowTimingDefaults.payoutReleaseWaitHours,
       disputeResponseWaitHours: workflowTimingDefaults.disputeResponseWaitHours,
+      campaignAutoCloseGraceHours: workflowTimingDefaults.campaignAutoCloseGraceHours,
       earlyAccessAssignmentMode: "manual",
       earlyAccessLastRunAt: null,
       earlyAccessLastRunStatus: "",
@@ -438,6 +443,7 @@ export class AdminListsController {
       "submissionAutoCompleteGraceHours",
       "payoutReleaseWaitHours",
       "disputeResponseWaitHours",
+      "campaignAutoCloseGraceHours",
     ]) {
       if (next[key] === undefined) continue;
       const hours = Number(next[key]);
