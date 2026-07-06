@@ -1257,6 +1257,13 @@ export class CampaignsService {
   ] as const;
 
   private stripMongoIds(val: any): any {
+    // Mongoose documents/subdocuments (e.g. campaign.socialMedia entries) expose internal
+    // bookkeeping (`$__`, `$__parent`, `__parentArray`) as their own enumerable keys, which
+    // circularly reference the parent document — recursing into those blows the call stack.
+    // Normalize to a plain object/array first so only schema fields remain.
+    if (val && typeof val === "object" && typeof val.toObject === "function") {
+      val = val.toObject({ depopulate: true, versionKey: false });
+    }
     if (Array.isArray(val)) return val.map((v) => this.stripMongoIds(v));
     if (val && typeof val === "object") {
       const out: any = {};
