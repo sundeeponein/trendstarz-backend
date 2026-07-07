@@ -30,6 +30,7 @@ export class DashboardService {
     const newInvites: any[] = [];
     const activeCampaigns: any[] = [];
     const completedCampaigns: any[] = [];
+    const withdrawnCampaigns: any[] = [];
     for (const invite of invites) {
       const st = invite.status as string;
       // Debug: count all raw statuses
@@ -65,6 +66,19 @@ export class DashboardService {
           metrics: invite.analytics,
           selectedPlatform: invite.selectedPlatform,
           selectedContentType: invite.selectedContentType,
+        });
+      }
+      if (st === "withdrawn") {
+        // Auto-closed (campaign reached its accepted-slot limit) reads differently
+        // to the creator than a host explicitly pulling their invite.
+        const autoClosed = /^Auto-closed/i.test(String(invite.withdrawnReason || ""));
+        withdrawnCampaigns.push({
+          ...invite.campaignId,
+          inviteId: invite._id,
+          inviteStatus: st,
+          withdrawnAt: invite.withdrawnAt,
+          withdrawnReason: invite.withdrawnReason,
+          autoClosed,
         });
       }
     }
@@ -103,6 +117,7 @@ export class DashboardService {
       invites: { ...stats, newInvites, statusDebug },
       activeCampaigns,
       completedCampaigns,
+      withdrawnCampaigns,
     };
   }
 
