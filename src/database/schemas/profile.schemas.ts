@@ -1176,21 +1176,12 @@ export const CampaignSchema = new Schema(
     promotionUrl: { type: String },
     suggestedCaption: { type: String },
     hashtags: { type: String },
-    resourceLogo: {
-      url: { type: String },
-      public_id: { type: String },
-    },
     resourceImages: [
       {
         url: { type: String, required: true },
         public_id: { type: String, required: true },
       },
     ],
-    resourceGuidelines: {
-      url: { type: String },
-      public_id: { type: String },
-      originalName: { type: String },
-    },
   },
   { timestamps: true },
 );
