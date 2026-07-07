@@ -13,6 +13,7 @@ import { PlansService } from "../plans/plans.service";
 import { PushService } from "../push/push.service";
 import { NotificationsService } from "../notifications/notifications.service";
 import { ProfileVerificationService } from "../profile-verification/profile-verification.service";
+import { TrackingLinksService } from "./tracking-links.service";
 
 function detectPlatform(url: string): string {
   if (!url) return "other";
@@ -91,6 +92,7 @@ export class CampaignInvitesService {
     private readonly pushService: PushService,
     private readonly notificationsService: NotificationsService,
     private readonly profileVerificationService: ProfileVerificationService,
+    private readonly trackingLinksService: TrackingLinksService,
   ) {}
 
   private async getSubmissionApprovalWaitHours(): Promise<number> {
@@ -2253,6 +2255,17 @@ export class CampaignInvitesService {
       }
     }
 
+    // Create the tracking link eagerly on acceptance so it exists even if nobody
+    // ever opens a dashboard view that would otherwise lazily create it (e.g. once
+    // the campaign is completed, no dashboard is being visited).
+    if (status === "accepted") {
+      this.trackingLinksService
+        .getOrCreateForInvite(String(invite._id), String(invite.influencerId), true)
+        .catch(() => {
+          /* non-critical — e.g. campaign has no promotionUrl configured */
+        });
+    }
+
     if (status === "accepted") {
       const acceptedRole = this.normalizeRecipientRole(invite?.recipientRole);
       const campaignForClose: any = await this.campaignModel
@@ -2473,6 +2486,15 @@ export class CampaignInvitesService {
     }
 
     const updated = await invite.save();
+
+    if (action === "accept") {
+      this.trackingLinksService
+        .getOrCreateForInvite(String(invite._id), String(invite.influencerId), true)
+        .catch(() => {
+          /* non-critical — e.g. campaign has no promotionUrl configured */
+        });
+    }
+
     const recipientRole = this.normalizeRecipientRole(invite?.recipientRole);
     const recipientId = String(
       invite?.influencerId || invite?.photographerId || "",
