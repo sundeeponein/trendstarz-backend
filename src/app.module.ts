@@ -83,7 +83,11 @@ import { ProfileVerificationModule } from "./profile-verification/profile-verifi
       },
     ]),
     ScheduleModule.forRoot(),
-    MongooseModule.forRoot(process.env.MONGODB_URI as string),
+    MongooseModule.forRoot(process.env.MONGODB_URI as string, {
+      serverSelectionTimeoutMS: 8000,
+      connectTimeoutMS: 8000,
+      socketTimeoutMS: 20000,
+    }),
     MongooseModule.forFeature([
       { name: "Category", schema: CategorySchema, collection: "categories" },
       { name: "State", schema: StateSchema, collection: "states" },
