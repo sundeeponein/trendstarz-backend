@@ -21,6 +21,7 @@
     "smoke:collab-invites": "node smoke-collab-invites.js",
     "simulate:razorpayx:webhook": "node scripts/simulate-razorpayx-webhook.js",
     "check:gateway-readiness": "node scripts/check-gateway-readiness.js",
+    "backfill:public-ids": "node scripts/backfill-public-ids.js",
     "seeder": "node dist/run-seeder.js",
     "backfill:campaign-scope": "node cron/backfillCampaignScopeFields.js",
     "backfill:invite-due-dates": "node cron/backfillInviteDueDatesFromCampaignDeadline.js",

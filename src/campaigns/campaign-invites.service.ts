@@ -695,6 +695,14 @@ export class CampaignInvitesService {
     };
   }
 
+  async getCampaignIdForInvite(inviteId: string): Promise<string | null> {
+    const invite = (await this.inviteModel
+      .findById(inviteId)
+      .select("campaignId")
+      .lean()) as any;
+    return invite?.campaignId ? String(invite.campaignId) : null;
+  }
+
   async create(brandId: string, data: any) {
     const campaign: any = await this.campaignModel
       .findById(data.campaignId)

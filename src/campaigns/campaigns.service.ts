@@ -8,6 +8,7 @@ import { Cron, CronExpression } from "@nestjs/schedule";
 import { Model, Types } from "mongoose";
 import { PlansService } from "../plans/plans.service";
 import { CloudinaryService } from "../cloudinary.service";
+import { CloudinaryFolders } from "../cloudinary-folders";
 import { PushService } from "../push/push.service";
 import { NotificationsService } from "../notifications/notifications.service";
 import {
@@ -924,6 +925,27 @@ export class CampaignsService {
       brandId: ownerId,
       campaignNumber,
     });
+
+    // Relocate any staged-upload campaign image(s) into their final
+    // campaigns/{_id}/images/ folder now that the document's _id is known,
+    // before the single .save() below.
+    const campaignId = String(campaign._id);
+    const imagesFolder = CloudinaryFolders.campaign.images(campaignId);
+    if (campaign.image?.public_id) {
+      campaign.image = await this.cloudinaryService.relocateAsset(
+        campaign.image,
+        imagesFolder,
+      );
+    }
+    if (campaign.resourceImages?.length) {
+      campaign.resourceImages = await Promise.all(
+        campaign.resourceImages.map(async (img: any) => ({
+          ...img,
+          ...(await this.cloudinaryService.relocateAsset(img, imagesFolder)),
+        })),
+      );
+    }
+
     return await campaign.save();
   }
 

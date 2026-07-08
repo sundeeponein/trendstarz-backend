@@ -70,8 +70,12 @@ export class CloudinaryService {
       throw new Error("Unsupported file format for local upload");
     }
 
-    // Generate unique filename
-    const filename = `${folder}_${Date.now()}_${Math.random().toString(36).substring(2, 8)}${ext}`;
+    // Generate unique filename. Sanitize the folder for use as a filename
+    // prefix — local storage is flat, but `folder` may contain slashes for
+    // nested Cloudinary paths (e.g. "influencers/_pending/profile"), which
+    // would otherwise make fs.writeFileSync target a non-existent subdirectory.
+    const safeFolder = folder.replace(/\//g, "_");
+    const filename = `${safeFolder}_${Date.now()}_${Math.random().toString(36).substring(2, 8)}${ext}`;
     const localDir = getLocalImagesDir();
     if (!fs.existsSync(localDir)) {
       fs.mkdirSync(localDir, { recursive: true });
@@ -90,6 +94,51 @@ export class CloudinaryService {
 
   async uploadImage(file: string, folder = "profile_images") {
     return this.uploadFile(file, folder, "image");
+  }
+
+  // Moves an already-uploaded asset into its final entity-scoped folder once
+  // the owning document's _id becomes known (registration / campaign creation
+  // upload before the entity exists in Mongo). No-ops for local-dev assets,
+  // since local storage has no real folder concept. Fails safe: if the
+  // Cloudinary rename errors out, the original asset reference is returned
+  // unchanged rather than losing the reference to the uploaded file.
+  async relocateAsset(
+    asset: { url: string; public_id: string },
+    newFolder: string,
+    resourceType: "image" | "raw" | "video" = "image",
+  ): Promise<{ url: string; public_id: string }> {
+    if (
+      !asset?.public_id ||
+      !isCloudinaryEnabled() ||
+      asset.public_id.startsWith("/assets/local-images/")
+    ) {
+      return asset;
+    }
+
+    const basename = asset.public_id.split("/").pop();
+    const newPublicId = `${newFolder}/${basename}`;
+    if (newPublicId === asset.public_id) {
+      return asset;
+    }
+
+    setCloudinaryConfig();
+    try {
+      const result = await cloudinary.uploader.rename(
+        asset.public_id,
+        newPublicId,
+        { overwrite: true, resource_type: resourceType },
+      );
+      return { url: result.secure_url, public_id: result.public_id };
+    } catch (err) {
+      console.error(
+        "[Cloudinary] relocateAsset failed:",
+        asset.public_id,
+        "->",
+        newPublicId,
+        err,
+      );
+      return asset;
+    }
   }
 
   async deleteImage(publicId: string) {

@@ -2,6 +2,7 @@ import {
   Injectable,
   UnauthorizedException,
   BadRequestException,
+  ForbiddenException,
 } from "@nestjs/common";
 import * as bcrypt from "bcryptjs";
 import * as crypto from "crypto";
@@ -26,6 +27,8 @@ import {
   validateSocialHandle,
 } from "../utils/social-handle.util";
 import { consumeOtpVerificationToken } from "../otp/otp.controller";
+import { CloudinaryService } from "../cloudinary.service";
+import { CloudinaryFolders } from "../cloudinary-folders";
 
 type AnyUserDoc = {
   email: string;
@@ -594,8 +597,48 @@ export class AuthService {
     @InjectModel("Language") private readonly languageModel: Model<any>,
     @InjectModel("SocialMedia") private readonly socialMediaModel: Model<any>,
     @InjectModel("AppSettings") private readonly appSettingsModel: Model<any>,
+    @InjectModel("Counter") private readonly counterModel: Model<any>,
     private readonly firebaseAdminService: FirebaseAdminService,
+    private readonly cloudinaryService: CloudinaryService,
   ) {}
+
+  // Generates the next sequential, role-prefixed human-readable ID (e.g.
+  // "INF100057") using the shared `counters` collection (same mechanism as
+  // Campaign.campaignNumber). Note: findOneAndUpdate+upsert does NOT apply
+  // the schema's `default` on insert, so `seq` starts at 1 on first use —
+  // the +100000 display offset is applied here rather than stored, keeping
+  // this independent of that Mongoose quirk.
+  private async nextPublicId(
+    prefix: string,
+    counterKey: string,
+  ): Promise<string> {
+    const doc = await this.counterModel.findOneAndUpdate(
+      { _id: counterKey },
+      { $inc: { seq: 1 } },
+      { new: true, upsert: true },
+    );
+    return `${prefix}${100000 + doc.seq}`;
+  }
+
+  // Moves images/docs uploaded to a `_pending` staging folder into their
+  // final entity-scoped folder now that the document's _id is known. Called
+  // after `new this.xModel(...)` (Mongoose assigns _id client-side) and
+  // before `.save()`, so the doc is only written once.
+  private async relocateAssets<T extends { url: string; public_id: string }>(
+    assets: T[],
+    folder: string,
+  ): Promise<T[]> {
+    if (!assets?.length) return assets;
+    return Promise.all(
+      assets.map(async (asset) => {
+        const relocated = await this.cloudinaryService.relocateAsset(
+          asset,
+          folder,
+        );
+        return { ...asset, ...relocated };
+      }),
+    );
+  }
 
   private modelForRole(role: string): Model<any> | null {
     const normalized = String(role || "").toLowerCase();
@@ -604,6 +647,20 @@ export class AuthService {
     if (normalized === "brand") return this.brandModel;
     if (normalized === "photographer") return this.photographerModel;
     return null;
+  }
+
+  // Fresh DB read — the JWT payload deliberately excludes isEmailVerified
+  // (kept minimal at sign time), so this can't be trusted from req.user alone.
+  async assertEmailVerified(userId: string, role: string): Promise<void> {
+    const model = this.modelForRole(role);
+    const doc = model
+      ? await model.findById(userId).select("isEmailVerified").lean()
+      : null;
+    if (!doc || (doc as any).isEmailVerified !== true) {
+      throw new ForbiddenException(
+        "Verify your email before uploading files.",
+      );
+    }
   }
 
   /** Lightweight lookup so the live checkout page can show Founder Offer bonus eligibility without loading the full dashboard. */
@@ -1412,6 +1469,33 @@ export class AuthService {
       verificationAdminNotes: "",
       verificationAuditLog,
     });
+    influencer.publicId = await this.nextPublicId(
+      "INF",
+      "influencer_public_id",
+    );
+
+    // Relocate any staged uploads into their final influencers/{_id}/... folder
+    // now that the document's _id is known, before the single .save() below.
+    const influencerId = String(influencer._id);
+    if (influencer.profileImages?.length) {
+      const [profilePhoto, ...gallery] = influencer.profileImages;
+      const [relocatedProfile] = await this.relocateAssets(
+        [profilePhoto],
+        CloudinaryFolders.influencer.profile(influencerId),
+      );
+      const relocatedGallery = await this.relocateAssets(
+        gallery,
+        CloudinaryFolders.influencer.gallery(influencerId),
+      );
+      influencer.profileImages = [relocatedProfile, ...relocatedGallery];
+    }
+    if (influencer.verificationDocuments?.length) {
+      influencer.verificationDocuments = await this.relocateAssets(
+        influencer.verificationDocuments,
+        CloudinaryFolders.influencer.verification(influencerId),
+      );
+    }
+
     // Status stays "pending" until email is verified — auto-approve (if enabled) is applied in verifyEmailByToken.
     try {
       await influencer.save();
@@ -1553,6 +1637,23 @@ export class AuthService {
       socialMedia: socialMediaMapped,
       signupAttribution,
     });
+    brand.publicId = await this.nextPublicId("BRD", "brand_public_id");
+
+    // Relocate any staged uploads into their final brands/{_id}/... folder
+    // now that the document's _id is known, before the single .save() below.
+    const brandId = String(brand._id);
+    if (brand.brandLogo?.length) {
+      brand.brandLogo = await this.relocateAssets(
+        brand.brandLogo,
+        CloudinaryFolders.brand.logo(brandId),
+      );
+    }
+    if (brand.products?.length) {
+      brand.products = await this.relocateAssets(
+        brand.products,
+        CloudinaryFolders.brand.products(brandId),
+      );
+    }
     // Status stays "pending" until email is verified — auto-approve (if enabled) is applied in verifyEmailByToken.
     const savedBrand = await brand.save();
     return {
@@ -1738,6 +1839,27 @@ export class AuthService {
       profileImages: normalizedProfileImages,
       signupAttribution,
     });
+
+    photographer.publicId = await this.nextPublicId(
+      "PHO",
+      "photographer_public_id",
+    );
+
+    // Relocate any staged uploads into their final photographers/{_id}/... folder
+    // now that the document's _id is known, before the single .save() below.
+    if (photographer.profileImages?.length) {
+      const photographerId = String(photographer._id);
+      const [profilePhoto, ...gallery] = photographer.profileImages;
+      const [relocatedProfile] = await this.relocateAssets(
+        [profilePhoto],
+        CloudinaryFolders.photographer.profile(photographerId),
+      );
+      const relocatedGallery = await this.relocateAssets(
+        gallery,
+        CloudinaryFolders.photographer.gallery(photographerId),
+      );
+      photographer.profileImages = [relocatedProfile, ...relocatedGallery];
+    }
 
     try {
       const saved = await photographer.save();

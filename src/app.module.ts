@@ -42,6 +42,7 @@ import {
   AppSettingsSchema,
   CampaignSchema,
   WhatsAppCommunitySchema,
+  CounterSchema,
 } from "./database/schemas/profile.schemas";
 import { PaymentSchema } from "./database/schemas/payment.schema";
 import { CampaignInviteSchema } from "./database/schemas/campaign-invite.schema";
@@ -99,6 +100,7 @@ import { ProfileVerificationModule } from "./profile-verification/profile-verifi
       },
       { name: "Language", schema: LanguageSchema, collection: "languages" },
       { name: "User", schema: UserSchema, collection: "users" },
+      { name: "Counter", schema: CounterSchema, collection: "counters" },
       {
         name: "Influencer",
         schema: InfluencerSchema,

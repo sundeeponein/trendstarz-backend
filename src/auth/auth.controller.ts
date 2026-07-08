@@ -22,6 +22,7 @@ import * as path from "path";
 import { randomUUID } from "crypto";
 import { AuthService } from "./auth.service";
 import { CloudinaryService } from "../cloudinary.service";
+import { CloudinaryFolders } from "../cloudinary-folders";
 import { JwtAuthGuard } from "./jwt-auth.guard";
 import { Throttle } from "@nestjs/throttler";
 import { isLocalAuthBypassRequest } from "../utils/local-auth-bypass.util";
@@ -32,6 +33,11 @@ import {
   SendEmailVerificationDto,
   ChangePasswordDto,
 } from "./dto/auth.dto";
+
+// Allows slash-delimited entity-scoped paths (e.g. "influencers/_pending/profile",
+// "brands/64f.../logo") while structurally blocking path traversal — "." isn't
+// in the allowed character class, so ".." segments can't be constructed.
+const CLOUDINARY_FOLDER_PATTERN = /^[a-zA-Z0-9_-]+(\/[a-zA-Z0-9_-]+)*$/;
 
 @Controller("auth")
 export class AuthController {
@@ -185,13 +191,87 @@ export class AuthController {
     @Body("folder") folder?: string,
   ) {
     const targetFolder =
-      typeof folder === "string" && /^[a-zA-Z0-9_-]+$/.test(folder)
+      typeof folder === "string" && CLOUDINARY_FOLDER_PATTERN.test(folder)
         ? folder
         : "registration_images";
 
     const uploaded = await this.cloudinaryService.uploadImage(
       file.path,
       targetFolder,
+    );
+
+    if (file?.path && fs.existsSync(file.path)) {
+      fs.unlinkSync(file.path);
+    }
+
+    return {
+      url: uploaded.secure_url || uploaded.url,
+      public_id: uploaded.public_id,
+    };
+  }
+
+  // Authenticated + email-verified-only variant, used for gallery/product
+  // uploads from the post-login profile-edit pages (registration no longer
+  // offers these — only the profile-image upload above, which stays public).
+  // Unlike upload-image, the folder is derived server-side from the caller's
+  // own identity rather than trusted from the request body.
+  @UseGuards(JwtAuthGuard)
+  @Post("upload-authenticated-image")
+  @UseInterceptors(
+    FileInterceptor("file", {
+      storage: diskStorage({
+        destination: (req: any, file: any, cb: any) => {
+          const dest = path.resolve(process.cwd(), "assets/local-images");
+          if (!fs.existsSync(dest)) {
+            fs.mkdirSync(dest, { recursive: true });
+          }
+          cb(null, dest);
+        },
+        filename: (req: any, file: any, cb: any) => {
+          const ext = path.extname(file.originalname || "") || ".jpg";
+          cb(null, `${randomUUID()}${ext}`);
+        },
+      }),
+      fileFilter: (req, file, cb) => {
+        const allowed = ["image/jpeg", "image/jpg", "image/png", "image/webp"];
+        if (!allowed.includes(file.mimetype)) {
+          return cb(
+            new BadRequestException("Only JPG, PNG, or WebP images are allowed"),
+            false,
+          );
+        }
+        cb(null, true);
+      },
+      limits: { fileSize: 10 * 1024 * 1024 },
+    }),
+  )
+  async uploadAuthenticatedImage(
+    @UploadedFile() file: Express.Multer.File,
+    @Body("type") type: string,
+    @Req() req: any,
+  ) {
+    const userId = String(req.user?.userId || "");
+    const role = String(req.user?.role || "");
+    await this.authService.assertEmailVerified(userId, role);
+
+    const folder =
+      role === "influencer" && type === "gallery"
+        ? CloudinaryFolders.influencer.gallery(userId)
+        : role === "brand" && type === "products"
+          ? CloudinaryFolders.brand.products(userId)
+          : role === "photographer" && type === "gallery"
+            ? CloudinaryFolders.photographer.gallery(userId)
+            : null;
+    if (!folder) {
+      if (file?.path && fs.existsSync(file.path)) {
+        fs.unlinkSync(file.path);
+      }
+      throw new BadRequestException("Unsupported upload type for this role.");
+    }
+
+    const uploaded = await this.cloudinaryService.uploadImage(
+      file.path,
+      folder,
     );
 
     if (file?.path && fs.existsSync(file.path)) {
@@ -238,7 +318,7 @@ export class AuthController {
     @Body("folder") folder?: string,
   ) {
     const targetFolder =
-      typeof folder === "string" && /^[a-zA-Z0-9_-]+$/.test(folder)
+      typeof folder === "string" && CLOUDINARY_FOLDER_PATTERN.test(folder)
         ? folder
         : "influencer-verifications";
     const uploaded = await this.cloudinaryService.uploadFile(

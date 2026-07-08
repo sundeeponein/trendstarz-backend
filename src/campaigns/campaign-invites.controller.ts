@@ -21,6 +21,7 @@ import * as path from "path";
 import * as fs from "fs";
 import { randomUUID } from "crypto";
 import { CloudinaryService } from "../cloudinary.service";
+import { CloudinaryFolders } from "../cloudinary-folders";
 
 @Controller("campaign-invites")
 export class CampaignInvitesController {
@@ -77,9 +78,14 @@ export class CampaignInvitesController {
     @UploadedFile() file: Express.Multer.File,
     @Req() req: any,
   ) {
+    const submitterId = this.requesterId(req);
+    const campaignId = await this.invitesService.getCampaignIdForInvite(id);
+    const folder = campaignId
+      ? CloudinaryFolders.campaign.proofs(campaignId, submitterId)
+      : "campaign_proofs";
     const uploaded = await this.cloudinaryService.uploadImage(
       file.path,
-      "campaign_proofs",
+      folder,
     );
 
     if (file?.path && fs.existsSync(file.path)) {

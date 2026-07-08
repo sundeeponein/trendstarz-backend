@@ -4,6 +4,7 @@ import { UnauthorizedException, BadRequestException } from "@nestjs/common";
 import { AuthService } from "./auth.service";
 import * as bcrypt from "bcryptjs";
 import { FirebaseAdminService } from "../utils/firebase-admin.service";
+import { CloudinaryService } from "../cloudinary.service";
 
 // Mock external dependencies
 jest.mock("bcryptjs");
@@ -104,6 +105,12 @@ describe("AuthService", () => {
         { provide: getModelToken("Language"), useValue: createMockModel() },
         { provide: getModelToken("SocialMedia"), useValue: createMockModel() },
         {
+          provide: getModelToken("Counter"),
+          useValue: {
+            findOneAndUpdate: jest.fn().mockResolvedValue({ seq: 1 }),
+          },
+        },
+        {
           provide: getModelToken("AppSettings"),
           useValue: {
             findOne: jest
@@ -121,6 +128,12 @@ describe("AuthService", () => {
             setUserRoleClaim: jest.fn(),
             verifyIdToken: jest.fn(),
             setEmailVerified: jest.fn(),
+          },
+        },
+        {
+          provide: CloudinaryService,
+          useValue: {
+            relocateAsset: jest.fn().mockImplementation((asset) => Promise.resolve(asset)),
           },
         },
       ],
