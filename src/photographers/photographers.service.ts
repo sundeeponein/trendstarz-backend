@@ -439,6 +439,30 @@ export class PhotographersService {
       .lean();
     if (!current) throw new NotFoundException("Photographer not found");
 
+    // Cleanup old images if profileImages is being replaced — mirrors
+    // updateInfluencerProfile()/updateBrandProfile() in users.service.ts.
+    // Without this, a re-uploaded photo just orphans the previous one in
+    // Cloudinary forever instead of replacing it.
+    if (update.profileImages && Array.isArray(current.profileImages)) {
+      for (const oldImg of current.profileImages) {
+        const oldPublicId = oldImg?.public_id;
+        if (
+          oldPublicId &&
+          !update.profileImages.some((img: any) => img?.public_id === oldPublicId)
+        ) {
+          try {
+            await this.cloudinaryService.deleteImage(oldPublicId);
+          } catch (err) {
+            console.error(
+              "[PATCH][ERROR] Failed to delete photographer image:",
+              oldPublicId,
+              err,
+            );
+          }
+        }
+      }
+    }
+
     if (Object.prototype.hasOwnProperty.call(update, "phoneNumber")) {
       const existingPhone = this.normalizePhone(current.phoneNumber);
       const incomingPhone = this.normalizePhone(update.phoneNumber);
