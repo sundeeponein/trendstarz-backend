@@ -831,6 +831,15 @@ export const AppSettingsSchema = new Schema({
   pendingUserAutoDeleteLastRunAt: { type: Date, default: null },
   pendingUserAutoDeleteLastRunCount: { type: Number, default: 0 },
   pendingUserAutoDeleteLastRunBy: { type: String, default: "" },
+  // Cleans up orphaned Cloudinary uploads left in `_pending/*` folders when a
+  // registration attempt uploads a photo/doc but never completes (abandoned
+  // tab, failed validation) — those assets never get relocated to a real
+  // entity folder and would otherwise sit in storage forever.
+  pendingUploadAutoDeleteEnabled: { type: Boolean, default: false },
+  pendingUploadAutoDeleteHours: { type: Number, default: 48 },
+  pendingUploadAutoDeleteLastRunAt: { type: Date, default: null },
+  pendingUploadAutoDeleteLastRunCount: { type: Number, default: 0 },
+  pendingUploadAutoDeleteLastRunBy: { type: String, default: "" },
   campaignApprovalMode: {
     type: String,
     enum: ["manual", "auto_live"],

@@ -56,6 +56,7 @@ import { FirebaseAdminService } from "./utils/firebase-admin.service";
 import { AdminUserTableController } from "./admin/admin-user-table.controller";
 import { EarlyAccessAssignmentService } from "./admin/early-access-assignment.service";
 import { PendingUserCleanupService } from "./admin/pending-user-cleanup.service";
+import { PendingUploadCleanupService } from "./admin/pending-upload-cleanup.service";
 import { PaymentModule } from "./payment/payment.module";
 import { UsersModule } from "./users/users.module";
 import { CampaignsModule } from "./campaigns/campaigns.module";
@@ -192,6 +193,7 @@ import { ProfileVerificationModule } from "./profile-verification/profile-verifi
     AuthService,
     EarlyAccessAssignmentService,
     PendingUserCleanupService,
+    PendingUploadCleanupService,
     MongoLogger,
     CloudinaryService,
     FirebaseAdminService,

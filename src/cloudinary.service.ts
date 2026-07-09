@@ -141,7 +141,10 @@ export class CloudinaryService {
     }
   }
 
-  async deleteImage(publicId: string) {
+  async deleteImage(
+    publicId: string,
+    resourceType: "image" | "raw" | "video" = "image",
+  ) {
     if (!publicId) {
       return { result: "not_found", reason: "empty_public_id" };
     }
@@ -178,7 +181,9 @@ export class CloudinaryService {
     for (const id of variants) {
       try {
         console.log("[Cloudinary] Attempting to delete public_id:", id);
-        const result = await cloudinary.uploader.destroy(id);
+        const result = await cloudinary.uploader.destroy(id, {
+          resource_type: resourceType,
+        });
         console.log("[Cloudinary] destroy result for", id, ":", result);
         if (result.result === "ok") {
           console.log("[Cloudinary] Successfully deleted:", id);
@@ -195,5 +200,41 @@ export class CloudinaryService {
       publicId,
     );
     return lastResult;
+  }
+
+  // Lists assets under a folder prefix that were uploaded before `cutoff`.
+  // Used to find `_pending/*` staging uploads that were never relocated —
+  // i.e. abandoned/failed registrations — so they can be purged instead of
+  // accumulating in Cloudinary storage forever.
+  async listResourcesOlderThan(
+    prefix: string,
+    cutoff: Date,
+    resourceType: "image" | "raw" = "image",
+  ): Promise<Array<{ public_id: string; created_at: string }>> {
+    if (!isCloudinaryEnabled() || !hasCloudinaryCredentials()) return [];
+    setCloudinaryConfig();
+
+    const stale: Array<{ public_id: string; created_at: string }> = [];
+    let nextCursor: string | undefined;
+    do {
+      const resp: any = await cloudinary.api.resources({
+        type: "upload",
+        resource_type: resourceType,
+        prefix,
+        max_results: 500,
+        next_cursor: nextCursor,
+      });
+      for (const resource of resp.resources || []) {
+        if (new Date(resource.created_at) <= cutoff) {
+          stale.push({
+            public_id: resource.public_id,
+            created_at: resource.created_at,
+          });
+        }
+      }
+      nextCursor = resp.next_cursor;
+    } while (nextCursor);
+
+    return stale;
   }
 }

@@ -36,6 +36,7 @@ import {
   seedMissingWhatsAppCommunitiesFromConfig,
 } from "./utils/whatsapp-community-config.util";
 import { PendingUserCleanupService } from "./admin/pending-user-cleanup.service";
+import { PendingUploadCleanupService } from "./admin/pending-upload-cleanup.service";
 
 interface VisibilityItem {
   _id: string;
@@ -193,6 +194,7 @@ export class AdminListsController {
     @InjectModel("WhatsAppCommunity")
     private readonly whatsappCommunityModel: Model<any>,
     private readonly pendingUserCleanupService: PendingUserCleanupService,
+    private readonly pendingUploadCleanupService: PendingUploadCleanupService,
   ) {
     // Load plans-config.json on initialization
     this.loadPlansConfig();
@@ -532,6 +534,21 @@ export class AdminListsController {
     return this.pendingUserCleanupService.syncFirebaseVerifiedEmails(
       String(actor),
     );
+  }
+
+  // Lists what the pending-upload cleanup would delete, without deleting
+  // anything — use this to sanity-check the retention window before turning
+  // on `pendingUploadAutoDeleteEnabled`.
+  @Get("pending-upload-cleanup/preview")
+  async previewPendingUploadCleanup() {
+    return this.pendingUploadCleanupService.runCleanupNow("admin_preview", true);
+  }
+
+  @Post("pending-upload-cleanup/run")
+  async runPendingUploadCleanup(@Req() req: any) {
+    const actor =
+      req?.user?.email || req?.user?.userId || req?.user?.sub || "admin";
+    return this.pendingUploadCleanupService.runCleanupNow(String(actor), false);
   }
 
   /**
