@@ -1042,42 +1042,25 @@ export class AuthService {
 
     // Fetch all collections in parallel to eliminate sequential DB round-trips
     // and prevent timing-based enumeration of which collection a user belongs to.
-    const [adminUser, influencer, brandRaw, photographer] = await Promise.all([
+    const [adminUser, influencer, brand, photographer] = await Promise.all([
       this.userModel.findOne({ email: normalizedEmail, role: "admin" }),
       this.influencerModel.findOne({ email: normalizedEmail }),
       this.brandModel.findOne({ email: normalizedEmail }),
       this.photographerModel.findOne({ email: normalizedEmail }),
     ]);
 
-    // If user is a brand but no brand profile exists, auto-create a minimal profile
-    let brand = brandRaw;
-	    if (!brand && !adminUser && !influencer && !photographer) {
-      // Create minimal brand profile
-      const minimalBrand = new this.brandModel({
-        brandName: normalizedEmail.split("@")[0] || "Brand",
-        email: normalizedEmail,
-        phoneNumber: "",
-        password: await bcrypt.hash(password, 10),
-        firstRegisteredAt: new Date(),
-        status: "pending",
-      });
-      try {
-        brand = await minimalBrand.save();
-      } catch {
-        throw new UnauthorizedException(
-          "Could not auto-create brand profile for this user.",
-	        );
-	      }
-	    }
+    if (!adminUser && !influencer && !brand && !photographer) {
+      throw new UnauthorizedException("Invalid credentials");
+    }
 
-	    await Promise.all([
-	      this.promoteLegacyEmailVerified(adminUser, this.userModel),
-	      this.promoteLegacyEmailVerified(influencer, this.influencerModel),
-	      this.promoteLegacyEmailVerified(brand, this.brandModel),
-	      this.promoteLegacyEmailVerified(photographer, this.photographerModel),
-	    ]);
+    await Promise.all([
+      this.promoteLegacyEmailVerified(adminUser, this.userModel),
+      this.promoteLegacyEmailVerified(influencer, this.influencerModel),
+      this.promoteLegacyEmailVerified(brand, this.brandModel),
+      this.promoteLegacyEmailVerified(photographer, this.photographerModel),
+    ]);
 
-	    if (adminUser) {
+    if (adminUser) {
       const isMatch = await bcrypt.compare(password, adminUser.password);
       if (!isMatch) throw new UnauthorizedException("Invalid credentials");
       const now = new Date();
@@ -1195,6 +1178,11 @@ export class AuthService {
         "brand",
         options,
       );
+      if (brand.status === "pending" && !options?.localAuthBypass) {
+        throw new UnauthorizedException(
+          "Your account is pending approval. Please wait for admin to activate your account.",
+        );
+      }
       const now = new Date();
       await this.brandModel.updateOne(
         { _id: brand._id },
