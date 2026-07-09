@@ -92,6 +92,10 @@ export class ImageCleanupService {
       addPublicId(typeof img === "object" ? img?.publicId : img);
     }
 
+    for (const doc of user?.verificationDocuments ?? []) {
+      addPublicId(typeof doc === "object" ? doc?.public_id : doc);
+    }
+
     return [...publicIds];
   }
 
@@ -101,6 +105,22 @@ export class ImageCleanupService {
         await this.cloudinaryService.deleteImage(publicId);
       } catch (err) {
         this.logger.warn(`[ImageCleanup] Failed to delete ${publicId}`, err);
+      }
+    }
+  }
+
+  // Verification docs can be a PDF (Cloudinary `raw` resource) or an image,
+  // unlike gallery/product media which is always `image` — each needs its
+  // own resource type resolved from the stored mimeType.
+  private async deleteVerificationDocuments(docs: any[]) {
+    for (const doc of docs) {
+      const publicId = typeof doc === "object" ? doc?.public_id : doc;
+      if (!publicId) continue;
+      const resourceType = doc?.mimeType === "application/pdf" ? "raw" : "image";
+      try {
+        await this.cloudinaryService.deleteImage(publicId, resourceType);
+      } catch (err) {
+        this.logger.warn(`[ImageCleanup] Failed to delete verification doc ${publicId}`, err);
       }
     }
   }
@@ -122,7 +142,7 @@ export class ImageCleanupService {
   private softDeletedMediaToPurge(
     user: any,
     userType: "Influencer" | "Brand" | "Photographer",
-  ): { publicIds: string[]; update: any } {
+  ): { publicIds: string[]; verificationDocs: any[]; update: any } {
     if (userType === "Brand") {
       const logos = Array.isArray(user?.brandLogo) ? user.brandLogo : [];
       const primaryLogo = logos[0] || null;
@@ -136,6 +156,7 @@ export class ImageCleanupService {
             ? user.galleryImages.map((img: any) => this.getImagePublicId(img))
             : []),
         ]),
+        verificationDocs: [],
         update: {
           brandLogo: primaryLogo ? [primaryLogo] : [],
           products: [],
@@ -147,9 +168,13 @@ export class ImageCleanupService {
 
     const images = Array.isArray(user?.profileImages) ? user.profileImages : [];
     const primaryImage = images[0] || null;
+    const verificationDocs = Array.isArray(user?.verificationDocuments)
+      ? user.verificationDocuments
+      : [];
     const update: any = {
       profileImages: primaryImage ? [primaryImage] : [],
       galleryImages: [],
+      verificationDocuments: [],
       status: "deleted",
     };
     if (primaryImage && typeof primaryImage === "object") {
@@ -169,6 +194,7 @@ export class ImageCleanupService {
           ? user.galleryImages.map((img: any) => this.getImagePublicId(img))
           : []),
       ]),
+      verificationDocs,
       update,
     };
   }
@@ -295,13 +321,16 @@ export class ImageCleanupService {
         if (snapshot.publicIds.length > 0) {
           await this.deleteMediaByPublicIds(snapshot.publicIds);
         }
+        if (snapshot.verificationDocs.length > 0) {
+          await this.deleteVerificationDocuments(snapshot.verificationDocs);
+        }
 
         await entry.model.findByIdAndUpdate(user._id, {
           $set: snapshot.update,
         });
 
         this.logger.log(
-          `[ImageCleanup] Purged ${snapshot.publicIds.length} gallery/product media file(s) for soft-deleted ${entry.name} ${user._id}`,
+          `[ImageCleanup] Purged ${snapshot.publicIds.length} gallery/product media file(s) and ${snapshot.verificationDocs.length} verification document(s) for soft-deleted ${entry.name} ${user._id}`,
         );
       }
     }

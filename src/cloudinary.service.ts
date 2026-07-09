@@ -128,6 +128,17 @@ export class CloudinaryService {
         newPublicId,
         { overwrite: true, resource_type: resourceType },
       );
+
+      // On accounts using Cloudinary's Dynamic Folder Mode, `rename` only
+      // changes the public_id/URL — it does NOT move the separate
+      // `asset_folder` attribute the Console's folder browser actually
+      // reads. Left alone, the asset is fully accessible at its new path
+      // but stays visually filed under the old `_pending/...` folder
+      // forever. Sync it explicitly; this is cosmetic only (nothing in the
+      // app reads asset_folder), so a failure here shouldn't undo the
+      // already-successful rename above.
+      await this.syncAssetFolder(newPublicId, newFolder, resourceType);
+
       return { url: result.secure_url, public_id: result.public_id };
     } catch (err) {
       console.error(
@@ -138,6 +149,40 @@ export class CloudinaryService {
         err,
       );
       return asset;
+    }
+  }
+
+  isEnabled(): boolean {
+    return isCloudinaryEnabled();
+  }
+
+  // Sets the Console-visible `asset_folder` for an asset whose public_id
+  // already lives at `folder/...`. Safe to call repeatedly — writing the
+  // same value again is a harmless no-op — which is what makes the backfill
+  // job idempotent. Failures are logged and swallowed rather than thrown:
+  // this attribute is cosmetic only, nothing in the app reads it.
+  async syncAssetFolder(
+    publicId: string,
+    folder: string,
+    resourceType: "image" | "raw" | "video" = "image",
+  ): Promise<boolean> {
+    if (!isCloudinaryEnabled() || !hasCloudinaryCredentials()) return false;
+    setCloudinaryConfig();
+    try {
+      await cloudinary.api.update(publicId, {
+        resource_type: resourceType,
+        asset_folder: folder,
+      });
+      return true;
+    } catch (err) {
+      console.warn(
+        "[Cloudinary] syncAssetFolder failed:",
+        publicId,
+        "->",
+        folder,
+        err,
+      );
+      return false;
     }
   }
 

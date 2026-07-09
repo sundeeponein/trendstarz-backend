@@ -57,6 +57,7 @@ import { AdminUserTableController } from "./admin/admin-user-table.controller";
 import { EarlyAccessAssignmentService } from "./admin/early-access-assignment.service";
 import { PendingUserCleanupService } from "./admin/pending-user-cleanup.service";
 import { PendingUploadCleanupService } from "./admin/pending-upload-cleanup.service";
+import { AssetFolderBackfillService } from "./admin/asset-folder-backfill.service";
 import { PaymentModule } from "./payment/payment.module";
 import { UsersModule } from "./users/users.module";
 import { CampaignsModule } from "./campaigns/campaigns.module";
@@ -194,6 +195,7 @@ import { ProfileVerificationModule } from "./profile-verification/profile-verifi
     EarlyAccessAssignmentService,
     PendingUserCleanupService,
     PendingUploadCleanupService,
+    AssetFolderBackfillService,
     MongoLogger,
     CloudinaryService,
     FirebaseAdminService,

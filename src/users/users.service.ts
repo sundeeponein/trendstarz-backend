@@ -275,6 +275,38 @@ export class UsersService {
     }
   }
 
+  // Verification docs can be a PDF (Cloudinary `raw` resource) or an image —
+  // unlike profile/gallery media, which is always `image` — so each one
+  // needs its own resource type resolved from the stored mimeType rather
+  // than defaulting to "image" like removeStoredMedia() does.
+  private async deleteVerificationDocuments(
+    docs: any[] | undefined,
+    errors: any[],
+    errorType: string,
+  ): Promise<void> {
+    if (!Array.isArray(docs)) return;
+    for (const doc of docs) {
+      const publicId =
+        typeof doc === "object"
+          ? doc?.public_id
+          : typeof doc === "string"
+            ? doc
+            : null;
+      if (!publicId) continue;
+      const resourceType = doc?.mimeType === "application/pdf" ? "raw" : "image";
+      try {
+        await this.cloudinaryService.deleteImage(publicId, resourceType);
+      } catch (cloudErr) {
+        console.error(
+          `[DELETE] Error deleting ${errorType} verification document from Cloudinary:`,
+          cloudErr,
+          doc,
+        );
+        errors.push({ type: errorType, publicId, error: cloudErr });
+      }
+    }
+  }
+
   private getImagePublicId(image: any): string {
     if (!image) return "";
     if (typeof image === "string") return image.trim();
@@ -558,6 +590,11 @@ export class UsersService {
           }
         }
       }
+      await this.deleteVerificationDocuments(
+        user.verificationDocuments,
+        errors,
+        "influencerVerification",
+      );
       const deleteResult = await this.influencerModel.findByIdAndDelete(id);
       if (!deleteResult) {
         console.error(
@@ -695,6 +732,11 @@ export class UsersService {
           }
         }
       }
+      await this.deleteVerificationDocuments(
+        user.verificationDocuments,
+        errors,
+        "photographerVerification",
+      );
 
       const deleteResult = await this.photographerModel.findByIdAndDelete(id);
       if (!deleteResult) {

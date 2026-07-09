@@ -37,6 +37,7 @@ import {
 } from "./utils/whatsapp-community-config.util";
 import { PendingUserCleanupService } from "./admin/pending-user-cleanup.service";
 import { PendingUploadCleanupService } from "./admin/pending-upload-cleanup.service";
+import { AssetFolderBackfillService } from "./admin/asset-folder-backfill.service";
 
 interface VisibilityItem {
   _id: string;
@@ -195,6 +196,7 @@ export class AdminListsController {
     private readonly whatsappCommunityModel: Model<any>,
     private readonly pendingUserCleanupService: PendingUserCleanupService,
     private readonly pendingUploadCleanupService: PendingUploadCleanupService,
+    private readonly assetFolderBackfillService: AssetFolderBackfillService,
   ) {
     // Load plans-config.json on initialization
     this.loadPlansConfig();
@@ -549,6 +551,19 @@ export class AdminListsController {
     const actor =
       req?.user?.email || req?.user?.userId || req?.user?.sub || "admin";
     return this.pendingUploadCleanupService.runCleanupNow(String(actor), false);
+  }
+
+  // One-time (re-runnable) repair for historically-relocated Cloudinary
+  // assets whose `asset_folder` attribute never got synced to match their
+  // real public_id path — see AssetFolderBackfillService for the full story.
+  @Get("asset-folder-backfill/preview")
+  async previewAssetFolderBackfill() {
+    return this.assetFolderBackfillService.runBackfillNow(true);
+  }
+
+  @Post("asset-folder-backfill/run")
+  async runAssetFolderBackfill() {
+    return this.assetFolderBackfillService.runBackfillNow(false);
   }
 
   /**
