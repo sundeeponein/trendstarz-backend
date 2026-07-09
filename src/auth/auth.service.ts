@@ -1462,29 +1462,12 @@ export class AuthService {
       "influencer_public_id",
     );
 
-    // Relocate any staged uploads into their final influencers/{_id}/... folder
-    // now that the document's _id is known, before the single .save() below.
-    const influencerId = String(influencer._id);
-    if (influencer.profileImages?.length) {
-      const [profilePhoto, ...gallery] = influencer.profileImages;
-      const [relocatedProfile] = await this.relocateAssets(
-        [profilePhoto],
-        CloudinaryFolders.influencer.profile(influencerId),
-      );
-      const relocatedGallery = await this.relocateAssets(
-        gallery,
-        CloudinaryFolders.influencer.gallery(influencerId),
-      );
-      influencer.profileImages = [relocatedProfile, ...relocatedGallery];
-    }
-    if (influencer.verificationDocuments?.length) {
-      influencer.verificationDocuments = await this.relocateAssets(
-        influencer.verificationDocuments,
-        CloudinaryFolders.influencer.verification(influencerId),
-      );
-    }
-
-    // Status stays "pending" until email is verified — auto-approve (if enabled) is applied in verifyEmailByToken.
+    // Save first while assets still reference their `_pending/...` staging
+    // path. Relocating before the doc exists would leave images permanently
+    // moved into an `influencers/{id}/...` folder with no owning record if
+    // `.save()` then failed — an orphan the `_pending` cleanup job can't see
+    // because it isn't in `_pending` anymore. Only relocate once we know the
+    // registration actually succeeded.
     try {
       await influencer.save();
     } catch (err) {
@@ -1499,6 +1482,36 @@ export class AuthService {
         "Failed to save influencer: " + error.message,
       );
     }
+
+    // Relocate staged uploads into their final influencers/{_id}/... folder
+    // now that the document is confirmed saved.
+    const influencerId = String(influencer._id);
+    let relocationChanged = false;
+    if (influencer.profileImages?.length) {
+      const [profilePhoto, ...gallery] = influencer.profileImages;
+      const [relocatedProfile] = await this.relocateAssets(
+        [profilePhoto],
+        CloudinaryFolders.influencer.profile(influencerId),
+      );
+      const relocatedGallery = await this.relocateAssets(
+        gallery,
+        CloudinaryFolders.influencer.gallery(influencerId),
+      );
+      influencer.profileImages = [relocatedProfile, ...relocatedGallery];
+      relocationChanged = true;
+    }
+    if (influencer.verificationDocuments?.length) {
+      influencer.verificationDocuments = await this.relocateAssets(
+        influencer.verificationDocuments,
+        CloudinaryFolders.influencer.verification(influencerId),
+      );
+      relocationChanged = true;
+    }
+    // Status stays "pending" until email is verified — auto-approve (if enabled) is applied in verifyEmailByToken.
+    if (relocationChanged) {
+      await influencer.save();
+    }
+
     return {
       success: true,
       message: "Influencer registered",
@@ -1627,23 +1640,34 @@ export class AuthService {
     });
     brand.publicId = await this.nextPublicId("BRD", "brand_public_id");
 
-    // Relocate any staged uploads into their final brands/{_id}/... folder
-    // now that the document's _id is known, before the single .save() below.
+    // Save first while assets still reference their `_pending/...` staging
+    // path — see the matching comment in registerInfluencer for why relocate
+    // must not run before the document is confirmed saved.
+    let savedBrand = await brand.save();
+
+    // Relocate staged uploads into their final brands/{_id}/... folder now
+    // that the document is confirmed saved.
     const brandId = String(brand._id);
+    let relocationChanged = false;
     if (brand.brandLogo?.length) {
       brand.brandLogo = await this.relocateAssets(
         brand.brandLogo,
         CloudinaryFolders.brand.logo(brandId),
       );
+      relocationChanged = true;
     }
     if (brand.products?.length) {
       brand.products = await this.relocateAssets(
         brand.products,
         CloudinaryFolders.brand.products(brandId),
       );
+      relocationChanged = true;
     }
     // Status stays "pending" until email is verified — auto-approve (if enabled) is applied in verifyEmailByToken.
-    const savedBrand = await brand.save();
+    if (relocationChanged) {
+      savedBrand = await brand.save();
+    }
+
     return {
       success: true,
       message: "Brand registered",
@@ -1833,24 +1857,29 @@ export class AuthService {
       "photographer_public_id",
     );
 
-    // Relocate any staged uploads into their final photographers/{_id}/... folder
-    // now that the document's _id is known, before the single .save() below.
-    if (photographer.profileImages?.length) {
-      const photographerId = String(photographer._id);
-      const [profilePhoto, ...gallery] = photographer.profileImages;
-      const [relocatedProfile] = await this.relocateAssets(
-        [profilePhoto],
-        CloudinaryFolders.photographer.profile(photographerId),
-      );
-      const relocatedGallery = await this.relocateAssets(
-        gallery,
-        CloudinaryFolders.photographer.gallery(photographerId),
-      );
-      photographer.profileImages = [relocatedProfile, ...relocatedGallery];
-    }
-
+    // Save first while assets still reference their `_pending/...` staging
+    // path — see the matching comment in registerInfluencer for why relocate
+    // must not run before the document is confirmed saved.
     try {
-      const saved = await photographer.save();
+      let saved = await photographer.save();
+
+      // Relocate staged uploads into their final photographers/{_id}/...
+      // folder now that the document is confirmed saved.
+      if (photographer.profileImages?.length) {
+        const photographerId = String(photographer._id);
+        const [profilePhoto, ...gallery] = photographer.profileImages;
+        const [relocatedProfile] = await this.relocateAssets(
+          [profilePhoto],
+          CloudinaryFolders.photographer.profile(photographerId),
+        );
+        const relocatedGallery = await this.relocateAssets(
+          gallery,
+          CloudinaryFolders.photographer.gallery(photographerId),
+        );
+        photographer.profileImages = [relocatedProfile, ...relocatedGallery];
+        saved = await photographer.save();
+      }
+
       return {
         success: true,
         message: "Photographer registered",
