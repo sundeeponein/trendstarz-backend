@@ -990,6 +990,8 @@ export const CampaignSchema = new Schema(
     },
     title: { type: String, required: true },
     description: { type: String },
+    // Suggested reel/short script or key talking points for creators — optional, adaptable guide.
+    script: { type: String },
     campaignType: {
       type: String,
       enum: [

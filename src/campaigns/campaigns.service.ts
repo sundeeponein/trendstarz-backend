@@ -513,6 +513,7 @@ export class CampaignsService {
     // Contact details are shared automatically after payment confirmation.
     const textFieldsToScan: Array<[string, string]> = [
       ["description", String(normalized.description || "")],
+      ["script", String(normalized.script || "")],
       ["specialInstructions", String(normalized.specialInstructions || "")],
     ];
     const deliverablesList: string[] = Array.isArray(normalized.deliverables)
@@ -1262,6 +1263,7 @@ export class CampaignsService {
    */
   private readonly LOCKED_ON_ACCEPTANCE = [
     "description",
+    "script",
     "deliverables",
     "specialInstructions",
     "inviteBenefits",
