@@ -12,6 +12,7 @@ import {
 import { PlansModule } from "../plans/plans.module";
 import { NotificationsModule } from "../notifications/notifications.module";
 import { PushModule } from "../push/push.module";
+import { LinkConversionSchema } from "../database/schemas/link-conversion.schema";
 
 @Module({
   imports: [
@@ -20,6 +21,7 @@ import { PushModule } from "../push/push.module";
       { name: "Influencer", schema: InfluencerSchema, collection: "influencers" },
       { name: "Brand", schema: BrandSchema, collection: "brands" },
       { name: "Photographer", schema: PhotographerSchema, collection: "photographers" },
+      { name: "LinkConversion", schema: LinkConversionSchema, collection: "linkconversions" },
     ]),
     PlansModule,
     NotificationsModule,

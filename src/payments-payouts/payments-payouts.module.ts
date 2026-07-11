@@ -9,6 +9,7 @@ import {
 } from "../database/schemas/profile.schemas";
 import { CampaignInviteSchema } from "../database/schemas/campaign-invite.schema";
 import { CampaignTransactionSchema } from "../database/schemas/campaign-transaction.schema";
+import { LinkConversionSchema } from "../database/schemas/link-conversion.schema";
 import { PaymentsPayoutsController } from "./payments-payouts.controller";
 import { PaymentsPayoutsService } from "./payments-payouts.service";
 import { PushModule } from "../push/push.module";
@@ -40,6 +41,11 @@ import { RazorpayService } from "../payment/razorpay.service";
         name: "AppSettings",
         schema: AppSettingsSchema,
         collection: "appsettings",
+      },
+      {
+        name: "LinkConversion",
+        schema: LinkConversionSchema,
+        collection: "linkconversions",
       },
     ]),
     PushModule,

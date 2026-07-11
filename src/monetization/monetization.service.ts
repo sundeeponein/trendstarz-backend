@@ -35,6 +35,7 @@ export class MonetizationService {
     @InjectModel("CollaborationUnlock") private readonly unlockModel: Model<any>,
     @InjectModel("UsageCounter") private readonly usageModel: Model<any>,
     @InjectModel("SocialProfileClick") private readonly socialClickModel: Model<any>,
+    @InjectModel("LinkConversion") private readonly linkConversionModel: Model<any>,
     private readonly razorpayService: RazorpayService,
     private readonly paymentService: PaymentService,
     private readonly plansService: PlansService,
@@ -385,9 +386,38 @@ export class MonetizationService {
       // isPremium there (not the subscriptions collection) drives the
       // Pro badge and all visibility gating.
       await this.paymentService.confirmUpgrade(input.userId, premiumDuration);
+      await this.recordPremiumConversion(input.userId, payment.amount, payment._id);
     }
 
     return { success: true, paymentId: input.paymentId };
+  }
+
+  // Best-effort: if this user originally joined through a referral tracking link,
+  // record that they've now converted to a paying Premium subscriber. Never blocks payment.
+  private async recordPremiumConversion(userId: string, amount: number, paymentId: any): Promise<void> {
+    try {
+      const signup: any = await this.linkConversionModel
+        .findOne({ userId: String(userId), conversionType: "signup" })
+        .lean();
+      if (!signup) return;
+      await this.linkConversionModel.updateOne(
+        { trackingLinkId: signup.trackingLinkId, userId: signup.userId, conversionType: "premium_purchase" },
+        {
+          $setOnInsert: {
+            trackingLinkId: signup.trackingLinkId,
+            userId: signup.userId,
+            userType: signup.userType,
+            conversionType: "premium_purchase",
+            amount,
+            paymentId,
+            convertedAt: new Date(),
+          },
+        },
+        { upsert: true },
+      );
+    } catch (err) {
+      console.error("Failed to record premium purchase conversion:", err);
+    }
   }
 
   async trackSocialClick(input: {

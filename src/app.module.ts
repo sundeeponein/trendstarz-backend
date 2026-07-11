@@ -49,6 +49,8 @@ import { CampaignInviteSchema } from "./database/schemas/campaign-invite.schema"
 import { CampaignSubmissionSchema } from "./database/schemas/campaign-submission.schema";
 import { CampaignTransactionSchema } from "./database/schemas/campaign-transaction.schema";
 import { ProfileFlagSchema } from "./database/schemas/profile-flag.schema";
+import { TrackingLinkSchema } from "./database/schemas/tracking-link.schema";
+import { LinkConversionSchema } from "./database/schemas/link-conversion.schema";
 
 import { AuthService } from "./auth/auth.service";
 import { AuthController } from "./auth/auth.controller";
@@ -150,6 +152,16 @@ import { ProfileVerificationModule } from "./profile-verification/profile-verifi
         name: "ProfileFlag",
         schema: ProfileFlagSchema,
         collection: "profile_flags",
+      },
+      {
+        name: "TrackingLink",
+        schema: TrackingLinkSchema,
+        collection: "trackinglinks",
+      },
+      {
+        name: "LinkConversion",
+        schema: LinkConversionSchema,
+        collection: "linkconversions",
       },
     ]),
     UsersModule,

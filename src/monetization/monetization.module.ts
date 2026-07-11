@@ -16,6 +16,7 @@ import { CollaborationUnlockSchema } from "../database/schemas/collaboration-unl
 import { TransactionSchema } from "../database/schemas/transaction.schema";
 import { UsageCounterSchema } from "../database/schemas/usage-counter.schema";
 import { SocialProfileClickSchema } from "../database/schemas/social-profile-click.schema";
+import { LinkConversionSchema } from "../database/schemas/link-conversion.schema";
 
 @Module({
   imports: [
@@ -31,6 +32,7 @@ import { SocialProfileClickSchema } from "../database/schemas/social-profile-cli
       { name: "Transaction", schema: TransactionSchema, collection: "transactions" },
       { name: "UsageCounter", schema: UsageCounterSchema, collection: "usage_counters" },
       { name: "SocialProfileClick", schema: SocialProfileClickSchema, collection: "social_profile_clicks" },
+      { name: "LinkConversion", schema: LinkConversionSchema, collection: "linkconversions" },
     ]),
   ],
   controllers: [MonetizationController],

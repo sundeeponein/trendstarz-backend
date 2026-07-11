@@ -11,6 +11,12 @@ import * as crypto from "crypto";
 const CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"; // no 0/O/1/I to avoid ambiguity
 const CODE_LENGTH = 8;
 
+const REGISTRATION_PATH_BY_ROLE: Record<string, string> = {
+  brand: "register-brand",
+  influencer: "register-influencer",
+  photographer: "register-photographer",
+};
+
 // Statuses where the collaboration is live enough for a promo link to be worth generating.
 const TRACKABLE_INVITE_STATUSES = [
   "accepted",
@@ -52,6 +58,8 @@ export class TrackingLinksService {
     @InjectModel("Campaign") private readonly campaignModel: Model<any>,
     @InjectModel("Brand") private readonly brandModel: Model<any>,
     @InjectModel("Photographer") private readonly photographerModel: Model<any>,
+    @InjectModel("Influencer") private readonly influencerModel: Model<any>,
+    @InjectModel("LinkConversion") private readonly linkConversionModel: Model<any>,
   ) {}
 
   private buildTrackingUrl(code: string): string {
@@ -67,6 +75,7 @@ export class TrackingLinksService {
       contentType: doc.contentType || "",
       destinationUrl: doc.destinationUrl || "",
       destinationType: doc.destinationType || "other",
+      destinationRole: doc.destinationRole || "",
       moduleType: doc.moduleType || "campaign",
     };
   }
@@ -130,6 +139,39 @@ export class TrackingLinksService {
     return this.toPublicShape(created);
   }
 
+  /** Get-or-create a self-service referral link for inviting new signups of `targetRole`. */
+  async getOrCreateReferralLink(hostId: string, hostType: string, targetRole: string) {
+    const role = String(targetRole || "").toLowerCase();
+    const path = REGISTRATION_PATH_BY_ROLE[role];
+    if (!path) throw new BadRequestException("Invalid target role");
+
+    const existing: any = await this.trackingLinkModel
+      .findOne({ hostId: String(hostId), moduleType: "referral", destinationRole: role })
+      .lean();
+    if (existing) return this.toPublicShape(existing);
+
+    const destinationUrl = `${process.env.FRONTEND_URL || "https://trendstarz.in"}/${path}`;
+
+    let code = generateCode();
+    for (let attempt = 0; attempt < 5; attempt++) {
+      const collision = await this.trackingLinkModel.exists({ code });
+      if (!collision) break;
+      code = generateCode();
+    }
+
+    const created = await this.trackingLinkModel.create({
+      code,
+      hostId: String(hostId),
+      hostType,
+      destinationUrl,
+      destinationType: "registration",
+      destinationRole: role,
+      moduleType: "referral",
+    });
+
+    return this.toPublicShape(created);
+  }
+
   /** Public — resolves a short code to its destination and logs the click. Never throws; returns null on miss. */
   async resolveAndRecordClick(
     code: string,
@@ -147,7 +189,13 @@ export class TrackingLinksService {
     });
     await this.trackingLinkModel.updateOne({ _id: trackingLink._id }, { $inc: { clickCount: 1 } });
 
-    return { destinationUrl: trackingLink.destinationUrl };
+    let destinationUrl = String(trackingLink.destinationUrl || "");
+    if (trackingLink.moduleType === "referral" && destinationUrl) {
+      const separator = destinationUrl.includes("?") ? "&" : "?";
+      destinationUrl = `${destinationUrl}${separator}tlc=${trackingLink.code}`;
+    }
+
+    return { destinationUrl };
   }
 
   /** Admin-only aggregate view across all tracking links. */
@@ -158,8 +206,10 @@ export class TrackingLinksService {
 
     const links = await this.trackingLinkModel.find(query).sort({ createdAt: -1 }).lean();
     const linkIds = links.map((l) => l._id);
+    const campaignLinks = links.filter((l) => l.moduleType !== "referral");
+    const referralLinkDocs = links.filter((l) => l.moduleType === "referral");
 
-    const campaignIds = [...new Set(links.map((l) => String(l.campaignId)).filter(Boolean))];
+    const campaignIds = [...new Set(campaignLinks.map((l) => String(l.campaignId)).filter(Boolean))];
     const campaignRows = campaignIds.length
       ? await this.campaignModel
           .find({ _id: { $in: campaignIds } })
@@ -175,7 +225,7 @@ export class TrackingLinksService {
 
     const brandHostIds = [
       ...new Set(
-        links.filter((l) => l.hostType !== "photographer").map((l) => String(l.hostId)).filter(Boolean),
+        links.filter((l) => l.hostType === "brand").map((l) => String(l.hostId)).filter(Boolean),
       ),
     ];
     const photographerHostIds = [
@@ -183,17 +233,26 @@ export class TrackingLinksService {
         links.filter((l) => l.hostType === "photographer").map((l) => String(l.hostId)).filter(Boolean),
       ),
     ];
-    const [brandHostRows, photographerHostRows] = await Promise.all([
+    const influencerHostIds = [
+      ...new Set(
+        links.filter((l) => l.hostType === "influencer").map((l) => String(l.hostId)).filter(Boolean),
+      ),
+    ];
+    const [brandHostRows, photographerHostRows, influencerHostRows] = await Promise.all([
       brandHostIds.length
         ? this.brandModel.find({ _id: { $in: brandHostIds } }).select("brandName").lean()
         : [],
       photographerHostIds.length
         ? this.photographerModel.find({ _id: { $in: photographerHostIds } }).select("name").lean()
         : [],
+      influencerHostIds.length
+        ? this.influencerModel.find({ _id: { $in: influencerHostIds } }).select("name").lean()
+        : [],
     ]);
     const hostNameById = new Map<string, string>([
       ...brandHostRows.map((b: any): [string, string] => [String(b._id), b.brandName]),
       ...photographerHostRows.map((p: any): [string, string] => [String(p._id), p.name]),
+      ...influencerHostRows.map((i: any): [string, string] => [String(i._id), i.name]),
     ]);
 
     const uniqueByLink = await this.linkClickModel.aggregate([
@@ -210,7 +269,7 @@ export class TrackingLinksService {
       string,
       { campaignId: string; campaignNumber?: number; campaignTitle?: string; links: number; clicks: number }
     >();
-    for (const l of links) {
+    for (const l of campaignLinks) {
       const key = String(l.campaignId);
       const row = perCampaign.get(key) || {
         campaignId: key,
@@ -225,7 +284,7 @@ export class TrackingLinksService {
     }
 
     const limit = Math.min(Math.max(Number(filters.limit) || 20, 1), 100);
-    const topPerformers = [...links]
+    const topPerformers = [...campaignLinks]
       .sort((a, b) => (b.clickCount || 0) - (a.clickCount || 0))
       .slice(0, limit)
       .map((l) => ({
@@ -244,7 +303,7 @@ export class TrackingLinksService {
         createdAt: l.createdAt,
       }));
 
-    const zeroActivity = links
+    const zeroActivity = campaignLinks
       .filter((l) => !l.clickCount)
       .slice(0, limit)
       .map((l) => ({
@@ -257,6 +316,82 @@ export class TrackingLinksService {
         createdAt: l.createdAt,
       }));
 
+    // Referral links (moduleType "referral") are host-centric, not campaign-centric —
+    // aggregated separately with their signup/premium/campaign-payment conversions.
+    const referralLinkIds = referralLinkDocs.map((l) => l._id);
+    const conversionAgg = referralLinkIds.length
+      ? await this.linkConversionModel.aggregate([
+          { $match: { trackingLinkId: { $in: referralLinkIds } } },
+          {
+            $group: {
+              _id: { link: "$trackingLinkId", type: "$conversionType" },
+              count: { $sum: 1 },
+              amount: { $sum: { $ifNull: ["$amount", 0] } },
+            },
+          },
+        ])
+      : [];
+
+    type ConversionTotals = {
+      signups: number;
+      premiumPurchases: number;
+      premiumRevenue: number;
+      campaignPayments: number;
+      campaignPaymentRevenue: number;
+    };
+    const conversionByLink = new Map<string, ConversionTotals>();
+    for (const row of conversionAgg) {
+      const linkId = String(row._id.link);
+      const entry: ConversionTotals =
+        conversionByLink.get(linkId) || {
+          signups: 0,
+          premiumPurchases: 0,
+          premiumRevenue: 0,
+          campaignPayments: 0,
+          campaignPaymentRevenue: 0,
+        };
+      if (row._id.type === "signup") entry.signups += row.count;
+      if (row._id.type === "premium_purchase") {
+        entry.premiumPurchases += row.count;
+        entry.premiumRevenue += row.amount;
+      }
+      if (row._id.type === "campaign_payment") {
+        entry.campaignPayments += row.count;
+        entry.campaignPaymentRevenue += row.amount;
+      }
+      conversionByLink.set(linkId, entry);
+    }
+
+    const referralLinks = [...referralLinkDocs]
+      .sort((a, b) => (b.clickCount || 0) - (a.clickCount || 0))
+      .map((l) => {
+        const conv = conversionByLink.get(String(l._id)) || {
+          signups: 0,
+          premiumPurchases: 0,
+          premiumRevenue: 0,
+          campaignPayments: 0,
+          campaignPaymentRevenue: 0,
+        };
+        const clickCount = l.clickCount || 0;
+        const uniqueClicks = uniqueMap.get(String(l._id)) || 0;
+        return {
+          code: l.code,
+          hostId: String(l.hostId),
+          hostType: l.hostType,
+          hostName: hostNameById.get(String(l.hostId)) || "",
+          destinationRole: l.destinationRole,
+          clickCount,
+          uniqueClicks,
+          signups: conv.signups,
+          premiumPurchases: conv.premiumPurchases,
+          premiumRevenue: conv.premiumRevenue,
+          campaignPayments: conv.campaignPayments,
+          campaignPaymentRevenue: conv.campaignPaymentRevenue,
+          conversionRate: uniqueClicks ? conv.signups / uniqueClicks : 0,
+          createdAt: l.createdAt,
+        };
+      });
+
     return {
       overview: {
         totalLinks: links.length,
@@ -266,6 +401,7 @@ export class TrackingLinksService {
       perCampaign: [...perCampaign.values()].sort((a, b) => b.clicks - a.clicks),
       topPerformers,
       zeroActivity,
+      referralLinks,
     };
   }
 }

@@ -598,6 +598,8 @@ export class AuthService {
     @InjectModel("SocialMedia") private readonly socialMediaModel: Model<any>,
     @InjectModel("AppSettings") private readonly appSettingsModel: Model<any>,
     @InjectModel("Counter") private readonly counterModel: Model<any>,
+    @InjectModel("TrackingLink") private readonly trackingLinkModel: Model<any>,
+    @InjectModel("LinkConversion") private readonly linkConversionModel: Model<any>,
     private readonly firebaseAdminService: FirebaseAdminService,
     private readonly cloudinaryService: CloudinaryService,
   ) {}
@@ -618,6 +620,31 @@ export class AuthService {
       { new: true, upsert: true },
     );
     return `${prefix}${100000 + doc.seq}`;
+  }
+
+  // Best-effort: if this signup came in through a referral tracking link (`?tlc=<code>`
+  // captured by the registration form), record the conversion. Never blocks registration.
+  private async recordSignupConversion(
+    trackingLinkCode: unknown,
+    userId: string,
+    userType: "brand" | "influencer" | "photographer",
+  ): Promise<void> {
+    const code = String(trackingLinkCode || "").trim().toUpperCase();
+    if (!code) return;
+    try {
+      const trackingLink = await this.trackingLinkModel.findOne({
+        code,
+        moduleType: "referral",
+      });
+      if (!trackingLink) return;
+      await this.linkConversionModel.updateOne(
+        { trackingLinkId: trackingLink._id, userId, conversionType: "signup" },
+        { $setOnInsert: { trackingLinkId: trackingLink._id, userId, userType, conversionType: "signup", convertedAt: new Date() } },
+        { upsert: true },
+      );
+    } catch (err) {
+      console.error("Failed to record signup conversion:", err);
+    }
   }
 
   // Moves images/docs uploaded to a `_pending` staging folder into their
@@ -1483,6 +1510,12 @@ export class AuthService {
       );
     }
 
+    await this.recordSignupConversion(
+      data?.trackingLinkCode,
+      String(influencer._id),
+      "influencer",
+    );
+
     // Relocate staged uploads into their final influencers/{_id}/... folder
     // now that the document is confirmed saved.
     const influencerId = String(influencer._id);
@@ -1644,6 +1677,12 @@ export class AuthService {
     // path — see the matching comment in registerInfluencer for why relocate
     // must not run before the document is confirmed saved.
     let savedBrand = await brand.save();
+
+    await this.recordSignupConversion(
+      data?.trackingLinkCode,
+      String(savedBrand._id),
+      "brand",
+    );
 
     // Relocate staged uploads into their final brands/{_id}/... folder now
     // that the document is confirmed saved.
@@ -1862,6 +1901,12 @@ export class AuthService {
     // must not run before the document is confirmed saved.
     try {
       let saved = await photographer.save();
+
+      await this.recordSignupConversion(
+        data?.trackingLinkCode,
+        String(saved._id),
+        "photographer",
+      );
 
       // Relocate staged uploads into their final photographers/{_id}/...
       // folder now that the document is confirmed saved.

@@ -60,6 +60,7 @@ export class PaymentsPayoutsService {
     @InjectModel("Brand") private readonly brandModel: Model<any>,
     @InjectModel("Influencer") private readonly influencerModel: Model<any>,
     @InjectModel("Photographer") private readonly photographerModel: Model<any>,
+    @InjectModel("LinkConversion") private readonly linkConversionModel: Model<any>,
     private readonly razorpayService: RazorpayService,
     private readonly pushService: PushService,
     private readonly notificationsService: NotificationsService,
@@ -1205,6 +1206,34 @@ export class PaymentsPayoutsService {
     return this.verifyCollectionById(transactionId, notes, false);
   }
 
+  // Best-effort: if this brand originally joined through a referral tracking link,
+  // record that they've now converted to a paying campaign customer. Never blocks payment.
+  private async recordCampaignPaymentConversion(payerId: string, amount: number, campaignTransactionId: any): Promise<void> {
+    try {
+      const signup: any = await this.linkConversionModel
+        .findOne({ userId: payerId, conversionType: "signup" })
+        .lean();
+      if (!signup) return;
+      await this.linkConversionModel.updateOne(
+        { trackingLinkId: signup.trackingLinkId, userId: signup.userId, conversionType: "campaign_payment" },
+        {
+          $setOnInsert: {
+            trackingLinkId: signup.trackingLinkId,
+            userId: signup.userId,
+            userType: signup.userType,
+            conversionType: "campaign_payment",
+            amount,
+            campaignTransactionId,
+            convertedAt: new Date(),
+          },
+        },
+        { upsert: true },
+      );
+    } catch (err) {
+      console.error("Failed to record campaign payment conversion:", err);
+    }
+  }
+
   private async verifyCollectionById(
     transactionId: string,
     notes?: string,
@@ -1235,6 +1264,10 @@ export class PaymentsPayoutsService {
     }
 
     await tx.save();
+
+    if (tx.payerRole === "brand") {
+      await this.recordCampaignPaymentConversion(String(tx.payerId), tx.payerTotal, tx._id);
+    }
 
     // Brand pays → unlock contact for the linked invite (paid_collab payment path).
     // Also advance invite status to payment_confirmed if still in accepted.

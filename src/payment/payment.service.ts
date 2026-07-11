@@ -13,6 +13,7 @@ export class PaymentService {
     @InjectModel("Influencer") private readonly influencerModel: Model<any>,
     @InjectModel("Brand") private readonly brandModel: Model<any>,
     @InjectModel("Photographer") private readonly photographerModel: Model<any>,
+    @InjectModel("LinkConversion") private readonly linkConversionModel: Model<any>,
     public readonly plansService: PlansService,
     private readonly notificationsService: NotificationsService,
     private readonly pushService: PushService,
@@ -78,6 +79,34 @@ export class PaymentService {
     if (photographer)
       return { success: true, message: "Premium activated", premiumEnd: end };
     return { success: false, message: "User not found" };
+  }
+
+  // Best-effort: if this user originally joined through a referral tracking link,
+  // record that they've now converted to a paying Premium subscriber. Never blocks payment.
+  private async recordPremiumConversion(userId: string, amount: number, paymentId: any): Promise<void> {
+    try {
+      const signup: any = await this.linkConversionModel
+        .findOne({ userId: String(userId), conversionType: "signup" })
+        .lean();
+      if (!signup) return;
+      await this.linkConversionModel.updateOne(
+        { trackingLinkId: signup.trackingLinkId, userId: signup.userId, conversionType: "premium_purchase" },
+        {
+          $setOnInsert: {
+            trackingLinkId: signup.trackingLinkId,
+            userId: signup.userId,
+            userType: signup.userType,
+            conversionType: "premium_purchase",
+            amount,
+            paymentId,
+            convertedAt: new Date(),
+          },
+        },
+        { upsert: true },
+      );
+    } catch (err) {
+      console.error("Failed to record premium purchase conversion:", err);
+    }
   }
 
   /* ── Manual UPI Payment Flow ─────────────────────── */
@@ -152,6 +181,7 @@ export class PaymentService {
 
     // Activate premium for user
     await this.confirmUpgrade(payment.userId, payment.premiumDuration);
+    await this.recordPremiumConversion(String(payment.userId), payment.amount, payment._id);
     try {
       const plan = await this.plansService.findProPlanForUserType(payment.userType);
       await this.plansService.activateSubscription(

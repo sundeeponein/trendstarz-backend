@@ -15,6 +15,15 @@ export class TrackingLinksController {
     return this.trackingLinksService.getOrCreateForInvite(inviteId, requesterId, isAdmin);
   }
 
+  // Any logged-in user (brand/influencer/photographer) sharing their own referral link.
+  @UseGuards(JwtAuthGuard)
+  @Get("referral-link")
+  async getMyReferralLink(@Query("targetRole") targetRole: string, @Req() req: any) {
+    const hostId = req.user?.userId;
+    const hostType = req.user?.role;
+    return this.trackingLinksService.getOrCreateReferralLink(hostId, hostType, targetRole);
+  }
+
   // Public — hit by the /r/:code redirect page. No auth: whoever clicked the shared link isn't a logged-in app user.
   @Get("tracking-links/resolve/:code")
   async resolve(@Param("code") code: string, @Req() req: any) {

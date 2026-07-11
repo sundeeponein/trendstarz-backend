@@ -15,6 +15,7 @@ import { AnalyticsEventSchema } from "../database/schemas/analytics-event.schema
 import { ProfileFlagSchema } from "../database/schemas/profile-flag.schema";
 import { TrackingLinkSchema } from "../database/schemas/tracking-link.schema";
 import { LinkClickSchema } from "../database/schemas/link-click.schema";
+import { LinkConversionSchema } from "../database/schemas/link-conversion.schema";
 import { CampaignsController } from "./campaigns.controller";
 import { CampaignsService } from "./campaigns.service";
 import { CampaignInvitesController } from "./campaign-invites.controller";
@@ -88,6 +89,11 @@ import { ProfileVerificationModule } from "../profile-verification/profile-verif
         name: "LinkClick",
         schema: LinkClickSchema,
         collection: "linkclicks",
+      },
+      {
+        name: "LinkConversion",
+        schema: LinkConversionSchema,
+        collection: "linkconversions",
       },
     ]),
   ],
