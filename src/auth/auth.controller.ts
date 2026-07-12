@@ -412,6 +412,14 @@ export class AuthController {
     });
   }
 
+  @Get("reset-password/validate")
+  @Throttle({ default: { ttl: 60000, limit: 20 } })
+  @HttpCode(200)
+  async validateResetToken(@Query("token") token: string) {
+    const valid = await this.authService.validateResetToken(token);
+    return { valid };
+  }
+
   @Post("reset-password")
   @Throttle({ default: { ttl: 60000, limit: 5 } })
   @UsePipes(new ValidationPipe({ whitelist: true, transform: true }))

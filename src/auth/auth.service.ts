@@ -369,6 +369,31 @@ export class AuthService {
     await user.save();
   }
 
+  async validateResetToken(token: string): Promise<boolean> {
+    if (!token) return false;
+    const tokenHash = crypto.createHash("sha256").update(token).digest("hex");
+    const now = Date.now();
+    const [adminUser, influencer, brand, photographer] = await Promise.all([
+      this.userModel.findOne({
+        resetToken: { $in: [token, tokenHash] },
+        resetTokenExpires: { $gt: now },
+      }),
+      this.influencerModel.findOne({
+        resetToken: { $in: [token, tokenHash] },
+        resetTokenExpires: { $gt: now },
+      }),
+      this.brandModel.findOne({
+        resetToken: { $in: [token, tokenHash] },
+        resetTokenExpires: { $gt: now },
+      }),
+      this.photographerModel.findOne({
+        resetToken: { $in: [token, tokenHash] },
+        resetTokenExpires: { $gt: now },
+      }),
+    ]);
+    return !!(adminUser || influencer || brand || photographer);
+  }
+
   async resetPassword(token: string, newPassword: string) {
     if (!token || !newPassword) {
       throw new BadRequestException("Token and new password are required");
