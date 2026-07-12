@@ -174,6 +174,13 @@ export class CampaignInvitesService {
     ];
   }
 
+  // Withdrawn/declined invites don't hold a slot — the cap represents
+  // active/consumed invitations, not historical attempts. Documents are
+  // kept for audit/history but excluded from the count.
+  private getNonConsumingInviteStatuses(): string[] {
+    return ["withdrawn", "declined"];
+  }
+
   private getRoleAcceptanceCloseAt(
     campaign: any,
     role: "influencer" | "photographer",
@@ -789,6 +796,7 @@ export class CampaignInvitesService {
     // sender's plan; campaign.maxInfluencers is the accepted-slot close target.
     const inviteCount = await this.inviteModel.countDocuments({
       campaignId: data.campaignId,
+      status: { $nin: this.getNonConsumingInviteStatuses() },
     });
     const acceptanceCloseAt = this.getRoleAcceptanceCloseAt(
       campaign,
