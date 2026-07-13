@@ -13,10 +13,12 @@ import { PushService } from "../push/push.service";
 import { NotificationsService } from "../notifications/notifications.service";
 import { WhatsAppService } from "../whatsapp/whatsapp.service";
 import {
+  ACCEPTED_OR_LATER_STATUSES,
+  computeCampaignAlertFields,
+  openCampaignWhatsAppParams,
+  inviteOnlyWhatsAppParams,
   ownerApprovedTemplateParams,
-  openCampaignTemplateParams,
-  inviteOnlyTemplateParams,
-} from "../whatsapp/whatsapp.templates";
+} from "./campaign-alert-messages";
 import {
   CampaignTypeConfigItem,
   resolveCampaignAccessModeConfigs,
@@ -54,25 +56,6 @@ const TIER_FILTERED_OPEN_ROLLOUT_AT = new Date("2026-05-05T00:00:00.000Z"); // R
 const ENABLE_CAMPAIGN_LIVE_EMAILS = false; // comment this if need to send campaign notification emails
 const ENABLE_CAMPAIGN_WHATSAPP =
   process.env.ENABLE_CAMPAIGN_WHATSAPP === "true"; // requires Meta-approved templates + WHATSAPP_CLOUD_API_TOKEN
-// Mirrors campaign-alert-message.component's ACCEPTED_OR_LATER_STATUSES — anyone who accepted, regardless of pipeline stage since.
-const ACCEPTED_OR_LATER_STATUSES = [
-  "accepted",
-  "payment_confirmed",
-  "working",
-  "submitted",
-  "completed",
-  "approved",
-];
-
-function formatWhatsAppDateLabel(value: unknown): string {
-  const date = value ? new Date(value as any) : null;
-  if (!date || isNaN(date.getTime())) return "Not specified";
-  return date.toLocaleDateString("en-US", {
-    day: "numeric",
-    month: "short",
-    year: "numeric",
-  });
-}
 const PROFILE_PHOTO_VISIBILITY_BLOCK_FLAG_CODES = [
   "PROFILE_PHOTO_PENDING_REVIEW",
   "PROFILE_PHOTO_MISSING",
@@ -1503,6 +1486,22 @@ export class CampaignsService {
     Object.assign(campaign, normalized);
     const saved = await campaign.save();
 
+    this.handleStatusTransitionSideEffects(previousStatus, saved).catch(() => {});
+
+    return saved;
+  }
+
+  /**
+   * Fires notifications (in-app/push/email/WhatsApp) and cleanup that must
+   * happen whenever a campaign's status crosses into "active" or "completed",
+   * regardless of which endpoint changed it — the brand's own update() above,
+   * or admin moderation (admin-lists.controller.ts moderateCampaign, which
+   * saves the campaign document directly rather than going through update()).
+   */
+  async handleStatusTransitionSideEffects(
+    previousStatus: string,
+    saved: any,
+  ): Promise<void> {
     if (previousStatus !== "active" && saved.status === "active") {
       this.notifyOwnerApproved(saved).catch(() => {});
       if (saved.campaignMode === "tier_filtered_open") {
@@ -1517,7 +1516,7 @@ export class CampaignsService {
       // submission gets closed out and marked refunded — no admin action needed. Safe
       // no-op when nothing is pending (e.g. the auto-complete cron, which only ever
       // reaches 'completed' once no blocking invites remain).
-      this.campaignInvitesService
+      await this.campaignInvitesService
         .expireUnsubmittedInvitesForCampaign(
           String(saved._id),
           "Campaign ended by host before submission.",
@@ -1526,8 +1525,6 @@ export class CampaignsService {
           /* non-critical */
         });
     }
-
-    return saved;
   }
 
   /** Tells the brand/photographer who created the campaign/collab that admin approved it and it's now live. */
@@ -1606,11 +1603,6 @@ export class CampaignsService {
       inviteRecipientRole,
       title,
       brandId,
-      maxInfluencers,
-      inviteSlots,
-      acceptanceDeadline,
-      endDate,
-      timelineEnd,
     } = campaign;
 
     const isPhotographer =
@@ -1754,20 +1746,13 @@ export class CampaignsService {
     const locationLabel = [locationDistrict, locationState]
       .filter(Boolean)
       .join(", ");
-    const requiredCreators = Number(maxInfluencers || inviteSlots || 0) || 0;
     const acceptedCount = ENABLE_CAMPAIGN_WHATSAPP
       ? await this.campaignInviteModel.countDocuments({
           campaignId,
           status: { $in: ACCEPTED_OR_LATER_STATUSES },
         })
       : 0;
-    const slotsRemaining = Math.max(requiredCreators - acceptedCount, 0);
-    const applyBeforeLabel = formatWhatsAppDateLabel(
-      acceptanceDeadline || endDate || timelineEnd,
-    );
-    const tierLine = minInfluencerTier
-      ? `🏆 Minimum Tier: ${minInfluencerTier}`
-      : "";
+    const alertFields = computeCampaignAlertFields(campaign, acceptedCount);
 
     const notificationPromises = matched.map((recipient: any) => {
       const userRole = isPhotographer ? "photographer" : "influencer";
@@ -1813,15 +1798,7 @@ export class CampaignsService {
               recipient.isMobileVerified,
               {
                 name: "campaign_new_match_open",
-                bodyParams: openCampaignTemplateParams({
-                  campaignTitle: title,
-                  location: locationLabel || "Not specified",
-                  applyBeforeLabel,
-                  tierLine,
-                  requiredCreators,
-                  acceptedCount,
-                  slotsRemaining,
-                }),
+                bodyParams: openCampaignWhatsAppParams(alertFields),
               },
             )
             .catch(() => {}),
@@ -1834,21 +1811,7 @@ export class CampaignsService {
   }
 
   private async notifyInvitedUsers(campaign: any): Promise<void> {
-    const {
-      _id: campaignId,
-      title,
-      brandId,
-      inviteRecipientRole,
-      targetState,
-      targetDistrict,
-      venueState,
-      venueDistrict,
-      maxInfluencers,
-      inviteSlots,
-      acceptanceDeadline,
-      endDate,
-      timelineEnd,
-    } = campaign;
+    const { _id: campaignId, title, brandId, inviteRecipientRole } = campaign;
 
     // Get all active invites for this campaign
     const inviteQueries: any[] = [{ campaignId }];
@@ -1877,25 +1840,13 @@ export class CampaignsService {
         ? "/photographer-dashboard"
         : "/influencer-dashboard/invites";
     const campaignUrl = `${frontendBase}${dashboardPath}`;
-    const isPhotographer =
-      String(inviteRecipientRole || "influencer") === "photographer";
-    const locationLabel = [
-      isPhotographer ? venueDistrict || targetDistrict : targetDistrict,
-      isPhotographer ? venueState || targetState : targetState,
-    ]
-      .filter(Boolean)
-      .join(", ");
-    const requiredCreators = Number(maxInfluencers || inviteSlots || 0) || 0;
     const acceptedCount = ENABLE_CAMPAIGN_WHATSAPP
       ? await this.campaignInviteModel.countDocuments({
           $or: inviteQueries,
           status: { $in: ACCEPTED_OR_LATER_STATUSES },
         })
       : 0;
-    const slotsRemaining = Math.max(requiredCreators - acceptedCount, 0);
-    const respondBeforeLabel = formatWhatsAppDateLabel(
-      acceptanceDeadline || endDate || timelineEnd,
-    );
+    const alertFields = computeCampaignAlertFields(campaign, acceptedCount);
 
     // Load recipient profiles and notify verified invited users after campaign is live.
     const notificationPromises = invites.map(async (invite: any) => {
@@ -1949,14 +1900,7 @@ export class CampaignsService {
               recipient.isMobileVerified,
               {
                 name: "campaign_new_match_invite",
-                bodyParams: inviteOnlyTemplateParams({
-                  campaignTitle: title,
-                  location: locationLabel || "Not specified",
-                  respondBeforeLabel,
-                  requiredCreators,
-                  acceptedCount,
-                  slotsRemaining,
-                }),
+                bodyParams: inviteOnlyWhatsAppParams(alertFields),
               },
             )
             .catch(() => {});

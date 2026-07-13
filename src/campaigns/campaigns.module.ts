@@ -112,6 +112,6 @@ import { ProfileVerificationModule } from "../profile-verification/profile-verif
     TrackingLinksService,
     CloudinaryService,
   ],
-  exports: [CampaignInvitesService],
+  exports: [CampaignsService, CampaignInvitesService],
 })
 export class CampaignsModule {}

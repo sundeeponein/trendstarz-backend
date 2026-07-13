@@ -38,6 +38,13 @@ import {
 import { PendingUserCleanupService } from "./admin/pending-user-cleanup.service";
 import { PendingUploadCleanupService } from "./admin/pending-upload-cleanup.service";
 import { AssetFolderBackfillService } from "./admin/asset-folder-backfill.service";
+import { CampaignsService } from "./campaigns/campaigns.service";
+import {
+  ACCEPTED_OR_LATER_STATUSES,
+  computeCampaignAlertFields,
+  renderOpenCampaignMessage,
+  renderInviteOnlyMessage,
+} from "./campaigns/campaign-alert-messages";
 
 interface VisibilityItem {
   _id: string;
@@ -197,6 +204,7 @@ export class AdminListsController {
     private readonly pendingUserCleanupService: PendingUserCleanupService,
     private readonly pendingUploadCleanupService: PendingUploadCleanupService,
     private readonly assetFolderBackfillService: AssetFolderBackfillService,
+    private readonly campaignsService: CampaignsService,
   ) {
     // Load plans-config.json on initialization
     this.loadPlansConfig();
@@ -1044,6 +1052,7 @@ export class AdminListsController {
       }
     }
 
+    const previousStatus = campaign.status;
     campaign.status = nextStatus;
     campaign.moderationNote = String(body?.moderationNote || "").trim();
     campaign.moderatedBy = String(
@@ -1052,7 +1061,37 @@ export class AdminListsController {
     campaign.moderatedAt = new Date();
 
     const saved = await campaign.save();
+    this.campaignsService
+      .handleStatusTransitionSideEffects(previousStatus, saved)
+      .catch(() => {});
     return { success: true, campaign: saved };
+  }
+
+  /**
+   * Canonical "campaign is live" copy for the review page's Ready-to-Share
+   * panel — computed the same way as the automated WhatsApp send (see
+   * campaign-alert-messages.ts) so the two can never drift.
+   */
+  @Get("campaigns/:id/share-messages")
+  async getCampaignShareMessages(@Param("id") id: string) {
+    const campaign = await this.campaignModel
+      .findById(id)
+      .select(
+        "title targetState targetDistrict venueState venueDistrict inviteRecipientRole maxInfluencers inviteSlots acceptanceDeadline endDate timelineEnd minInfluencerTier",
+      )
+      .lean();
+    if (!campaign) {
+      throw new BadRequestException("Campaign not found");
+    }
+    const acceptedCount = await this.campaignInviteModel.countDocuments({
+      campaignId: { $in: [id, (campaign as any)._id] },
+      status: { $in: ACCEPTED_OR_LATER_STATUSES },
+    });
+    const fields = computeCampaignAlertFields(campaign, acceptedCount);
+    return {
+      openCampaignMessage: renderOpenCampaignMessage(fields),
+      inviteOnlyMessage: renderInviteOnlyMessage(fields),
+    };
   }
 
   private assertAdminOverrideReason(reason: unknown): string {
