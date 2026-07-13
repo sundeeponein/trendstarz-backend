@@ -297,7 +297,8 @@ export function renderInviteAcceptedOwnerMessage(
     "",
     `${fields.recipientName} accepted your invite for "${fields.campaignTitle}".`,
     "",
-    `View details: ${fields.campaignUrl}`,
+    `Next step: Confirm the invite and complete payment to proceed.`,
+    `View & Confirm: ${fields.campaignUrl}`,
   ].join("\n");
 }
 
