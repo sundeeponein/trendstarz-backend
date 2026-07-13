@@ -6,7 +6,10 @@ import { sendWhatsAppTemplateMessage } from "../utils/whatsapp-cloud-api.util";
 export type WhatsAppTemplateName =
   | "campaign_approved_owner"
   | "campaign_new_match_open"
-  | "campaign_new_match_invite";
+  | "campaign_new_match_invite"
+  | "campaign_invite_accepted_owner"
+  | "campaign_post_submitted_owner"
+  | "campaign_posting_reminder";
 
 @Injectable()
 export class WhatsAppService {

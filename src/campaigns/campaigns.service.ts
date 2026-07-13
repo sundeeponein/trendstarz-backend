@@ -14,6 +14,7 @@ import { NotificationsService } from "../notifications/notifications.service";
 import { WhatsAppService } from "../whatsapp/whatsapp.service";
 import {
   ACCEPTED_OR_LATER_STATUSES,
+  ENABLE_CAMPAIGN_WHATSAPP,
   computeCampaignAlertFields,
   openCampaignWhatsAppParams,
   inviteOnlyWhatsAppParams,
@@ -54,8 +55,6 @@ const VALID_TRANSITIONS: Record<string, string[]> = {
 
 const TIER_FILTERED_OPEN_ROLLOUT_AT = new Date("2026-05-05T00:00:00.000Z"); // Rolled out May 2026
 const ENABLE_CAMPAIGN_LIVE_EMAILS = false; // comment this if need to send campaign notification emails
-const ENABLE_CAMPAIGN_WHATSAPP =
-  process.env.ENABLE_CAMPAIGN_WHATSAPP === "true"; // requires Meta-approved templates + WHATSAPP_CLOUD_API_TOKEN
 const PROFILE_PHOTO_VISIBILITY_BLOCK_FLAG_CODES = [
   "PROFILE_PHOTO_PENDING_REVIEW",
   "PROFILE_PHOTO_MISSING",

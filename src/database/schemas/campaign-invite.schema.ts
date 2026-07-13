@@ -113,6 +113,10 @@ export const CampaignInviteSchema = new Schema({
   // ── Brand-side actions ──
   remindedAt: { type: Date },
   remindersSent: { type: Number, default: 0 },
+  // Automated "your post is due soon" nudges to the creator, keyed by selectedPostDate — set once each
+  // milestone fires so the cron never re-sends it (independent of the brand-initiated remindedAt above).
+  postingReminder48hSentAt: { type: Date },
+  postingReminder24hSentAt: { type: Date },
   withdrawnAt: { type: Date },
   withdrawnReason: { type: String },
   reportedIssue: {

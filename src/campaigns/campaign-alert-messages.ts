@@ -101,6 +101,8 @@ export interface CampaignAlertFields {
   requiredCreators: number;
   acceptedCount: number;
   slotsRemaining: number;
+  postingWindowStartLabel: string;
+  postingWindowEndLabel: string;
 }
 
 export function formatCampaignDateLabel(value: unknown): string {
@@ -146,6 +148,12 @@ export function computeCampaignAlertFields(
     requiredCreators,
     acceptedCount,
     slotsRemaining: Math.max(requiredCreators - acceptedCount, 0),
+    postingWindowStartLabel: formatCampaignDateLabel(
+      campaign?.timelineStart || campaign?.startDate,
+    ),
+    postingWindowEndLabel: formatCampaignDateLabel(
+      campaign?.timelineEnd || campaign?.endDate,
+    ),
   };
 }
 
@@ -200,6 +208,28 @@ export function renderInviteOnlyMessage(fields: CampaignAlertFields): string {
   ].join("\n");
 }
 
+/** Generic, campaign-level nudge (same for every accepted creator) — mirrors the admin review page's manual copy button. */
+export function renderPostingReminderMessage(fields: CampaignAlertFields): string {
+  return [
+    "📅 Reminder: Your TrendStarz campaign",
+    "",
+    "Hi,",
+    "",
+    "Your collaboration is scheduled to begin.",
+    "",
+    `Campaign: ${fields.campaignTitle}`,
+    `📆 Posting Window: ${fields.postingWindowStartLabel} – ${fields.postingWindowEndLabel}`,
+    "",
+    "Please review the campaign resources, caption, hashtags, and promotion link before posting.",
+    "",
+    "Login to TrendStarz:",
+    "https://www.trendstarz.in",
+    "",
+    "Thank you,",
+    "TrendStarz Team",
+  ].join("\n");
+}
+
 export function openCampaignWhatsAppParams(
   fields: CampaignAlertFields,
 ): string[] {
@@ -234,3 +264,112 @@ export function ownerApprovedTemplateParams(args: {
 }): string[] {
   return [args.ownerName, args.campaignTitle, args.campaignUrl];
 }
+
+export interface HostEventFields {
+  ownerName: string;
+  recipientName: string;
+  campaignTitle: string;
+  campaignUrl: string;
+}
+
+/**
+ * campaign_invite_accepted_owner template body (4 params — owner name,
+ * recipient name, campaign title, campaign URL):
+ *   Hi {{1}}, {{2}} accepted your invite for "{{3}}". View it here: {{4}}
+ */
+export function inviteAcceptedOwnerTemplateParams(
+  fields: HostEventFields,
+): string[] {
+  return [
+    fields.ownerName,
+    fields.recipientName,
+    fields.campaignTitle,
+    fields.campaignUrl,
+  ];
+}
+
+/** Full copy-paste text for the same event — shown to admin in the campaign preview modal per-invite. */
+export function renderInviteAcceptedOwnerMessage(
+  fields: HostEventFields,
+): string {
+  return [
+    `Hi ${fields.ownerName}, great news!`,
+    "",
+    `${fields.recipientName} accepted your invite for "${fields.campaignTitle}".`,
+    "",
+    `View details: ${fields.campaignUrl}`,
+  ].join("\n");
+}
+
+/**
+ * campaign_post_submitted_owner template body (4 params — owner name,
+ * recipient name, campaign title, campaign URL):
+ *   Hi {{1}}, {{2}} submitted their post for "{{3}}". Review it here: {{4}}
+ */
+export function postSubmittedOwnerTemplateParams(
+  fields: HostEventFields,
+): string[] {
+  return [
+    fields.ownerName,
+    fields.recipientName,
+    fields.campaignTitle,
+    fields.campaignUrl,
+  ];
+}
+
+/** Full copy-paste text for the same event — shown to admin in the campaign preview modal per-invite. */
+export function renderPostSubmittedOwnerMessage(
+  fields: HostEventFields,
+): string {
+  return [
+    `Hi ${fields.ownerName},`,
+    "",
+    `${fields.recipientName} submitted their post for "${fields.campaignTitle}" — it's ready for your review.`,
+    "",
+    `Review it here: ${fields.campaignUrl}`,
+  ].join("\n");
+}
+
+/** Mirrors the pipeline stages that imply a submission has happened. */
+export const SUBMITTED_OR_LATER_STATUSES = [
+  "submitted",
+  "completed",
+  "approved",
+  "disputed",
+];
+
+/** Invite statuses that can still owe a post — a reminder makes no sense once submitted/withdrawn/declined. */
+export const AWAITING_POST_STATUSES = ["accepted", "payment_confirmed", "working"];
+
+export interface PostingReminderFields {
+  recipientName: string;
+  campaignTitle: string;
+  /** e.g. "48 hours" / "24 hours" / "tomorrow" — kept as a plain phrase so one template covers every milestone. */
+  timeframeLabel: string;
+  postDateLabel: string;
+  campaignUrl: string;
+}
+
+/**
+ * campaign_posting_reminder template body (5 params — recipient name,
+ * campaign title, timeframe phrase, post date, campaign URL). Sent to the
+ * CREATOR (not the host) automatically, ahead of their individually selected
+ * post date — see sendPostingRemindersCron in campaign-invites.service.ts.
+ *   Hi {{1}}, just a reminder — your post for "{{2}}" is due in {{3}} (on
+ *   {{4}}). Please review the campaign details and post on time: {{5}}
+ */
+export function postingReminderTemplateParams(
+  fields: PostingReminderFields,
+): string[] {
+  return [
+    fields.recipientName,
+    fields.campaignTitle,
+    fields.timeframeLabel,
+    fields.postDateLabel,
+    fields.campaignUrl,
+  ];
+}
+
+/** Shared feature flag — requires Meta-approved templates + WHATSAPP_CLOUD_API_TOKEN. */
+export const ENABLE_CAMPAIGN_WHATSAPP =
+  process.env.ENABLE_CAMPAIGN_WHATSAPP === "true";

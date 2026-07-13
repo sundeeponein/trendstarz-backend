@@ -12,6 +12,15 @@ import { inviteReminderTemplate } from "../email/templates/campaign.templates";
 import { PlansService } from "../plans/plans.service";
 import { PushService } from "../push/push.service";
 import { NotificationsService } from "../notifications/notifications.service";
+import { WhatsAppService } from "../whatsapp/whatsapp.service";
+import {
+  ENABLE_CAMPAIGN_WHATSAPP,
+  AWAITING_POST_STATUSES,
+  formatCampaignDateLabel,
+  inviteAcceptedOwnerTemplateParams,
+  postSubmittedOwnerTemplateParams,
+  postingReminderTemplateParams,
+} from "./campaign-alert-messages";
 import { ProfileVerificationService } from "../profile-verification/profile-verification.service";
 import { TrackingLinksService } from "./tracking-links.service";
 
@@ -91,6 +100,7 @@ export class CampaignInvitesService {
     private readonly plansService: PlansService,
     private readonly pushService: PushService,
     private readonly notificationsService: NotificationsService,
+    private readonly whatsAppService: WhatsAppService,
     private readonly profileVerificationService: ProfileVerificationService,
     private readonly trackingLinksService: TrackingLinksService,
   ) {}
@@ -431,11 +441,13 @@ export class CampaignInvitesService {
     role: "brand" | "influencer" | "photographer";
     name: string;
     email?: string;
+    phoneNumber?: string;
+    isMobileVerified?: boolean;
   }> {
     const brand: any = await this.safeFindById(
       this.brandModel,
       ownerId,
-      "brandName name email",
+      "brandName name email phoneNumber isMobileVerified",
     );
     if (brand) {
       return {
@@ -443,26 +455,30 @@ export class CampaignInvitesService {
         name:
           String(brand.brandName || brand.name || "Brand").trim() || "Brand",
         email: brand.email,
+        phoneNumber: brand.phoneNumber,
+        isMobileVerified: brand.isMobileVerified,
       };
     }
 
     const influencer: any = await this.safeFindById(
       this.influencerModel,
       ownerId,
-      "name email",
+      "name email phoneNumber isMobileVerified",
     );
     if (influencer) {
       return {
         role: "influencer",
         name: String(influencer.name || "Influencer").trim() || "Influencer",
         email: influencer.email,
+        phoneNumber: influencer.phoneNumber,
+        isMobileVerified: influencer.isMobileVerified,
       };
     }
 
     const photographer: any = await this.safeFindById(
       this.photographerModel,
       ownerId,
-      "name email",
+      "name email phoneNumber isMobileVerified",
     );
     if (photographer) {
       return {
@@ -470,6 +486,8 @@ export class CampaignInvitesService {
         name:
           String(photographer.name || "Photographer").trim() || "Photographer",
         email: photographer.email,
+        phoneNumber: photographer.phoneNumber,
+        isMobileVerified: photographer.isMobileVerified,
       };
     }
 
@@ -1722,6 +1740,132 @@ export class CampaignInvitesService {
     };
   }
 
+  /**
+   * Automated "your post is due soon" nudge to the CREATOR (not the brand) —
+   * separate from remindInvite() above, which is a manual brand-initiated
+   * "please respond" nudge. Fires once per milestone per invite, guarded by
+   * postingReminder48hSentAt/24hSentAt so a missed/delayed cron run can't
+   * cause a duplicate send (2h tolerance band on each side of the milestone).
+   */
+  @Cron(CronExpression.EVERY_HOUR)
+  async sendPostingRemindersCron() {
+    await this.sendPostingReminders();
+  }
+
+  async sendPostingReminders(): Promise<{ sent: number }> {
+    const HOUR_MS = 60 * 60 * 1000;
+    const now = Date.now();
+    const milestones: Array<{
+      field: "postingReminder48hSentAt" | "postingReminder24hSentAt";
+      timeframeLabel: string;
+      windowStart: Date;
+      windowEnd: Date;
+    }> = [
+      {
+        field: "postingReminder48hSentAt",
+        timeframeLabel: "48 hours",
+        windowStart: new Date(now + 47 * HOUR_MS),
+        windowEnd: new Date(now + 49 * HOUR_MS),
+      },
+      {
+        field: "postingReminder24hSentAt",
+        timeframeLabel: "24 hours",
+        windowStart: new Date(now + 23 * HOUR_MS),
+        windowEnd: new Date(now + 25 * HOUR_MS),
+      },
+    ];
+
+    let sent = 0;
+    const frontendBase = (
+      process.env.FRONTEND_URL || "https://trendstarz.in"
+    ).replace(/\/$/, "");
+
+    for (const milestone of milestones) {
+      const dueInvites = await this.inviteModel
+        .find({
+          status: { $in: AWAITING_POST_STATUSES },
+          selectedPostDate: { $gte: milestone.windowStart, $lt: milestone.windowEnd },
+          [milestone.field]: { $exists: false },
+        })
+        .lean();
+
+      for (const invite of dueInvites) {
+        try {
+          const recipientRole = this.normalizeRecipientRole(
+            (invite as any).recipientRole,
+          );
+          const recipient: any = await this.loadRecipientProfile(
+            recipientRole,
+            String((invite as any).influencerId),
+          );
+          if (!recipient?._id) continue;
+
+          const campaign: any = await this.campaignModel
+            .findById((invite as any).campaignId)
+            .select("title")
+            .lean();
+          const campaignTitle = campaign?.title || "your campaign";
+          const dashboardPath =
+            recipientRole === "photographer"
+              ? "/photographer-dashboard"
+              : "/influencer-dashboard/campaigns";
+          const postDateLabel = formatCampaignDateLabel(
+            (invite as any).selectedPostDate,
+          );
+          const body = `Your post for "${campaignTitle}" is due in ${milestone.timeframeLabel} (on ${postDateLabel}).`;
+
+          await this.notificationsService
+            .createForUser({
+              userId: String(recipient._id),
+              userRole: recipientRole,
+              title: "Posting reminder",
+              body,
+              url: dashboardPath,
+            })
+            .catch(() => {});
+
+          await this.pushService
+            .sendToUser(
+              String(recipient._id),
+              { title: "Posting reminder", body, url: dashboardPath },
+              "campaign",
+            )
+            .catch(() => {});
+
+          if (ENABLE_CAMPAIGN_WHATSAPP) {
+            await this.whatsAppService
+              .sendToUser(
+                String(recipient._id),
+                recipient.phoneNumber,
+                recipient.isMobileVerified,
+                {
+                  name: "campaign_posting_reminder",
+                  bodyParams: postingReminderTemplateParams({
+                    recipientName: recipient.name || "Creator",
+                    campaignTitle,
+                    timeframeLabel: milestone.timeframeLabel,
+                    postDateLabel,
+                    campaignUrl: `${frontendBase}${dashboardPath}`,
+                  }),
+                },
+              )
+              .catch(() => {});
+          }
+
+          await this.inviteModel.updateOne(
+            { _id: (invite as any)._id },
+            { $set: { [milestone.field]: new Date() } },
+          );
+          sent++;
+        } catch (e) {
+          console.error("Failed to send posting reminder:", e);
+        }
+      }
+    }
+
+    return { sent };
+  }
+
   /** Brand withdraws a pending/accepted invite before execution starts.
    * Once the influencer is working (payment_confirmed / working / submitted / completed)
    * the invite is locked and cannot be withdrawn.
@@ -2336,6 +2480,29 @@ export class CampaignInvitesService {
           .catch(() => {
             /* non-critical */
           });
+        if (ENABLE_CAMPAIGN_WHATSAPP) {
+          const frontendBase = (
+            process.env.FRONTEND_URL || "https://trendstarz.in"
+          ).replace(/\/$/, "");
+          this.whatsAppService
+            .sendToUser(
+              String(invite.brandId),
+              sender.phoneNumber,
+              sender.isMobileVerified,
+              {
+                name: "campaign_invite_accepted_owner",
+                bodyParams: inviteAcceptedOwnerTemplateParams({
+                  ownerName: sender.name,
+                  recipientName: recipient?.name || `A ${recipientRole}`,
+                  campaignTitle: campaign?.title || "your campaign",
+                  campaignUrl: `${frontendBase}/campaign-management`,
+                }),
+              },
+            )
+            .catch(() => {
+              /* non-critical */
+            });
+        }
       } catch (e) {
         console.error("Failed to send acceptance notification:", e);
       }
@@ -3016,6 +3183,36 @@ export class CampaignInvitesService {
       .catch(() => {
         /* non-critical */
       });
+
+    if (ENABLE_CAMPAIGN_WHATSAPP) {
+      const submitterRole = this.normalizeRecipientRole(invite.recipientRole);
+      Promise.all([
+        this.campaignModel.findById(invite.campaignId).select("title").lean(),
+        this.loadRecipientProfile(submitterRole, String(invite.influencerId)),
+      ])
+        .then(([submittedCampaign, recipient]: [any, any]) => {
+          const frontendBase = (
+            process.env.FRONTEND_URL || "https://trendstarz.in"
+          ).replace(/\/$/, "");
+          return this.whatsAppService.sendToUser(
+            String(invite.brandId),
+            submissionOwner.phoneNumber,
+            submissionOwner.isMobileVerified,
+            {
+              name: "campaign_post_submitted_owner",
+              bodyParams: postSubmittedOwnerTemplateParams({
+                ownerName: submissionOwner.name,
+                recipientName: recipient?.name || `A ${submitterRole}`,
+                campaignTitle: submittedCampaign?.title || "your campaign",
+                campaignUrl: `${frontendBase}/campaign-management`,
+              }),
+            },
+          );
+        })
+        .catch(() => {
+          /* non-critical */
+        });
+    }
 
     return { success: true, submission };
   }

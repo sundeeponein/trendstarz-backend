@@ -41,9 +41,13 @@ import { AssetFolderBackfillService } from "./admin/asset-folder-backfill.servic
 import { CampaignsService } from "./campaigns/campaigns.service";
 import {
   ACCEPTED_OR_LATER_STATUSES,
+  SUBMITTED_OR_LATER_STATUSES,
   computeCampaignAlertFields,
   renderOpenCampaignMessage,
   renderInviteOnlyMessage,
+  renderPostingReminderMessage,
+  renderInviteAcceptedOwnerMessage,
+  renderPostSubmittedOwnerMessage,
 } from "./campaigns/campaign-alert-messages";
 
 interface VisibilityItem {
@@ -1077,7 +1081,7 @@ export class AdminListsController {
     const campaign = await this.campaignModel
       .findById(id)
       .select(
-        "title targetState targetDistrict venueState venueDistrict inviteRecipientRole maxInfluencers inviteSlots acceptanceDeadline endDate timelineEnd minInfluencerTier",
+        "title targetState targetDistrict venueState venueDistrict inviteRecipientRole maxInfluencers inviteSlots acceptanceDeadline endDate timelineEnd minInfluencerTier timelineStart startDate",
       )
       .lean();
     if (!campaign) {
@@ -1091,6 +1095,70 @@ export class AdminListsController {
     return {
       openCampaignMessage: renderOpenCampaignMessage(fields),
       inviteOnlyMessage: renderInviteOnlyMessage(fields),
+      postingReminderMessage: renderPostingReminderMessage(fields),
+    };
+  }
+
+  /**
+   * Per-invite "ready to share" copy for the host-facing events (invite
+   * accepted / post submitted) — shown in the campaign preview modal next to
+   * that participant's row. Computed the same way as the automated WhatsApp
+   * send (see campaign-alert-messages.ts) so the two can never drift.
+   */
+  @Get("campaigns/invites/:inviteId/share-messages")
+  async getInviteHostShareMessages(@Param("inviteId") inviteId: string) {
+    const invite = await this.campaignInviteModel.findById(inviteId).lean();
+    if (!invite) {
+      throw new BadRequestException("Invite not found");
+    }
+    const isPhotographerRecipient =
+      String((invite as any).recipientRole || "influencer") === "photographer";
+    const recipientModel = isPhotographerRecipient
+      ? this.photographerModel
+      : this.influencerModel;
+
+    const [campaign, recipient, brandOwner, photographerOwner] =
+      await Promise.all([
+        this.campaignModel
+          .findById((invite as any).campaignId)
+          .select("title")
+          .lean(),
+        recipientModel.findById((invite as any).influencerId).select("name").lean(),
+        this.brandModel
+          .findById((invite as any).brandId)
+          .select("brandName name")
+          .lean(),
+        this.photographerModel
+          .findById((invite as any).brandId)
+          .select("name")
+          .lean(),
+      ]);
+
+    const ownerName =
+      (brandOwner as any)?.brandName ||
+      (brandOwner as any)?.name ||
+      (photographerOwner as any)?.name ||
+      "there";
+    const frontendBase = (
+      process.env.FRONTEND_URL || "https://trendstarz.in"
+    ).replace(/\/$/, "");
+    const fields = {
+      ownerName,
+      recipientName:
+        (recipient as any)?.name ||
+        `A ${isPhotographerRecipient ? "photographer" : "influencer"}`,
+      campaignTitle: (campaign as any)?.title || "your campaign",
+      campaignUrl: `${frontendBase}/campaign-management`,
+    };
+
+    const status = String((invite as any).status || "");
+    return {
+      inviteAcceptedMessage: ACCEPTED_OR_LATER_STATUSES.includes(status)
+        ? renderInviteAcceptedOwnerMessage(fields)
+        : null,
+      postSubmittedMessage: SUBMITTED_OR_LATER_STATUSES.includes(status)
+        ? renderPostSubmittedOwnerMessage(fields)
+        : null,
     };
   }
 
