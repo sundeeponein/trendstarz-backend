@@ -2464,7 +2464,7 @@ export class CampaignInvitesService {
           .sendToUser(String(invite.brandId), {
             title: "Invite Accepted ✅",
             body: `${recipient?.name || `A ${recipientRole}`} accepted your invite for "${campaign?.title || "your campaign"}"`,
-            url: "/campaign-management",
+            url: "/campaigns",
           }, 'campaign')
           .catch(() => {
             /* non-critical */
@@ -2475,7 +2475,7 @@ export class CampaignInvitesService {
             userRole: sender.role,
             title: "Invite Accepted",
             body: `${recipient?.name || `A ${recipientRole}`} accepted your invite for "${campaign?.title || "your campaign"}"`,
-            url: "/campaign-management",
+            url: "/campaigns",
           })
           .catch(() => {
             /* non-critical */
