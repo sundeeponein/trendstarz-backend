@@ -67,6 +67,7 @@ export class PushController {
       mobileEnabled?: boolean;
       campaignEnabled?: boolean;
       paymentEnabled?: boolean;
+      whatsappEnabled?: boolean;
     },
   ) {
     const userId: string = req.user?.userId || req.user?.sub;

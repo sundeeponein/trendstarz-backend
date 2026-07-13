@@ -112,6 +112,7 @@ describe("PushService", () => {
       mobileEnabled: true,
       campaignEnabled: true,
       paymentEnabled: true,
+      whatsappEnabled: true,
     });
   });
 
@@ -191,6 +192,7 @@ describe("PushService", () => {
       mobileEnabled: true,
       campaignEnabled: true,
       paymentEnabled: true,
+      whatsappEnabled: true,
     });
   });
 });

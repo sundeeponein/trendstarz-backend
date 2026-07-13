@@ -11,6 +11,12 @@ import { CloudinaryService } from "../cloudinary.service";
 import { CloudinaryFolders } from "../cloudinary-folders";
 import { PushService } from "../push/push.service";
 import { NotificationsService } from "../notifications/notifications.service";
+import { WhatsAppService } from "../whatsapp/whatsapp.service";
+import {
+  ownerApprovedTemplateParams,
+  openCampaignTemplateParams,
+  inviteOnlyTemplateParams,
+} from "../whatsapp/whatsapp.templates";
 import {
   CampaignTypeConfigItem,
   resolveCampaignAccessModeConfigs,
@@ -46,6 +52,27 @@ const VALID_TRANSITIONS: Record<string, string[]> = {
 
 const TIER_FILTERED_OPEN_ROLLOUT_AT = new Date("2026-05-05T00:00:00.000Z"); // Rolled out May 2026
 const ENABLE_CAMPAIGN_LIVE_EMAILS = false; // comment this if need to send campaign notification emails
+const ENABLE_CAMPAIGN_WHATSAPP =
+  process.env.ENABLE_CAMPAIGN_WHATSAPP === "true"; // requires Meta-approved templates + WHATSAPP_CLOUD_API_TOKEN
+// Mirrors campaign-alert-message.component's ACCEPTED_OR_LATER_STATUSES — anyone who accepted, regardless of pipeline stage since.
+const ACCEPTED_OR_LATER_STATUSES = [
+  "accepted",
+  "payment_confirmed",
+  "working",
+  "submitted",
+  "completed",
+  "approved",
+];
+
+function formatWhatsAppDateLabel(value: unknown): string {
+  const date = value ? new Date(value as any) : null;
+  if (!date || isNaN(date.getTime())) return "Not specified";
+  return date.toLocaleDateString("en-US", {
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+  });
+}
 const PROFILE_PHOTO_VISIBILITY_BLOCK_FLAG_CODES = [
   "PROFILE_PHOTO_PENDING_REVIEW",
   "PROFILE_PHOTO_MISSING",
@@ -86,6 +113,7 @@ export class CampaignsService {
     private readonly cloudinaryService: CloudinaryService,
     private readonly pushService: PushService,
     private readonly notificationsService: NotificationsService,
+    private readonly whatsAppService: WhatsAppService,
     private readonly profileVerificationService: ProfileVerificationService,
     private readonly campaignInvitesService: CampaignInvitesService,
   ) {}
@@ -1476,6 +1504,7 @@ export class CampaignsService {
     const saved = await campaign.save();
 
     if (previousStatus !== "active" && saved.status === "active") {
+      this.notifyOwnerApproved(saved).catch(() => {});
       if (saved.campaignMode === "tier_filtered_open") {
         this.notifyMatchingInfluencers(saved).catch(() => {});
       } else if (saved.campaignMode === "invite_only") {
@@ -1501,6 +1530,59 @@ export class CampaignsService {
     return saved;
   }
 
+  /** Tells the brand/photographer who created the campaign/collab that admin approved it and it's now live. */
+  private async notifyOwnerApproved(campaign: any): Promise<void> {
+    const { title, brandId, ownerType } = campaign;
+    const isPhotographerOwner = String(ownerType) === "photographer";
+    const ownerModel = isPhotographerOwner ? this.photographerModel : this.brandModel;
+    const owner = (await ownerModel
+      .findById(brandId)
+      .select("name brandName email phoneNumber isMobileVerified")
+      .lean()) as any;
+    if (!owner) return;
+
+    const ownerName = owner.brandName || owner.name || "there";
+    const dashboardPath = isPhotographerOwner
+      ? "/photographer-dashboard"
+      : "/campaign-management";
+    const frontendBase = (
+      process.env.FRONTEND_URL || "https://trendstarz.in"
+    ).replace(/\/$/, "");
+    const campaignUrl = `${frontendBase}${dashboardPath}`;
+    const body = `Your campaign "${title}" has been approved and is now live!`;
+
+    await Promise.allSettled([
+      this.notificationsService
+        .createForUser({
+          userId: String(brandId),
+          userRole: isPhotographerOwner ? "photographer" : "brand",
+          title: "Campaign approved",
+          body,
+          url: dashboardPath,
+        })
+        .catch(() => {}),
+      this.pushService
+        .sendToUser(
+          String(brandId),
+          { title: "Campaign approved", body, url: dashboardPath },
+          "campaign",
+        )
+        .catch(() => {}),
+      ENABLE_CAMPAIGN_WHATSAPP
+        ? this.whatsAppService
+            .sendToUser(String(brandId), owner.phoneNumber, owner.isMobileVerified, {
+              name: "campaign_approved_owner",
+              bodyParams: ownerApprovedTemplateParams({
+                ownerName,
+                campaignTitle: title,
+                campaignUrl,
+              }),
+            })
+            .catch(() => {})
+        : Promise.resolve(),
+    ]);
+  }
+
   private async notifyMatchingInfluencers(campaign: any): Promise<void> {
     const TIER_ORDER = [
       "Starter",
@@ -1512,6 +1594,7 @@ export class CampaignsService {
     ];
 
     const {
+      _id: campaignId,
       targetState,
       targetDistrict,
       venueState,
@@ -1523,6 +1606,11 @@ export class CampaignsService {
       inviteRecipientRole,
       title,
       brandId,
+      maxInfluencers,
+      inviteSlots,
+      acceptanceDeadline,
+      endDate,
+      timelineEnd,
     } = campaign;
 
     const isPhotographer =
@@ -1610,7 +1698,7 @@ export class CampaignsService {
 
     const candidates: any[] = await recipientModel
       .find(baseQuery)
-      .select("name email socialMedia isEmailVerified isMobileVerified")
+      .select("name email phoneNumber socialMedia isEmailVerified isMobileVerified")
       .limit(500)
       .lean();
 
@@ -1666,6 +1754,20 @@ export class CampaignsService {
     const locationLabel = [locationDistrict, locationState]
       .filter(Boolean)
       .join(", ");
+    const requiredCreators = Number(maxInfluencers || inviteSlots || 0) || 0;
+    const acceptedCount = ENABLE_CAMPAIGN_WHATSAPP
+      ? await this.campaignInviteModel.countDocuments({
+          campaignId,
+          status: { $in: ACCEPTED_OR_LATER_STATUSES },
+        })
+      : 0;
+    const slotsRemaining = Math.max(requiredCreators - acceptedCount, 0);
+    const applyBeforeLabel = formatWhatsAppDateLabel(
+      acceptanceDeadline || endDate || timelineEnd,
+    );
+    const tierLine = minInfluencerTier
+      ? `🏆 Minimum Tier: ${minInfluencerTier}`
+      : "";
 
     const notificationPromises = matched.map((recipient: any) => {
       const userRole = isPhotographer ? "photographer" : "influencer";
@@ -1701,6 +1803,30 @@ export class CampaignsService {
           sendAppEmail({ to: recipient.email, ...tpl }).catch(() => {}),
         );
       }
+
+      if (ENABLE_CAMPAIGN_WHATSAPP) {
+        base.push(
+          this.whatsAppService
+            .sendToUser(
+              String(recipient._id),
+              recipient.phoneNumber,
+              recipient.isMobileVerified,
+              {
+                name: "campaign_new_match_open",
+                bodyParams: openCampaignTemplateParams({
+                  campaignTitle: title,
+                  location: locationLabel || "Not specified",
+                  applyBeforeLabel,
+                  tierLine,
+                  requiredCreators,
+                  acceptedCount,
+                  slotsRemaining,
+                }),
+              },
+            )
+            .catch(() => {}),
+        );
+      }
       return Promise.allSettled(base);
     });
 
@@ -1708,7 +1834,21 @@ export class CampaignsService {
   }
 
   private async notifyInvitedUsers(campaign: any): Promise<void> {
-    const { _id: campaignId, title, brandId, inviteRecipientRole } = campaign;
+    const {
+      _id: campaignId,
+      title,
+      brandId,
+      inviteRecipientRole,
+      targetState,
+      targetDistrict,
+      venueState,
+      venueDistrict,
+      maxInfluencers,
+      inviteSlots,
+      acceptanceDeadline,
+      endDate,
+      timelineEnd,
+    } = campaign;
 
     // Get all active invites for this campaign
     const inviteQueries: any[] = [{ campaignId }];
@@ -1737,6 +1877,25 @@ export class CampaignsService {
         ? "/photographer-dashboard"
         : "/influencer-dashboard/invites";
     const campaignUrl = `${frontendBase}${dashboardPath}`;
+    const isPhotographer =
+      String(inviteRecipientRole || "influencer") === "photographer";
+    const locationLabel = [
+      isPhotographer ? venueDistrict || targetDistrict : targetDistrict,
+      isPhotographer ? venueState || targetState : targetState,
+    ]
+      .filter(Boolean)
+      .join(", ");
+    const requiredCreators = Number(maxInfluencers || inviteSlots || 0) || 0;
+    const acceptedCount = ENABLE_CAMPAIGN_WHATSAPP
+      ? await this.campaignInviteModel.countDocuments({
+          $or: inviteQueries,
+          status: { $in: ACCEPTED_OR_LATER_STATUSES },
+        })
+      : 0;
+    const slotsRemaining = Math.max(requiredCreators - acceptedCount, 0);
+    const respondBeforeLabel = formatWhatsAppDateLabel(
+      acceptanceDeadline || endDate || timelineEnd,
+    );
 
     // Load recipient profiles and notify verified invited users after campaign is live.
     const notificationPromises = invites.map(async (invite: any) => {
@@ -1748,7 +1907,7 @@ export class CampaignsService {
 
         const recipient = (await recipientModel
           .findById(invite.influencerId)
-          .select("name email isEmailVerified isMobileVerified")
+          .select("name email phoneNumber isEmailVerified isMobileVerified")
           .lean()) as any;
 
         if (
@@ -1781,6 +1940,27 @@ export class CampaignsService {
             url: dashboardPath,
           }, 'campaign')
           .catch(() => {});
+
+        if (ENABLE_CAMPAIGN_WHATSAPP) {
+          await this.whatsAppService
+            .sendToUser(
+              String(recipient._id),
+              recipient.phoneNumber,
+              recipient.isMobileVerified,
+              {
+                name: "campaign_new_match_invite",
+                bodyParams: inviteOnlyTemplateParams({
+                  campaignTitle: title,
+                  location: locationLabel || "Not specified",
+                  respondBeforeLabel,
+                  requiredCreators,
+                  acceptedCount,
+                  slotsRemaining,
+                }),
+              },
+            )
+            .catch(() => {});
+        }
 
         if (!ENABLE_CAMPAIGN_LIVE_EMAILS || !recipient?.email) return;
 

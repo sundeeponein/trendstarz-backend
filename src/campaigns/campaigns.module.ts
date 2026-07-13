@@ -28,6 +28,7 @@ import { PlansModule } from "../plans/plans.module";
 import { CloudinaryService } from "../cloudinary.service";
 import { PushModule } from "../push/push.module";
 import { NotificationsModule } from "../notifications/notifications.module";
+import { WhatsAppModule } from "../whatsapp/whatsapp.module";
 import { ProfileVerificationModule } from "../profile-verification/profile-verification.module";
 
 @Module({
@@ -35,6 +36,7 @@ import { ProfileVerificationModule } from "../profile-verification/profile-verif
     PlansModule,
     PushModule,
     NotificationsModule,
+    WhatsAppModule,
     ProfileVerificationModule,
     MongooseModule.forFeature([
       { name: "Campaign", schema: CampaignSchema, collection: "campaigns" },

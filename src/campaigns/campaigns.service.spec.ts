@@ -6,7 +6,9 @@ import { PlansService } from "../plans/plans.service";
 import { CloudinaryService } from "../cloudinary.service";
 import { PushService } from "../push/push.service";
 import { NotificationsService } from "../notifications/notifications.service";
+import { WhatsAppService } from "../whatsapp/whatsapp.service";
 import { ProfileVerificationService } from "../profile-verification/profile-verification.service";
+import { CampaignInvitesService } from "./campaign-invites.service";
 
 describe("CampaignsService", () => {
   let service: CampaignsService;
@@ -122,11 +124,18 @@ describe("CampaignsService", () => {
         { provide: CloudinaryService, useValue: {} },
         { provide: PushService, useValue: {} },
         { provide: NotificationsService, useValue: {} },
+        { provide: WhatsAppService, useValue: {} },
         {
           provide: ProfileVerificationService,
           useValue: {
             isProfileComplete: jest.fn().mockReturnValue(true),
             isAdminApproved: jest.fn().mockReturnValue(true),
+          },
+        },
+        {
+          provide: CampaignInvitesService,
+          useValue: {
+            expireUnsubmittedInvitesForCampaign: jest.fn().mockResolvedValue(undefined),
           },
         },
       ],

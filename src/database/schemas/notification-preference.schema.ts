@@ -8,6 +8,7 @@ export const NotificationPreferenceSchema = new Schema(
     mobileEnabled: { type: Boolean, default: true },
     campaignEnabled: { type: Boolean, default: true },
     paymentEnabled: { type: Boolean, default: true },
+    whatsappEnabled: { type: Boolean, default: true },
   },
   { timestamps: true },
 );

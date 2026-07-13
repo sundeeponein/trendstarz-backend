@@ -57,6 +57,7 @@ export class PushService implements OnModuleInit {
       mobileEnabled: pref?.mobileEnabled ?? true,
       campaignEnabled: pref?.campaignEnabled ?? true,
       paymentEnabled: pref?.paymentEnabled ?? true,
+      whatsappEnabled: pref?.whatsappEnabled ?? true,
     };
   }
 
@@ -67,10 +68,11 @@ export class PushService implements OnModuleInit {
       mobileEnabled?: boolean;
       campaignEnabled?: boolean;
       paymentEnabled?: boolean;
+      whatsappEnabled?: boolean;
     },
   ) {
     const $set: Record<string, boolean> = {};
-    for (const key of ["webEnabled", "mobileEnabled", "campaignEnabled", "paymentEnabled"] as const) {
+    for (const key of ["webEnabled", "mobileEnabled", "campaignEnabled", "paymentEnabled", "whatsappEnabled"] as const) {
       if (typeof updates[key] === "boolean") $set[key] = updates[key] as boolean;
     }
     const pref = await this.preferenceModel.findOneAndUpdate(
@@ -83,6 +85,7 @@ export class PushService implements OnModuleInit {
       mobileEnabled: pref.mobileEnabled ?? true,
       campaignEnabled: pref.campaignEnabled ?? true,
       paymentEnabled: pref.paymentEnabled ?? true,
+      whatsappEnabled: pref.whatsappEnabled ?? true,
     };
   }
 
