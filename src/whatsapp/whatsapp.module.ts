@@ -2,6 +2,7 @@ import { Module } from "@nestjs/common";
 import { MongooseModule } from "@nestjs/mongoose";
 import { NotificationPreferenceSchema } from "../database/schemas/notification-preference.schema";
 import { WhatsAppService } from "./whatsapp.service";
+import { WhatsAppWebhookController } from "./whatsapp.controller";
 
 @Module({
   imports: [
@@ -9,6 +10,7 @@ import { WhatsAppService } from "./whatsapp.service";
       { name: "NotificationPreference", schema: NotificationPreferenceSchema },
     ]),
   ],
+  controllers: [WhatsAppWebhookController],
   providers: [WhatsAppService],
   exports: [WhatsAppService],
 })
