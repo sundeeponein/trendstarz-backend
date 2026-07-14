@@ -37,3 +37,38 @@ export class WhatsAppWebhookController {
     return res.status(200).send("EVENT_RECEIVED");
   }
 }
+
+/**
+ * Redirect target for Meta's Embedded Signup OAuth flow. Currently a stub:
+ * it accepts the redirect so the config can be saved in the Meta dashboard,
+ * but does not yet exchange `code` for a WABA access token — that requires
+ * META_APP_ID / META_APP_SECRET (not yet configured) and a storage decision
+ * for the resulting WABA id / phone number id.
+ */
+@Controller("whatsapp/embedded-signup")
+export class WhatsAppEmbeddedSignupController {
+  private readonly logger = new Logger(WhatsAppEmbeddedSignupController.name);
+
+  @Get("callback")
+  callback(@Query() query: Record<string, string>, @Res() res: Response) {
+    const { code, state, error, error_description } = query;
+
+    if (error) {
+      this.logger.warn(
+        `Embedded signup OAuth denied/cancelled: ${error} - ${error_description}`,
+      );
+      return res.status(200).send("WhatsApp signup was cancelled.");
+    }
+
+    if (!code) {
+      return res.status(400).send("Missing authorization code");
+    }
+
+    this.logger.log(`Embedded signup callback received code (state=${state})`);
+    // TODO: exchange `code` for a business access token via the Graph API
+    // and persist the resulting WABA id / phone number id once wired up.
+    return res
+      .status(200)
+      .send("WhatsApp signup received. You can close this window.");
+  }
+}
