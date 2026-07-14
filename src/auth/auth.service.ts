@@ -231,8 +231,20 @@ export class AuthService {
    * emailVerificationWhatsappReminderSentAt so a missed/delayed cron run
    * can't cause a duplicate send; re-armed by sendEmailVerificationLink()
    * whenever a fresh link is sent. Silently a no-op until the WhatsApp Cloud
-   * API credentials + the "email_verification_reminder" template are live —
-   * see sendWhatsAppTemplateMessage in whatsapp-cloud-api.util.ts.
+   * API credentials are set AND the "email_verification_reminder" template
+   * below is approved — see sendWhatsAppTemplateMessage in
+   * whatsapp-cloud-api.util.ts.
+   *
+   * email_verification_reminder template body to submit in Meta Business
+   * Manager → WhatsApp Manager → Message Templates (category: Utility,
+   * 2 body params — display name, verification link):
+   *
+   *   Hi {{1}}, just a reminder to verify your email so you can start using
+   *   TrendStarz.
+   *
+   *   Verify now (valid for 1 hour): {{2}}
+   *
+   *   If you've already verified, please ignore this message.
    */
   @Cron(CronExpression.EVERY_5_MINUTES)
   async sendEmailVerificationWhatsappRemindersCron() {
