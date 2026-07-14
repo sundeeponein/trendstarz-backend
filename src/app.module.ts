@@ -74,6 +74,7 @@ import { NotificationsModule } from "./notifications/notifications.module";
 import { PhotographersModule } from "./photographers/photographers.module";
 import { MonetizationModule } from "./monetization/monetization.module";
 import { ProfileVerificationModule } from "./profile-verification/profile-verification.module";
+import { WhatsAppModule } from "./whatsapp/whatsapp.module";
 
 @Module({
   imports: [
@@ -176,6 +177,7 @@ import { ProfileVerificationModule } from "./profile-verification/profile-verifi
     PhotographersModule,
     MonetizationModule,
     ProfileVerificationModule,
+    WhatsAppModule,
   ],
   controllers: [
     AppController,

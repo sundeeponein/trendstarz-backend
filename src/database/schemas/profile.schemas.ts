@@ -2,6 +2,13 @@ import { Schema, Types, model } from "mongoose";
 
 const ProfileVerificationFields = {
   emailVerifiedAt: { type: Date, default: null },
+  // When the last verification-email link was sent; drives the one-time
+  // 30-minutes-later WhatsApp reminder (the link itself expires after 1h).
+  emailVerificationSentAt: { type: Date, default: null },
+  // Stamped once the reminder cron has sent (or attempted to send) the
+  // WhatsApp nudge for the *current* emailVerificationSentAt, so it only
+  // ever fires once per verification email.
+  emailVerificationWhatsappReminderSentAt: { type: Date, default: null },
   // Snapshot of the last email that was actually verified, kept when the user
   // changes their email so admins can see what changed (fraud/support signal).
   previousVerifiedEmail: { type: String, default: "" },

@@ -9,7 +9,9 @@ import * as crypto from "crypto";
 import * as jwt from "jsonwebtoken";
 import { InjectModel } from "@nestjs/mongoose";
 import { Model } from "mongoose";
+import { Cron, CronExpression } from "@nestjs/schedule";
 import { sendAppEmail } from "../utils/app-email.service";
+import { WhatsAppService } from "../whatsapp/whatsapp.service";
 import {
   verifyEmailTemplate,
   resetPasswordTemplate,
@@ -165,6 +167,29 @@ export class AuthService {
     }
   }
 
+  private async generateVerifyUrl(
+    normalizedEmail: string,
+    role: TrendstarzRole,
+  ): Promise<string> {
+    if (this.firebaseAdminService.isConfigured()) {
+      const verifyUrl =
+        await this.firebaseAdminService.generateEmailVerificationLink(
+          normalizedEmail,
+        );
+      await this.firebaseAdminService.setUserRoleClaim(normalizedEmail, role);
+      return verifyUrl;
+    }
+    const token = jwt.sign(
+      { email: normalizedEmail, purpose: "email_verification" },
+      getJwtSecret(),
+      { expiresIn: "1h" },
+    );
+    const backendUrl = (
+      process.env.BACKEND_URL || "https://api.trendstarz.in"
+    ).replace(/\/$/, "");
+    return `${backendUrl}/api/auth/verify-email?token=${encodeURIComponent(token)}`;
+  }
+
   async sendEmailVerificationLink(email: string) {
     const normalizedEmail = (email || "").trim().toLowerCase();
     if (!normalizedEmail) {
@@ -185,33 +210,97 @@ export class AuthService {
       return { success: true, message: "Email is already verified." };
     }
 
-    let verifyUrl = "";
-    if (this.firebaseAdminService.isConfigured()) {
-      verifyUrl =
-        await this.firebaseAdminService.generateEmailVerificationLink(
-          normalizedEmail,
-        );
-      await this.firebaseAdminService.setUserRoleClaim(
-        normalizedEmail,
-        match.role,
-      );
-    } else {
-      const token = jwt.sign(
-        { email: normalizedEmail, purpose: "email_verification" },
-        getJwtSecret(),
-        { expiresIn: "1h" },
-      );
-
-      const backendUrl = (
-        process.env.BACKEND_URL || "https://api.trendstarz.in"
-      ).replace(/\/$/, "");
-      verifyUrl = `${backendUrl}/api/auth/verify-email?token=${encodeURIComponent(token)}`;
-    }
+    const verifyUrl = await this.generateVerifyUrl(normalizedEmail, match.role);
     const { subject, html, text } = verifyEmailTemplate(verifyUrl);
 
     await sendAppEmail({ to: normalizedEmail, subject, html, text });
 
+    // Reset so the 30-minute WhatsApp reminder cron re-arms for this fresh link
+    // instead of treating it as already reminded-about.
+    user.emailVerificationSentAt = new Date();
+    user.emailVerificationWhatsappReminderSentAt = null;
+    await user.save();
+
     return { success: true, message: "Verification email sent." };
+  }
+
+  /**
+   * One-time WhatsApp nudge for accounts still unverified 30 minutes after
+   * their last verification email went out (the link itself stays valid for
+   * 1h, so the reminder's fresh link still works). Guarded by
+   * emailVerificationWhatsappReminderSentAt so a missed/delayed cron run
+   * can't cause a duplicate send; re-armed by sendEmailVerificationLink()
+   * whenever a fresh link is sent. Silently a no-op until the WhatsApp Cloud
+   * API credentials + the "email_verification_reminder" template are live —
+   * see sendWhatsAppTemplateMessage in whatsapp-cloud-api.util.ts.
+   */
+  @Cron(CronExpression.EVERY_5_MINUTES)
+  async sendEmailVerificationWhatsappRemindersCron() {
+    try {
+      await this.sendEmailVerificationWhatsappReminders();
+    } catch (e) {
+      console.error("sendEmailVerificationWhatsappRemindersCron failed:", e);
+    }
+  }
+
+  async sendEmailVerificationWhatsappReminders(): Promise<{ sent: number }> {
+    const MIN_MS = 60 * 1000;
+    const now = Date.now();
+    // Wide-ish band (25-40 min) so a 5-minute cron cadence can't skip a row
+    // between runs; emailVerificationWhatsappReminderSentAt prevents repeats.
+    const query = {
+      isEmailVerified: { $ne: true },
+      emailVerificationSentAt: {
+        $gte: new Date(now - 40 * MIN_MS),
+        $lte: new Date(now - 25 * MIN_MS),
+      },
+      emailVerificationWhatsappReminderSentAt: null,
+    };
+    const roleModels: Array<{ model: Model<any>; role: TrendstarzRole }> = [
+      { model: this.userModel, role: "admin" },
+      { model: this.influencerModel, role: "influencer" },
+      { model: this.brandModel, role: "brand" },
+      { model: this.photographerModel, role: "photographer" },
+    ];
+
+    let sent = 0;
+    for (const { model, role } of roleModels) {
+      const dueUsers = await model.find(query).lean();
+      for (const dueUser of dueUsers) {
+        const email = String((dueUser as any).email || "");
+        const displayName =
+          (dueUser as any).name ||
+          (dueUser as any).contactPersonName ||
+          (dueUser as any).brandName ||
+          "there";
+        try {
+          const verifyUrl = await this.generateVerifyUrl(email, role);
+          await this.whatsAppService
+            .sendToUser(
+              String((dueUser as any)._id),
+              (dueUser as any).phoneNumber,
+              (dueUser as any).isMobileVerified,
+              {
+                name: "email_verification_reminder",
+                bodyParams: [displayName, verifyUrl],
+              },
+            )
+            .catch(() => {});
+        } catch (e) {
+          console.error(
+            `Failed to send email-verification WhatsApp reminder to ${email}:`,
+            e,
+          );
+        } finally {
+          await model.updateOne(
+            { _id: (dueUser as any)._id },
+            { $set: { emailVerificationWhatsappReminderSentAt: new Date() } },
+          );
+          sent++;
+        }
+      }
+    }
+    return { sent };
   }
 
   async verifyEmailByToken(token: string) {
@@ -627,6 +716,7 @@ export class AuthService {
     @InjectModel("LinkConversion") private readonly linkConversionModel: Model<any>,
     private readonly firebaseAdminService: FirebaseAdminService,
     private readonly cloudinaryService: CloudinaryService,
+    private readonly whatsAppService: WhatsAppService,
   ) {}
 
   // Generates the next sequential, role-prefixed human-readable ID (e.g.
