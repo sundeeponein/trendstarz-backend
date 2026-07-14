@@ -701,11 +701,37 @@ export class AdminListsController {
         ...matchingBrands.map((b: any) => b._id),
         ...matchingPhotographers.map((p: any) => p._id),
       ];
+
+      // Displayed campaign IDs are "CMP-<campaignNumber>" or, for legacy rows
+      // without a campaignNumber, "CMP-<last 6 chars of _id>" (see
+      // campaignIdLabel in referral-link.util.ts). Neither is a stored,
+      // directly-searchable field, so a "CMP-..." query needs to be decoded
+      // back into the field it actually maps to.
+      const idMatch = searchQuery.match(/^cmp-([a-z0-9]+)$/i);
+      const idOrConditions: any[] = [];
+      if (idMatch) {
+        const idSuffix = idMatch[1];
+        if (/^\d+$/.test(idSuffix)) {
+          idOrConditions.push({ campaignNumber: Number(idSuffix) });
+        }
+        if (/^[a-f0-9]{1,6}$/i.test(idSuffix)) {
+          idOrConditions.push({
+            $expr: {
+              $eq: [
+                { $toUpper: { $substrCP: [{ $toString: "$_id" }, 18, 6] } },
+                idSuffix.toUpperCase(),
+              ],
+            },
+          });
+        }
+      }
+
       andConditions.push({
         $or: [
           { title: regex },
           { campaignTitle: regex },
           ...(ownerIds.length ? [{ brandId: { $in: ownerIds } }] : []),
+          ...idOrConditions,
         ],
       });
     }
