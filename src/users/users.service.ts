@@ -1101,7 +1101,7 @@ export class UsersService {
   /** Throw if the user has already reached their maxImages plan limit */
   async checkImageUploadLimit(userId: string, currentCount: number) {
     const limit = await this.plansService.getLimit(userId, "maxProductImages");
-    if (currentCount >= limit) {
+    if (currentCount > limit) {
       throw new BadRequestException(
         `Image upload limit reached. Your plan allows ${limit} image(s). Upgrade to upload more.`,
       );

@@ -1527,10 +1527,13 @@ export class AuthService {
     );
     // Hash password
     const hashedPassword = await bcrypt.hash(data.password, 10);
+    // Registration only accepts a single profile photo, regardless of plan —
+    // gallery images are only available post-verification from the profile-edit
+    // page (see users.controller.ts updateUserImages / checkImageUploadLimit).
     const normalizedProfileImages = Array.isArray(data.profileImages)
       ? data.profileImages
           .filter((img: any) => img?.url && img?.public_id)
-          .slice(0, 10)
+          .slice(0, 1)
       : [];
     const signupAttribution = {
       source:
@@ -1786,6 +1789,15 @@ export class AuthService {
         data?.signupAttribution?.referrerUrl || data?.referrerUrl || null,
       capturedAt: new Date(),
     };
+    // Registration only accepts a single brand logo and no product images,
+    // regardless of plan — product images are only available post-verification
+    // from the profile-edit page (see users.controller.ts updateUserImages /
+    // checkImageUploadLimit).
+    const normalizedBrandLogo = Array.isArray(data.brandLogo)
+      ? data.brandLogo
+          .filter((img: any) => img?.url && img?.public_id)
+          .slice(0, 1)
+      : [];
     const brand = new this.brandModel({
       ...data,
       email: normalizedEmail || data.email,
@@ -1797,6 +1809,8 @@ export class AuthService {
       languages: languageNames,
       socialMedia: socialMediaMapped,
       signupAttribution,
+      brandLogo: normalizedBrandLogo,
+      products: [],
     });
     brand.publicId = await this.nextPublicId("BRD", "brand_public_id");
 
@@ -1956,10 +1970,13 @@ export class AuthService {
       : data?.location?.district || "";
 
     const hashedPassword = await bcrypt.hash(data.password, 10);
+    // Registration only accepts a single profile photo, regardless of plan —
+    // gallery images are only available post-verification from the profile-edit
+    // page (see users.controller.ts updateUserImages / checkImageUploadLimit).
     const normalizedProfileImages = Array.isArray(data.profileImages)
       ? data.profileImages
           .filter((img: any) => img?.url && img?.public_id)
-          .slice(0, 10)
+          .slice(0, 1)
       : [];
     const normalizedSocialMedia = normalizeSocialMediaList(data?.socialMedia);
     this.validateCreatorSocialMediaRates(normalizedSocialMedia);
