@@ -10,7 +10,8 @@ export type WhatsAppTemplateName =
   | "campaign_invite_accepted_owner"
   | "campaign_post_submitted_owner"
   | "campaign_posting_reminder"
-  | "email_verification_reminder";
+  | "email_verification_reminder"
+  | "profile_photo_not_verified";
 
 @Injectable()
 export class WhatsAppService {

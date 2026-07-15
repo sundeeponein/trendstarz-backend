@@ -6,6 +6,7 @@ import {
 } from "@nestjs/common";
 import { InjectModel } from "@nestjs/mongoose";
 import { Model, Types } from "mongoose";
+import { WhatsAppService } from "../whatsapp/whatsapp.service";
 
 type ProfileRole = "influencer" | "brand" | "photographer" | "admin";
 export type ProfileUserType = "Influencer" | "Brand" | "Photographer" | "User";
@@ -249,6 +250,7 @@ export class ProfileVerificationService {
     @InjectModel("Brand") private readonly brandModel: Model<any>,
     @InjectModel("Photographer") private readonly photographerModel: Model<any>,
     @InjectModel("User") private readonly userModel: Model<any>,
+    private readonly whatsAppService: WhatsAppService,
   ) {}
 
   private normalizeRole(role: any): ProfileRole {
@@ -1599,7 +1601,60 @@ export class ProfileVerificationService {
         },
       ],
     });
+
+    if (PHOTO_FLAG_MESSAGES[flagCode]) {
+      await this.notifyProfilePhotoFlagged(userType, userId).catch(() => {});
+    }
+
     return flag;
+  }
+
+  /**
+   * Nudges a fully-verified user by WhatsApp when admin/support manually
+   * flags their profile photo as not meeting guidelines (via addFlag above —
+   * photo review is manual, there is no automated check at upload time).
+   * Only fires once the user's email AND mobile are both already verified,
+   * matching the "Your email and mobile number are verified" copy. Best-effort:
+   * a delivery failure here must never block the admin's flagging action.
+   *
+   * profile_photo_not_verified template body to submit in Meta Business
+   * Manager → WhatsApp Manager → Message Templates (category: Utility,
+   * 1 body param — display name):
+   *
+   *   Hi {{1}}, your email and mobile number are verified.
+   *
+   *   However, your profile photo does not meet our profile guidelines.
+   *   Please update your profile photo to make your profile visible to
+   *   brands on TrendStarZ.
+   *
+   *   Login and update your profile photo to complete your profile:
+   *   www.trendstarz.in
+   */
+  private async notifyProfilePhotoFlagged(
+    userType: ProfileUserType,
+    userId: string,
+  ) {
+    const profile = await this.modelForUserType(userType)
+      .findById(userId)
+      .lean();
+    if (!profile) return;
+    if (!this.isEmailVerified(profile) || !this.isMobileVerified(profile)) return;
+
+    const displayName =
+      (profile as any).name ||
+      (profile as any).brandName ||
+      (profile as any).contactPersonName ||
+      "there";
+
+    await this.whatsAppService.sendToUser(
+      String(userId),
+      (profile as any).phoneNumber,
+      this.isMobileVerified(profile),
+      {
+        name: "profile_photo_not_verified",
+        bodyParams: [displayName],
+      },
+    );
   }
 
   async updateFlag(actor: any, flagId: string, body: any) {

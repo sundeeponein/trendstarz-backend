@@ -10,6 +10,7 @@ import { PaymentSchema } from "../database/schemas/payment.schema";
 import { ProfileFlagSchema } from "../database/schemas/profile-flag.schema";
 import { ProfileVerificationController } from "./profile-verification.controller";
 import { ProfileVerificationService } from "./profile-verification.service";
+import { WhatsAppModule } from "../whatsapp/whatsapp.module";
 
 @Module({
   imports: [
@@ -21,6 +22,7 @@ import { ProfileVerificationService } from "./profile-verification.service";
       { name: "User", schema: UserSchema, collection: "users" },
       { name: "Payment", schema: PaymentSchema, collection: "payments" },
     ]),
+    WhatsAppModule,
   ],
   controllers: [ProfileVerificationController],
   providers: [ProfileVerificationService],
