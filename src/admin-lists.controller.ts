@@ -42,12 +42,15 @@ import { CampaignsService } from "./campaigns/campaigns.service";
 import {
   ACCEPTED_OR_LATER_STATUSES,
   SUBMITTED_OR_LATER_STATUSES,
+  WORK_STARTED_OR_LATER_STATUSES,
   computeCampaignAlertFields,
   renderOpenCampaignMessage,
   renderInviteOnlyMessage,
   renderPostingReminderMessage,
   renderInviteAcceptedOwnerMessage,
   renderPostSubmittedOwnerMessage,
+  renderOwnerApprovedMessage,
+  renderStartWorkMessage,
 } from "./campaigns/campaign-alert-messages";
 
 interface VisibilityItem {
@@ -1107,7 +1110,7 @@ export class AdminListsController {
     const campaign = await this.campaignModel
       .findById(id)
       .select(
-        "title targetState targetDistrict venueState venueDistrict inviteRecipientRole maxInfluencers inviteSlots acceptanceDeadline endDate timelineEnd minInfluencerTier timelineStart startDate",
+        "title targetState targetDistrict venueState venueDistrict inviteRecipientRole maxInfluencers inviteSlots acceptanceDeadline endDate timelineEnd minInfluencerTier timelineStart startDate brandId ownerType status",
       )
       .lean();
     if (!campaign) {
@@ -1118,10 +1121,39 @@ export class AdminListsController {
       status: { $in: ACCEPTED_OR_LATER_STATUSES },
     });
     const fields = computeCampaignAlertFields(campaign, acceptedCount);
+
+    const isPhotographerOwner =
+      String((campaign as any).ownerType || "").toLowerCase() === "photographer";
+    const ownerModel = isPhotographerOwner
+      ? this.photographerModel
+      : this.brandModel;
+    const owner = await ownerModel
+      .findById((campaign as any).brandId)
+      .select("brandName name phoneNumber")
+      .lean();
+    const ownerName =
+      (owner as any)?.brandName || (owner as any)?.name || "there";
+    const ownerPhone = (owner as any)?.phoneNumber || "";
+    const frontendBase = (
+      process.env.FRONTEND_URL || "https://trendstarz.in"
+    ).replace(/\/$/, "");
+
+    const isApproved = ["active", "completed"].includes(
+      String((campaign as any).status || "").toLowerCase(),
+    );
+
     return {
       openCampaignMessage: renderOpenCampaignMessage(fields),
       inviteOnlyMessage: renderInviteOnlyMessage(fields),
       postingReminderMessage: renderPostingReminderMessage(fields),
+      ownerApprovedMessage: isApproved
+        ? renderOwnerApprovedMessage({
+            ownerName,
+            campaignTitle: fields.campaignTitle,
+            campaignUrl: `${frontendBase}/campaign-management`,
+          })
+        : null,
+      ownerPhone,
     };
   }
 
@@ -1149,14 +1181,17 @@ export class AdminListsController {
           .findById((invite as any).campaignId)
           .select("title")
           .lean(),
-        recipientModel.findById((invite as any).influencerId).select("name").lean(),
+        recipientModel
+          .findById((invite as any).influencerId)
+          .select("name phoneNumber")
+          .lean(),
         this.brandModel
           .findById((invite as any).brandId)
-          .select("brandName name")
+          .select("brandName name phoneNumber")
           .lean(),
         this.photographerModel
           .findById((invite as any).brandId)
-          .select("name")
+          .select("name phoneNumber")
           .lean(),
       ]);
 
@@ -1165,6 +1200,9 @@ export class AdminListsController {
       (brandOwner as any)?.name ||
       (photographerOwner as any)?.name ||
       "there";
+    const ownerPhone =
+      (brandOwner as any)?.phoneNumber || (photographerOwner as any)?.phoneNumber || "";
+    const recipientPhone = (recipient as any)?.phoneNumber || "";
     const frontendBase = (
       process.env.FRONTEND_URL || "https://trendstarz.in"
     ).replace(/\/$/, "");
@@ -1185,6 +1223,11 @@ export class AdminListsController {
       postSubmittedMessage: SUBMITTED_OR_LATER_STATUSES.includes(status)
         ? renderPostSubmittedOwnerMessage(fields)
         : null,
+      startWorkMessage: WORK_STARTED_OR_LATER_STATUSES.includes(status)
+        ? renderStartWorkMessage(fields)
+        : null,
+      ownerPhone,
+      recipientPhone,
     };
   }
 

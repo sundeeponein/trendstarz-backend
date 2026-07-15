@@ -257,12 +257,25 @@ export function inviteOnlyWhatsAppParams(
   ];
 }
 
-export function ownerApprovedTemplateParams(args: {
+export interface OwnerApprovedFields {
   ownerName: string;
   campaignTitle: string;
   campaignUrl: string;
-}): string[] {
+}
+
+export function ownerApprovedTemplateParams(
+  args: OwnerApprovedFields,
+): string[] {
   return [args.ownerName, args.campaignTitle, args.campaignUrl];
+}
+
+/** Full copy-paste text for the same event — shown to admin once a campaign is approved. */
+export function renderOwnerApprovedMessage(fields: OwnerApprovedFields): string {
+  return [
+    `Hi ${fields.ownerName}, great news — your campaign "${fields.campaignTitle}" has been approved by TrendStarz and is now live!`,
+    "",
+    `Creators can start applying. View it here: ${fields.campaignUrl}`,
+  ].join("\n");
 }
 
 export interface HostEventFields {
@@ -331,8 +344,29 @@ export function renderPostSubmittedOwnerMessage(
   ].join("\n");
 }
 
+/** Full copy-paste text for the same event — shown to admin once payment is confirmed, addressed to the creator. */
+export function renderStartWorkMessage(fields: HostEventFields): string {
+  return [
+    `🎉 Hi ${fields.recipientName}, your collaboration has been confirmed by the host.`,
+    "",
+    `You can now start working on "${fields.campaignTitle}". Please check the campaign details and requirements in TrendStarz.`,
+    "",
+    `View it here: ${fields.campaignUrl}`,
+  ].join("\n");
+}
+
 /** Mirrors the pipeline stages that imply a submission has happened. */
 export const SUBMITTED_OR_LATER_STATUSES = [
+  "submitted",
+  "completed",
+  "approved",
+  "disputed",
+];
+
+/** Mirrors the pipeline stages that imply payment is confirmed and the creator can start work. */
+export const WORK_STARTED_OR_LATER_STATUSES = [
+  "payment_confirmed",
+  "working",
   "submitted",
   "completed",
   "approved",
