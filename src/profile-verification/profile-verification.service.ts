@@ -947,6 +947,11 @@ export class ProfileVerificationService {
       campaignEligibility: this.buildEligibility(profile, flags, userType),
       campaignStatus: this.buildCampaignStatus(profile, flags, userType),
       profileVisibility: profile?.profileVisibility || "PUBLIC",
+      // False for pre-existing accounts that never explicitly chose — see
+      // getProfileVisibility in users.service.ts for the matching
+      // self-service field. Admin/support should ask this during a manual
+      // verification call when false.
+      profileVisibilityIsSet: !!profile?.profileVisibility,
       featuredInMarketing: !!profile?.featuredInMarketing,
       homepageEligibility: this.buildHomepageEligibility(profile, flags, userType),
     };
@@ -988,11 +993,11 @@ export class ProfileVerificationService {
   /**
    * Homepage Feature eligibility checklist for the admin profile-moderation
    * view. Mirrors (but is not literally shared code with) the real gating
-   * conditions in applyApprovedEligibilityFilter (profile-eligibility.util.ts)
-   * plus the featuredInMarketing/profileVisibility checks in
-   * getHeroShowcaseInfluencerAndBrandImages / getHeroShowcasePhotographerImage
-   * — if those change, update this too. isPremium is informational only
-   * (ranking bonus in the real query), never a hard requirement here either.
+   * conditions in applyApprovedEligibilityFilter (profile-eligibility.util.ts,
+   * requirePremium option) plus the featuredInMarketing/profileVisibility
+   * checks in getHeroShowcaseInfluencerAndBrandImages /
+   * getHeroShowcasePhotographerImage — if those change, update this too.
+   * Premium is now a hard requirement (Homepage Hero Feature is Premium-only).
    */
   buildHomepageEligibility(profile: any, flags: any[], userType: ProfileUserType) {
     const hasOpen = (code: string) =>
@@ -1010,7 +1015,9 @@ export class ProfileVerificationService {
         hasOpen(code),
       );
     const profileApproved = this.isAdminApproved(profile);
-    const isPremium = !!profile?.isPremium;
+    const isPremium =
+      !!profile?.isPremium &&
+      (!profile?.premiumEnd || new Date(profile.premiumEnd) >= new Date());
     const homepageConsent = !!profile?.featuredInMarketing;
     const profileVisibility = profile?.profileVisibility || "PUBLIC";
     const visibilityIsPublic = profileVisibility === "PUBLIC";
@@ -1020,6 +1027,7 @@ export class ProfileVerificationService {
     if (!mobileVerified) reasons.push("Mobile not verified");
     if (!profilePhotoApproved) reasons.push("Profile photo not approved");
     if (!profileApproved) reasons.push("Profile not approved by admin");
+    if (!isPremium) reasons.push("Premium subscription required");
     if (!homepageConsent) reasons.push("Homepage consent disabled");
     if (!visibilityIsPublic) reasons.push("Profile visibility is not Public");
 

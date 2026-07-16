@@ -212,6 +212,11 @@ export const InfluencerSchema = new Schema(
       enum: ["PUBLIC", "MEMBERS_ONLY", "PRIVATE"],
       default: "PUBLIC",
     },
+    // Set by anonymizeUser() once a self-requested deletion's grace period
+    // expires — distinguishes "PII stripped, row kept for referential
+    // integrity" from a manual admin hard-delete (which removes the row
+    // entirely). See cleanupExpiredSelfDeletionRequests.
+    anonymized: { type: Boolean, default: false },
     premiumDuration: {
       type: String,
       enum: ["1m", "3m", "1y", null],
@@ -517,6 +522,11 @@ export const BrandSchema = new Schema(
       enum: ["PUBLIC", "MEMBERS_ONLY", "PRIVATE"],
       default: "PUBLIC",
     },
+    // Set by anonymizeUser() once a self-requested deletion's grace period
+    // expires — distinguishes "PII stripped, row kept for referential
+    // integrity" from a manual admin hard-delete (which removes the row
+    // entirely). See cleanupExpiredSelfDeletionRequests.
+    anonymized: { type: Boolean, default: false },
     premiumDuration: {
       type: String,
       enum: ["1m", "3m", "1y", null],
@@ -774,6 +784,11 @@ export const PhotographerSchema = new Schema(
       enum: ["PUBLIC", "MEMBERS_ONLY", "PRIVATE"],
       default: "PUBLIC",
     },
+    // Set by anonymizeUser() once a self-requested deletion's grace period
+    // expires — distinguishes "PII stripped, row kept for referential
+    // integrity" from a manual admin hard-delete (which removes the row
+    // entirely). See cleanupExpiredSelfDeletionRequests.
+    anonymized: { type: Boolean, default: false },
     premiumDuration: {
       type: String,
       enum: ["1m", "3m", "1y", null],

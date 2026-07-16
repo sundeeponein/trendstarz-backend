@@ -71,19 +71,36 @@ export function applySearchEligibilityFilter(
   return filter;
 }
 
+export interface ApprovedEligibilityOptions extends SearchEligibilityOptions {
+  /**
+   * Require an active Premium subscription. The Homepage Hero always
+   * requires this (guest and logged-in alike). The Featured Grid sections
+   * require it only for guest viewers — logged-in viewers see a broader
+   * Public + Members-Only set without the Premium bar, as an incentive to
+   * register.
+   */
+  requirePremium?: boolean;
+}
+
 /**
  * "Is this profile recommended by TrendStarZ?" — Welcome/Featured eligibility.
  * Everything Search requires, plus admin approval.
  */
 export function applyApprovedEligibilityFilter(
   filter: Record<string, any> = {},
-  options: SearchEligibilityOptions = {},
+  options: ApprovedEligibilityOptions = {},
 ): Record<string, any> {
   applySearchEligibilityFilter(filter, options);
   filter.$and = [
     ...(Array.isArray(filter.$and) ? filter.$and : []),
     { $or: [{ verificationStatus: "approved" }, { verifiedByTrendStarz: true }] },
   ];
+  if (options.requirePremium) {
+    filter.isPremium = true;
+    filter.$and.push({
+      $or: [{ premiumEnd: null }, { premiumEnd: { $gte: new Date() } }],
+    });
+  }
   return filter;
 }
 

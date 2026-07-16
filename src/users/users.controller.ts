@@ -405,20 +405,32 @@ export class UsersController {
   /**
    * Welcome Page "Featured" sections — eligible-only (accepted + verified +
    * approved), weighted-random selection (60% recently active / 20% recently
-   * approved / 20% random). Identical for Guest, Registered, and Premium
-   * viewers; this is a marketing surface, not the gated Search directory.
+   * approved / 20% random). NOT identical for guests vs logged-in viewers:
+   * guests only see Premium profiles (a registration incentive); logged-in
+   * viewers see the full Public + Members-Only eligible set regardless of
+   * Premium. See applyApprovedEligibilityFilter's requirePremium option.
    */
   @Get("featured-profiles")
   async getFeaturedProfiles(
+    @Req() req: any,
     @Query("influencerLimit") influencerLimit?: string,
     @Query("brandLimit") brandLimit?: string,
     @Query("photographerLimit") photographerLimit?: string,
   ) {
+    const viewerId = extractOptionalViewerId(req);
+    const viewerIsAuthenticated = !!viewerId;
     const [influencers, brands, photographers] = await Promise.all([
-      this.usersService.getFeaturedInfluencers(Number(influencerLimit) || 8),
-      this.usersService.getFeaturedBrands(Number(brandLimit) || 6),
+      this.usersService.getFeaturedInfluencers(
+        Number(influencerLimit) || 8,
+        viewerIsAuthenticated,
+      ),
+      this.usersService.getFeaturedBrands(
+        Number(brandLimit) || 6,
+        viewerIsAuthenticated,
+      ),
       this.photographersService.getFeaturedPhotographers(
         Number(photographerLimit) || 6,
+        viewerIsAuthenticated,
       ),
     ]);
     return { influencers, brands, photographers };

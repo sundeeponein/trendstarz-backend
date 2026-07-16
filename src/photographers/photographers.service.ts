@@ -181,9 +181,14 @@ export class PhotographersService {
   }
 
   /** Eligible-only, weighted-score selection for the Welcome Page "Featured Photo/Videographers" section. */
-  async getFeaturedPhotographers(limit = 6) {
+  async getFeaturedPhotographers(limit = 6, viewerIsAuthenticated = false) {
     const filter: any = {};
-    applyApprovedEligibilityFilter(filter, { photoField: "profileImages", requireSocialTier: true });
+    applyApprovedEligibilityFilter(filter, {
+      photoField: "profileImages",
+      requireSocialTier: true,
+      viewerIsAuthenticated,
+      requirePremium: !viewerIsAuthenticated,
+    });
     const blocked = await this.blockedPhotographerIds();
     if (blocked.length) {
       filter._id = {
@@ -224,7 +229,11 @@ export class PhotographersService {
     }
 
     const filter: any = { featuredInMarketing: true };
-    applyApprovedEligibilityFilter(filter, { photoField: "profileImages", requireSocialTier: true });
+    applyApprovedEligibilityFilter(filter, {
+      photoField: "profileImages",
+      requireSocialTier: true,
+      requirePremium: true,
+    });
     const blocked = await this.blockedPhotographerIds();
     if (blocked.length) {
       filter._id = {

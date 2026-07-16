@@ -789,6 +789,72 @@ export class UsersService {
 
     return { message: "User not found", id };
   }
+
+  /**
+   * Anonymizes (rather than hard-deletes) an account whose self-requested
+   * deletion grace period has expired — see cleanupExpiredSelfDeletionRequests.
+   * Keeps the document (and its _id), so Payment/Campaign/CampaignInvite rows
+   * that reference it by ObjectId still resolve for reporting/audit, but
+   * strips all personally-identifying data and media. Distinct from
+   * deletePermanently, which is the admin-only explicit-GDPR-request hard
+   * delete and is left untouched by this.
+   */
+  async anonymizeUser(id: string): Promise<{ message: string }> {
+    let user: any = await this.influencerModel.findById(id);
+    let userType: "Influencer" | "Brand" | "Photographer" | null = user
+      ? "Influencer"
+      : null;
+    if (!user) {
+      user = await this.brandModel.findById(id);
+      userType = user ? "Brand" : null;
+    }
+    if (!user) {
+      user = await this.photographerModel.findById(id);
+      userType = user ? "Photographer" : null;
+    }
+    if (!user || !userType) return { message: "User not found" };
+
+    const errors: any[] = [];
+    try {
+      await this.deleteFirebaseAuthUserForPermanentDelete(user);
+    } catch (err) {
+      errors.push({ type: "firebase", error: err });
+    }
+
+    const publicIds = this.extractMediaPublicIds(user);
+    await this.removeStoredMedia(publicIds);
+    this.clearUserMediaFields(user);
+    await this.deleteVerificationDocuments(
+      user.verificationDocuments,
+      errors,
+      `${userType.toLowerCase()}Verification`,
+    );
+
+    user.email = `deleted-${user._id}@trendstarz.invalid`;
+    user.phoneNumber = "";
+    user.password = randomUUID() + randomUUID();
+    user.name = userType === "Brand" ? undefined : "Deleted User";
+    user.brandName = userType === "Brand" ? "Deleted Brand" : user.brandName;
+    user.contactPersonName = "";
+    user.socialMedia = [];
+    user.location = { state: "", district: "" };
+    user.verificationDocuments = [];
+    user.website = "";
+    user.googleMapAddress = "";
+    user.status = "deleted";
+    user.isDeleted = true;
+    user.anonymized = true;
+
+    await user.save();
+
+    if (errors.length > 0) {
+      console.error(
+        `[anonymizeUser] Completed for ${userType} ${id} with some cleanup errors:`,
+        errors,
+      );
+    }
+    return { message: `${userType} anonymized` };
+  }
   constructor(
     private readonly cloudinaryService: CloudinaryService,
     private readonly firebaseAdminService: FirebaseAdminService,
@@ -1160,6 +1226,16 @@ export class UsersService {
    * minutes, so a change here may take up to that long to be reflected there.
    */
   async setMarketingConsent(id: string, featuredInMarketing: boolean) {
+    if (featuredInMarketing) {
+      // Homepage Hero Feature is a Premium benefit — enforce server-side too,
+      // not just by hiding the toggle in the UI.
+      const isPremium = await this.isCurrentlyPremiumById(id);
+      if (!isPremium) {
+        throw new BadRequestException(
+          "Homepage Hero Feature is available to Premium users only.",
+        );
+      }
+    }
     const update = { $set: { featuredInMarketing } };
     const influencer = await this.influencerModel
       .findByIdAndUpdate(id, update, { new: true })
@@ -1176,24 +1252,64 @@ export class UsersService {
     throw new NotFoundException("User not found");
   }
 
-  /** Current profileVisibility — used by Settings/registration/edit-profile "Privacy & Visibility" controls. */
-  async getProfileVisibility(
-    id: string,
-  ): Promise<{ profileVisibility: "PUBLIC" | "MEMBERS_ONLY" | "PRIVATE" }> {
+  /** Looks up isPremium/premiumEnd across all three roles for a given id. */
+  private async isCurrentlyPremiumById(id: string): Promise<boolean> {
     const influencer = await this.influencerModel
       .findById(id)
-      .select("profileVisibility");
-    if (influencer)
-      return { profileVisibility: influencer.profileVisibility || "PUBLIC" };
+      .select("isPremium premiumEnd")
+      .lean();
+    if (influencer) return this.isCurrentlyPremium(influencer);
     const brand = await this.brandModel
       .findById(id)
-      .select("profileVisibility");
-    if (brand) return { profileVisibility: brand.profileVisibility || "PUBLIC" };
+      .select("isPremium premiumEnd")
+      .lean();
+    if (brand) return this.isCurrentlyPremium(brand);
     const photographer = await this.photographerModel
       .findById(id)
-      .select("profileVisibility");
+      .select("isPremium premiumEnd")
+      .lean();
+    if (photographer) return this.isCurrentlyPremium(photographer);
+    return false;
+  }
+
+  /** Current profileVisibility — used by Settings/registration/edit-profile "Privacy & Visibility" controls. */
+  async getProfileVisibility(id: string): Promise<{
+    profileVisibility: "PUBLIC" | "MEMBERS_ONLY" | "PRIVATE";
+    /** False for pre-existing accounts that never explicitly chose — the
+     * PUBLIC value above is a display default, not a recorded preference.
+     * Frontend uses this to decide whether to show the "who can view your
+     * profile?" prompt at login. */
+    isSet: boolean;
+  }> {
+    // .lean() is essential here — a hydrated Mongoose document would apply
+    // the schema's default: "PUBLIC" on read, making isSet always true.
+    const influencer = await this.influencerModel
+      .findById(id)
+      .select("profileVisibility")
+      .lean();
+    if (influencer)
+      return {
+        profileVisibility: (influencer as any).profileVisibility || "PUBLIC",
+        isSet: !!(influencer as any).profileVisibility,
+      };
+    const brand = await this.brandModel
+      .findById(id)
+      .select("profileVisibility")
+      .lean();
+    if (brand)
+      return {
+        profileVisibility: (brand as any).profileVisibility || "PUBLIC",
+        isSet: !!(brand as any).profileVisibility,
+      };
+    const photographer = await this.photographerModel
+      .findById(id)
+      .select("profileVisibility")
+      .lean();
     if (photographer)
-      return { profileVisibility: photographer.profileVisibility || "PUBLIC" };
+      return {
+        profileVisibility: (photographer as any).profileVisibility || "PUBLIC",
+        isSet: !!(photographer as any).profileVisibility,
+      };
     throw new NotFoundException("User not found");
   }
 
@@ -2264,11 +2380,15 @@ export class UsersService {
     "brandName brandUsername brandLogo categories isPremium promotionalPrice verificationStatus verifiedByTrendStarz location adminTags";
 
   /** Eligible-only, weighted-score selection for the Welcome Page "Featured Influencers" section. */
-  async getFeaturedInfluencers(limit = 8) {
+  async getFeaturedInfluencers(limit = 8, viewerIsAuthenticated = false) {
     const filter: any = {};
     applyApprovedEligibilityFilter(filter, {
       photoField: "profileImages",
       requireSocialTier: true,
+      viewerIsAuthenticated,
+      // Guests only see Premium profiles here — a registration incentive.
+      // Logged-in viewers see the full Public + Members-Only eligible set.
+      requirePremium: !viewerIsAuthenticated,
     });
     this.applyExcludedIds(
       filter,
@@ -2296,11 +2416,13 @@ export class UsersService {
   }
 
   /** Eligible-only, weighted-score selection for the Welcome Page "Featured Brands" section. */
-  async getFeaturedBrands(limit = 6) {
+  async getFeaturedBrands(limit = 6, viewerIsAuthenticated = false) {
     const filter: any = {};
     applyApprovedEligibilityFilter(filter, {
       photoField: "brandLogo",
       requireSocialTier: false,
+      viewerIsAuthenticated,
+      requirePremium: !viewerIsAuthenticated,
     });
     this.applyExcludedIds(filter, await this.publicProfileBlockedIds("Brand"));
     return fetchFeaturedProfilesByScore(
@@ -2338,6 +2460,7 @@ export class UsersService {
     applyApprovedEligibilityFilter(influencerFilter, {
       photoField: "profileImages",
       requireSocialTier: true,
+      requirePremium: true,
     });
     this.applyExcludedIds(
       influencerFilter,
@@ -2348,6 +2471,7 @@ export class UsersService {
     applyApprovedEligibilityFilter(brandFilter, {
       photoField: "brandLogo",
       requireSocialTier: false,
+      requirePremium: true,
     });
     this.applyExcludedIds(
       brandFilter,
@@ -2691,10 +2815,13 @@ export class UsersService {
   }
 
   /**
-   * Automatically hard-deletes accounts whose self-requested deletion grace
-   * period has passed. Admin-initiated deletions (status "deleted") are
-   * intentionally NOT touched here — those remain a manual admin action via
-   * the existing Deleted Users → Delete Permanently flow.
+   * Automatically anonymizes (see anonymizeUser) accounts whose self-requested
+   * deletion grace period has passed — PII and media are stripped, but the
+   * row is kept so Payment/Campaign/CampaignInvite records that reference it
+   * still resolve for reporting/audit. Admin-initiated deletions (status
+   * "deleted") are intentionally NOT touched here — those remain a manual
+   * admin action via the existing Deleted Users → Delete Permanently flow,
+   * which is a genuine hard delete for explicit GDPR/DPDP erasure requests.
    */
   @Cron(CronExpression.EVERY_DAY_AT_1AM)
   async cleanupExpiredSelfDeletionRequestsCron() {
@@ -2702,7 +2829,7 @@ export class UsersService {
       const result = await this.cleanupExpiredSelfDeletionRequests();
       if (result.deleted > 0) {
         console.log(
-          `[cleanupExpiredSelfDeletionRequestsCron] Permanently deleted ${result.deleted} account(s) past their self-deletion grace period.`,
+          `[cleanupExpiredSelfDeletionRequestsCron] Anonymized ${result.deleted} account(s) past their self-deletion grace period.`,
         );
       }
     } catch (e) {
@@ -2727,11 +2854,11 @@ export class UsersService {
     let deleted = 0;
     for (const id of ids) {
       try {
-        await this.deletePermanently(id);
+        await this.anonymizeUser(id);
         deleted++;
       } catch (e) {
         console.error(
-          `Failed to permanently delete expired self-deletion request ${id}:`,
+          `Failed to anonymize expired self-deletion request ${id}:`,
           e,
         );
       }
