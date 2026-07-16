@@ -229,6 +229,7 @@ export class PhotographersController {
     const smartPriority =
       String(query.smartLocationPriority || "").toLowerCase() === "1" ||
       String(query.smartLocationPriority || "").toLowerCase() === "true";
+    const viewerId = extractOptionalViewerId(req);
     const data = await this.photographersService.searchPhotographers({
       skill: query.skill,
       location: query.location,
@@ -237,6 +238,7 @@ export class PhotographersController {
       viewerState: query.viewerState,
       viewerDistrict: query.viewerDistrict,
       smartLocationPriority: smartPriority,
+      viewerIsAuthenticated: !!viewerId,
     });
 
     if (!usage) return data;

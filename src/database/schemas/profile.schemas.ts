@@ -203,6 +203,15 @@ export const InfluencerSchema = new Schema(
     // profile photo/logo can appear in public marketing surfaces (e.g. the
     // homepage hero banner). Being premium/verified is NOT sufficient consent.
     featuredInMarketing: { type: Boolean, default: false },
+    // Who can view this profile at all — see applySearchEligibilityFilter /
+    // applyApprovedEligibilityFilter in profile-eligibility.util.ts. Missing
+    // (undefined, e.g. pre-existing accounts) is treated as PUBLIC everywhere
+    // that filters on this field — no migration needed.
+    profileVisibility: {
+      type: String,
+      enum: ["PUBLIC", "MEMBERS_ONLY", "PRIVATE"],
+      default: "PUBLIC",
+    },
     premiumDuration: {
       type: String,
       enum: ["1m", "3m", "1y", null],
@@ -499,6 +508,15 @@ export const BrandSchema = new Schema(
     // profile photo/logo can appear in public marketing surfaces (e.g. the
     // homepage hero banner). Being premium/verified is NOT sufficient consent.
     featuredInMarketing: { type: Boolean, default: false },
+    // Who can view this profile at all — see applySearchEligibilityFilter /
+    // applyApprovedEligibilityFilter in profile-eligibility.util.ts. Missing
+    // (undefined, e.g. pre-existing accounts) is treated as PUBLIC everywhere
+    // that filters on this field — no migration needed.
+    profileVisibility: {
+      type: String,
+      enum: ["PUBLIC", "MEMBERS_ONLY", "PRIVATE"],
+      default: "PUBLIC",
+    },
     premiumDuration: {
       type: String,
       enum: ["1m", "3m", "1y", null],
@@ -747,6 +765,15 @@ export const PhotographerSchema = new Schema(
     // profile photo/logo can appear in public marketing surfaces (e.g. the
     // homepage hero banner). Being premium/verified is NOT sufficient consent.
     featuredInMarketing: { type: Boolean, default: false },
+    // Who can view this profile at all — see applySearchEligibilityFilter /
+    // applyApprovedEligibilityFilter in profile-eligibility.util.ts. Missing
+    // (undefined, e.g. pre-existing accounts) is treated as PUBLIC everywhere
+    // that filters on this field — no migration needed.
+    profileVisibility: {
+      type: String,
+      enum: ["PUBLIC", "MEMBERS_ONLY", "PRIVATE"],
+      default: "PUBLIC",
+    },
     premiumDuration: {
       type: String,
       enum: ["1m", "3m", "1y", null],

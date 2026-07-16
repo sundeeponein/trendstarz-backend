@@ -10,6 +10,7 @@ import {
   Query,
   Delete,
   ForbiddenException,
+  BadRequestException,
 } from "@nestjs/common";
 import { InjectModel } from "@nestjs/mongoose";
 import { JwtAuthGuard } from "../auth/jwt-auth.guard";
@@ -275,6 +276,38 @@ export class UsersController {
       id,
       body?.featuredInMarketing === true,
     );
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Get(":id/profile-visibility")
+  async getProfileVisibility(@Param("id") id: string, @Req() req: Request) {
+    const userId = (req as any).user?.userId;
+    if (userId !== id) {
+      throw new ForbiddenException("You can only view your own settings");
+    }
+    return this.usersService.getProfileVisibility(id);
+  }
+
+  /** Who can view this profile — PUBLIC / MEMBERS_ONLY / PRIVATE. See users.service.ts setProfileVisibility. */
+  @UseGuards(JwtAuthGuard)
+  @Patch(":id/profile-visibility")
+  async updateProfileVisibility(
+    @Param("id") id: string,
+    @Body() body: { profileVisibility?: string },
+    @Req() req: Request,
+  ) {
+    const userId = (req as any).user?.userId;
+    if (userId !== id) {
+      throw new ForbiddenException("You can only update your own settings");
+    }
+    const allowed = ["PUBLIC", "MEMBERS_ONLY", "PRIVATE"];
+    const value = String(body?.profileVisibility || "").toUpperCase();
+    if (!allowed.includes(value)) {
+      throw new BadRequestException(
+        "profileVisibility must be one of PUBLIC, MEMBERS_ONLY, PRIVATE",
+      );
+    }
+    return this.usersService.setProfileVisibility(id, value as any);
   }
 
   /**

@@ -17,6 +17,15 @@ export interface SearchEligibilityOptions {
   photoField?: string;
   /** Influencer/Photographer need a social handle + tier/followers to be discoverable; Brand does not. Defaults to true. */
   requireSocialTier?: boolean;
+  /**
+   * Whether the caller viewing search results is a logged-in user. Guests
+   * (default false) never see MEMBERS_ONLY profiles; PRIVATE is excluded
+   * regardless of viewer. See the Profile Visibility eligibility matrix:
+   *   PUBLIC        → guests ✓, logged-in ✓, search ✓, homepage ✓ (if consented)
+   *   MEMBERS_ONLY   → guests ✗, logged-in ✓, search ✓ (members only), homepage ✗
+   *   PRIVATE        → guests ✗, logged-in ✗, search ✗, homepage ✗
+   */
+  viewerIsAuthenticated?: boolean;
 }
 
 /**
@@ -33,6 +42,13 @@ export function applySearchEligibilityFilter(
   filter.isDeleted = { $ne: true };
   filter.isEmailVerified = true;
   filter.isMobileVerified = true;
+  // Missing profileVisibility (pre-existing accounts) is treated as PUBLIC —
+  // $nin never excludes documents where the field doesn't exist.
+  filter.profileVisibility = {
+    $nin: options.viewerIsAuthenticated
+      ? ["PRIVATE"]
+      : ["PRIVATE", "MEMBERS_ONLY"],
+  };
   const andConditions: any[] = [
     ...(Array.isArray(filter.$and) ? filter.$and : []),
     { [`${photoField}.0`]: { $exists: true } },

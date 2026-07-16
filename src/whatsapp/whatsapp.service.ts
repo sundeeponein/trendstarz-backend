@@ -11,7 +11,9 @@ export type WhatsAppTemplateName =
   | "campaign_post_submitted_owner"
   | "campaign_posting_reminder"
   | "email_verification_reminder"
-  | "profile_photo_not_verified";
+  | "profile_photo_not_verified"
+  | "mobile_otp_verification_reminder"
+  | "mobile_verification_call_reminder";
 
 @Injectable()
 export class WhatsAppService {
@@ -30,20 +32,11 @@ export class WhatsAppService {
     return pref?.whatsappEnabled ?? true;
   }
 
-  /**
-   * Sends a pre-approved WhatsApp template message to a user, honoring their
-   * account-level opt-out and requiring a verified mobile number. Best-effort:
-   * callers should not let a failure here block the surrounding flow.
-   */
-  async sendToUser(
+  private async deliver(
     userId: string,
-    phoneNumber: string | undefined | null,
-    isMobileVerified: boolean | undefined,
+    phoneNumber: string,
     template: { name: WhatsAppTemplateName; bodyParams: string[] },
   ): Promise<{ sent: boolean; reason?: string }> {
-    if (!isMobileVerified || !phoneNumber) {
-      return { sent: false, reason: "No verified mobile number" };
-    }
     const allowed = await this.isAllowed(userId);
     if (!allowed) {
       return { sent: false, reason: "User opted out of WhatsApp notifications" };
@@ -64,5 +57,39 @@ export class WhatsAppService {
       );
       return { sent: false, reason: "Send failed" };
     }
+  }
+
+  /**
+   * Sends a pre-approved WhatsApp template message to a user, honoring their
+   * account-level opt-out and requiring a verified mobile number. Best-effort:
+   * callers should not let a failure here block the surrounding flow.
+   */
+  async sendToUser(
+    userId: string,
+    phoneNumber: string | undefined | null,
+    isMobileVerified: boolean | undefined,
+    template: { name: WhatsAppTemplateName; bodyParams: string[] },
+  ): Promise<{ sent: boolean; reason?: string }> {
+    if (!isMobileVerified || !phoneNumber) {
+      return { sent: false, reason: "No verified mobile number" };
+    }
+    return this.deliver(userId, phoneNumber, template);
+  }
+
+  /**
+   * Admin-initiated manual verification nudge — deliberately does NOT
+   * require isMobileVerified, since the whole point is reaching a number
+   * that isn't verified yet (admin couldn't get through by call). Still
+   * respects the account's WhatsApp opt-out preference.
+   */
+  async sendVerificationNudge(
+    userId: string,
+    phoneNumber: string | undefined | null,
+    template: { name: WhatsAppTemplateName; bodyParams: string[] },
+  ): Promise<{ sent: boolean; reason?: string }> {
+    if (!phoneNumber) {
+      return { sent: false, reason: "No phone number on file" };
+    }
+    return this.deliver(userId, phoneNumber, template);
   }
 }

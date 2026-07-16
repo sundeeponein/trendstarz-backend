@@ -278,10 +278,14 @@ export class PhotographersService {
   }
 
   /** Photographer Search eligibility — see applySearchEligibilityFilter for the shared rule. */
-  private applyPublicDiscoveryEligibilityFilter(filter: any): void {
+  private applyPublicDiscoveryEligibilityFilter(
+    filter: any,
+    viewerIsAuthenticated = false,
+  ): void {
     applySearchEligibilityFilter(filter, {
       photoField: "profileImages",
       requireSocialTier: true,
+      viewerIsAuthenticated,
     });
   }
 
@@ -655,9 +659,13 @@ export class PhotographersService {
     viewerState?: string;
     viewerDistrict?: string;
     smartLocationPriority?: boolean;
+    viewerIsAuthenticated?: boolean;
   }) {
     const filter: any = { status: "accepted", isDeleted: { $ne: true } };
-    this.applyPublicDiscoveryEligibilityFilter(filter);
+    this.applyPublicDiscoveryEligibilityFilter(
+      filter,
+      !!query.viewerIsAuthenticated,
+    );
     if (query.skill) filter.skills = query.skill;
     if (query.location) filter["location.state"] = query.location;
 

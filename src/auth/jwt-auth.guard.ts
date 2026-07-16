@@ -26,11 +26,37 @@ interface AccountStatusEntry {
 const ACCOUNT_STATUS_CACHE_TTL_MS = 60 * 1000;
 const accountStatusCache = new Map<string, AccountStatusEntry>();
 
+// Mongoose's default command-buffering timeout is 10s (serverSelectionTimeoutMS
+// is 8s on top of that) — during a DB hiccup this guard would otherwise stall
+// EVERY authenticated request app-wide for up to 10s before falling back to
+// canActivate's fail-open catch. Bound our own wait far below that so a Mongo
+// blip degrades to "a bit slower," not "every request hangs for 10 seconds."
+const ACCOUNT_STATUS_QUERY_TIMEOUT_MS = 1500;
+
 const ROLE_MODEL_NAME: Record<string, string> = {
   influencer: "Influencer",
   brand: "Brand",
   photographer: "Photographer",
 };
+
+function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(
+      () => reject(new Error(`Account-status query timed out after ${ms}ms`)),
+      ms,
+    );
+    promise.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (err) => {
+        clearTimeout(timer);
+        reject(err);
+      },
+    );
+  });
+}
 
 async function getAccountStatus(
   userId: string,
@@ -44,10 +70,10 @@ async function getAccountStatus(
   const model = mongoose.models[modelName];
   if (!model) return null;
 
-  const doc: any = await model
-    .findById(userId)
-    .select("isDeleted status")
-    .lean();
+  const doc: any = await withTimeout(
+    model.findById(userId).select("isDeleted status").lean().exec(),
+    ACCOUNT_STATUS_QUERY_TIMEOUT_MS,
+  );
   if (!doc) return null;
 
   const entry: AccountStatusEntry = {

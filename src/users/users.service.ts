@@ -883,18 +883,26 @@ export class UsersService {
   }
 
   /** Influencer Search eligibility — see applySearchEligibilityFilter for the shared rule. */
-  private applyPublicDiscoveryEligibilityFilter(filter: any): void {
+  private applyPublicDiscoveryEligibilityFilter(
+    filter: any,
+    viewerIsAuthenticated = false,
+  ): void {
     applySearchEligibilityFilter(filter, {
       photoField: "profileImages",
       requireSocialTier: true,
+      viewerIsAuthenticated,
     });
   }
 
   /** Brand Search eligibility — same bar as Influencer/Photographer, minus the social-tier requirement. */
-  private applyBrandDiscoveryEligibilityFilter(filter: any): void {
+  private applyBrandDiscoveryEligibilityFilter(
+    filter: any,
+    viewerIsAuthenticated = false,
+  ): void {
     applySearchEligibilityFilter(filter, {
       photoField: "brandLogo",
       requireSocialTier: false,
+      viewerIsAuthenticated,
     });
   }
 
@@ -1165,6 +1173,56 @@ export class UsersService {
       .findByIdAndUpdate(id, update, { new: true })
       .select("_id");
     if (photographer) return { featuredInMarketing };
+    throw new NotFoundException("User not found");
+  }
+
+  /** Current profileVisibility — used by Settings/registration/edit-profile "Privacy & Visibility" controls. */
+  async getProfileVisibility(
+    id: string,
+  ): Promise<{ profileVisibility: "PUBLIC" | "MEMBERS_ONLY" | "PRIVATE" }> {
+    const influencer = await this.influencerModel
+      .findById(id)
+      .select("profileVisibility");
+    if (influencer)
+      return { profileVisibility: influencer.profileVisibility || "PUBLIC" };
+    const brand = await this.brandModel
+      .findById(id)
+      .select("profileVisibility");
+    if (brand) return { profileVisibility: brand.profileVisibility || "PUBLIC" };
+    const photographer = await this.photographerModel
+      .findById(id)
+      .select("profileVisibility");
+    if (photographer)
+      return { profileVisibility: photographer.profileVisibility || "PUBLIC" };
+    throw new NotFoundException("User not found");
+  }
+
+  /**
+   * Who can view this profile at all — see applySearchEligibilityFilter /
+   * applyApprovedEligibilityFilter. Setting anything other than PUBLIC also
+   * turns off Homepage Feature consent (MEMBERS_ONLY/PRIVATE profiles are
+   * never homepage-eligible regardless of featuredInMarketing).
+   */
+  async setProfileVisibility(
+    id: string,
+    profileVisibility: "PUBLIC" | "MEMBERS_ONLY" | "PRIVATE",
+  ) {
+    const update: any = { profileVisibility };
+    if (profileVisibility !== "PUBLIC") {
+      update.featuredInMarketing = false;
+    }
+    const influencer = await this.influencerModel
+      .findByIdAndUpdate(id, { $set: update }, { new: true })
+      .select("_id");
+    if (influencer) return update;
+    const brand = await this.brandModel
+      .findByIdAndUpdate(id, { $set: update }, { new: true })
+      .select("_id");
+    if (brand) return update;
+    const photographer = await this.photographerModel
+      .findByIdAndUpdate(id, { $set: update }, { new: true })
+      .select("_id");
+    if (photographer) return update;
     throw new NotFoundException("User not found");
   }
 
@@ -1604,7 +1662,7 @@ export class UsersService {
         await this.campaignProfileBlockedIds("Influencer"),
       );
     } else {
-      this.applyPublicDiscoveryEligibilityFilter(baseFilter);
+      this.applyPublicDiscoveryEligibilityFilter(baseFilter, !!viewerId);
       this.applyExcludedIds(
         baseFilter,
         await this.publicProfileBlockedIds("Influencer"),
@@ -1928,7 +1986,8 @@ export class UsersService {
     limit?: number;
   }) {
     const filter: any = { status: "accepted" };
-    this.applyPublicDiscoveryEligibilityFilter(filter);
+    // This endpoint is JwtAuthGuard-protected — caller is always logged in.
+    this.applyPublicDiscoveryEligibilityFilter(filter, true);
     this.applyExcludedIds(
       filter,
       await this.publicProfileBlockedIds("Influencer"),
@@ -2363,7 +2422,7 @@ export class UsersService {
   ) {
     const skip = (page - 1) * limit;
     const filter: any = { status: "accepted" };
-    this.applyBrandDiscoveryEligibilityFilter(filter);
+    this.applyBrandDiscoveryEligibilityFilter(filter, !!viewerId);
     this.applyExcludedIds(filter, await this.publicProfileBlockedIds("Brand"));
 
     if (lite) {

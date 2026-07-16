@@ -946,6 +946,9 @@ export class ProfileVerificationService {
       flags,
       campaignEligibility: this.buildEligibility(profile, flags, userType),
       campaignStatus: this.buildCampaignStatus(profile, flags, userType),
+      profileVisibility: profile?.profileVisibility || "PUBLIC",
+      featuredInMarketing: !!profile?.featuredInMarketing,
+      homepageEligibility: this.buildHomepageEligibility(profile, flags, userType),
     };
   }
 
@@ -980,6 +983,57 @@ export class ProfileVerificationService {
       blockers.push("Admin approval is required before campaign participation");
     }
     return { eligible: blockers.length === 0, blockers };
+  }
+
+  /**
+   * Homepage Feature eligibility checklist for the admin profile-moderation
+   * view. Mirrors (but is not literally shared code with) the real gating
+   * conditions in applyApprovedEligibilityFilter (profile-eligibility.util.ts)
+   * plus the featuredInMarketing/profileVisibility checks in
+   * getHeroShowcaseInfluencerAndBrandImages / getHeroShowcasePhotographerImage
+   * — if those change, update this too. isPremium is informational only
+   * (ranking bonus in the real query), never a hard requirement here either.
+   */
+  buildHomepageEligibility(profile: any, flags: any[], userType: ProfileUserType) {
+    const hasOpen = (code: string) =>
+      flags.some((flag) => flag.flagCode === code && flag.status === "Open");
+
+    const photoField = userType === "Brand" ? "brandLogo" : "profileImages";
+    const hasPhoto =
+      Array.isArray(profile?.[photoField]) && profile[photoField].length > 0;
+
+    const emailVerified = this.isEmailVerified(profile);
+    const mobileVerified = this.isMobileVerified(profile);
+    const profilePhotoApproved =
+      hasPhoto &&
+      ![...PROFILE_PHOTO_VISIBILITY_BLOCK_FLAG_CODES].some((code) =>
+        hasOpen(code),
+      );
+    const profileApproved = this.isAdminApproved(profile);
+    const isPremium = !!profile?.isPremium;
+    const homepageConsent = !!profile?.featuredInMarketing;
+    const profileVisibility = profile?.profileVisibility || "PUBLIC";
+    const visibilityIsPublic = profileVisibility === "PUBLIC";
+
+    const reasons: string[] = [];
+    if (!emailVerified) reasons.push("Email not verified");
+    if (!mobileVerified) reasons.push("Mobile not verified");
+    if (!profilePhotoApproved) reasons.push("Profile photo not approved");
+    if (!profileApproved) reasons.push("Profile not approved by admin");
+    if (!homepageConsent) reasons.push("Homepage consent disabled");
+    if (!visibilityIsPublic) reasons.push("Profile visibility is not Public");
+
+    return {
+      emailVerified,
+      mobileVerified,
+      profilePhotoApproved,
+      profileApproved,
+      isPremium,
+      homepageConsent,
+      profileVisibility,
+      eligibleForHomepage: reasons.length === 0,
+      reasons,
+    };
   }
 
   buildCampaignStatus(
@@ -1691,5 +1745,142 @@ export class ProfileVerificationService {
       });
     }
     return saved;
+  }
+
+  /**
+   * Admin override for Profile Visibility / Homepage Feature — support staff
+   * use this during manual verification calls (see buildHomepageEligibility
+   * for the read-only eligibility checklist shown alongside it).
+   */
+  async adminUpdateVisibility(
+    actor: any,
+    userType: ProfileUserType,
+    userId: string,
+    body: { profileVisibility?: string; featuredInMarketing?: boolean },
+  ) {
+    this.assertAdmin(actor);
+    const update: any = {};
+    if (body?.profileVisibility !== undefined) {
+      const allowed = ["PUBLIC", "MEMBERS_ONLY", "PRIVATE"];
+      const value = String(body.profileVisibility).toUpperCase();
+      if (!allowed.includes(value)) {
+        throw new BadRequestException(
+          "profileVisibility must be one of PUBLIC, MEMBERS_ONLY, PRIVATE",
+        );
+      }
+      update.profileVisibility = value;
+      if (value !== "PUBLIC") update.featuredInMarketing = false;
+    }
+    if (
+      typeof body?.featuredInMarketing === "boolean" &&
+      update.featuredInMarketing === undefined
+    ) {
+      update.featuredInMarketing = body.featuredInMarketing;
+    }
+    if (Object.keys(update).length > 0) {
+      await this.modelForUserType(userType).findByIdAndUpdate(userId, {
+        $set: update,
+      });
+    }
+    return this.adminDetail(actor, userType, userId);
+  }
+
+  private async sendMobileWhatsAppNudge(
+    actor: any,
+    userType: ProfileUserType,
+    userId: string,
+    templateName: "mobile_otp_verification_reminder" | "mobile_verification_call_reminder",
+  ) {
+    this.assertAdmin(actor);
+    const profile = await this.modelForUserType(userType)
+      .findById(userId)
+      .select("name brandName phoneNumber")
+      .lean();
+    if (!profile) throw new NotFoundException("User not found");
+
+    const displayName =
+      (profile as any).name || (profile as any).brandName || "there";
+    const phoneNumber = (profile as any).phoneNumber;
+
+    const result = await this.whatsAppService.sendVerificationNudge(
+      userId,
+      phoneNumber,
+      {
+        name: templateName,
+        bodyParams: [displayName, String(phoneNumber || "")],
+      },
+    );
+    if (!result.sent) {
+      throw new BadRequestException(
+        result.reason || "Failed to send WhatsApp reminder",
+      );
+    }
+    return result;
+  }
+
+  /**
+   * Admin "Send OTP Reminder" — the first-line nudge, pointing the user back
+   * to self-service OTP verification. Deliberately uses sendVerificationNudge
+   * (not sendToUser), since the number being messaged is exactly the one
+   * that isn't verified yet.
+   *
+   * mobile_otp_verification_reminder template body to submit in Meta
+   * Business Manager → WhatsApp Manager → Message Templates (category:
+   * Utility, 2 body params — display name, phone number):
+   *
+   *   Hi {{1}},
+   *
+   *   Your TrendStarZ mobile number {{2}} is still pending verification.
+   *
+   *   Please log in to your TrendStarZ account and complete the mobile
+   *   verification using the OTP sent to your registered mobile number.
+   *
+   *   If you need a new OTP, you can request one from the verification screen.
+   *
+   *   Thank you for joining TrendStarZ! 💜
+   */
+  async sendMobileOtpVerificationReminder(
+    actor: any,
+    userType: ProfileUserType,
+    userId: string,
+  ) {
+    return this.sendMobileWhatsAppNudge(
+      actor,
+      userType,
+      userId,
+      "mobile_otp_verification_reminder",
+    );
+  }
+
+  /**
+   * Admin "Request Manual Call" — the fallback once OTP self-verification
+   * hasn't worked out (a few unsuccessful attempts, or the user asks for
+   * help): asks the user to reply YES so a manual verification call can be
+   * made to their registered mobile number.
+   *
+   * mobile_verification_call_reminder template body to submit in Meta
+   * Business Manager → WhatsApp Manager → Message Templates (category:
+   * Utility, 2 body params — display name, phone number):
+   *
+   *   Hi {{1}},
+   *
+   *   Your TrendStarZ mobile number {{2}} is still pending verification.
+   *
+   *   Please reply YES when you're available. Our team will call your
+   *   registered mobile number to complete the verification process.
+   *
+   *   Thank you for joining TrendStarZ! 💜
+   */
+  async sendMobileVerificationReminder(
+    actor: any,
+    userType: ProfileUserType,
+    userId: string,
+  ) {
+    return this.sendMobileWhatsAppNudge(
+      actor,
+      userType,
+      userId,
+      "mobile_verification_call_reminder",
+    );
   }
 }
