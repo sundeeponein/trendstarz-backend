@@ -2042,6 +2042,12 @@ export class CampaignInvitesService {
         influencerId,
         recipientRole,
       );
+      if (status === "accepted") {
+        await this.profileVerificationService.assertHasPayout(
+          influencerId,
+          recipientRole,
+        );
+      }
 
       if (!selectedPostDate) {
         throw new BadRequestException(
@@ -2642,6 +2648,11 @@ export class CampaignInvitesService {
       await this.profileVerificationService.assertCampaignEligible(
         recipientIdForEligibility,
         recipientRole,
+      );
+      await this.profileVerificationService.assertHasPayout(
+        recipientIdForEligibility,
+        recipientRole,
+        "brand",
       );
       const requestedAmount = Number(counter?.requestedAmount || 0);
       const requestedAmountPaise = Number(counter?.requestedAmountPaise || 0);

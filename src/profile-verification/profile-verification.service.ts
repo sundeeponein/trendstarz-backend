@@ -1085,6 +1085,28 @@ export class ProfileVerificationService {
     }
   }
 
+  /**
+   * Payout details (UPI or bank) are required only at the moment an invite
+   * turns into a firm "accepted" commitment — never to be discoverable, be
+   * invited, or apply to an open campaign. Brands must still be able to send
+   * invites to, and recipients must still be able to see invites from,
+   * profiles that haven't added payout yet.
+   */
+  async assertHasPayout(
+    userId: string,
+    role: any,
+    audience: "self" | "brand" = "self",
+  ) {
+    const { profile } = await this.loadProfile(userId, role);
+    if (!this.hasPayout(profile)) {
+      throw new BadRequestException(
+        audience === "brand"
+          ? "This creator hasn't added a payment method yet, so the offer can't be accepted."
+          : "Add a payment method (UPI ID, or bank account + name) before accepting this invite.",
+      );
+    }
+  }
+
   async resubmit(userId: string, role: any) {
     const { userType } = await this.loadProfile(userId, role);
     await this.modelForUserType(userType).findByIdAndUpdate(userId, {

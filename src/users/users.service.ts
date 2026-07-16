@@ -1343,6 +1343,28 @@ export class UsersService {
   }
 
   /**
+   * Self-service "please call me to verify my mobile" ask, for accounts in
+   * manual (non-OTP) verification. Just timestamps the request — an admin
+   * reads it off the Admin Users table and calls; no automated dialing.
+   */
+  async requestMobileCallback(id: string) {
+    const update = { mobileCallbackRequestedAt: new Date() };
+    const influencer = await this.influencerModel
+      .findByIdAndUpdate(id, { $set: update }, { new: true })
+      .select("_id");
+    if (influencer) return update;
+    const brand = await this.brandModel
+      .findByIdAndUpdate(id, { $set: update }, { new: true })
+      .select("_id");
+    if (brand) return update;
+    const photographer = await this.photographerModel
+      .findByIdAndUpdate(id, { $set: update }, { new: true })
+      .select("_id");
+    if (photographer) return update;
+    throw new NotFoundException("User not found");
+  }
+
+  /**
    * Apply plan-based visibility filters to a public profile.
    * Hides socialMedia and contact when plan features are disabled.
    */

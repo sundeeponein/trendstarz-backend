@@ -310,6 +310,17 @@ export class UsersController {
     return this.usersService.setProfileVisibility(id, value as any);
   }
 
+  /** Self-service "please call me to verify my mobile" ask — see users.service.ts requestMobileCallback. */
+  @UseGuards(JwtAuthGuard)
+  @Patch(":id/request-mobile-callback")
+  async requestMobileCallback(@Param("id") id: string, @Req() req: Request) {
+    const userId = (req as any).user?.userId;
+    if (userId !== id) {
+      throw new ForbiddenException("You can only request a callback for your own account");
+    }
+    return this.usersService.requestMobileCallback(id);
+  }
+
   /**
    * Self-service "Delete Account" (Settings → Delete Account). Requires the
    * caller's current password. Soft-deletes with status "deletion_pending" —

@@ -362,6 +362,9 @@ export const InfluencerSchema = new Schema(
       accountHolderName: { type: String, default: "" },
       lastConfirmedAt: { type: Date, default: null },
     },
+    // Self-service "please call me to verify my mobile" ask — cleared once
+    // the number is verified. Surfaced to admins in the Admin Users table.
+    mobileCallbackRequestedAt: { type: Date, default: null },
     // Commission override for early access, partners, premium creators
     commissionOverride: {
       enabled: { type: Boolean, default: false },
@@ -582,6 +585,9 @@ export const BrandSchema = new Schema(
       accountHolderName: { type: String, default: "" },
       lastConfirmedAt: { type: Date, default: null },
     },
+    // Self-service "please call me to verify my mobile" ask — cleared once
+    // the number is verified. Surfaced to admins in the Admin Users table.
+    mobileCallbackRequestedAt: { type: Date, default: null },
     // Commission override for early access, partners, premium creators
     commissionOverride: {
       enabled: { type: Boolean, default: false },
@@ -746,6 +752,9 @@ export const PhotographerSchema = new Schema(
       accountHolderName: { type: String, default: "" },
       lastConfirmedAt: { type: Date, default: null },
     },
+    // Self-service "please call me to verify my mobile" ask — cleared once
+    // the number is verified. Surfaced to admins in the Admin Users table.
+    mobileCallbackRequestedAt: { type: Date, default: null },
     isDeleted: { type: Boolean, default: false },
     deletedAt: { type: Date },
     status: {
