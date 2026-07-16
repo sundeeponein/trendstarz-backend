@@ -17,6 +17,7 @@ import {
   resetPasswordTemplate,
 } from "../email/templates/auth.templates";
 import { getJwtSecret } from "./jwt-secret";
+import { SELF_DELETION_GRACE_PERIOD_DAYS } from "../users/users.service";
 import { normalizeCollaborationAvailability } from "../utils/collaboration-availability.util";
 import {
   PROFILE_SELECTION_LIMITS,
@@ -1186,6 +1187,37 @@ export class AuthService {
   }
 
   // Admin / influencer / brand login
+  /**
+   * Short-lived, restricted login response for accounts with a pending
+   * self-deletion request (status "deletion_pending") — the token this
+   * issues can only be used to view deletion status or cancel it
+   * (JwtAuthGuard blocks every other endpoint for this status). Lets the
+   * frontend route straight to a "cancel deletion?" screen instead of the
+   * normal dashboard.
+   */
+  private buildDeletionPendingLoginResponse(
+    user: any,
+    role: "influencer" | "brand" | "photographer",
+  ) {
+    const token = jwt.sign(
+      { userId: user._id, email: user.email, role },
+      getJwtSecret(),
+      { expiresIn: "1h" },
+    );
+    const deletedAt = user.deletedAt ? new Date(user.deletedAt) : new Date();
+    const deletionGracePeriodEndsAt = new Date(
+      deletedAt.getTime() +
+        SELF_DELETION_GRACE_PERIOD_DAYS * 24 * 60 * 60 * 1000,
+    );
+    return {
+      token,
+      userType: role,
+      accountDeletionPending: true,
+      deletionGracePeriodEndsAt,
+      user: { id: user._id, email: user.email, role },
+    };
+  }
+
   async login(
     email: string,
     password: string,
@@ -1256,6 +1288,12 @@ export class AuthService {
       const isMatch = await bcrypt.compare(password, influencer.password);
       if (!isMatch) throw new UnauthorizedException("Invalid credentials");
       if (influencer.isDeleted === true || influencer.isDeleted === "true") {
+        if (influencer.status === "deletion_pending") {
+          return this.buildDeletionPendingLoginResponse(
+            influencer,
+            "influencer",
+          );
+        }
         throw new UnauthorizedException(
           "Your account has been deleted. Please contact support.",
         );
@@ -1321,6 +1359,9 @@ export class AuthService {
       const isMatch = await bcrypt.compare(password, brand.password);
       if (!isMatch) throw new UnauthorizedException("Invalid credentials");
       if (brand.isDeleted === true || brand.isDeleted === "true") {
+        if (brand.status === "deletion_pending") {
+          return this.buildDeletionPendingLoginResponse(brand, "brand");
+        }
         throw new UnauthorizedException(
           "Your account has been deleted. Please contact support.",
         );
@@ -1383,6 +1424,12 @@ export class AuthService {
         photographer.isDeleted === true ||
         photographer.isDeleted === "true"
       ) {
+        if (photographer.status === "deletion_pending") {
+          return this.buildDeletionPendingLoginResponse(
+            photographer,
+            "photographer",
+          );
+        }
         throw new UnauthorizedException(
           "Your account has been deleted. Please contact support.",
         );

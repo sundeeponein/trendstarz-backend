@@ -1,4 +1,5 @@
-import { Injectable, BadRequestException } from "@nestjs/common";
+import { Injectable, BadRequestException, NotFoundException } from "@nestjs/common";
+import { Cron, CronExpression } from "@nestjs/schedule";
 import * as fs from "fs";
 import * as path from "path";
 import { randomUUID } from "crypto";
@@ -15,12 +16,18 @@ import {
   normalizeSelectionList,
 } from "../utils/profile-selection-limits.util";
 import { normalizeSocialMediaList } from "../utils/social-handle.util";
+import { withCloudinaryHeroTransform } from "../utils/cloudinary-transform.util";
+import { invalidateAccountStatusCache } from "../auth/jwt-auth.guard";
 import { consumeOtpVerificationToken } from "../otp/otp.controller";
 import {
   applySearchEligibilityFilter,
   applyApprovedEligibilityFilter,
   fetchFeaturedProfilesByScore,
 } from "../utils/profile-eligibility.util";
+
+/** Self-service "Delete Account" grace period — see requestSelfDeletion. */
+export const SELF_DELETION_GRACE_PERIOD_DAYS =
+  Number.parseInt(process.env.SELF_DELETION_GRACE_PERIOD_DAYS || "", 10) || 30;
 
 const USE_LOCAL_IMAGES = process.env.USE_LOCAL_IMAGES === "true";
 const LOCAL_IMAGE_DIR = path.resolve(__dirname, "../../assets/local-images");
@@ -91,6 +98,19 @@ const PUBLIC_PROFILE_VISIBILITY_BLOCK_FLAG_CODES = [
 
 @Injectable()
 export class UsersService {
+  // TTL cache for the public homepage hero-showcase-images endpoint — avoids
+  // re-running the scored featured-profile aggregation on every homepage
+  // load. Single-process in-memory cache (same pattern as
+  // CampaignInvitesService.attentionCache); fine for this traffic level.
+  private heroShowcaseCache: {
+    value: {
+      influencer: { url: string; alt: string } | null;
+      brand: { url: string; alt: string } | null;
+    };
+    expiresAt: number;
+  } | null = null;
+  private static readonly HERO_SHOWCASE_CACHE_TTL_MS = 10 * 60 * 1000;
+
   private normalizePhone(value: any): string {
     return String(value ?? "").replace(/\D/g, "");
   }
@@ -1106,6 +1126,46 @@ export class UsersService {
         `Image upload limit reached. Your plan allows ${limit} image(s). Upgrade to upload more.`,
       );
     }
+  }
+
+  /** Current opt-in state for setMarketingConsent — used by the settings page. */
+  async getMarketingConsent(id: string): Promise<{ featuredInMarketing: boolean }> {
+    const influencer = await this.influencerModel
+      .findById(id)
+      .select("featuredInMarketing");
+    if (influencer) return { featuredInMarketing: !!influencer.featuredInMarketing };
+    const brand = await this.brandModel.findById(id).select("featuredInMarketing");
+    if (brand) return { featuredInMarketing: !!brand.featuredInMarketing };
+    const photographer = await this.photographerModel
+      .findById(id)
+      .select("featuredInMarketing");
+    if (photographer) return { featuredInMarketing: !!photographer.featuredInMarketing };
+    throw new NotFoundException("User not found");
+  }
+
+  /**
+   * Self-service opt-in/out for showing this user's photo/logo on public
+   * marketing surfaces (homepage hero banner + slider) — see
+   * getHeroShowcaseInfluencerAndBrandImages. Being premium/verified is not
+   * sufficient consent; the user must explicitly enable this themselves.
+   * Note: the hero-showcase-images endpoint caches its result for up to 10
+   * minutes, so a change here may take up to that long to be reflected there.
+   */
+  async setMarketingConsent(id: string, featuredInMarketing: boolean) {
+    const update = { $set: { featuredInMarketing } };
+    const influencer = await this.influencerModel
+      .findByIdAndUpdate(id, update, { new: true })
+      .select("_id");
+    if (influencer) return { featuredInMarketing };
+    const brand = await this.brandModel
+      .findByIdAndUpdate(id, update, { new: true })
+      .select("_id");
+    if (brand) return { featuredInMarketing };
+    const photographer = await this.photographerModel
+      .findByIdAndUpdate(id, update, { new: true })
+      .select("_id");
+    if (photographer) return { featuredInMarketing };
+    throw new NotFoundException("User not found");
   }
 
   /**
@@ -2199,6 +2259,102 @@ export class UsersService {
     );
   }
 
+  /**
+   * Homepage hero banner + hero slider images — one eligible, EXPLICITLY
+   * opted-in (featuredInMarketing: true) influencer + brand image. Same
+   * "Welcome" eligibility bar as the Featured sections, plus consent — being
+   * premium/verified is not sufficient to show someone's photo publicly.
+   * See setMarketingConsent for the opt-in toggle.
+   */
+  async getHeroShowcaseInfluencerAndBrandImages(): Promise<{
+    influencer: { url: string; alt: string } | null;
+    brand: { url: string; alt: string } | null;
+  }> {
+    const cached = this.heroShowcaseCache;
+    if (cached && cached.expiresAt > Date.now()) {
+      return cached.value;
+    }
+
+    const influencerFilter: any = { featuredInMarketing: true };
+    applyApprovedEligibilityFilter(influencerFilter, {
+      photoField: "profileImages",
+      requireSocialTier: true,
+    });
+    this.applyExcludedIds(
+      influencerFilter,
+      await this.publicProfileBlockedIds("Influencer"),
+    );
+
+    const brandFilter: any = { featuredInMarketing: true };
+    applyApprovedEligibilityFilter(brandFilter, {
+      photoField: "brandLogo",
+      requireSocialTier: false,
+    });
+    this.applyExcludedIds(
+      brandFilter,
+      await this.publicProfileBlockedIds("Brand"),
+    );
+
+    const [influencers, brands] = await Promise.all([
+      fetchFeaturedProfilesByScore(
+        this.influencerModel,
+        influencerFilter,
+        "name profileImages",
+        1,
+        {
+          from: "campaigninvites",
+          matchField: "influencerId",
+          statusIn: [
+            "accepted",
+            "payment_confirmed",
+            "working",
+            "submitted",
+            "completed",
+          ],
+          dateField: "updatedAt",
+          windowDays: 30,
+        },
+      ),
+      fetchFeaturedProfilesByScore(
+        this.brandModel,
+        brandFilter,
+        "brandName brandLogo",
+        1,
+        {
+          from: "campaigns",
+          matchField: "brandId",
+          statusIn: ["active", "completed"],
+          dateField: "createdAt",
+          windowDays: 60,
+        },
+      ),
+    ]);
+
+    const influencer = influencers[0] as any;
+    const brand = brands[0] as any;
+
+    const value = {
+      influencer: influencer?.profileImages?.[0]?.url
+        ? {
+            url: withCloudinaryHeroTransform(influencer.profileImages[0].url),
+            alt: `${influencer.name || "Influencer"} on TrendStarz`,
+          }
+        : null,
+      brand: brand?.brandLogo?.[0]?.url
+        ? {
+            url: withCloudinaryHeroTransform(brand.brandLogo[0].url),
+            alt: `${brand.brandName || "Brand"} on TrendStarz`,
+          }
+        : null,
+    };
+
+    this.heroShowcaseCache = {
+      value,
+      expiresAt: Date.now() + UsersService.HERO_SHOWCASE_CACHE_TTL_MS,
+    };
+    return value;
+  }
+
   async getBrands(
     page = 1,
     limit = 20,
@@ -2330,23 +2486,32 @@ export class UsersService {
       { status: "pending", isDeleted: false, deletedAt: null },
       { new: true },
     );
-    if (influencer) return { message: "User restored", user: influencer };
+    if (influencer) {
+      invalidateAccountStatusCache(id);
+      return { message: "User restored", user: influencer };
+    }
     const brand = await this.brandModel.findByIdAndUpdate(
       id,
       { status: "pending", isDeleted: false, deletedAt: null },
       { new: true },
     );
-    if (brand) return { message: "User restored", user: brand };
+    if (brand) {
+      invalidateAccountStatusCache(id);
+      return { message: "User restored", user: brand };
+    }
     const photographer = await this.photographerModel.findByIdAndUpdate(
       id,
       { status: "pending", isDeleted: false, deletedAt: null },
       { new: true },
     );
-    if (photographer) return { message: "User restored", user: photographer };
+    if (photographer) {
+      invalidateAccountStatusCache(id);
+      return { message: "User restored", user: photographer };
+    }
     return { message: "User not found", id };
   }
 
-  async deleteUser(id: string) {
+  async deleteUser(id: string, status: "deleted" | "deletion_pending" = "deleted") {
     // Try influencer first
     let user: any = await this.influencerModel.findById(id);
     let userType: "Influencer" | "Brand" | "Photographer" | null = user
@@ -2393,8 +2558,10 @@ export class UsersService {
     // Soft delete
     user.isDeleted = true;
     user.deletedAt = new Date();
-    user.status = "deleted";
+    user.status = status;
+    user.featuredInMarketing = false;
     await user.save();
+    invalidateAccountStatusCache(id);
 
     return {
       message:
@@ -2402,6 +2569,117 @@ export class UsersService {
       removedImages: publicIds.length,
     };
   }
+
+  /**
+   * Self-service "Delete Account" (Settings → Delete Account). Verifies the
+   * caller's password, then soft-deletes with status "deletion_pending" —
+   * distinct from admin's "deleted" so the account can still log back in
+   * during the grace period specifically to cancel (see JwtAuthGuard +
+   * @AllowPendingDeletion, and cancelSelfDeletion below). Hard-delete runs
+   * automatically once the grace period passes — see
+   * cleanupExpiredSelfDeletionRequests.
+   */
+  async requestSelfDeletion(id: string, password: string) {
+    let user: any = await this.influencerModel.findById(id);
+    if (!user) user = await this.brandModel.findById(id);
+    if (!user) user = await this.photographerModel.findById(id);
+    if (!user) throw new NotFoundException("User not found");
+
+    const isMatch = await bcrypt.compare(password || "", user.password);
+    if (!isMatch) throw new BadRequestException("Incorrect password");
+
+    await this.deleteUser(id, "deletion_pending");
+    return {
+      message: "Account scheduled for deletion",
+      gracePeriodDays: SELF_DELETION_GRACE_PERIOD_DAYS,
+    };
+  }
+
+  /** Cancels a pending self-deletion request — same reset as admin restoreUser. */
+  async cancelSelfDeletion(id: string) {
+    return this.restoreUser(id);
+  }
+
+  async getSelfDeletionStatus(id: string): Promise<{
+    deletionPending: boolean;
+    deletedAt: Date | null;
+    gracePeriodEndsAt: Date | null;
+  }> {
+    let user: any = await this.influencerModel
+      .findById(id)
+      .select("isDeleted status deletedAt");
+    if (!user)
+      user = await this.brandModel
+        .findById(id)
+        .select("isDeleted status deletedAt");
+    if (!user)
+      user = await this.photographerModel
+        .findById(id)
+        .select("isDeleted status deletedAt");
+    if (!user) throw new NotFoundException("User not found");
+
+    const pending = user.status === "deletion_pending";
+    const deletedAt = user.deletedAt ? new Date(user.deletedAt) : null;
+    const gracePeriodEndsAt =
+      pending && deletedAt
+        ? new Date(
+            deletedAt.getTime() +
+              SELF_DELETION_GRACE_PERIOD_DAYS * 24 * 60 * 60 * 1000,
+          )
+        : null;
+
+    return { deletionPending: pending, deletedAt, gracePeriodEndsAt };
+  }
+
+  /**
+   * Automatically hard-deletes accounts whose self-requested deletion grace
+   * period has passed. Admin-initiated deletions (status "deleted") are
+   * intentionally NOT touched here — those remain a manual admin action via
+   * the existing Deleted Users → Delete Permanently flow.
+   */
+  @Cron(CronExpression.EVERY_DAY_AT_1AM)
+  async cleanupExpiredSelfDeletionRequestsCron() {
+    try {
+      const result = await this.cleanupExpiredSelfDeletionRequests();
+      if (result.deleted > 0) {
+        console.log(
+          `[cleanupExpiredSelfDeletionRequestsCron] Permanently deleted ${result.deleted} account(s) past their self-deletion grace period.`,
+        );
+      }
+    } catch (e) {
+      console.error("cleanupExpiredSelfDeletionRequestsCron failed:", e);
+    }
+  }
+
+  async cleanupExpiredSelfDeletionRequests(): Promise<{ deleted: number }> {
+    const cutoff = new Date(
+      Date.now() - SELF_DELETION_GRACE_PERIOD_DAYS * 24 * 60 * 60 * 1000,
+    );
+    const query = { status: "deletion_pending", deletedAt: { $lte: cutoff } };
+    const [influencers, brands, photographers] = await Promise.all([
+      this.influencerModel.find(query).select("_id").lean(),
+      this.brandModel.find(query).select("_id").lean(),
+      this.photographerModel.find(query).select("_id").lean(),
+    ]);
+    const ids = [...influencers, ...brands, ...photographers].map((d: any) =>
+      String(d._id),
+    );
+
+    let deleted = 0;
+    for (const id of ids) {
+      try {
+        await this.deletePermanently(id);
+        deleted++;
+      } catch (e) {
+        console.error(
+          `Failed to permanently delete expired self-deletion request ${id}:`,
+          e,
+        );
+      }
+    }
+    return { deleted };
+  }
+
   async setPremium(
     id: string,
     isPremium: boolean,

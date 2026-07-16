@@ -18,6 +18,7 @@ import {
   applyApprovedEligibilityFilter,
   fetchFeaturedProfilesByScore,
 } from "../utils/profile-eligibility.util";
+import { withCloudinaryHeroTransform } from "../utils/cloudinary-transform.util";
 
 const PROFILE_PHOTO_VISIBILITY_BLOCK_FLAG_CODES = [
   "PROFILE_PHOTO_PENDING_REVIEW",
@@ -69,6 +70,14 @@ const FEATURED_PHOTOGRAPHER_FIELDS =
 
 @Injectable()
 export class PhotographersService {
+  // TTL cache for the public homepage hero-showcase-images endpoint — see
+  // matching cache on UsersService.getHeroShowcaseInfluencerAndBrandImages.
+  private heroShowcaseCache: {
+    value: { url: string; alt: string } | null;
+    expiresAt: number;
+  } | null = null;
+  private static readonly HERO_SHOWCASE_CACHE_TTL_MS = 10 * 60 * 1000;
+
   constructor(
     @InjectModel("Photographer") private readonly photographerModel: Model<any>,
     @InjectModel("CampaignInvite")
@@ -200,6 +209,59 @@ export class PhotographersService {
         windowDays: 30,
       },
     );
+  }
+
+  /**
+   * Homepage hero banner + hero slider image — one eligible, EXPLICITLY
+   * opted-in (featuredInMarketing: true) photographer image. Same "Welcome"
+   * eligibility bar as getFeaturedPhotographers, plus consent — being
+   * premium/verified is not sufficient to show someone's photo publicly.
+   */
+  async getHeroShowcasePhotographerImage(): Promise<{ url: string; alt: string } | null> {
+    const cached = this.heroShowcaseCache;
+    if (cached && cached.expiresAt > Date.now()) {
+      return cached.value;
+    }
+
+    const filter: any = { featuredInMarketing: true };
+    applyApprovedEligibilityFilter(filter, { photoField: "profileImages", requireSocialTier: true });
+    const blocked = await this.blockedPhotographerIds();
+    if (blocked.length) {
+      filter._id = {
+        $nin: blocked.flatMap((id) => {
+          const value = String(id || "").trim();
+          if (!value) return [];
+          return Types.ObjectId.isValid(value)
+            ? [value, new Types.ObjectId(value)]
+            : [value];
+        }),
+      };
+    }
+    const [photographer] = (await fetchFeaturedProfilesByScore(
+      this.photographerModel,
+      filter,
+      "name profileImages",
+      1,
+      {
+        from: "campaigninvites",
+        matchField: "photographerId",
+        statusIn: ["accepted", "payment_confirmed", "working", "submitted", "completed"],
+        dateField: "updatedAt",
+        windowDays: 30,
+      },
+    )) as any[];
+    const value = photographer?.profileImages?.[0]?.url
+      ? {
+          url: withCloudinaryHeroTransform(photographer.profileImages[0].url),
+          alt: `${photographer.name || "Photographer"} on TrendStarz`,
+        }
+      : null;
+
+    this.heroShowcaseCache = {
+      value,
+      expiresAt: Date.now() + PhotographersService.HERO_SHOWCASE_CACHE_TTL_MS,
+    };
+    return value;
   }
 
   private async hasOpenGalleryBlock(userId: any): Promise<boolean> {

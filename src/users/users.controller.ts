@@ -14,6 +14,7 @@ import {
 import { InjectModel } from "@nestjs/mongoose";
 import { JwtAuthGuard } from "../auth/jwt-auth.guard";
 import { RolesGuard } from "../auth/roles.guard";
+import { AllowPendingDeletion } from "../auth/allow-pending-deletion.decorator";
 import { InfluencerProfileDto, BrandProfileDto } from "./dto/profile.dto";
 import { UsersService } from "./users.service";
 import { Request } from "express";
@@ -244,6 +245,82 @@ export class UsersController {
     return this.usersService.updateUserImages(id, body);
   }
 
+  @UseGuards(JwtAuthGuard)
+  @Get(":id/marketing-consent")
+  async getMarketingConsent(@Param("id") id: string, @Req() req: Request) {
+    const userId = (req as any).user?.userId;
+    if (userId !== id) {
+      throw new ForbiddenException("You can only view your own settings");
+    }
+    return this.usersService.getMarketingConsent(id);
+  }
+
+  /**
+   * Self-service opt-in/out for showing this user's photo/logo on public
+   * marketing surfaces (homepage hero banner + slider). Being premium or
+   * verified is not sufficient consent — see users.service.ts setMarketingConsent.
+   */
+  @UseGuards(JwtAuthGuard)
+  @Patch(":id/marketing-consent")
+  async updateMarketingConsent(
+    @Param("id") id: string,
+    @Body() body: { featuredInMarketing?: boolean },
+    @Req() req: Request,
+  ) {
+    const userId = (req as any).user?.userId;
+    if (userId !== id) {
+      throw new ForbiddenException("You can only update your own settings");
+    }
+    return this.usersService.setMarketingConsent(
+      id,
+      body?.featuredInMarketing === true,
+    );
+  }
+
+  /**
+   * Self-service "Delete Account" (Settings → Delete Account). Requires the
+   * caller's current password. Soft-deletes with status "deletion_pending" —
+   * hidden from search/homepage immediately, hard-deleted automatically
+   * after the grace period (see UsersService.cleanupExpiredSelfDeletionRequests).
+   */
+  @UseGuards(JwtAuthGuard)
+  @Post(":id/self-delete")
+  async selfDeleteAccount(
+    @Param("id") id: string,
+    @Body() body: { password?: string },
+    @Req() req: Request,
+  ) {
+    const userId = (req as any).user?.userId;
+    if (userId !== id) {
+      throw new ForbiddenException("You can only delete your own account");
+    }
+    return this.usersService.requestSelfDeletion(id, body?.password || "");
+  }
+
+  /** Cancels a pending self-deletion request, during the grace period only. */
+  @UseGuards(JwtAuthGuard)
+  @AllowPendingDeletion()
+  @Post(":id/cancel-deletion")
+  async cancelSelfDeletion(@Param("id") id: string, @Req() req: Request) {
+    const userId = (req as any).user?.userId;
+    if (userId !== id) {
+      throw new ForbiddenException("You can only restore your own account");
+    }
+    return this.usersService.cancelSelfDeletion(id);
+  }
+
+  /** Returns whether this account has a pending self-deletion request, and when the grace period ends. */
+  @UseGuards(JwtAuthGuard)
+  @AllowPendingDeletion()
+  @Get(":id/deletion-status")
+  async getSelfDeletionStatus(@Param("id") id: string, @Req() req: Request) {
+    const userId = (req as any).user?.userId;
+    if (userId !== id) {
+      throw new ForbiddenException("You can only view your own account status");
+    }
+    return this.usersService.getSelfDeletionStatus(id);
+  }
+
   @Post("register")
   async registerUser(@Body() body: any) {
     // Determine type by presence of brandName or other logic
@@ -312,6 +389,20 @@ export class UsersController {
       ),
     ]);
     return { influencers, brands, photographers };
+  }
+
+  /**
+   * Homepage hero banner + hero slider images — one eligible, explicitly
+   * opted-in (featuredInMarketing: true) image per role. Public endpoint,
+   * used by guests too.
+   */
+  @Get("hero-showcase-images")
+  async getHeroShowcaseImages() {
+    const [{ influencer, brand }, photographer] = await Promise.all([
+      this.usersService.getHeroShowcaseInfluencerAndBrandImages(),
+      this.photographersService.getHeroShowcasePhotographerImage(),
+    ]);
+    return { influencer, brand, photographer };
   }
 
   @Get("influencers")

@@ -199,6 +199,10 @@ export const InfluencerSchema = new Schema(
       },
     ],
     isPremium: { type: Boolean, default: false },
+    // Self-service opt-in: user must explicitly enable this before their
+    // profile photo/logo can appear in public marketing surfaces (e.g. the
+    // homepage hero banner). Being premium/verified is NOT sufficient consent.
+    featuredInMarketing: { type: Boolean, default: false },
     premiumDuration: {
       type: String,
       enum: ["1m", "3m", "1y", null],
@@ -391,6 +395,11 @@ InfluencerSchema.index({ "location.state": 1 });
 InfluencerSchema.index({ "location.district": 1 });
 InfluencerSchema.index({ resetToken: 1 }, { sparse: true });
 InfluencerSchema.index({ commissionBadge: 1 });
+// Partial index — only the small opted-in minority is indexed, since default is false.
+InfluencerSchema.index(
+  { featuredInMarketing: 1 },
+  { partialFilterExpression: { featuredInMarketing: true } },
+);
 InfluencerSchema.pre("validate", function (next) {
   normalizeVerificationAuditLog(this);
   next();
@@ -486,6 +495,10 @@ export const BrandSchema = new Schema(
       },
     ],
     isPremium: { type: Boolean, default: false },
+    // Self-service opt-in: user must explicitly enable this before their
+    // profile photo/logo can appear in public marketing surfaces (e.g. the
+    // homepage hero banner). Being premium/verified is NOT sufficient consent.
+    featuredInMarketing: { type: Boolean, default: false },
     premiumDuration: {
       type: String,
       enum: ["1m", "3m", "1y", null],
@@ -589,6 +602,11 @@ BrandSchema.index({ status: 1 });
 BrandSchema.index({ brandName: 1 });
 BrandSchema.index({ resetToken: 1 }, { sparse: true });
 BrandSchema.index({ commissionBadge: 1 });
+// Partial index — only the small opted-in minority is indexed, since default is false.
+BrandSchema.index(
+  { featuredInMarketing: 1 },
+  { partialFilterExpression: { featuredInMarketing: true } },
+);
 BrandSchema.pre("validate", function (next) {
   normalizeVerificationAuditLog(this);
   next();
@@ -725,6 +743,10 @@ export const PhotographerSchema = new Schema(
     resetToken: { type: String, default: null },
     resetTokenExpires: { type: Number, default: null },
     isPremium: { type: Boolean, default: false },
+    // Self-service opt-in: user must explicitly enable this before their
+    // profile photo/logo can appear in public marketing surfaces (e.g. the
+    // homepage hero banner). Being premium/verified is NOT sufficient consent.
+    featuredInMarketing: { type: Boolean, default: false },
     premiumDuration: {
       type: String,
       enum: ["1m", "3m", "1y", null],
@@ -816,6 +838,11 @@ PhotographerSchema.index({ skills: 1 });
 PhotographerSchema.index({ "location.state": 1 });
 PhotographerSchema.index({ resetToken: 1 }, { sparse: true });
 PhotographerSchema.index({ commissionBadge: 1 });
+// Partial index — only the small opted-in minority is indexed, since default is false.
+PhotographerSchema.index(
+  { featuredInMarketing: 1 },
+  { partialFilterExpression: { featuredInMarketing: true } },
+);
 PhotographerSchema.pre("validate", function (next) {
   normalizeVerificationAuditLog(this);
   next();
