@@ -36,6 +36,45 @@ export function verifyEmailTemplate(verifyUrl: string): EmailTemplate {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// 1b. Incomplete-registration nudges (7 / 15 / 30 day) — copy deliberately
+// only ever talks about the user's own next step, never retention/deletion
+// policy. See PendingUserCleanupService.sendVerificationReminders.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export function registrationReminderTemplate(
+  stage: "email" | "mobile" | "incomplete",
+  loginUrl: string,
+): EmailTemplate {
+  const copy = {
+    email: {
+      subject: "Complete your email verification — TrendStarZ",
+      heading: "Complete your email verification",
+      body: "Your TrendStarZ registration is almost complete. Verify your email address to keep moving toward brand campaign invites.",
+      cta: "Verify Email",
+    },
+    mobile: {
+      subject: "Complete your mobile verification — TrendStarZ",
+      heading: "Complete your mobile verification",
+      body: "You've verified your email — nice. Complete your mobile verification next to activate your profile and become eligible for brand campaign invites.",
+      cta: "Verify Mobile",
+    },
+    incomplete: {
+      subject: "Your TrendStarZ registration is still incomplete",
+      heading: "Your registration is still incomplete",
+      body: "Please finish email and mobile verification to activate your profile and start receiving brand campaign invites.",
+      cta: "Finish Verification",
+    },
+  }[stage];
+
+  const html = wrapEmail(
+    h2(copy.heading) + p(copy.body) + btn(copy.cta, loginUrl),
+  );
+  const text = `${copy.body}\n\n${loginUrl}`;
+
+  return { subject: copy.subject, html, text };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // 2. Password Reset
 // ─────────────────────────────────────────────────────────────────────────────
 

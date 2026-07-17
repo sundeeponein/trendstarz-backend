@@ -559,8 +559,11 @@ export class UsersController {
 
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Patch(":id/decline")
-  async declineUser(@Param("id") id: string) {
-    return this.usersService.declineUser(id);
+  async declineUser(
+    @Param("id") id: string,
+    @Body() body: { reason?: string },
+  ) {
+    return this.usersService.declineUser(id, body?.reason);
   }
 
   @UseGuards(JwtAuthGuard, RolesGuard)

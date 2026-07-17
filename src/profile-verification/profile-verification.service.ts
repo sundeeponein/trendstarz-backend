@@ -931,6 +931,12 @@ export class ProfileVerificationService {
       // screen can show both without one implying the other.
       verificationStatus: this.verificationStatusLabel(profile),
       isTrendstarzVerified: this.isAdminApproved(profile),
+      // Raw account status ("pending"/"accepted"/"declined") — distinct from
+      // verificationStatus above. This is what the Admin Users table's
+      // Accept/Decline buttons actually set (acceptUser/declineUser in
+      // users.service.ts), so it's the field a "you were declined" UI needs.
+      accountStatus: profile?.status || "pending",
+      declineReason: profile?.declineReason || "",
       verificationChecks: this.verificationChecks(profile),
       verificationBadges: this.verificationBadges(profile),
       checklist: this.checklist(profile, flags, userType),

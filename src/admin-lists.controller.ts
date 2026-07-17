@@ -553,6 +553,17 @@ export class AdminListsController {
     );
   }
 
+  // User-facing 7/15/30-day nudge emails (never mentions retention/deletion —
+  // see registrationReminderTemplate). Idempotent per threshold per account.
+  @Post("registration-reminders/run")
+  async runRegistrationReminders(@Req() req: any) {
+    const actor =
+      req?.user?.email || req?.user?.userId || req?.user?.sub || "admin";
+    return this.pendingUserCleanupService.sendVerificationReminders(
+      String(actor),
+    );
+  }
+
   // Lists what the pending-user auto-delete would soft-delete, without
   // touching anything — covers every "never went active" case (email
   // pending, mobile pending, admin review pending, or admin declined; see

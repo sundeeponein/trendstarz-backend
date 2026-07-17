@@ -365,6 +365,15 @@ export const InfluencerSchema = new Schema(
     // Self-service "please call me to verify my mobile" ask — cleared once
     // the number is verified. Surfaced to admins in the Admin Users table.
     mobileCallbackRequestedAt: { type: Date, default: null },
+    // Set alongside status: "declined" — shown back to the user so they know
+    // what to fix instead of just seeing "Declined". Cleared on re-decline
+    // with a new reason, or when the account is restored/re-accepted.
+    declineReason: { type: String, default: "" },
+    // Guards against re-sending the same incomplete-registration nudge every
+    // day once its threshold is crossed — see PendingUserCleanupService.sendVerificationReminders.
+    reminderDay7SentAt: { type: Date, default: null },
+    reminderDay15SentAt: { type: Date, default: null },
+    reminderDay30SentAt: { type: Date, default: null },
     // Commission override for early access, partners, premium creators
     commissionOverride: {
       enabled: { type: Boolean, default: false },
@@ -588,6 +597,15 @@ export const BrandSchema = new Schema(
     // Self-service "please call me to verify my mobile" ask — cleared once
     // the number is verified. Surfaced to admins in the Admin Users table.
     mobileCallbackRequestedAt: { type: Date, default: null },
+    // Set alongside status: "declined" — shown back to the user so they know
+    // what to fix instead of just seeing "Declined". Cleared on re-decline
+    // with a new reason, or when the account is restored/re-accepted.
+    declineReason: { type: String, default: "" },
+    // Guards against re-sending the same incomplete-registration nudge every
+    // day once its threshold is crossed — see PendingUserCleanupService.sendVerificationReminders.
+    reminderDay7SentAt: { type: Date, default: null },
+    reminderDay15SentAt: { type: Date, default: null },
+    reminderDay30SentAt: { type: Date, default: null },
     // Commission override for early access, partners, premium creators
     commissionOverride: {
       enabled: { type: Boolean, default: false },
@@ -755,6 +773,15 @@ export const PhotographerSchema = new Schema(
     // Self-service "please call me to verify my mobile" ask — cleared once
     // the number is verified. Surfaced to admins in the Admin Users table.
     mobileCallbackRequestedAt: { type: Date, default: null },
+    // Set alongside status: "declined" — shown back to the user so they know
+    // what to fix instead of just seeing "Declined". Cleared on re-decline
+    // with a new reason, or when the account is restored/re-accepted.
+    declineReason: { type: String, default: "" },
+    // Guards against re-sending the same incomplete-registration nudge every
+    // day once its threshold is crossed — see PendingUserCleanupService.sendVerificationReminders.
+    reminderDay7SentAt: { type: Date, default: null },
+    reminderDay15SentAt: { type: Date, default: null },
+    reminderDay30SentAt: { type: Date, default: null },
     isDeleted: { type: Boolean, default: false },
     deletedAt: { type: Date },
     status: {

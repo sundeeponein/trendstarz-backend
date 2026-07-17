@@ -2642,43 +2642,37 @@ export class UsersService {
   }
 
   async acceptUser(id: string) {
-    const influencer = await this.influencerModel.findByIdAndUpdate(
-      id,
-      { status: "accepted" },
-      { new: true },
-    );
+    const update = { status: "accepted", declineReason: "" };
+    const influencer = await this.influencerModel.findByIdAndUpdate(id, update, {
+      new: true,
+    });
     if (influencer) return { message: "User accepted", user: influencer };
-    const brand = await this.brandModel.findByIdAndUpdate(
-      id,
-      { status: "accepted" },
-      { new: true },
-    );
+    const brand = await this.brandModel.findByIdAndUpdate(id, update, {
+      new: true,
+    });
     if (brand) return { message: "User accepted", user: brand };
     const photographer = await this.photographerModel.findByIdAndUpdate(
       id,
-      { status: "accepted" },
+      update,
       { new: true },
     );
     if (photographer) return { message: "User accepted", user: photographer };
     return { message: "User not found", id };
   }
 
-  async declineUser(id: string) {
-    const influencer = await this.influencerModel.findByIdAndUpdate(
-      id,
-      { status: "declined" },
-      { new: true },
-    );
+  async declineUser(id: string, reason?: string) {
+    const update = { status: "declined", declineReason: String(reason || "").trim() };
+    const influencer = await this.influencerModel.findByIdAndUpdate(id, update, {
+      new: true,
+    });
     if (influencer) return { message: "User declined", user: influencer };
-    const brand = await this.brandModel.findByIdAndUpdate(
-      id,
-      { status: "declined" },
-      { new: true },
-    );
+    const brand = await this.brandModel.findByIdAndUpdate(id, update, {
+      new: true,
+    });
     if (brand) return { message: "User declined", user: brand };
     const photographer = await this.photographerModel.findByIdAndUpdate(
       id,
-      { status: "declined" },
+      update,
       { new: true },
     );
     if (photographer) return { message: "User declined", user: photographer };
@@ -2688,7 +2682,7 @@ export class UsersService {
   async restoreUser(id: string) {
     const influencer = await this.influencerModel.findByIdAndUpdate(
       id,
-      { status: "pending", isDeleted: false, deletedAt: null },
+      { status: "pending", isDeleted: false, deletedAt: null, declineReason: "" },
       { new: true },
     );
     if (influencer) {
@@ -2697,7 +2691,7 @@ export class UsersService {
     }
     const brand = await this.brandModel.findByIdAndUpdate(
       id,
-      { status: "pending", isDeleted: false, deletedAt: null },
+      { status: "pending", isDeleted: false, deletedAt: null, declineReason: "" },
       { new: true },
     );
     if (brand) {
@@ -2706,7 +2700,7 @@ export class UsersService {
     }
     const photographer = await this.photographerModel.findByIdAndUpdate(
       id,
-      { status: "pending", isDeleted: false, deletedAt: null },
+      { status: "pending", isDeleted: false, deletedAt: null, declineReason: "" },
       { new: true },
     );
     if (photographer) {

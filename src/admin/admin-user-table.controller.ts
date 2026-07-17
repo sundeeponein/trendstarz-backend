@@ -269,6 +269,11 @@ export class AdminUserTableController {
       filter.verificationStatus = "rejected";
       return;
     }
+    if (normalized === "callback_requested") {
+      filter.isMobileVerified = { $ne: true };
+      filter.mobileCallbackRequestedAt = { $ne: null };
+      return;
+    }
     if (normalized === "featured_eligible" || normalized === "campaign_eligible") {
       filter.status = "accepted";
       applyApprovedEligibilityFilter(filter, {

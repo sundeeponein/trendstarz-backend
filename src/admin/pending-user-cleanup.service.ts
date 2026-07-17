@@ -3,6 +3,8 @@ import { InjectModel } from "@nestjs/mongoose";
 import { Cron, CronExpression } from "@nestjs/schedule";
 import { Model } from "mongoose";
 import { FirebaseAdminService } from "../utils/firebase-admin.service";
+import { sendAppEmail } from "../utils/app-email.service";
+import { registrationReminderTemplate } from "../email/templates/auth.templates";
 
 @Injectable()
 export class PendingUserCleanupService {
@@ -439,6 +441,153 @@ export class PendingUserCleanupService {
     };
   }
 
+  private ageOrClause(cutoff: Date) {
+    return [
+      { firstRegisteredAt: { $lte: cutoff } },
+      {
+        $and: [
+          {
+            $or: [
+              { firstRegisteredAt: { $exists: false } },
+              { firstRegisteredAt: null },
+            ],
+          },
+          { createdAt: { $lte: cutoff } },
+        ],
+      },
+    ];
+  }
+
+  /**
+   * User-facing nudges only — never mentions auto-delete/retention. Each
+   * threshold sends at most once per account (guarded by reminderDayXSentAt),
+   * so a user who verifies right after the day-7 email doesn't also get the
+   * day-15 one for a step they already completed. Day 30 only fires for
+   * accounts still missing email or mobile verification — same "not on the
+   * user" exclusion the auto-delete filter uses, since nagging someone who's
+   * just waiting on admin review isn't a "you" problem.
+   */
+  async sendVerificationReminders(triggeredBy: string = "system") {
+    const frontendBase = (
+      process.env.FRONTEND_URL || "https://www.trendstarz.in"
+    ).replace(/\/$/, "");
+    const loginUrl = `${frontendBase}/login`;
+    const now = new Date();
+    const day7Cutoff = new Date(now);
+    day7Cutoff.setDate(day7Cutoff.getDate() - 7);
+    const day15Cutoff = new Date(now);
+    day15Cutoff.setDate(day15Cutoff.getDate() - 15);
+    const day30Cutoff = new Date(now);
+    day30Cutoff.setDate(day30Cutoff.getDate() - 30);
+
+    const models = [
+      this.influencerModel,
+      this.brandModel,
+      this.photographerModel,
+    ];
+
+    const sendBatch = async (
+      model: Model<any>,
+      filter: Record<string, any>,
+      stage: "email" | "mobile" | "incomplete",
+      sentField: string,
+    ) => {
+      const users = await model
+        .find(filter)
+        .select("email")
+        .lean();
+      const { subject, html, text } = registrationReminderTemplate(
+        stage,
+        loginUrl,
+      );
+      let sent = 0;
+      for (const user of users as any[]) {
+        if (!user.email) continue;
+        try {
+          await sendAppEmail({ to: user.email, subject, html, text });
+          await model.updateOne(
+            { _id: user._id },
+            { $set: { [sentField]: now } },
+          );
+          sent += 1;
+        } catch (err: any) {
+          this.logger.error(
+            `[PendingUserCleanup] Reminder email failed for ${user.email}`,
+            err?.stack || err?.message || String(err),
+          );
+        }
+      }
+      return sent;
+    };
+
+    let day7 = 0;
+    let day15 = 0;
+    let day30 = 0;
+
+    for (const model of models) {
+      day7 += await sendBatch(
+        model,
+        {
+          status: { $in: ["pending", "declined"] },
+          isDeleted: { $ne: true },
+          isEmailVerified: { $ne: true },
+          reminderDay7SentAt: null,
+          $or: this.ageOrClause(day7Cutoff),
+        },
+        "email",
+        "reminderDay7SentAt",
+      );
+
+      day15 += await sendBatch(
+        model,
+        {
+          status: { $in: ["pending", "declined"] },
+          isDeleted: { $ne: true },
+          isEmailVerified: true,
+          isMobileVerified: { $ne: true },
+          reminderDay15SentAt: null,
+          $or: this.ageOrClause(day15Cutoff),
+        },
+        "mobile",
+        "reminderDay15SentAt",
+      );
+
+      day30 += await sendBatch(
+        model,
+        {
+          status: { $in: ["pending", "declined"] },
+          isDeleted: { $ne: true },
+          reminderDay30SentAt: null,
+          $and: [
+            { $or: [{ isEmailVerified: { $ne: true } }, { isMobileVerified: { $ne: true } }] },
+            { $or: this.ageOrClause(day30Cutoff) },
+          ],
+        },
+        "incomplete",
+        "reminderDay30SentAt",
+      );
+    }
+
+    const total = day7 + day15 + day30;
+    await this.appSettingsModel.findOneAndUpdate(
+      {},
+      {
+        $set: {
+          registrationReminderLastRunAt: now,
+          registrationReminderLastRunCounts: { day7, day15, day30 },
+          registrationReminderLastRunBy: triggeredBy,
+        },
+      },
+      { upsert: true },
+    );
+
+    this.logger.log(
+      `[PendingUserCleanup] Sent ${total} registration reminder(s): day7=${day7}, day15=${day15}, day30=${day30}`,
+    );
+
+    return { success: true, triggeredBy, total, counts: { day7, day15, day30 } };
+  }
+
   @Cron(CronExpression.EVERY_DAY_AT_3AM)
   async runScheduledCleanup() {
     try {
@@ -446,6 +595,18 @@ export class PendingUserCleanupService {
     } catch (err: any) {
       this.logger.error(
         "[PendingUserCleanup] Cron failed",
+        err?.stack || err?.message || String(err),
+      );
+    }
+  }
+
+  @Cron(CronExpression.EVERY_DAY_AT_7AM)
+  async runScheduledVerificationReminders() {
+    try {
+      await this.sendVerificationReminders("system_cron");
+    } catch (err: any) {
+      this.logger.error(
+        "[PendingUserCleanup] Verification reminder cron failed",
         err?.stack || err?.message || String(err),
       );
     }
