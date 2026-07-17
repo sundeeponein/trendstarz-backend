@@ -553,6 +553,22 @@ export class AdminListsController {
     );
   }
 
+  // Lists what the pending-user auto-delete would soft-delete, without
+  // touching anything — covers every "never went active" case (email
+  // pending, mobile pending, admin review pending, or admin declined; see
+  // buildPendingAgeFilter/eligibilityReason in PendingUserCleanupService).
+  @Get("pending-user-cleanup/preview")
+  async previewPendingUserCleanup() {
+    return this.pendingUserCleanupService.runCleanupNow("admin_preview", true);
+  }
+
+  @Post("pending-user-cleanup/run")
+  async runPendingUserCleanup(@Req() req: any) {
+    const actor =
+      req?.user?.email || req?.user?.userId || req?.user?.sub || "admin";
+    return this.pendingUserCleanupService.runCleanupNow(String(actor), false);
+  }
+
   // Lists what the pending-upload cleanup would delete, without deleting
   // anything — use this to sanity-check the retention window before turning
   // on `pendingUploadAutoDeleteEnabled`.

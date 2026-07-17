@@ -26,10 +26,24 @@ export class PendingUserCleanupService {
     return rounded;
   }
 
+  /**
+   * "Ready for soft-delete" = stalled on something the *user* controls
+   * (never verified email/mobile) or was explicitly rejected (declined) —
+   * never a case that's purely waiting on admin action. A user who has
+   * verified both email and mobile and is just sitting in admin review is
+   * deliberately excluded: the only remaining step is ours, and deleting
+   * their account for a review we haven't done yet is a bad user experience,
+   * not "cleanup." Those accounts stay pending indefinitely until an admin
+   * accepts or declines them — see the "Awaiting Admin Approval" queue
+   * instead of relying on this job for them.
+   */
   private buildPendingAgeFilter(cutoff: Date) {
     return {
-      status: "pending",
+      status: { $in: ["pending", "declined"] },
       isDeleted: { $ne: true },
+      $nor: [
+        { status: "pending", isEmailVerified: true, isMobileVerified: true },
+      ],
       $or: [
         { firstRegisteredAt: { $lte: cutoff } },
         {
@@ -45,6 +59,19 @@ export class PendingUserCleanupService {
         },
       ],
     };
+  }
+
+  /**
+   * Why a given eligible user qualifies — for the dry-run preview breakdown.
+   * "admin_approval_pending" never actually fires here: buildPendingAgeFilter
+   * excludes the fully-verified-but-admin-pending case entirely. Kept as a
+   * defensive fallback only.
+   */
+  private eligibilityReason(user: any): string {
+    if (user?.status === "declined") return "admin_declined";
+    if (user?.isEmailVerified !== true) return "email_pending";
+    if (user?.isMobileVerified !== true) return "mobile_pending";
+    return "admin_approval_pending";
   }
 
   private buildPendingUnverifiedAgeFilter(cutoff: Date) {
@@ -63,6 +90,8 @@ export class PendingUserCleanupService {
       phoneNumber: user?.phoneNumber || "",
       status: user?.status || "pending",
       isEmailVerified: user?.isEmailVerified === true,
+      isMobileVerified: user?.isMobileVerified === true,
+      reason: this.eligibilityReason(user),
       firstRegisteredAt: user?.firstRegisteredAt || null,
       createdAt: user?.createdAt || null,
       lastLoginAt: user?.lastLoginAt || null,
@@ -70,7 +99,10 @@ export class PendingUserCleanupService {
     };
   }
 
-  async getPendingUnverifiedReport(daysRaw: unknown = 7, limitRaw: unknown = 25) {
+  async getPendingUnverifiedReport(
+    daysRaw: unknown = 7,
+    limitRaw: unknown = 25,
+  ) {
     const days = this.normalizeDays(daysRaw, 7);
     const limit = Math.min(100, Math.max(1, Number(limitRaw) || 25));
     const cutoff = new Date();
@@ -129,16 +161,24 @@ export class PendingUserCleanupService {
         ...(photographers || []).map((u: any) =>
           this.normalizeReportUser(u, "photographer"),
         ),
-      ].sort((a: any, b: any) => {
-        const aTime = new Date(a.firstRegisteredAt || a.createdAt || 0).getTime();
-        const bTime = new Date(b.firstRegisteredAt || b.createdAt || 0).getTime();
-        return aTime - bTime;
-      }).slice(0, limit),
+      ]
+        .sort((a: any, b: any) => {
+          const aTime = new Date(
+            a.firstRegisteredAt || a.createdAt || 0,
+          ).getTime();
+          const bTime = new Date(
+            b.firstRegisteredAt || b.createdAt || 0,
+          ).getTime();
+          return aTime - bTime;
+        })
+        .slice(0, limit),
     };
   }
 
   private async syncFirebaseVerifiedUser(firebaseUser: any) {
-    const email = String(firebaseUser?.email || "").trim().toLowerCase();
+    const email = String(firebaseUser?.email || "")
+      .trim()
+      .toLowerCase();
     if (!email || firebaseUser?.emailVerified !== true) {
       return null;
     }
@@ -167,7 +207,10 @@ export class PendingUserCleanupService {
           { ...filter, status: "pending" },
           activatePatch,
         ),
-        this.brandModel.updateOne({ ...filter, status: "pending" }, activatePatch),
+        this.brandModel.updateOne(
+          { ...filter, status: "pending" },
+          activatePatch,
+        ),
         this.photographerModel.updateOne(
           { ...filter, status: "pending" },
           activatePatch,
@@ -175,13 +218,20 @@ export class PendingUserCleanupService {
       ]);
 
     const adminModified = Number((adminRes as any)?.modifiedCount || 0);
-    const influencerModified = Number((influencerRes as any)?.modifiedCount || 0);
+    const influencerModified = Number(
+      (influencerRes as any)?.modifiedCount || 0,
+    );
     const brandModified = Number((brandRes as any)?.modifiedCount || 0);
     const photographerModified = Number(
       (photographerRes as any)?.modifiedCount || 0,
     );
 
-    if (adminModified || influencerModified || brandModified || photographerModified) {
+    if (
+      adminModified ||
+      influencerModified ||
+      brandModified ||
+      photographerModified
+    ) {
       return {
         email,
         firebaseUid: firebaseUser.uid,
@@ -205,7 +255,9 @@ export class PendingUserCleanupService {
     const acceptedInfluencerModified = Number(
       (influencerAccepted as any)?.modifiedCount || 0,
     );
-    const acceptedBrandModified = Number((brandAccepted as any)?.modifiedCount || 0);
+    const acceptedBrandModified = Number(
+      (brandAccepted as any)?.modifiedCount || 0,
+    );
     const acceptedPhotographerModified = Number(
       (photographerAccepted as any)?.modifiedCount || 0,
     );
@@ -239,8 +291,11 @@ export class PendingUserCleanupService {
       };
     }
 
-    const firebaseUsers = await this.firebaseAdminService.listEmailUsers(100000);
-    const verifiedUsers = firebaseUsers.filter((user) => user.emailVerified === true);
+    const firebaseUsers =
+      await this.firebaseAdminService.listEmailUsers(100000);
+    const verifiedUsers = firebaseUsers.filter(
+      (user) => user.emailVerified === true,
+    );
     const synced: any[] = [];
 
     for (const firebaseUser of verifiedUsers) {
@@ -281,13 +336,22 @@ export class PendingUserCleanupService {
     };
   }
 
-  async runCleanupNow(triggeredBy: string = "system") {
-    const settings: any = (await this.appSettingsModel.findOne({}).lean()) || {};
+  // dryRun lists what *would* be soft-deleted without touching anything —
+  // used by the admin preview endpoint so the retention window and the
+  // pending/declined mix can be sanity-checked before enabling the cron.
+  async runCleanupNow(triggeredBy: string = "system", dryRun = false) {
+    const settings: any =
+      (await this.appSettingsModel.findOne({}).lean()) || {};
     const enabled = settings.pendingUserAutoDeleteEnabled === true;
-    const retentionDays = this.normalizeDays(settings.pendingUserAutoDeleteDays, 45);
+    const retentionDays = this.normalizeDays(
+      settings.pendingUserAutoDeleteDays,
+      45,
+    );
 
-    if (!enabled) {
-      this.logger.log("[PendingUserCleanup] Skipped: disabled in admin settings");
+    if (!enabled && !dryRun) {
+      this.logger.log(
+        "[PendingUserCleanup] Skipped: disabled in admin settings",
+      );
       return {
         success: true,
         skipped: true,
@@ -299,45 +363,68 @@ export class PendingUserCleanupService {
 
     const cutoff = new Date();
     cutoff.setDate(cutoff.getDate() - retentionDays);
+    const filter = this.buildPendingAgeFilter(cutoff);
+    const projection =
+      "name brandName email phoneNumber status isEmailVerified isMobileVerified firstRegisteredAt createdAt";
 
-    const patch = {
-      $set: {
-        status: "deleted",
-        isDeleted: true,
-        deletedAt: new Date(),
-      },
-    };
-
-    const [influencerRes, brandRes, photographerRes] = await Promise.all([
-      this.influencerModel.updateMany(this.buildPendingAgeFilter(cutoff), patch),
-      this.brandModel.updateMany(this.buildPendingAgeFilter(cutoff), patch),
-      this.photographerModel.updateMany(this.buildPendingAgeFilter(cutoff), patch),
+    const [influencers, brands, photographers] = await Promise.all([
+      this.influencerModel.find(filter).select(projection).lean(),
+      this.brandModel.find(filter).select(projection).lean(),
+      this.photographerModel.find(filter).select(projection).lean(),
     ]);
 
-    const influencerCount = Number((influencerRes as any)?.modifiedCount || 0);
-    const brandCount = Number((brandRes as any)?.modifiedCount || 0);
-    const photographerCount = Number((photographerRes as any)?.modifiedCount || 0);
+    const candidates = [
+      ...influencers.map((u: any) => ({ ...u, userType: "influencer" })),
+      ...brands.map((u: any) => ({ ...u, userType: "brand" })),
+      ...photographers.map((u: any) => ({ ...u, userType: "photographer" })),
+    ];
+
+    const byReason: Record<string, number> = {
+      admin_declined: 0,
+      email_pending: 0,
+      mobile_pending: 0,
+      admin_approval_pending: 0,
+    };
+    for (const candidate of candidates) {
+      byReason[this.eligibilityReason(candidate)] += 1;
+    }
+
+    const influencerCount = influencers.length;
+    const brandCount = brands.length;
+    const photographerCount = photographers.length;
     const totalDeleted = influencerCount + brandCount + photographerCount;
 
-    await this.appSettingsModel.findOneAndUpdate(
-      {},
-      {
-        $set: {
-          pendingUserAutoDeleteLastRunAt: new Date(),
-          pendingUserAutoDeleteLastRunCount: totalDeleted,
-          pendingUserAutoDeleteLastRunBy: triggeredBy,
-        },
-      },
-      { upsert: true },
-    );
+    if (!dryRun) {
+      const patch = {
+        $set: { status: "deleted", isDeleted: true, deletedAt: new Date() },
+      };
+      await Promise.all([
+        this.influencerModel.updateMany(filter, patch),
+        this.brandModel.updateMany(filter, patch),
+        this.photographerModel.updateMany(filter, patch),
+      ]);
 
-    this.logger.log(
-      `[PendingUserCleanup] Soft-deleted ${totalDeleted} user(s) older than ${retentionDays} day(s): influencers=${influencerCount}, brands=${brandCount}, photographers=${photographerCount}`,
-    );
+      await this.appSettingsModel.findOneAndUpdate(
+        {},
+        {
+          $set: {
+            pendingUserAutoDeleteLastRunAt: new Date(),
+            pendingUserAutoDeleteLastRunCount: totalDeleted,
+            pendingUserAutoDeleteLastRunBy: triggeredBy,
+          },
+        },
+        { upsert: true },
+      );
+
+      this.logger.log(
+        `[PendingUserCleanup] Soft-deleted ${totalDeleted} user(s) older than ${retentionDays} day(s): influencers=${influencerCount}, brands=${brandCount}, photographers=${photographerCount}, reasons=${JSON.stringify(byReason)}`,
+      );
+    }
 
     return {
       success: true,
       skipped: false,
+      dryRun,
       retentionDays,
       cutoff,
       triggeredBy,
@@ -345,6 +432,10 @@ export class PendingUserCleanupService {
       influencerCount,
       brandCount,
       photographerCount,
+      byReason,
+      users: candidates
+        .slice(0, 50)
+        .map((u) => this.normalizeReportUser(u, u.userType)),
     };
   }
 
