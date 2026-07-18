@@ -2345,6 +2345,7 @@ export class UsersService {
       status: "accepted",
       isDeleted: { $ne: true },
     };
+    this.applyPublicDiscoveryEligibilityFilter(photographerFilter);
     this.applyExcludedIds(
       photographerFilter,
       await this.publicProfileBlockedIds("Photographer"),
@@ -2356,6 +2357,7 @@ export class UsersService {
     };
 
     const brandFilter: any = { status: "accepted" };
+    this.applyBrandDiscoveryEligibilityFilter(brandFilter);
     this.applyExcludedIds(
       brandFilter,
       await this.publicProfileBlockedIds("Brand"),

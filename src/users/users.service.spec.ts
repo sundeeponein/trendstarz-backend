@@ -5,24 +5,33 @@ describe("UsersService profile update guards", () => {
   const makeService = (overrides?: {
     influencerModel?: any;
     brandModel?: any;
+    photographerModel?: any;
     campaignInviteModel?: any;
+    campaignModel?: any;
+    profileFlagModel?: any;
   }) => {
     const cloudinaryService = {} as any;
+    const firebaseAdminService = {} as any;
     const userModel = {} as any;
     const influencerModel = overrides?.influencerModel || ({} as any);
     const brandModel = overrides?.brandModel || ({} as any);
-    const photographerModel = {} as any;
+    const photographerModel = overrides?.photographerModel || ({} as any);
     const campaignInviteModel =
       overrides?.campaignInviteModel || ({} as any);
+    const campaignModel = overrides?.campaignModel || ({} as any);
+    const profileFlagModel = overrides?.profileFlagModel || ({} as any);
     const plansService = {} as any;
 
     return new UsersService(
       cloudinaryService,
+      firebaseAdminService,
       userModel,
       influencerModel,
       brandModel,
       photographerModel,
       campaignInviteModel,
+      campaignModel,
+      profileFlagModel,
       plansService,
     );
   };
@@ -173,6 +182,54 @@ describe("UsersService profile update guards", () => {
         isMobileVerified: false,
       }),
       { new: true },
+    );
+  });
+
+  it("counts only public-visible profiles in platform stats", async () => {
+    const influencerModel = {
+      countDocuments: jest.fn().mockResolvedValue(2),
+    };
+    const brandModel = {
+      countDocuments: jest.fn().mockResolvedValue(3),
+    };
+    const photographerModel = {
+      countDocuments: jest.fn().mockResolvedValue(4),
+    };
+    const campaignModel = {
+      countDocuments: jest.fn().mockResolvedValue(5),
+    };
+    const profileFlagModel = {
+      find: jest.fn().mockReturnValue({
+        select: jest.fn().mockReturnValue({
+          lean: jest.fn().mockResolvedValue([]),
+        }),
+      }),
+    };
+
+    const service = makeService({
+      influencerModel,
+      brandModel,
+      photographerModel,
+      campaignModel,
+      profileFlagModel,
+    });
+
+    await service.getPlatformStats();
+
+    expect(influencerModel.countDocuments).toHaveBeenCalledWith(
+      expect.objectContaining({
+        profileVisibility: { $nin: ["PRIVATE", "MEMBERS_ONLY"] },
+      }),
+    );
+    expect(brandModel.countDocuments).toHaveBeenCalledWith(
+      expect.objectContaining({
+        profileVisibility: { $nin: ["PRIVATE", "MEMBERS_ONLY"] },
+      }),
+    );
+    expect(photographerModel.countDocuments).toHaveBeenCalledWith(
+      expect.objectContaining({
+        profileVisibility: { $nin: ["PRIVATE", "MEMBERS_ONLY"] },
+      }),
     );
   });
 
