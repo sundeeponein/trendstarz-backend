@@ -885,6 +885,43 @@ export class ProfileVerificationService {
     );
   }
 
+  private buildPublicProfileUrl(profile: any, userType: ProfileUserType): string | null {
+    const siteBase = "https://trendstarz.in";
+    if (userType === "Brand") {
+      const slug = String(profile?.brandUsername || profile?.brandName || "").trim();
+      if (!slug) return null;
+      return `${siteBase}/brand/${encodeURIComponent(slug)}`;
+    }
+    const slug = String(profile?.username || "").trim();
+    if (!slug) return null;
+    const route = userType === "Photographer" ? "photographer" : "influencer";
+    return `${siteBase}/${route}/${encodeURIComponent(slug)}`;
+  }
+
+  private buildReferralLink(profile: any, userType: ProfileUserType): string | null {
+    const siteBase = "https://trendstarz.in";
+    const slugSource =
+      userType === "Brand"
+        ? String(profile?.brandUsername || profile?.brandName || "").trim()
+        : String(profile?.username || "").trim();
+    if (!slugSource) return null;
+    const route =
+      userType === "Brand"
+        ? "register-brand"
+        : userType === "Photographer"
+          ? "register-photographer"
+          : "register-influencer";
+    const campaign =
+      userType === "Brand"
+        ? "brand_reg"
+        : userType === "Photographer"
+          ? "photographer_reg"
+          : "influencer_reg";
+    const slug = slugSource.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "");
+    if (!slug) return null;
+    return `${siteBase}/${route}?utm_source=${encodeURIComponent(slug)}&utm_medium=social&utm_campaign=${campaign}`;
+  }
+
   async getDashboard(userId: string, role: any) {
     const { userType, profile } = await this.loadProfile(userId, role);
     await this.refreshAutomaticFlags(userId, userType, profile);
@@ -959,6 +996,9 @@ export class ProfileVerificationService {
       // verification call when false.
       profileVisibilityIsSet: !!profile?.profileVisibility,
       featuredInMarketing: !!profile?.featuredInMarketing,
+      phoneNumber: profile?.phoneNumber || "",
+      publicProfileUrl: this.buildPublicProfileUrl(profile, userType),
+      referralLink: this.buildReferralLink(profile, userType),
       homepageEligibility: this.buildHomepageEligibility(profile, flags, userType),
     };
   }

@@ -2410,9 +2410,9 @@ export class UsersService {
       photoField: "profileImages",
       requireSocialTier: true,
       viewerIsAuthenticated,
-      // Guests only see Premium profiles here — a registration incentive.
-      // Logged-in viewers see the full Public + Members-Only eligible set.
-      requirePremium: !viewerIsAuthenticated,
+      // Featured creators are available when the profile is Public, approved,
+      // complete, and Premium is active.
+      requirePremium: true,
     });
     this.applyExcludedIds(
       filter,
@@ -2446,7 +2446,7 @@ export class UsersService {
       photoField: "brandLogo",
       requireSocialTier: false,
       viewerIsAuthenticated,
-      requirePremium: !viewerIsAuthenticated,
+      requirePremium: true,
     });
     this.applyExcludedIds(filter, await this.publicProfileBlockedIds("Brand"));
     return fetchFeaturedProfilesByScore(
@@ -2948,8 +2948,8 @@ export class UsersService {
           premiumDuration as "1m" | "3m" | "1y",
           "admin",
         );
-        // Sync legacy premiumEnd to the subscription's actual endDate (which
-        // includes any bonus months) so isCurrentlyPremium() stays accurate.
+        // Sync legacy premiumEnd to the subscription's exact endDate so
+        // isCurrentlyPremium() stays accurate for admin-granted access.
         if (subscription?.endDate) {
           const syncUpdate = { premiumEnd: subscription.endDate };
           if (userType === "Brand") {

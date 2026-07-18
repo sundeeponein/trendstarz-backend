@@ -298,38 +298,43 @@ export class PlansService {
     else if (duration === "1y") end.setFullYear(end.getFullYear() + 1);
     const billingCycle = this.durationToBillingCycle(duration);
 
-    // Admin-configurable bonus duration (e.g. "pay 1 month, get 2" promos),
-    // set per-cycle in Admin → Plans → Pricing & Discounts. Same mechanism as
-    // the existing discount offers — no separate fee/plan type needed. This
-    // "standing" bonus applies to every purchase of this cycle, regardless of
-    // Founder Offer eligibility.
-    const cycleSuffix =
-      billingCycle === "monthly"
-        ? "Monthly"
-        : billingCycle === "quarterly"
-          ? "Quarterly"
-          : "Yearly";
-    const bonusMonths = Number(
-      (plan.offers || []).find((o: any) => o.key === `bonusMonths${cycleSuffix}`)
-        ?.value || 0,
-    );
-    if (bonusMonths > 0) end.setMonth(end.getMonth() + bonusMonths);
-
-    // Founder Offer bonus stacks on top of the standing bonus above, but only
-    // when the user is still eligible at approval time (Admin → Plans →
-    // First-Login Founder Offer Popup → audience checkboxes + window days).
-    const founderBonusMonths = Number(
-      (plan.offers || []).find(
-        (o: any) => o.key === `founderBonusMonths${cycleSuffix}`,
-      )?.value || 0,
-    );
-    if (founderBonusMonths > 0) {
-      const eligible = await this.isEligibleForFounderOffer(
-        userId,
-        this.normalizeUserType(userType),
-        plan,
+    // Admin-granted premium should use the exact requested duration and not
+    // inherit promo/offer bonus months from the plan. Normal purchases still
+    // keep the existing bonus logic.
+    if (source !== "admin") {
+      // Admin-configurable bonus duration (e.g. "pay 1 month, get 2" promos),
+      // set per-cycle in Admin → Plans → Pricing & Discounts. Same mechanism as
+      // the existing discount offers — no separate fee/plan type needed. This
+      // "standing" bonus applies to every purchase of this cycle, regardless of
+      // Founder Offer eligibility.
+      const cycleSuffix =
+        billingCycle === "monthly"
+          ? "Monthly"
+          : billingCycle === "quarterly"
+            ? "Quarterly"
+            : "Yearly";
+      const bonusMonths = Number(
+        (plan.offers || []).find((o: any) => o.key === `bonusMonths${cycleSuffix}`)
+          ?.value || 0,
       );
-      if (eligible) end.setMonth(end.getMonth() + founderBonusMonths);
+      if (bonusMonths > 0) end.setMonth(end.getMonth() + bonusMonths);
+
+      // Founder Offer bonus stacks on top of the standing bonus above, but only
+      // when the user is still eligible at approval time (Admin → Plans →
+      // First-Login Founder Offer Popup → audience checkboxes + window days).
+      const founderBonusMonths = Number(
+        (plan.offers || []).find(
+          (o: any) => o.key === `founderBonusMonths${cycleSuffix}`,
+        )?.value || 0,
+      );
+      if (founderBonusMonths > 0) {
+        const eligible = await this.isEligibleForFounderOffer(
+          userId,
+          this.normalizeUserType(userType),
+          plan,
+        );
+        if (eligible) end.setMonth(end.getMonth() + founderBonusMonths);
+      }
     }
 
     const subscription = await this.subscriptionModel.create({

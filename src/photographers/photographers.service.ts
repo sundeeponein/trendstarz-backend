@@ -187,7 +187,7 @@ export class PhotographersService {
       photoField: "profileImages",
       requireSocialTier: true,
       viewerIsAuthenticated,
-      requirePremium: !viewerIsAuthenticated,
+      requirePremium: true,
     });
     const blocked = await this.blockedPhotographerIds();
     if (blocked.length) {
