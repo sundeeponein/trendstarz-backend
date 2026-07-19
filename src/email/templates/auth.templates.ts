@@ -90,12 +90,12 @@ export function resetPasswordTemplate(resetUrl: string): EmailTemplate {
       btn("Reset Password", resetUrl, BRAND_PURPLE) +
       fallbackLink(resetUrl) +
       p(
-        "This link expires in <strong>1 hour</strong>. If you did not request a password reset, you can safely ignore this email.",
+        "This link expires in <strong>1 hour</strong>. If you requested more than one reset email, use only the most recent link. If you did not request a password reset, you can safely ignore this email.",
         `color:${TEXT_MUTED};font-size:13px;`,
       ),
   );
 
-  const text = `Reset your Trendstarz password:\n${resetUrl}\n\nThis link expires in 1 hour.\nIf you did not request this, you can safely ignore this email.`;
+  const text = `Reset your Trendstarz password:\n${resetUrl}\n\nThis link expires in 1 hour. If you requested more than one reset email, use only the most recent link.\nIf you did not request this, you can safely ignore this email.`;
 
   return { subject, html, text };
 }

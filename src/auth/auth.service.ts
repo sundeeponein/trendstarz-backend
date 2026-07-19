@@ -464,11 +464,11 @@ export class AuthService {
       process.env.FRONTEND_URL || "https://www.trendstarz.in"
     ).replace(/\/$/, "");
     const resetUrl = `${frontendBase}/reset-password?token=${resetToken}`;
-    const { subject, html, text } = resetPasswordTemplate(resetUrl);
-    await sendAppEmail({ to: user.email, subject, html, text });
     user.resetToken = resetTokenHash;
     user.resetTokenExpires = Date.now() + 1000 * 60 * 60; // 1 hour expiry
     await user.save();
+    const { subject, html, text } = resetPasswordTemplate(resetUrl);
+    await sendAppEmail({ to: user.email, subject, html, text });
   }
 
   async validateResetToken(token: string): Promise<boolean> {

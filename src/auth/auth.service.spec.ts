@@ -5,6 +5,7 @@ import { AuthService } from "./auth.service";
 import * as bcrypt from "bcryptjs";
 import { FirebaseAdminService } from "../utils/firebase-admin.service";
 import { CloudinaryService } from "../cloudinary.service";
+import { WhatsAppService } from "../whatsapp/whatsapp.service";
 
 // Mock external dependencies
 jest.mock("bcryptjs");
@@ -110,6 +111,11 @@ describe("AuthService", () => {
             findOneAndUpdate: jest.fn().mockResolvedValue({ seq: 1 }),
           },
         },
+        { provide: getModelToken("TrackingLink"), useValue: createMockModel() },
+        {
+          provide: getModelToken("LinkConversion"),
+          useValue: createMockModel(),
+        },
         {
           provide: getModelToken("AppSettings"),
           useValue: {
@@ -134,6 +140,13 @@ describe("AuthService", () => {
           provide: CloudinaryService,
           useValue: {
             relocateAsset: jest.fn().mockImplementation((asset) => Promise.resolve(asset)),
+          },
+        },
+        {
+          provide: WhatsAppService,
+          useValue: {
+            sendOtp: jest.fn(),
+            sendCustomTemplateMessage: jest.fn(),
           },
         },
       ],
@@ -289,6 +302,9 @@ describe("AuthService", () => {
       userModel.findOne.mockResolvedValue(mockUser);
       await service.forgotPassword("user@test.com");
       expect(mockUser.save).toHaveBeenCalled();
+      expect(mockUser.save.mock.invocationCallOrder[0]).toBeLessThan(
+        (sendAppEmail as jest.Mock).mock.invocationCallOrder[0],
+      );
       expect(mockUser.resetToken).toBeTruthy();
       expect(sendAppEmail).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -400,6 +416,7 @@ describe("AuthService", () => {
       userModel.findOne.mockResolvedValue({
         ...mockAdmin,
         isEmailVerified: false,
+        save: jest.fn().mockResolvedValue(undefined),
       });
       const result = await service.sendEmailVerificationLink("admin@test.com");
       expect(result.message).toBe("Verification email sent.");
