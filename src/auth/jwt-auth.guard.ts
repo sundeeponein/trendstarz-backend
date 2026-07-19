@@ -16,6 +16,14 @@ interface AccountStatusEntry {
   expiresAt: number;
 }
 
+interface AccountStatusGuardMetrics {
+  checksFailed: number;
+  timeouts: number;
+  staleFallbackUsed: number;
+  failOpenWithoutCache: number;
+  lastFailureAt: string | null;
+}
+
 // Deliberately NOT injected via @InjectModel: JwtAuthGuard is applied via
 // bare `@UseGuards(JwtAuthGuard)` across dozens of controllers/modules with
 // no single owning module, so constructor-injected Mongoose models would
@@ -24,6 +32,7 @@ interface AccountStatusEntry {
 // default connection — see MongooseModule.forRoot in app.module.ts) avoids
 // that entirely.
 const ACCOUNT_STATUS_CACHE_TTL_MS = 60 * 1000;
+const ACCOUNT_STATUS_STALE_GRACE_MS = 10 * 60 * 1000;
 const accountStatusCache = new Map<string, AccountStatusEntry>();
 
 // Mongoose's default command-buffering timeout is 10s (serverSelectionTimeoutMS
@@ -32,6 +41,15 @@ const accountStatusCache = new Map<string, AccountStatusEntry>();
 // canActivate's fail-open catch. Bound our own wait far below that so a Mongo
 // blip degrades to "a bit slower," not "every request hangs for 10 seconds."
 const ACCOUNT_STATUS_QUERY_TIMEOUT_MS = 1500;
+const ACCOUNT_STATUS_ERROR_LOG_THROTTLE_MS = 60 * 1000;
+let lastAccountStatusErrorLogAt = 0;
+const accountStatusGuardMetrics: AccountStatusGuardMetrics = {
+  checksFailed: 0,
+  timeouts: 0,
+  staleFallbackUsed: 0,
+  failOpenWithoutCache: 0,
+  lastFailureAt: null,
+};
 
 const ROLE_MODEL_NAME: Record<string, string> = {
   influencer: "Influencer",
@@ -71,7 +89,12 @@ async function getAccountStatus(
   if (!model) return null;
 
   const doc: any = await withTimeout(
-    model.findById(userId).select("isDeleted status").lean().exec(),
+    model
+      .findById(userId)
+      .select("isDeleted status")
+      .maxTimeMS(ACCOUNT_STATUS_QUERY_TIMEOUT_MS)
+      .lean()
+      .exec(),
     ACCOUNT_STATUS_QUERY_TIMEOUT_MS,
   );
   if (!doc) return null;
@@ -85,11 +108,45 @@ async function getAccountStatus(
   return entry;
 }
 
+function getStaleAccountStatus(userId: string): AccountStatusEntry | null {
+  const cached = accountStatusCache.get(userId);
+  if (!cached) return null;
+  if (Date.now() - cached.expiresAt > ACCOUNT_STATUS_STALE_GRACE_MS) {
+    return null;
+  }
+  return cached;
+}
+
+function markAccountStatusGuardFailure(err: unknown): void {
+  accountStatusGuardMetrics.checksFailed += 1;
+  accountStatusGuardMetrics.lastFailureAt = new Date().toISOString();
+  const message = err instanceof Error ? err.message : String(err || "");
+  if (/timed out/i.test(message)) {
+    accountStatusGuardMetrics.timeouts += 1;
+  }
+}
+
+function logAccountStatusErrorThrottled(err: unknown): void {
+  const now = Date.now();
+  if (now - lastAccountStatusErrorLogAt < ACCOUNT_STATUS_ERROR_LOG_THROTTLE_MS) {
+    return;
+  }
+  lastAccountStatusErrorLogAt = now;
+  console.error("JwtAuthGuard account-status check failed:", {
+    error: err,
+    metrics: { ...accountStatusGuardMetrics },
+  });
+}
+
 /** Called by UsersService whenever isDeleted/status changes, so a deletion
  * or restore takes effect on the very next request instead of waiting out
  * the cache TTL. */
 export function invalidateAccountStatusCache(userId: string): void {
   accountStatusCache.delete(String(userId));
+}
+
+export function getJwtAuthGuardAccountStatusMetrics(): AccountStatusGuardMetrics {
+  return { ...accountStatusGuardMetrics };
 }
 
 @Injectable()
@@ -122,8 +179,15 @@ export class JwtAuthGuard implements CanActivate {
     } catch (err) {
       // Fail OPEN on a transient DB hiccup — a status-check outage must
       // never turn into an app-wide authentication outage.
-      console.error("JwtAuthGuard account-status check failed:", err);
-      return true;
+      markAccountStatusGuardFailure(err);
+      logAccountStatusErrorThrottled(err);
+      account = getStaleAccountStatus(String(decoded.userId));
+      if (account) {
+        accountStatusGuardMetrics.staleFallbackUsed += 1;
+      } else {
+        accountStatusGuardMetrics.failOpenWithoutCache += 1;
+        return true;
+      }
     }
 
     if (account?.isDeleted) {
