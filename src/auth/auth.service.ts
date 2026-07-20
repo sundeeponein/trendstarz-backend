@@ -2173,6 +2173,9 @@ export class AuthService {
       showRegisterBrandLink: settings?.showRegisterBrandLink !== false,
       showRegisterPhotographerLink:
         settings?.showRegisterPhotographerLink !== false,
+      showInfluencerSearchTab: settings?.showInfluencerSearchTab !== false,
+      showPhotographerSearchTab:
+        settings?.showPhotographerSearchTab !== false,
     };
   }
 

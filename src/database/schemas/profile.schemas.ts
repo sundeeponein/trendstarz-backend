@@ -1017,6 +1017,9 @@ export const AppSettingsSchema = new Schema({
   showRegisterInfluencerLink: { type: Boolean, default: true },
   showRegisterBrandLink: { type: Boolean, default: true },
   showRegisterPhotographerLink: { type: Boolean, default: true },
+  // Search page tab visibility controls (admin-managed)
+  showInfluencerSearchTab: { type: Boolean, default: true },
+  showPhotographerSearchTab: { type: Boolean, default: true },
   campaignTypeConfigs: {
     type: [Schema.Types.Mixed],
     default: () => [],

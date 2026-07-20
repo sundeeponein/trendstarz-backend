@@ -1,4 +1,3 @@
-import { BadRequestException } from "@nestjs/common";
 import { PhotographersService } from "./photographers.service";
 
 describe("PhotographersService profile update guards", () => {
@@ -9,9 +8,11 @@ describe("PhotographersService profile update guards", () => {
       {} as any,
       {} as any,
       {} as any,
+      {} as any,
+      {} as any,
     );
 
-  it("blocks phone changes after mobile verification", async () => {
+  it("resets mobile verification when verified phone is changed", async () => {
     const photographerModel = {
       findById: jest.fn().mockReturnValue({
         select: jest.fn().mockReturnValue({
@@ -22,15 +23,26 @@ describe("PhotographersService profile update guards", () => {
           }),
         }),
       }),
-      findByIdAndUpdate: jest.fn(),
+      findByIdAndUpdate: jest.fn().mockReturnValue({
+        lean: jest.fn().mockResolvedValue({ _id: "photo-1" }),
+      }),
     };
 
     const service = makeService(photographerModel);
 
-    await expect(
-      service.updateProfile("photo-1", { phoneNumber: "9999999999" }),
-    ).rejects.toBeInstanceOf(BadRequestException);
-    expect(photographerModel.findByIdAndUpdate).not.toHaveBeenCalled();
+    await service.updateProfile("photo-1", { phoneNumber: "9999999999" });
+
+    expect(photographerModel.findByIdAndUpdate).toHaveBeenCalledWith(
+      "photo-1",
+      {
+        $set: expect.objectContaining({
+          phoneNumber: "9999999999",
+          isMobileVerified: false,
+          previousVerifiedMobile: "9908763880",
+        }),
+      },
+      { new: true },
+    );
   });
 
   it("resets email verification when email changes", async () => {
@@ -109,6 +121,8 @@ describe("PhotographersService profile update guards", () => {
     const service = new PhotographersService(
       {} as any,
       campaignInviteModel as any,
+      {} as any,
+      {} as any,
       {} as any,
       {} as any,
       {} as any,

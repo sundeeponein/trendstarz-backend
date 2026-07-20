@@ -427,21 +427,36 @@ export class UsersController {
     @Query("influencerLimit") influencerLimit?: string,
     @Query("brandLimit") brandLimit?: string,
     @Query("photographerLimit") photographerLimit?: string,
+    @Query("viewerState") viewerState?: string,
+    @Query("viewerDistrict") viewerDistrict?: string,
+    @Query("viewerCountry") viewerCountry?: string,
   ) {
     const viewerId = extractOptionalViewerId(req);
     const viewerIsAuthenticated = !!viewerId;
+    const viewerLocation = await this.usersService.resolveDiscoveryViewerLocation(
+      viewerId,
+      {
+        state: viewerState,
+        district: viewerDistrict,
+        country: viewerCountry,
+        source: viewerIsAuthenticated ? "registered_profile" : "country_fallback",
+      },
+    );
     const [influencers, brands, photographers] = await Promise.all([
       this.usersService.getFeaturedInfluencers(
         Number(influencerLimit) || 8,
         viewerIsAuthenticated,
+        viewerLocation,
       ),
       this.usersService.getFeaturedBrands(
         Number(brandLimit) || 6,
         viewerIsAuthenticated,
+        viewerLocation,
       ),
       this.photographersService.getFeaturedPhotographers(
         Number(photographerLimit) || 6,
         viewerIsAuthenticated,
+        viewerLocation,
       ),
     ]);
     return { influencers, brands, photographers };
@@ -453,10 +468,25 @@ export class UsersController {
    * used by guests too.
    */
   @Get("hero-showcase-images")
-  async getHeroShowcaseImages() {
+  async getHeroShowcaseImages(
+    @Req() req: any,
+    @Query("viewerState") viewerState?: string,
+    @Query("viewerDistrict") viewerDistrict?: string,
+    @Query("viewerCountry") viewerCountry?: string,
+  ) {
+    const viewerId = extractOptionalViewerId(req);
+    const viewerLocation = await this.usersService.resolveDiscoveryViewerLocation(
+      viewerId,
+      {
+        state: viewerState,
+        district: viewerDistrict,
+        country: viewerCountry,
+        source: viewerId ? "registered_profile" : "country_fallback",
+      },
+    );
     const [{ influencer, brand }, photographer] = await Promise.all([
-      this.usersService.getHeroShowcaseInfluencerAndBrandImages(),
-      this.photographersService.getHeroShowcasePhotographerImage(),
+      this.usersService.getHeroShowcaseInfluencerAndBrandImages(viewerLocation),
+      this.photographersService.getHeroShowcasePhotographerImage(viewerLocation),
     ]);
     return { influencer, brand, photographer };
   }
@@ -471,6 +501,7 @@ export class UsersController {
     @Query("creatorType") creatorType?: string,
     @Query("viewerState") viewerState?: string,
     @Query("viewerDistrict") viewerDistrict?: string,
+    @Query("viewerCountry") viewerCountry?: string,
     @Query("smartLocationPriority") smartLocationPriority?: string,
     @Query("category") category?: string,
     @Query("q") q?: string,
@@ -507,6 +538,7 @@ export class UsersController {
         creatorType,
         viewerState,
         viewerDistrict,
+        viewerCountry,
         smartLocationPriority: smartPriority,
         campaignEligible: campaignEligibleOnly,
         category,

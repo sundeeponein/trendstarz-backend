@@ -20,9 +20,13 @@ import { withCloudinaryHeroTransform } from "../utils/cloudinary-transform.util"
 import { invalidateAccountStatusCache } from "../auth/jwt-auth.guard";
 import { consumeOtpVerificationToken } from "../otp/otp.controller";
 import {
+  applyDiscoverableProfileFilter,
   applySearchEligibilityFilter,
   applyApprovedEligibilityFilter,
+  buildSearchRankingStages,
   fetchFeaturedProfilesByScore,
+  normalizeLocationValue,
+  ViewerLocationContext,
 } from "../utils/profile-eligibility.util";
 
 /** Self-service "Delete Account" grace period — see requestSelfDeletion. */
@@ -98,17 +102,19 @@ const PUBLIC_PROFILE_VISIBILITY_BLOCK_FLAG_CODES = [
 
 @Injectable()
 export class UsersService {
-  // TTL cache for the public homepage hero-showcase-images endpoint — avoids
-  // re-running the scored featured-profile aggregation on every homepage
-  // load. Single-process in-memory cache (same pattern as
-  // CampaignInvitesService.attentionCache); fine for this traffic level.
-  private heroShowcaseCache: {
-    value: {
-      influencer: { url: string; alt: string } | null;
-      brand: { url: string; alt: string } | null;
-    };
-    expiresAt: number;
-  } | null = null;
+  // TTL cache for the public homepage hero-showcase-images endpoint. Cache is
+  // keyed by viewer location bucket so location-aware ranking does not leak
+  // one region's recommendation into another region's response.
+  private heroShowcaseCache = new Map<
+    string,
+    {
+      value: {
+        influencer: { url: string; alt: string } | null;
+        brand: { url: string; alt: string } | null;
+      };
+      expiresAt: number;
+    }
+  >();
   private static readonly HERO_SHOWCASE_CACHE_TTL_MS = 10 * 60 * 1000;
 
   private normalizePhone(value: any): string {
@@ -972,6 +978,131 @@ export class UsersService {
     });
   }
 
+  private selectStringToProjection(fields: string): Record<string, 1> {
+    const projection: Record<string, 1> = { _id: 1 };
+    for (const field of String(fields || "").split(/\s+/).filter(Boolean)) {
+      projection[field] = 1;
+    }
+    return projection;
+  }
+
+  private async resolveViewerLocationContext(
+    viewerId?: string | null,
+    hints?: Partial<ViewerLocationContext>,
+  ): Promise<ViewerLocationContext> {
+    const fallbackCountry =
+      normalizeLocationValue(process.env.DISCOVERY_DEFAULT_COUNTRY || "india") ||
+      "india";
+
+    if (!viewerId) {
+      return {
+        district: String(hints?.district || "").trim(),
+        state: String(hints?.state || "").trim(),
+        country: String(hints?.country || fallbackCountry).trim(),
+        source: hints?.source || (hints?.country ? "country_fallback" : "none"),
+      };
+    }
+
+    const [admin, influencer, brand, photographer] = (await Promise.all([
+      this.userModel.findById(viewerId).select("location").lean().catch(() => null),
+      this.influencerModel.findById(viewerId).select("location").lean().catch(() => null),
+      this.brandModel.findById(viewerId).select("location").lean().catch(() => null),
+      this.photographerModel.findById(viewerId).select("location").lean().catch(() => null),
+    ])) as any[];
+    const location =
+      admin?.location ||
+      influencer?.location ||
+      brand?.location ||
+      photographer?.location ||
+      {};
+
+    return {
+      district: String(location?.district || hints?.district || "").trim(),
+      state: String(location?.state || hints?.state || "").trim(),
+      country: String(location?.country || hints?.country || fallbackCountry).trim(),
+      source: "registered_profile",
+    };
+  }
+
+  async resolveDiscoveryViewerLocation(
+    viewerId?: string | null,
+    hints?: Partial<ViewerLocationContext>,
+  ): Promise<ViewerLocationContext> {
+    return this.resolveViewerLocationContext(viewerId, hints);
+  }
+
+  private activityTimestamp(user: any): number {
+    return (
+      new Date(
+        user?.lastLoginAt || user?.lastOpenedAt || user?.updatedAt || user?.createdAt || 0,
+      ).getTime() || 0
+    );
+  }
+
+  private getLocationPriorityScore(
+    user: any,
+    viewer: ViewerLocationContext,
+  ): number {
+    const viewerDistrict = normalizeLocationValue(viewer?.district);
+    const viewerState = normalizeLocationValue(viewer?.state);
+    const viewerCountry =
+      normalizeLocationValue(viewer?.country) ||
+      normalizeLocationValue(process.env.DISCOVERY_DEFAULT_COUNTRY || "india");
+
+    const userDistrict = normalizeLocationValue(user?.location?.district);
+    const userState = normalizeLocationValue(user?.location?.state);
+    const userCountry =
+      normalizeLocationValue(user?.location?.country) ||
+      normalizeLocationValue(process.env.DISCOVERY_DEFAULT_COUNTRY || "india");
+
+    if (
+      viewerDistrict &&
+      viewerState &&
+      userDistrict &&
+      userState &&
+      viewerDistrict === userDistrict &&
+      viewerState === userState
+    ) {
+      return 4;
+    }
+    if (viewerState && userState && viewerState === userState) return 3;
+    if (viewerCountry && userCountry && viewerCountry === userCountry) return 2;
+    return 1;
+  }
+
+  private compareSearchRank(
+    a: any,
+    b: any,
+    viewer: ViewerLocationContext,
+  ): number {
+    const locationDiff =
+      this.getLocationPriorityScore(b, viewer) -
+      this.getLocationPriorityScore(a, viewer);
+    if (locationDiff !== 0) return locationDiff;
+
+    const premiumDiff =
+      Number(this.isCurrentlyPremium(b)) - Number(this.isCurrentlyPremium(a));
+    if (premiumDiff !== 0) return premiumDiff;
+
+    const completionDiff =
+      Number(b?.profileCompletion || 0) - Number(a?.profileCompletion || 0);
+    if (completionDiff !== 0) return completionDiff;
+
+    const activityDiff = this.activityTimestamp(b) - this.activityTimestamp(a);
+    if (activityDiff !== 0) return activityDiff;
+
+    const followersDiff =
+      this.extractTopFollowersCount(b) - this.extractTopFollowersCount(a);
+    if (followersDiff !== 0) return followersDiff;
+
+    const updatedDiff =
+      new Date(b?.updatedAt || 0).getTime() -
+      new Date(a?.updatedAt || 0).getTime();
+    if (updatedDiff !== 0) return updatedDiff;
+
+    return Math.random() - 0.5;
+  }
+
   private visibleInfluencerProfileImages(
     profileImages: any,
     hideGallery: boolean,
@@ -1750,6 +1881,7 @@ export class UsersService {
       creatorType?: string;
       viewerState?: string;
       viewerDistrict?: string;
+      viewerCountry?: string;
       smartLocationPriority?: boolean;
       campaignEligible?: boolean;
       category?: string;
@@ -1762,18 +1894,26 @@ export class UsersService {
     const creatorTypeFilter = String(options?.creatorType || "").trim();
     const viewerState = String(options?.viewerState || "").trim();
     const viewerDistrict = String(options?.viewerDistrict || "").trim();
+    const viewerCountry = String(options?.viewerCountry || "").trim();
     const categoryFilter = String(options?.category || "").trim();
     const searchQuery = String(options?.q || "").trim();
     const campaignEligibleOnly = !!options?.campaignEligible;
     const hasManualLocationFilter = !!stateFilter || !!districtFilter;
-    const useSmartLocationPriority =
-      !!options?.smartLocationPriority && !hasManualLocationFilter;
+    const viewerContext = await this.resolveViewerLocationContext(viewerId, {
+      state: viewerState,
+      district: viewerDistrict,
+      country: viewerCountry,
+      source: viewerId ? "registered_profile" : undefined,
+    });
+    const useSmartLocationPriority = !hasManualLocationFilter;
     const smartLocationMeta = {
       smartLocationPriorityApplied: useSmartLocationPriority,
       manualLocationFilterApplied: hasManualLocationFilter,
       smartLocationContext: {
-        viewerState: viewerState || null,
-        viewerDistrict: viewerDistrict || null,
+        viewerState: viewerContext.state || null,
+        viewerDistrict: viewerContext.district || null,
+        viewerCountry: viewerContext.country || null,
+        source: viewerContext.source || "none",
       },
     };
 
@@ -1800,7 +1940,11 @@ export class UsersService {
         await this.campaignProfileBlockedIds("Influencer"),
       );
     } else {
-      this.applyPublicDiscoveryEligibilityFilter(baseFilter, !!viewerId);
+      applyDiscoverableProfileFilter(baseFilter, {
+        photoField: "profileImages",
+        requireSocialTier: true,
+        viewerIsAuthenticated: !!viewerId,
+      });
       this.applyExcludedIds(
         baseFilter,
         await this.publicProfileBlockedIds("Influencer"),
@@ -1856,48 +2000,24 @@ export class UsersService {
     if (lite) {
       const selection =
         "name username profileImage profileImages categories influencerCategory creatorTypes verificationStatus verifiedByTrendStarz location socialMedia collaborationAvailability adminTags isPremium premiumEnd promotionalPrice dateOfBirth firstRegisteredAt createdAt lastLoginAt";
-      const [rows, total] = useSmartLocationPriority
-        ? await Promise.all([
-            this.influencerModel.find(baseFilter).select(selection).lean(),
-            this.influencerModel.countDocuments(baseFilter),
+      const projection = this.selectStringToProjection(selection);
+      const [pagedRows, total] = await Promise.all([
+        this.influencerModel
+          .aggregate([
+            { $match: baseFilter },
+            ...buildSearchRankingStages(viewerContext, {
+              invitesCollection: "campaigninvites",
+              inviteMatchField: "influencerId",
+              reviewsCollection: "reviews",
+              reviewTargetType: "influencer",
+            }),
+            { $skip: skip },
+            { $limit: limit },
+            { $project: projection },
           ])
-        : await Promise.all([
-            this.influencerModel
-              .find(baseFilter)
-              .select(selection)
-              .sort({ updatedAt: -1 })
-              .skip(skip)
-              .limit(limit)
-              .lean(),
-            this.influencerModel.countDocuments(baseFilter),
-          ]);
-
-      const rankedRows = useSmartLocationPriority
-        ? [...(rows || [])].sort((a: any, b: any) => {
-            const scoreA = this.getLocationPriorityScore(
-              a,
-              viewerState,
-              viewerDistrict,
-            );
-            const scoreB = this.getLocationPriorityScore(
-              b,
-              viewerState,
-              viewerDistrict,
-            );
-            if (scoreA !== scoreB) return scoreB - scoreA;
-            const followersA = this.extractTopFollowersCount(a);
-            const followersB = this.extractTopFollowersCount(b);
-            if (followersA !== followersB) return followersB - followersA;
-            return (
-              new Date(b?.updatedAt || 0).getTime() -
-              new Date(a?.updatedAt || 0).getTime()
-            );
-          })
-        : rows || [];
-
-      const pagedRows = useSmartLocationPriority
-        ? rankedRows.slice(skip, skip + limit)
-        : rankedRows;
+          .exec(),
+        this.influencerModel.countDocuments(baseFilter),
+      ]);
 
       const data = await Promise.all(
         (pagedRows || []).map(async (inf: any) => {
@@ -1975,28 +2095,7 @@ export class UsersService {
       return inviteCounts[idx] < cap;
     });
 
-    if (useSmartLocationPriority) {
-      eligible.sort((a: any, b: any) => {
-        const scoreA = this.getLocationPriorityScore(
-          a,
-          viewerState,
-          viewerDistrict,
-        );
-        const scoreB = this.getLocationPriorityScore(
-          b,
-          viewerState,
-          viewerDistrict,
-        );
-        if (scoreA !== scoreB) return scoreB - scoreA;
-        const followersA = this.extractTopFollowersCount(a);
-        const followersB = this.extractTopFollowersCount(b);
-        if (followersA !== followersB) return followersB - followersA;
-        return (
-          new Date(b?.updatedAt || 0).getTime() -
-          new Date(a?.updatedAt || 0).getTime()
-        );
-      });
-    }
+    eligible.sort((a: any, b: any) => this.compareSearchRank(a, b, viewerContext));
 
     const total = eligible.length;
     const pageItems = eligible.slice(skip, skip + limit);
@@ -2057,30 +2156,6 @@ export class UsersService {
     if (age <= 34) return "25-34";
     if (age <= 44) return "35-44";
     return "45+";
-  }
-
-  private normalizeLocationValue(value: unknown): string {
-    return String(value || "")
-      .trim()
-      .toLowerCase();
-  }
-
-  private getLocationPriorityScore(
-    user: any,
-    viewerStateRaw?: string,
-    viewerDistrictRaw?: string,
-  ): number {
-    const viewerState = this.normalizeLocationValue(viewerStateRaw);
-    const viewerDistrict = this.normalizeLocationValue(viewerDistrictRaw);
-    if (!viewerState) return 0;
-
-    const userState = this.normalizeLocationValue(user?.location?.state);
-    const userDistrict = this.normalizeLocationValue(user?.location?.district);
-
-    if (viewerDistrict && userDistrict && viewerDistrict === userDistrict)
-      return 100;
-    if (userState && viewerState === userState) return 70;
-    return 30;
   }
 
   private extractTopFollowersCount(user: any): number {
@@ -2404,7 +2479,11 @@ export class UsersService {
     "brandName brandUsername brandLogo categories isPremium promotionalPrice verificationStatus verifiedByTrendStarz location adminTags";
 
   /** Eligible-only, weighted-score selection for the Welcome Page "Featured Influencers" section. */
-  async getFeaturedInfluencers(limit = 8, viewerIsAuthenticated = false) {
+  async getFeaturedInfluencers(
+    limit = 8,
+    viewerIsAuthenticated = false,
+    viewerLocation?: ViewerLocationContext,
+  ) {
     const filter: any = {};
     applyApprovedEligibilityFilter(filter, {
       photoField: "profileImages",
@@ -2436,11 +2515,16 @@ export class UsersService {
         dateField: "updatedAt",
         windowDays: 30,
       },
+      viewerLocation,
     );
   }
 
   /** Eligible-only, weighted-score selection for the Welcome Page "Featured Brands" section. */
-  async getFeaturedBrands(limit = 6, viewerIsAuthenticated = false) {
+  async getFeaturedBrands(
+    limit = 6,
+    viewerIsAuthenticated = false,
+    viewerLocation?: ViewerLocationContext,
+  ) {
     const filter: any = {};
     applyApprovedEligibilityFilter(filter, {
       photoField: "brandLogo",
@@ -2461,6 +2545,7 @@ export class UsersService {
         dateField: "createdAt",
         windowDays: 60,
       },
+      viewerLocation,
     );
   }
 
@@ -2471,11 +2556,18 @@ export class UsersService {
    * premium/verified is not sufficient to show someone's photo publicly.
    * See setMarketingConsent for the opt-in toggle.
    */
-  async getHeroShowcaseInfluencerAndBrandImages(): Promise<{
+  async getHeroShowcaseInfluencerAndBrandImages(
+    viewerLocation?: ViewerLocationContext,
+  ): Promise<{
     influencer: { url: string; alt: string } | null;
     brand: { url: string; alt: string } | null;
   }> {
-    const cached = this.heroShowcaseCache;
+    const cacheKey = [
+      normalizeLocationValue(viewerLocation?.district),
+      normalizeLocationValue(viewerLocation?.state),
+      normalizeLocationValue(viewerLocation?.country),
+    ].join("|");
+    const cached = this.heroShowcaseCache.get(cacheKey);
     if (cached && cached.expiresAt > Date.now()) {
       return cached.value;
     }
@@ -2521,6 +2613,7 @@ export class UsersService {
           dateField: "updatedAt",
           windowDays: 30,
         },
+        viewerLocation,
       ),
       fetchFeaturedProfilesByScore(
         this.brandModel,
@@ -2534,6 +2627,7 @@ export class UsersService {
           dateField: "createdAt",
           windowDays: 60,
         },
+        viewerLocation,
       ),
     ]);
 
@@ -2555,10 +2649,10 @@ export class UsersService {
         : null,
     };
 
-    this.heroShowcaseCache = {
+    this.heroShowcaseCache.set(cacheKey, {
       value,
       expiresAt: Date.now() + UsersService.HERO_SHOWCASE_CACHE_TTL_MS,
-    };
+    });
     return value;
   }
 

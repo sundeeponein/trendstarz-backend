@@ -217,6 +217,7 @@ export class PhotographersController {
       limit?: string;
       viewerState?: string;
       viewerDistrict?: string;
+      viewerCountry?: string;
       smartLocationPriority?: string;
       countSearch?: string;
       countReason?: string;
@@ -234,9 +235,11 @@ export class PhotographersController {
       skill: query.skill,
       location: query.location,
       keyword: query.keyword,
+      page: Number(query.page) || 1,
       limit: Number(query.limit) || 60,
       viewerState: query.viewerState,
       viewerDistrict: query.viewerDistrict,
+      viewerCountry: query.viewerCountry,
       smartLocationPriority: smartPriority,
       viewerIsAuthenticated: !!viewerId,
     });

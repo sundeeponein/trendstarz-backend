@@ -14,9 +14,13 @@ import {
 } from "../utils/profile-selection-limits.util";
 import { normalizeSocialMediaList } from "../utils/social-handle.util";
 import {
+  applyDiscoverableProfileFilter,
   applySearchEligibilityFilter,
   applyApprovedEligibilityFilter,
+  buildSearchRankingStages,
   fetchFeaturedProfilesByScore,
+  normalizeLocationValue,
+  ViewerLocationContext,
 } from "../utils/profile-eligibility.util";
 import { withCloudinaryHeroTransform } from "../utils/cloudinary-transform.util";
 
@@ -70,12 +74,11 @@ const FEATURED_PHOTOGRAPHER_FIELDS =
 
 @Injectable()
 export class PhotographersService {
-  // TTL cache for the public homepage hero-showcase-images endpoint — see
-  // matching cache on UsersService.getHeroShowcaseInfluencerAndBrandImages.
-  private heroShowcaseCache: {
-    value: { url: string; alt: string } | null;
-    expiresAt: number;
-  } | null = null;
+  // TTL cache keyed by viewer location bucket to avoid cross-region reuse.
+  private heroShowcaseCache = new Map<
+    string,
+    { value: { url: string; alt: string } | null; expiresAt: number }
+  >();
   private static readonly HERO_SHOWCASE_CACHE_TTL_MS = 10 * 60 * 1000;
 
   constructor(
@@ -180,8 +183,20 @@ export class PhotographersService {
     ];
   }
 
+  private selectStringToProjection(fields: string): Record<string, 1> {
+    const projection: Record<string, 1> = { _id: 1 };
+    for (const field of String(fields || "").split(/\s+/).filter(Boolean)) {
+      projection[field] = 1;
+    }
+    return projection;
+  }
+
   /** Eligible-only, weighted-score selection for the Welcome Page "Featured Photo/Videographers" section. */
-  async getFeaturedPhotographers(limit = 6, viewerIsAuthenticated = false) {
+  async getFeaturedPhotographers(
+    limit = 6,
+    viewerIsAuthenticated = false,
+    viewerLocation?: ViewerLocationContext,
+  ) {
     const filter: any = {};
     applyApprovedEligibilityFilter(filter, {
       photoField: "profileImages",
@@ -213,6 +228,7 @@ export class PhotographersService {
         dateField: "updatedAt",
         windowDays: 30,
       },
+      viewerLocation,
     );
   }
 
@@ -222,8 +238,15 @@ export class PhotographersService {
    * eligibility bar as getFeaturedPhotographers, plus consent — being
    * premium/verified is not sufficient to show someone's photo publicly.
    */
-  async getHeroShowcasePhotographerImage(): Promise<{ url: string; alt: string } | null> {
-    const cached = this.heroShowcaseCache;
+  async getHeroShowcasePhotographerImage(
+    viewerLocation?: ViewerLocationContext,
+  ): Promise<{ url: string; alt: string } | null> {
+    const cacheKey = [
+      normalizeLocationValue(viewerLocation?.district),
+      normalizeLocationValue(viewerLocation?.state),
+      normalizeLocationValue(viewerLocation?.country),
+    ].join("|");
+    const cached = this.heroShowcaseCache.get(cacheKey);
     if (cached && cached.expiresAt > Date.now()) {
       return cached.value;
     }
@@ -258,6 +281,7 @@ export class PhotographersService {
         dateField: "updatedAt",
         windowDays: 30,
       },
+      viewerLocation,
     )) as any[];
     const value = photographer?.profileImages?.[0]?.url
       ? {
@@ -266,10 +290,10 @@ export class PhotographersService {
         }
       : null;
 
-    this.heroShowcaseCache = {
+    this.heroShowcaseCache.set(cacheKey, {
       value,
       expiresAt: Date.now() + PhotographersService.HERO_SHOWCASE_CACHE_TTL_MS,
-    };
+    });
     return value;
   }
 
@@ -665,39 +689,64 @@ export class PhotographersService {
     location?: string;
     keyword?: string;
     limit?: number;
+    page?: number;
     viewerState?: string;
     viewerDistrict?: string;
+    viewerCountry?: string;
     smartLocationPriority?: boolean;
     viewerIsAuthenticated?: boolean;
   }) {
     const filter: any = { status: "accepted", isDeleted: { $ne: true } };
-    this.applyPublicDiscoveryEligibilityFilter(
-      filter,
-      !!query.viewerIsAuthenticated,
-    );
+    applyDiscoverableProfileFilter(filter, {
+      photoField: "profileImages",
+      requireSocialTier: true,
+      viewerIsAuthenticated: !!query.viewerIsAuthenticated,
+    });
     if (query.skill) filter.skills = query.skill;
     if (query.location) filter["location.state"] = query.location;
 
-    const limit = Math.min(Number(query.limit) || 60, 100);
-    let docs = await this.photographerModel
-      .find(filter)
-      .select(
-        "name username email phoneNumber profileImage profileImages location skills pricing equipment socialMedia collaborationAvailability contact gender portfolio status adminTags isPremium commissionBadge commissionOverride verifiedByTrendStarz verificationStatus firstRegisteredAt createdAt lastLoginAt",
-      )
-      .limit(limit)
-      .lean();
-
     if (query.keyword) {
-      const kw = query.keyword.toLowerCase();
-      docs = docs.filter((d: any) => {
-        const name = (d.name || "").toLowerCase();
-        const skills = ((d.skills || []) as string[]).join(" ").toLowerCase();
-        return name.includes(kw) || skills.includes(kw);
-      });
+      const escaped = query.keyword.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      const re = new RegExp(escaped, "i");
+      filter.$and = [
+        ...(Array.isArray(filter.$and) ? filter.$and : []),
+        {
+          $or: [{ name: re }, { username: re }, { skills: re }, { "location.state": re }],
+        },
+      ];
     }
 
-    // Recompute from the live array — the stored singular field is legacy
-    // and goes stale the moment profileImages[0] changes (re-upload/recrop).
+    const page = Math.max(Number(query.page) || 1, 1);
+    const limit = Math.min(Math.max(Number(query.limit) || 60, 1), 100);
+    const skip = (page - 1) * limit;
+
+    const viewerContext: ViewerLocationContext = {
+      state: String(query.viewerState || "").trim(),
+      district: String(query.viewerDistrict || "").trim(),
+      country: String(query.viewerCountry || process.env.DISCOVERY_DEFAULT_COUNTRY || "india").trim(),
+      source: query.viewerIsAuthenticated ? "registered_profile" : "country_fallback",
+    };
+
+    const projection = this.selectStringToProjection(
+      "name username email phoneNumber profileImage profileImages location skills pricing equipment socialMedia collaborationAvailability contact gender portfolio status adminTags isPremium commissionBadge commissionOverride verifiedByTrendStarz verificationStatus firstRegisteredAt createdAt lastLoginAt",
+    );
+
+    let docs = await this.photographerModel
+      .aggregate([
+        { $match: filter },
+        ...buildSearchRankingStages(viewerContext, {
+          invitesCollection: "campaigninvites",
+          inviteMatchField: "influencerId",
+          inviteStaticMatch: { recipientRole: "photographer" },
+          reviewsCollection: "reviews",
+          reviewTargetType: "photographer",
+        }),
+        { $skip: skip },
+        { $limit: limit },
+        { $project: projection },
+      ])
+      .exec();
+
     docs = docs.map((d: any) => ({
       ...d,
       profileImage: d?.profileImages?.[0]?.url || null,
@@ -710,56 +759,17 @@ export class PhotographersService {
       smartLocationPriorityApplied: useSmartPriority,
       manualLocationFilterApplied: hasManualLocationFilter,
       smartLocationContext: {
-        viewerState: this.normalizeLocationValue(query.viewerState) || null,
-        viewerDistrict:
-          this.normalizeLocationValue(query.viewerDistrict) || null,
+        viewerState: normalizeLocationValue(viewerContext.state) || null,
+        viewerDistrict: normalizeLocationValue(viewerContext.district) || null,
+        viewerCountry: normalizeLocationValue(viewerContext.country) || null,
+        source: viewerContext.source || "none",
       },
     };
-    if (useSmartPriority) {
-      const viewerState = this.normalizeLocationValue(query.viewerState);
-      const viewerDistrict = this.normalizeLocationValue(query.viewerDistrict);
-      docs = [...docs].sort((a: any, b: any) => {
-        const scoreA = this.getLocationPriorityScore(
-          a,
-          viewerState,
-          viewerDistrict,
-        );
-        const scoreB = this.getLocationPriorityScore(
-          b,
-          viewerState,
-          viewerDistrict,
-        );
-        if (scoreA !== scoreB) return scoreB - scoreA;
-        const followersA = this.extractTopFollowersCount(a);
-        const followersB = this.extractTopFollowersCount(b);
-        return followersB - followersA;
-      });
-    }
 
     return {
       data: docs,
       ...smartLocationMeta,
     };
-  }
-
-  private normalizeLocationValue(value: unknown): string {
-    return String(value || "")
-      .trim()
-      .toLowerCase();
-  }
-
-  private getLocationPriorityScore(
-    user: any,
-    viewerState: string,
-    viewerDistrict: string,
-  ): number {
-    if (!viewerState) return 0;
-    const userState = this.normalizeLocationValue(user?.location?.state);
-    const userDistrict = this.normalizeLocationValue(user?.location?.district);
-    if (viewerDistrict && userDistrict && viewerDistrict === userDistrict)
-      return 100;
-    if (userState && viewerState === userState) return 70;
-    return 30;
   }
 
   private extractTopFollowersCount(user: any): number {

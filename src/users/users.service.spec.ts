@@ -1,4 +1,3 @@
-import { BadRequestException } from "@nestjs/common";
 import { UsersService } from "./users.service";
 
 describe("UsersService profile update guards", () => {
@@ -20,7 +19,10 @@ describe("UsersService profile update guards", () => {
       overrides?.campaignInviteModel || ({} as any);
     const campaignModel = overrides?.campaignModel || ({} as any);
     const profileFlagModel = overrides?.profileFlagModel || ({} as any);
-    const plansService = {} as any;
+    const plansService = {
+      canViewSocialLinks: jest.fn().mockResolvedValue(true),
+      listActive: jest.fn().mockResolvedValue({ plans: [] }),
+    } as any;
 
     return new UsersService(
       cloudinaryService,
@@ -36,7 +38,7 @@ describe("UsersService profile update guards", () => {
     );
   };
 
-  it("blocks influencer phone changes after team mobile verification", async () => {
+  it("resets influencer mobile verification when verified phone is changed", async () => {
     const doc: any = {
       phoneNumber: "9908763880",
       email: "old@example.com",
@@ -51,10 +53,10 @@ describe("UsersService profile update guards", () => {
 
     const service = makeService({ influencerModel });
 
-    await expect(
-      service.updateInfluencerProfile("inf-1", { phoneNumber: "9999999999" }),
-    ).rejects.toBeInstanceOf(BadRequestException);
-    expect(doc.save).not.toHaveBeenCalled();
+    await service.updateInfluencerProfile("inf-1", { phoneNumber: "9999999999" });
+    expect(doc.set).toHaveBeenCalledWith("previousVerifiedMobile", "9908763880");
+    expect(doc.set).toHaveBeenCalledWith("isMobileVerified", false);
+    expect(doc.save).toHaveBeenCalled();
   });
 
   it("resets influencer email verification when email is changed", async () => {
@@ -102,7 +104,7 @@ describe("UsersService profile update guards", () => {
     expect(doc.save).toHaveBeenCalled();
   });
 
-  it("blocks brand phone changes after team mobile verification", async () => {
+  it("resets brand mobile verification when verified phone is changed", async () => {
     const existingBrand = {
       phoneNumber: "9908763880",
       email: "brand@example.com",
@@ -110,20 +112,26 @@ describe("UsersService profile update guards", () => {
     };
 
     const brandModel = {
-      findById: jest.fn().mockReturnValue({
+      findById: jest.fn().mockImplementation(() => ({
         select: jest.fn().mockReturnValue({
           lean: jest.fn().mockResolvedValue(existingBrand),
         }),
-      }),
-      findByIdAndUpdate: jest.fn(),
+      })),
+      findByIdAndUpdate: jest.fn().mockResolvedValue({ _id: "brand-1" }),
     };
 
     const service = makeService({ brandModel });
 
-    await expect(
-      service.updateBrandProfile("brand-1", { phoneNumber: "9999999999" }),
-    ).rejects.toBeInstanceOf(BadRequestException);
-    expect(brandModel.findByIdAndUpdate).not.toHaveBeenCalled();
+    await service.updateBrandProfile("brand-1", { phoneNumber: "9999999999" });
+    expect(brandModel.findByIdAndUpdate).toHaveBeenCalledWith(
+      "brand-1",
+      expect.objectContaining({
+        phoneNumber: "9999999999",
+        isMobileVerified: false,
+        previousVerifiedMobile: "9908763880",
+      }),
+      { new: true },
+    );
   });
 
   it("resets brand email verification when email is changed", async () => {
@@ -267,7 +275,7 @@ describe("UsersService profile update guards", () => {
     );
   });
 
-  it("requires paid unlock type for brand contact visibility", async () => {
+  it("uses plan capability for brand social visibility", async () => {
     const influencerModel = {
       findById: jest.fn().mockReturnValue({
         select: jest.fn().mockReturnValue({
@@ -275,14 +283,7 @@ describe("UsersService profile update guards", () => {
         }),
       }),
     };
-    const campaignInviteModel = {
-      findOne: jest.fn().mockReturnValue({
-        select: jest.fn().mockReturnValue({
-          lean: jest.fn().mockResolvedValue({ _id: "inv-1" }),
-        }),
-      }),
-    };
-    const service = makeService({ influencerModel, campaignInviteModel });
+    const service = makeService({ influencerModel });
 
     const canView = await service.canViewBrandSocialMedia(
       { _id: "brand-1", brandUsername: "brand-one" },
@@ -290,11 +291,53 @@ describe("UsersService profile update guards", () => {
     );
 
     expect(canView).toBe(true);
-    expect(campaignInviteModel.findOne).toHaveBeenCalledWith(
-      expect.objectContaining({
-        unlocked: true,
-        unlockType: "paid_collab_payment",
-      }),
-    );
+  });
+
+  it("keeps local creators ahead of out-of-state premium creators", () => {
+    const service = makeService();
+    const viewer = { district: "Pune", state: "Maharashtra", country: "India" };
+
+    const localFree = {
+      location: { district: "Pune", state: "Maharashtra", country: "India" },
+      isPremium: false,
+      profileCompletion: 60,
+      socialMedia: [{ followersCount: 1000 }],
+      updatedAt: new Date("2026-01-01"),
+    };
+    const remotePremium = {
+      location: { district: "Bengaluru", state: "Karnataka", country: "India" },
+      isPremium: true,
+      premiumEnd: new Date("2099-01-01"),
+      profileCompletion: 90,
+      socialMedia: [{ followersCount: 5000 }],
+      updatedAt: new Date("2026-06-01"),
+    };
+
+    const result = (service as any).compareSearchRank(localFree, remotePremium, viewer);
+    expect(result).toBeLessThan(0);
+  });
+
+  it("applies premium boost within the same location tier", () => {
+    const service = makeService();
+    const viewer = { district: "Pune", state: "Maharashtra", country: "India" };
+
+    const localPremium = {
+      location: { district: "Pune", state: "Maharashtra", country: "India" },
+      isPremium: true,
+      premiumEnd: new Date("2099-01-01"),
+      profileCompletion: 50,
+      socialMedia: [{ followersCount: 500 }],
+      updatedAt: new Date("2026-01-01"),
+    };
+    const localFree = {
+      location: { district: "Pune", state: "Maharashtra", country: "India" },
+      isPremium: false,
+      profileCompletion: 95,
+      socialMedia: [{ followersCount: 5000 }],
+      updatedAt: new Date("2026-06-01"),
+    };
+
+    const result = (service as any).compareSearchRank(localPremium, localFree, viewer);
+    expect(result).toBeLessThan(0);
   });
 });

@@ -1,59 +1,149 @@
 /**
- * Three deliberately different eligibility tiers, in increasing strictness:
+ * Shared discovery/featured eligibility policy.
  *
- *   1. Search (discovery)   — "can this profile be found?"        applySearchEligibilityFilter
- *   2. Welcome (featured)   — "does TrendStarZ recommend this?"   applyApprovedEligibilityFilter
- *   3. Campaign eligibility — same bar as (2); see buildEligibility
- *      in profile-verification.service.ts for the per-profile boolean version.
- *
- * Search deliberately excludes admin approval — completing a quality profile
- * makes someone discoverable immediately, without waiting on manual review.
- * Welcome and Campaign both require approval on top of everything Search
- * requires, since they represent a TrendStarZ endorsement / real business
- * interaction rather than self-serve discovery.
+ * A profile is discoverable only when:
+ * - email is verified
+ * - mobile is verified
+ * - admin approved (verificationStatus=approved OR verifiedByTrendStarz=true)
+ * - status is active/accepted
+ * - not deleted/suspended
+ * - profile visibility allows discovery for the current viewer
  */
-export interface SearchEligibilityOptions {
+export interface DiscoverabilityOptions {
   /** Field holding the primary photo array — "profileImages" for Influencer/Photographer, "brandLogo" for Brand. */
   photoField?: string;
   /** Influencer/Photographer need a social handle + tier/followers to be discoverable; Brand does not. Defaults to true. */
   requireSocialTier?: boolean;
-  /**
-   * Whether the caller viewing search results is a logged-in user. Guests
-   * (default false) never see MEMBERS_ONLY profiles; PRIVATE is excluded
-   * regardless of viewer. See the Profile Visibility eligibility matrix:
-   *   PUBLIC        → guests ✓, logged-in ✓, search ✓, homepage ✓ (if consented)
-   *   MEMBERS_ONLY   → guests ✗, logged-in ✓, search ✓ (members only), homepage ✗
-   *   PRIVATE        → guests ✗, logged-in ✗, search ✗, homepage ✗
-   */
+  /** Whether the caller viewing discovery results is logged in. */
   viewerIsAuthenticated?: boolean;
 }
 
+export interface ViewerLocationContext {
+  district?: string;
+  state?: string;
+  country?: string;
+  /**
+   * Future-ready metadata for guest geolocation strategy:
+   * - registered_profile
+   * - guest_browser
+   * - guest_ip
+   * - country_fallback
+   * - none
+   */
+  source?:
+    | "registered_profile"
+    | "guest_browser"
+    | "guest_ip"
+    | "country_fallback"
+    | "none";
+}
+
+export interface SearchEligibilityOptions extends DiscoverabilityOptions {}
+
+function defaultDiscoveryCountry(): string {
+  return String(process.env.DISCOVERY_DEFAULT_COUNTRY || "india")
+    .trim()
+    .toLowerCase();
+}
+
+export function normalizeLocationValue(value: unknown): string {
+  return String(value || "")
+    .trim()
+    .toLowerCase();
+}
+
+function isAdminApproved(profile: any): boolean {
+  return (
+    String(profile?.verificationStatus || "").toLowerCase() === "approved" ||
+    profile?.verifiedByTrendStarz === true
+  );
+}
+
+export function profileVisibilityAllowsDiscovery(
+  profileVisibility: unknown,
+  viewerIsAuthenticated: boolean,
+): boolean {
+  const value = String(profileVisibility || "PUBLIC").toUpperCase();
+  if (value === "PRIVATE") return false;
+  if (value === "MEMBERS_ONLY" && !viewerIsAuthenticated) return false;
+  return true;
+}
+
+export function isDiscoverableProfile(
+  profile: any,
+  options: DiscoverabilityOptions = {},
+): boolean {
+  const photoField = options.photoField || "profileImages";
+  const viewerIsAuthenticated = !!options.viewerIsAuthenticated;
+  const requireSocialTier = options.requireSocialTier !== false;
+
+  if (String(profile?.status || "").toLowerCase() !== "accepted") return false;
+  if (profile?.isDeleted === true) return false;
+  if (String(profile?.accountStatus || "").toLowerCase() === "suspended")
+    return false;
+  if (profile?.isEmailVerified !== true) return false;
+  if (profile?.isMobileVerified !== true) return false;
+  if (!isAdminApproved(profile)) return false;
+  if (
+    !profileVisibilityAllowsDiscovery(
+      profile?.profileVisibility,
+      viewerIsAuthenticated,
+    )
+  ) {
+    return false;
+  }
+
+  const photos = profile?.[photoField];
+  if (!Array.isArray(photos) || photos.length === 0) return false;
+  if (!String(profile?.location?.state || "").trim()) return false;
+
+  if (!requireSocialTier) return true;
+  const social = Array.isArray(profile?.socialMedia) ? profile.socialMedia : [];
+  return social.some((item: any) => {
+    const handle = String(item?.handle || "").trim();
+    const tier = String(item?.tier || "").trim();
+    const followers = Number(item?.followersCount || 0);
+    return !!handle && (!!tier || followers > 0);
+  });
+}
+
 /**
- * "Can this profile be discovered?" — Search Page eligibility. Mutates
- * `filter` in place and returns it, so it composes with callers that already
- * build up a filter object (matches the existing `applyExcludedIds` convention).
+ * Shared "discoverable profile" DB filter. Mutates `filter` in place and
+ * returns it so callers can append additional constraints.
  */
-export function applySearchEligibilityFilter(
+export function applyDiscoverableProfileFilter(
   filter: Record<string, any> = {},
-  options: SearchEligibilityOptions = {},
+  options: DiscoverabilityOptions = {},
 ): Record<string, any> {
   const photoField = options.photoField || "profileImages";
   filter.status = "accepted";
   filter.isDeleted = { $ne: true };
   filter.isEmailVerified = true;
   filter.isMobileVerified = true;
-  // Missing profileVisibility (pre-existing accounts) is treated as PUBLIC —
-  // $nin never excludes documents where the field doesn't exist.
   filter.profileVisibility = {
     $nin: options.viewerIsAuthenticated
       ? ["PRIVATE"]
       : ["PRIVATE", "MEMBERS_ONLY"],
   };
+
   const andConditions: any[] = [
     ...(Array.isArray(filter.$and) ? filter.$and : []),
+    {
+      $or: [
+        { verificationStatus: "approved" },
+        { verifiedByTrendStarz: true },
+      ],
+    },
     { [`${photoField}.0`]: { $exists: true } },
     { "location.state": { $exists: true, $nin: ["", null] } },
+    {
+      $or: [
+        { accountStatus: { $exists: false } },
+        { accountStatus: { $nin: ["suspended", "SUSPENDED"] } },
+      ],
+    },
   ];
+
   if (options.requireSocialTier !== false) {
     andConditions.push({
       socialMedia: {
@@ -67,11 +157,20 @@ export function applySearchEligibilityFilter(
       },
     });
   }
+
   filter.$and = andConditions;
   return filter;
 }
 
-export interface ApprovedEligibilityOptions extends SearchEligibilityOptions {
+/** Backward-compatible alias retained for existing callers. */
+export function applySearchEligibilityFilter(
+  filter: Record<string, any> = {},
+  options: SearchEligibilityOptions = {},
+): Record<string, any> {
+  return applyDiscoverableProfileFilter(filter, options);
+}
+
+export interface ApprovedEligibilityOptions extends DiscoverabilityOptions {
   /**
    * Require an active Premium subscription. The Homepage Hero always
    * requires this (guest and logged-in alike). The Featured Grid sections
@@ -90,18 +189,107 @@ export function applyApprovedEligibilityFilter(
   filter: Record<string, any> = {},
   options: ApprovedEligibilityOptions = {},
 ): Record<string, any> {
-  applySearchEligibilityFilter(filter, options);
-  filter.$and = [
-    ...(Array.isArray(filter.$and) ? filter.$and : []),
-    { $or: [{ verificationStatus: "approved" }, { verifiedByTrendStarz: true }] },
-  ];
+  applyDiscoverableProfileFilter(filter, options);
   if (options.requirePremium) {
     filter.isPremium = true;
-    filter.$and.push({
+    filter.$and = [...(Array.isArray(filter.$and) ? filter.$and : []), {
       $or: [{ premiumEnd: null }, { premiumEnd: { $gte: new Date() } }],
-    });
+    }];
   }
   return filter;
+}
+
+function normalizedCountry(value: unknown): string {
+  const normalized = normalizeLocationValue(value);
+  return normalized || defaultDiscoveryCountry();
+}
+
+export function getLocationPriorityTier(
+  profile: any,
+  viewer: ViewerLocationContext = {},
+): number {
+  const viewerCountry = normalizedCountry(viewer.country);
+  const viewerState = normalizeLocationValue(viewer.state);
+  const viewerDistrict = normalizeLocationValue(viewer.district);
+
+  const profileCountry = normalizedCountry(profile?.location?.country);
+  const profileState = normalizeLocationValue(profile?.location?.state);
+  const profileDistrict = normalizeLocationValue(profile?.location?.district);
+
+  if (
+    viewerDistrict &&
+    viewerState &&
+    profileDistrict &&
+    profileState &&
+    viewerDistrict === profileDistrict &&
+    viewerState === profileState
+  ) {
+    return 4;
+  }
+  if (viewerState && profileState && viewerState === profileState) {
+    return 3;
+  }
+  if (viewerCountry && profileCountry && viewerCountry === profileCountry) {
+    return 2;
+  }
+  return 1;
+}
+
+export function buildLocationPriorityExpr(viewer: ViewerLocationContext = {}): any {
+  const viewerDistrict = normalizeLocationValue(viewer.district);
+  const viewerState = normalizeLocationValue(viewer.state);
+  const viewerCountry = normalizedCountry(viewer.country);
+
+  const profileDistrict = {
+    $toLower: { $trim: { input: { $ifNull: ["$location.district", ""] } } },
+  };
+  const profileState = {
+    $toLower: { $trim: { input: { $ifNull: ["$location.state", ""] } } },
+  };
+  const profileCountry = {
+    $toLower: {
+      $trim: {
+        input: { $ifNull: ["$location.country", defaultDiscoveryCountry()] },
+      },
+    },
+  };
+
+  return {
+    $switch: {
+      branches: [
+        {
+          case: {
+            $and: [
+              { $ne: [viewerDistrict, ""] },
+              { $ne: [viewerState, ""] },
+              { $eq: [profileDistrict, viewerDistrict] },
+              { $eq: [profileState, viewerState] },
+            ],
+          },
+          then: 4,
+        },
+        {
+          case: {
+            $and: [
+              { $ne: [viewerState, ""] },
+              { $eq: [profileState, viewerState] },
+            ],
+          },
+          then: 3,
+        },
+        {
+          case: {
+            $and: [
+              { $ne: [viewerCountry, ""] },
+              { $eq: [profileCountry, viewerCountry] },
+            ],
+          },
+          then: 2,
+        },
+      ],
+      default: 1,
+    },
+  };
 }
 
 function selectStringToProjection(fields: string): Record<string, 1> {
@@ -151,6 +339,193 @@ interface FeaturedProfileModel {
   aggregate: (pipeline: any[]) => Promise<any[]>;
 }
 
+export interface SearchRankingOptions {
+  /** Mongo collection name used for response-rate aggregation (usually campaigninvites). */
+  invitesCollection: string;
+  /** Field on invites collection referencing the profile id. */
+  inviteMatchField: string;
+  /** Extra static match fields for invite lookup (for role-specific invites). */
+  inviteStaticMatch?: Record<string, any>;
+  /** Mongo collection name used for ratings aggregation. */
+  reviewsCollection: string;
+  /** targetType value in reviews collection (influencer|photographer). */
+  reviewTargetType: string;
+}
+
+export function buildSearchRankingStages(
+  viewer: ViewerLocationContext,
+  options: SearchRankingOptions,
+): any[] {
+  const acceptedStatuses = [
+    "accepted",
+    "payment_confirmed",
+    "working",
+    "submitted",
+    "completed",
+    "approved",
+  ];
+  const responseStatuses = ["accepted", "declined"];
+  const activityDateExpr = {
+    $ifNull: [
+      "$lastLoginAt",
+      { $ifNull: ["$lastOpenedAt", { $ifNull: ["$updatedAt", "$createdAt"] }] },
+    ],
+  };
+
+  return [
+    {
+      $lookup: {
+        from: options.reviewsCollection,
+        let: { pid: { $toString: "$_id" } },
+        pipeline: [
+          {
+            $match: {
+              $expr: {
+                $and: [
+                  { $eq: ["$targetId", "$$pid"] },
+                  { $eq: ["$targetType", options.reviewTargetType] },
+                  { $eq: ["$status", "approved"] },
+                ],
+              },
+            },
+          },
+          { $group: { _id: null, avgRating: { $avg: "$rating" } } },
+        ],
+        as: "_rating",
+      },
+    },
+    {
+      $lookup: {
+        from: options.invitesCollection,
+        let: { pid: "$_id", pidStr: { $toString: "$_id" } },
+        pipeline: [
+          {
+            $match: {
+              ...options.inviteStaticMatch,
+              $expr: {
+                $or: [
+                  { $eq: [`$${options.inviteMatchField}`, "$$pid"] },
+                  { $eq: [`$${options.inviteMatchField}`, "$$pidStr"] },
+                ],
+              },
+              status: { $in: responseStatuses },
+            },
+          },
+          {
+            $group: {
+              _id: null,
+              total: { $sum: 1 },
+              accepted: {
+                $sum: {
+                  $cond: [{ $eq: ["$status", "accepted"] }, 1, 0],
+                },
+              },
+            },
+          },
+        ],
+        as: "_response",
+      },
+    },
+    {
+      $addFields: {
+        _locationTier: buildLocationPriorityExpr(viewer),
+        _premiumBoost: {
+          $cond: [
+            {
+              $and: [
+                { $eq: ["$isPremium", true] },
+                {
+                  $or: [
+                    { $eq: ["$premiumEnd", null] },
+                    { $gte: ["$premiumEnd", "$$NOW"] },
+                  ],
+                },
+              ],
+            },
+            1,
+            0,
+          ],
+        },
+        _profileCompletionScore: { $ifNull: ["$profileCompletion", 0] },
+        _campaignRatingScore: {
+          $ifNull: [{ $arrayElemAt: ["$_rating.avgRating", 0] }, 0],
+        },
+        _responseRateScore: {
+          $let: {
+            vars: {
+              total: { $ifNull: [{ $arrayElemAt: ["$_response.total", 0] }, 0] },
+              accepted: {
+                $ifNull: [{ $arrayElemAt: ["$_response.accepted", 0] }, 0],
+              },
+            },
+            in: {
+              $cond: [
+                { $lte: ["$$total", 0] },
+                0,
+                { $multiply: [{ $divide: ["$$accepted", "$$total"] }, 100] },
+              ],
+            },
+          },
+        },
+        _recentActivityScore: decayScoreExpr(daysSinceExpr(activityDateExpr), [
+          [1, 100],
+          [7, 80],
+          [30, 60],
+          [90, 35],
+          [180, 20],
+        ]),
+        _recentCampaignActivityScore: {
+          $ifNull: [{ $arrayElemAt: ["$_response.accepted", 0] }, 0],
+        },
+        _topFollowersScore: {
+          $max: {
+            $map: {
+              input: { $ifNull: ["$socialMedia", []] },
+              as: "sm",
+              in: { $ifNull: ["$$sm.followersCount", 0] },
+            },
+          },
+        },
+        _updatedAtScore: { $ifNull: ["$updatedAt", new Date(0)] },
+        _randomRotation: { $rand: {} },
+        _acceptedInviteCount: {
+          $size: {
+            $filter: {
+              input: { $ifNull: ["$_response", []] },
+              as: "resp",
+              cond: { $gt: ["$$resp.accepted", 0] },
+            },
+          },
+        },
+      },
+    },
+    {
+      $addFields: {
+        _campaignPerformanceScore: {
+          $add: [
+            { $multiply: ["$_campaignRatingScore", 10] },
+            "$_responseRateScore",
+            { $min: [50, { $multiply: ["$_recentCampaignActivityScore", 3] }] },
+          ],
+        },
+      },
+    },
+    {
+      $sort: {
+        _locationTier: -1,
+        _premiumBoost: -1,
+        _profileCompletionScore: -1,
+        _campaignRatingScore: -1,
+        _responseRateScore: -1,
+        _recentActivityScore: -1,
+        _topFollowersScore: -1,
+        _updatedAtScore: -1,
+        _randomRotation: -1,
+      },
+    },
+  ];
+}
+
 /**
  * Weight breakdown for the Welcome Page "Featured" score (sums to 100):
  *   Premium Membership ........ 15   — active premium subscription (kept modest —
@@ -177,6 +552,7 @@ export async function fetchFeaturedProfilesByScore<T extends { _id: any }>(
   selectFields: string,
   limit: number,
   activity: FeaturedActivityLookup,
+  viewerLocation?: ViewerLocationContext,
 ): Promise<T[]> {
   if (limit <= 0) return [];
 
@@ -273,7 +649,14 @@ export async function fetchFeaturedProfilesByScore<T extends { _id: any }>(
         },
       },
     },
-    { $sort: { _featuredScore: -1 } },
+    {
+      $addFields: {
+        _locationTier: viewerLocation
+          ? buildLocationPriorityExpr(viewerLocation)
+          : 1,
+      },
+    },
+    { $sort: { _locationTier: -1, _featuredScore: -1 } },
     { $limit: limit },
     { $project: selectStringToProjection(selectFields) },
   ];
