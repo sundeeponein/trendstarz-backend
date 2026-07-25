@@ -18,7 +18,6 @@ import { Model, Types } from "mongoose";
 import { Payment } from "../database/schemas/payment.schema";
 import { EarlyAccessAssignmentService } from "./early-access-assignment.service";
 import { FirebaseAdminService } from "../utils/firebase-admin.service";
-import { PlansService } from "../plans/plans.service";
 import * as bcrypt from "bcryptjs";
 import * as crypto from "crypto";
 import {
@@ -45,12 +44,8 @@ export class AdminUserTableController {
     @InjectModel("Photographer") private readonly photographerModel: Model<any>,
     @InjectModel("Payment") private readonly paymentModel: Model<Payment>,
     @InjectModel("ProfileFlag") private readonly flagModel: Model<any>,
-    @InjectModel("CampaignInvite") private readonly campaignInviteModel: Model<any>,
-    @InjectModel("Campaign") private readonly campaignModel: Model<any>,
-    @InjectModel("CampaignTransaction") private readonly campaignTransactionModel: Model<any>,
     private readonly earlyAccessAssignmentService: EarlyAccessAssignmentService,
     private readonly firebaseAdminService: FirebaseAdminService,
-    private readonly plansService: PlansService,
   ) {}
 
   private getPaging(pageRaw?: string, limitRaw?: string) {
@@ -1176,114 +1171,6 @@ export class AdminUserTableController {
           }
         : null,
       user,
-    };
-  }
-
-  // Statuses that count as "accepted" once an invite has moved past the initial
-  // offer/response stage — everything downstream of acceptance is still an accept,
-  // not a separate outcome.
-  private readonly acceptedInviteStatuses = [
-    "accepted",
-    "payment_confirmed",
-    "working",
-    "submitted",
-    "completed",
-    "approved",
-  ];
-
-  @Get("users/:type/:id/history")
-  async getUserHistory(@Param("type") type: string, @Param("id") id: string) {
-    const normalizedType = String(type || "").toLowerCase();
-    if (
-      normalizedType !== "influencer" &&
-      normalizedType !== "brand" &&
-      normalizedType !== "photographer"
-    ) {
-      throw new BadRequestException("Unsupported user type");
-    }
-    if (!Types.ObjectId.isValid(id)) {
-      throw new BadRequestException("Invalid user id");
-    }
-    const objectId = new Types.ObjectId(id);
-    const idMatch = { $in: [id, objectId] };
-
-    // Invites where this user is the recipient (influencer or photographer-as-creator).
-    const receivedInvites = await this.campaignInviteModel
-      .find({ influencerId: objectId })
-      .select("status")
-      .lean();
-
-    // Campaigns/collabs this user created (brand, or photographer hosting a collab).
-    const hostedCampaigns = await this.campaignModel
-      .find({ brandId: idMatch })
-      .select("_id")
-      .lean();
-    const hostedCampaignIds = hostedCampaigns.map((c: any) => c._id);
-    const hostedInvites = hostedCampaignIds.length
-      ? await this.campaignInviteModel
-          .find({ campaignId: { $in: hostedCampaignIds } })
-          .select("status")
-          .lean()
-      : [];
-
-    const allInvites = [...receivedInvites, ...hostedInvites];
-    const accepted = allInvites.filter((inv: any) =>
-      this.acceptedInviteStatuses.includes(inv.status),
-    ).length;
-    const declined = allInvites.filter(
-      (inv: any) => inv.status === "declined",
-    ).length;
-    const withdrawn = allInvites.filter(
-      (inv: any) => inv.status === "withdrawn",
-    ).length;
-
-    // Money actually collected from / paid out to this user across collabs.
-    const [spentAgg, receivedAmountAgg] = await Promise.all([
-      this.campaignTransactionModel.aggregate([
-        { $match: { payerId: idMatch, collectionStatus: "verified" } },
-        { $group: { _id: null, total: { $sum: "$payerTotal" } } },
-      ]),
-      this.campaignTransactionModel.aggregate([
-        { $match: { recipientId: idMatch, payoutStatus: "paid" } },
-        { $group: { _id: null, total: { $sum: "$recipientPayout" } } },
-      ]),
-    ]);
-
-    // Premium purchase history — only rows created from a real payment count
-    // toward totalPaid; admin-granted premium is listed but not summed in.
-    const { subscriptions } = await this.plansService.getUserSubscriptions(id);
-    const premiumSubscriptions = (subscriptions || []).map((sub: any) => ({
-      planName: sub.planName,
-      billingCycle: sub.billingCycle,
-      amount: sub.priceSnapshot || 0,
-      status: sub.status,
-      source: sub.source,
-      startDate: sub.startDate,
-      endDate: sub.endDate,
-    }));
-    const totalPremiumPaid = premiumSubscriptions
-      .filter((sub) => sub.source === "payment")
-      .reduce((sum, sub) => sum + (sub.amount || 0), 0);
-
-    return {
-      type: normalizedType,
-      userId: id,
-      campaigns: {
-        received: receivedInvites.length,
-        hosted: hostedCampaigns.length,
-        accepted,
-        declined,
-        withdrawn,
-      },
-      amounts: {
-        // payerTotal/recipientPayout on CampaignTransaction are stored in paise.
-        spent: (spentAgg?.[0]?.total || 0) / 100,
-        received: (receivedAmountAgg?.[0]?.total || 0) / 100,
-      },
-      premium: {
-        totalPaid: totalPremiumPaid,
-        subscriptions: premiumSubscriptions,
-      },
     };
   }
 
