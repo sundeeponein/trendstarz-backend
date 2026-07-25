@@ -2969,7 +2969,7 @@ export class CampaignInvitesService {
     await invite.save();
 
     await this.campaignTransactionModel.updateMany(
-      { inviteId },
+      { inviteId: { $in: [invite._id, String(invite._id)] } },
       { $set: { workStatus: "working" } },
     );
 
@@ -3164,7 +3164,7 @@ export class CampaignInvitesService {
     this.invalidateAttentionCache();
 
     await this.campaignTransactionModel.updateMany(
-      { inviteId },
+      { inviteId: { $in: [invite._id, String(invite._id)] } },
       { $set: { workStatus: "submitted" } },
     );
 
@@ -3404,7 +3404,9 @@ export class CampaignInvitesService {
       await invite.save();
       this.invalidateAttentionCache();
 
-      const txs = await this.campaignTransactionModel.find({ inviteId });
+      const txs = await this.campaignTransactionModel.find({
+        inviteId: { $in: [invite._id, String(invite._id)] },
+      });
       for (const tx of txs) {
         tx.workStatus = "approved";
         tx.payoutStatus =
@@ -3498,7 +3500,7 @@ export class CampaignInvitesService {
       // Freeze the payout — admin must resolve before money moves.
       // workStatus: 'disputed' signals the issue; payoutStatus: 'frozen' holds funds.
       await this.campaignTransactionModel.updateMany(
-        { inviteId },
+        { inviteId: { $in: [invite._id, String(invite._id)] } },
         {
           $set: {
             workStatus: "disputed",
@@ -3698,7 +3700,10 @@ export class CampaignInvitesService {
     // Guard against ever downgrading a transaction that's already been paid out via the
     // separate payments-payouts dispute-resolution surface.
     await this.campaignTransactionModel.updateMany(
-      { inviteId, payoutStatus: { $ne: "paid" } },
+      {
+        inviteId: { $in: [invite._id, String(invite._id)] },
+        payoutStatus: { $ne: "paid" },
+      },
       {
         $set: {
           payoutStatus: outcome === "pay_influencer" ? "processing" : "skipped",
@@ -3909,7 +3914,10 @@ export class CampaignInvitesService {
     await invite.save();
 
     await this.campaignTransactionModel.updateMany(
-      { inviteId, payoutStatus: { $ne: "paid" } },
+      {
+        inviteId: { $in: [invite._id, String(invite._id)] },
+        payoutStatus: { $ne: "paid" },
+      },
       {
         $set: {
           payoutStatus: "skipped",
@@ -3939,6 +3947,44 @@ export class CampaignInvitesService {
     return { success: true, status: invite.status };
   }
 
+  /**
+   * Closes out an invite that was never accepted (still pending/invited/counter_sent) once
+   * its campaign ends. Reuses 'withdrawn' — same "system closed this out, no fault, no
+   * payout" bucket as expireUnsubmittedInvite — since no acceptance ever happened, there's
+   * never a CampaignTransaction row to sync here.
+   */
+  async expireNeverAcceptedInvite(inviteId: string, reason: string) {
+    const invite = await this.inviteModel.findById(inviteId);
+    if (!invite) return { success: true, skipped: true };
+    if (!["pending", "invited", "counter_sent"].includes(invite.status)) {
+      return { success: true, status: invite.status, skipped: true };
+    }
+
+    const now = new Date();
+    invite.status = "withdrawn";
+    if (!invite.withdrawnAt) invite.withdrawnAt = now;
+    invite.withdrawnReason = reason;
+    invite.updatedAt = now;
+    await invite.save();
+
+    this.invalidateAttentionCache();
+
+    const title = "Invite Closed";
+    const body = reason;
+    this.pushService
+      .sendToUser(String(invite.influencerId), { title, body, url: "/influencer-dashboard" }, "campaign")
+      .catch(() => {
+        /* non-critical */
+      });
+    this.notificationsService
+      .createForUser({ userId: String(invite.influencerId), userRole: "influencer", title, body, url: "/influencer-dashboard" })
+      .catch(() => {
+        /* non-critical */
+      });
+
+    return { success: true, status: invite.status };
+  }
+
   /** Closes out every not-yet-submitted invite for a campaign — called when a host ends it. */
   async expireUnsubmittedInvitesForCampaign(campaignId: string, reason: string) {
     const candidates = await this.inviteModel
@@ -3951,7 +3997,26 @@ export class CampaignInvitesService {
     for (const candidate of candidates) {
       await this.expireUnsubmittedInvite(String(candidate._id), reason);
     }
-    return { success: true, expiredCount: candidates.length };
+
+    const neverAcceptedCandidates = await this.inviteModel
+      .find({
+        campaignId: { $in: [campaignId, String(campaignId)] },
+        status: { $in: ["pending", "invited", "counter_sent"] },
+      })
+      .select("_id")
+      .lean();
+    for (const candidate of neverAcceptedCandidates) {
+      await this.expireNeverAcceptedInvite(
+        String(candidate._id),
+        "Campaign ended before this invite was accepted.",
+      );
+    }
+
+    return {
+      success: true,
+      expiredCount: candidates.length,
+      neverAcceptedExpiredCount: neverAcceptedCandidates.length,
+    };
   }
 
   /** Auto-expire invites whose posting deadline (+ any grace period) passed with no submission. */

@@ -159,21 +159,27 @@ export class CampaignsService {
         .select("_id")
         .lean();
 
+      if (hasActiveWork && !pastGrace) continue;
+
+      // Always run the close-out sweep once we're past grace (or there's nothing blocking
+      // to wait on) — it also closes out invites that were never accepted, which don't
+      // count as "active work" but would otherwise sit as 'pending' forever once the
+      // campaign completes around them.
+      try {
+        await this.campaignInvitesService.expireUnsubmittedInvitesForCampaign(
+          String(campaignId),
+          "Campaign's grace period ended with no submission.",
+        );
+      } catch (e) {
+        console.error(
+          "autoCompleteExpiredCampaigns: grace-period expiry failed",
+          campaignId,
+          e,
+        );
+        continue; // retry next hour — never lock 'completed' over a failed cleanup
+      }
+
       if (hasActiveWork) {
-        if (!pastGrace) continue;
-        try {
-          await this.campaignInvitesService.expireUnsubmittedInvitesForCampaign(
-            String(campaignId),
-            "Campaign's grace period ended with no submission.",
-          );
-        } catch (e) {
-          console.error(
-            "autoCompleteExpiredCampaigns: grace-period expiry failed",
-            campaignId,
-            e,
-          );
-          continue; // retry next hour — never lock 'completed' over a failed cleanup
-        }
         // Re-verify only the never-submitted set — if expiry partially failed and one of
         // these is still stuck, don't complete yet (would orphan it with no way back).
         const stillBlocking = await this.campaignInviteModel
@@ -1512,8 +1518,9 @@ export class CampaignsService {
 
     if (previousStatus !== "completed" && saved.status === "completed") {
       // Ending a campaign is an absolute cutoff: anyone still accepted/working with no
-      // submission gets closed out and marked refunded — no admin action needed. Safe
-      // no-op when nothing is pending (e.g. the auto-complete cron, which only ever
+      // submission gets closed out and marked refunded, and anyone who never even accepted
+      // gets withdrawn too — no admin action needed, nothing is left dangling as 'pending'.
+      // Safe no-op when nothing is pending (e.g. the auto-complete cron, which only ever
       // reaches 'completed' once no blocking invites remain).
       await this.campaignInvitesService
         .expireUnsubmittedInvitesForCampaign(
