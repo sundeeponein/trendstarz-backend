@@ -1276,8 +1276,9 @@ export class AdminUserTableController {
         withdrawn,
       },
       amounts: {
-        spent: spentAgg?.[0]?.total || 0,
-        received: receivedAmountAgg?.[0]?.total || 0,
+        // payerTotal/recipientPayout on CampaignTransaction are stored in paise.
+        spent: (spentAgg?.[0]?.total || 0) / 100,
+        received: (receivedAmountAgg?.[0]?.total || 0) / 100,
       },
       premium: {
         totalPaid: totalPremiumPaid,
