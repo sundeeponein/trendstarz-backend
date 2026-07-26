@@ -16,6 +16,13 @@ describe("CollaborationScoreRulesService", () => {
       campaignReadyMinScore: 70,
       partiallyReadyMinScore: 40,
     },
+    scoreWeights: {
+      profileCompletion: 15,
+      contentQuality: 25,
+      postingConsistency: 20,
+      professionalBranding: 20,
+      campaignReadiness: 20,
+    },
   };
 
   const baseInput = (overrides: Partial<ComputeScoresInput> = {}): ComputeScoresInput => ({
@@ -59,12 +66,13 @@ describe("CollaborationScoreRulesService", () => {
     expect(result.professionalBrandingScore).toBeGreaterThanOrEqual(90);
     expect(result.campaignReadinessScore).toBe(100); // eligible, no open High flags
 
+    const w = settings.scoreWeights;
     const expectedTotal = Math.round(
-      0.15 * result.profileCompletenessScore +
-        0.25 * result.contentQualityScore +
-        0.2 * result.postingConsistencyScore +
-        0.2 * result.professionalBrandingScore +
-        0.2 * result.campaignReadinessScore,
+      (w.profileCompletion / 100) * result.profileCompletenessScore +
+        (w.contentQuality / 100) * result.contentQualityScore +
+        (w.postingConsistency / 100) * result.postingConsistencyScore +
+        (w.professionalBranding / 100) * result.professionalBrandingScore +
+        (w.campaignReadiness / 100) * result.campaignReadinessScore,
     );
     expect(result.collaborationScore).toBe(expectedTotal);
   });

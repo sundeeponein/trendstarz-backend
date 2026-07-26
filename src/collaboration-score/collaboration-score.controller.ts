@@ -103,7 +103,15 @@ export class CollaborationScoreController {
   @Put("settings")
   async updateSettings(@Req() req: any, @Body() body: any) {
     this.assertAdmin(req);
-    return this.settingsService.updateSettings(body);
+    return this.settingsService.updateSettings(body, { userId: this.requesterId(req), role: req?.user?.role });
+  }
+
+  /** POST /api/audit/settings/reset — admin-only; deletes current config and re-seeds JSON defaults. */
+  @UseGuards(JwtAuthGuard)
+  @Post("settings/reset")
+  async resetSettings(@Req() req: any) {
+    this.assertAdmin(req);
+    return this.settingsService.resetToDefaults({ userId: this.requesterId(req), role: req?.user?.role });
   }
 
   /** GET /api/audit/:userId — full detail for self, brand-safe filtered otherwise. */

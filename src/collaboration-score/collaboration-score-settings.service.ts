@@ -1,7 +1,11 @@
-import { BadRequestException, Injectable } from "@nestjs/common";
+import { BadRequestException, Injectable, OnModuleInit } from "@nestjs/common";
 import { InjectModel } from "@nestjs/mongoose";
 import { Model } from "mongoose";
+import { plainToInstance } from "class-transformer";
+import { validate } from "class-validator";
 import { CollaborationScoreSettingsSnapshot } from "./collaboration-score-rules.service";
+import { UpdateAuditSettingsDto } from "./dto/update-audit-settings.dto";
+import { CURRENT_AUDIT_SETTINGS_SCHEMA_VERSION } from "../database/schemas/collaboration-score-settings.schema";
 import defaultSettingsJson from "./collaboration-score-settings.default.json";
 
 export interface CollaborationScorePlatformsEnabled {
@@ -19,6 +23,7 @@ export interface CollaborationScoreAnalyticsToggles {
 }
 
 export interface CollaborationScoreSettingsDoc extends CollaborationScoreSettingsSnapshot {
+  schemaVersion: number;
   aiEnabled: boolean;
   aiModel: string;
   // Kill-switch for the anonymous, pre-registration YouTube preview endpoint.
@@ -44,13 +49,51 @@ export interface CollaborationScoreSettingsDoc extends CollaborationScoreSetting
   lastNightlyRunAt: Date | null;
   lastNightlyRunCount: number;
   lastNightlyRunCostUsd: number;
+  // Any field present in Mongo but not declared above (future settings added
+  // to the JSON/DTO ahead of a code change) still round-trips — see
+  // normalize()'s spread of unknownFields.
+  [unknownField: string]: unknown;
 }
 
 // Single source of truth for defaults — loaded from the JSON file so the
 // starting configuration is reviewable/diffable without reading TS. Any
 // admin edit via PUT /api/audit/settings is layered on top of this in Mongo
 // (see getSettings/updateSettings below); this file never changes at runtime.
-const DEFAULTS: CollaborationScoreSettingsDoc = defaultSettingsJson as CollaborationScoreSettingsDoc;
+const DEFAULTS: CollaborationScoreSettingsDoc = defaultSettingsJson as unknown as CollaborationScoreSettingsDoc;
+
+// Every field this service explicitly knows how to normalize/validate.
+// Anything else present on a Mongo doc or an update body is treated as a
+// future/unknown setting and passed through as-is (see KNOWN_FIELDS usage
+// below) — this is what makes new JSON settings forward-compatible without a
+// code change.
+const KNOWN_FIELDS = new Set([
+  "_id",
+  "schemaVersion",
+  "aiEnabled",
+  "aiModel",
+  "anonymousPreviewEnabled",
+  "freeAuditCount",
+  "auditValidityDays",
+  "weights",
+  "thresholds",
+  "scoreWeights",
+  "version2Enabled",
+  "version1Name",
+  "version2Name",
+  "platformsEnabled",
+  "reanalysisCooldownDays",
+  "reanalysisFeeRupees",
+  "nightlyReauditEnabled",
+  "nightlyReauditCronHour",
+  "youtubeApiQuotaGuardPerDay",
+  "analytics",
+  "lastNightlyRunAt",
+  "lastNightlyRunCount",
+  "lastNightlyRunCostUsd",
+  "createdAt",
+  "updatedAt",
+  "__v",
+]);
 
 function clampNumber(value: unknown, fallback: number, min: number, max: number): number {
   const n = Number(value);
@@ -58,25 +101,76 @@ function clampNumber(value: unknown, fallback: number, min: number, max: number)
   return Math.min(max, Math.max(min, n));
 }
 
+function unknownFieldsOf(doc: any): Record<string, unknown> {
+  if (!doc) return {};
+  const out: Record<string, unknown> = {};
+  for (const key of Object.keys(doc)) {
+    if (!KNOWN_FIELDS.has(key)) out[key] = doc[key];
+  }
+  return out;
+}
+
 @Injectable()
-export class CollaborationScoreSettingsService {
+export class CollaborationScoreSettingsService implements OnModuleInit {
+  private cachedSettings: CollaborationScoreSettingsDoc | null = null;
+  private cacheExpiresAt = 0;
+  private static readonly CACHE_TTL_MS = 5 * 60 * 1000;
+
   constructor(
     @InjectModel("CollaborationScoreSettings")
     private readonly settingsModel: Model<any>,
+    @InjectModel("CollaborationSettingsAuditLog")
+    private readonly auditLogModel: Model<any>,
   ) {}
 
-  async getSettings(): Promise<CollaborationScoreSettingsDoc> {
-    const doc = await this.settingsModel.findOne({}).lean();
-    return this.normalize(doc);
+  /** Self-heals on every boot — inserts defaults once, never touches an existing doc. */
+  async onModuleInit(): Promise<void> {
+    await this.seedDefaults();
   }
 
-  async updateSettings(body: any): Promise<CollaborationScoreSettingsDoc> {
+  async getSettings(): Promise<CollaborationScoreSettingsDoc> {
+    if (this.cachedSettings && Date.now() < this.cacheExpiresAt) {
+      return this.cachedSettings;
+    }
+    const doc = await this.settingsModel.findOne({}).lean();
+    const normalized = this.normalize(doc);
+    this.cachedSettings = normalized;
+    this.cacheExpiresAt = Date.now() + CollaborationScoreSettingsService.CACHE_TTL_MS;
+    return normalized;
+  }
+
+  async updateSettings(body: any, actor?: { userId?: string; role?: string }): Promise<CollaborationScoreSettingsDoc> {
     const current = await this.getSettings();
-    const next = this.buildUpdate(body, current);
+    const next = await this.buildUpdate(body, current);
     const doc = await this.settingsModel
       .findOneAndUpdate({}, { $set: next }, { upsert: true, new: true })
       .lean();
-    return this.normalize(doc);
+    this.invalidateCache();
+    const normalized = this.normalize(doc);
+    await this.logChange("settings_updated", actor, Object.keys(next), current, normalized);
+    return normalized;
+  }
+
+  /** Inserts the JSON defaults if no document exists yet; never overwrites an existing one. */
+  async seedDefaults(): Promise<CollaborationScoreSettingsDoc> {
+    const existing = await this.settingsModel.findOne({}).lean();
+    if (existing) return this.normalize(existing);
+    const created = await this.settingsModel.create({
+      ...DEFAULTS,
+      schemaVersion: CURRENT_AUDIT_SETTINGS_SCHEMA_VERSION,
+    });
+    this.invalidateCache();
+    return this.normalize(created.toObject ? created.toObject() : created);
+  }
+
+  /** Deletes the current config and re-seeds from the JSON defaults. */
+  async resetToDefaults(actor?: { userId?: string; role?: string }): Promise<CollaborationScoreSettingsDoc> {
+    const before = await this.getSettings();
+    await this.settingsModel.deleteMany({});
+    this.invalidateCache();
+    const fresh = await this.seedDefaults();
+    await this.logChange("settings_reset", actor, Object.keys(DEFAULTS), before, fresh);
+    return fresh;
   }
 
   /** Bookkeeping only — called by CollaborationScoreNightlyService after each run. */
@@ -92,11 +186,40 @@ export class CollaborationScoreSettingsService {
       },
       { upsert: true },
     );
+    this.invalidateCache();
+  }
+
+  private invalidateCache(): void {
+    this.cachedSettings = null;
+    this.cacheExpiresAt = 0;
+  }
+
+  private async logChange(
+    action: "settings_updated" | "settings_reset",
+    actor: { userId?: string; role?: string } | undefined,
+    changedFields: string[],
+    before: unknown,
+    after: unknown,
+  ): Promise<void> {
+    try {
+      await this.auditLogModel.create({
+        action,
+        actorId: actor?.userId || "",
+        actorRole: actor?.role || "",
+        changedFields,
+        before,
+        after,
+      });
+    } catch {
+      // Logging must never block a settings write from succeeding.
+    }
   }
 
   private normalize(doc: any): CollaborationScoreSettingsDoc {
     if (!doc) return { ...DEFAULTS };
     return {
+      ...unknownFieldsOf(doc),
+      schemaVersion: clampNumber(doc.schemaVersion, DEFAULTS.schemaVersion as number, 0, 1_000_000),
       aiEnabled: doc.aiEnabled === true,
       aiModel: String(doc.aiModel || DEFAULTS.aiModel),
       anonymousPreviewEnabled: doc.anonymousPreviewEnabled !== false,
@@ -152,6 +275,38 @@ export class CollaborationScoreSettingsService {
           100,
         ),
       },
+      scoreWeights: {
+        profileCompletion: clampNumber(
+          doc?.scoreWeights?.profileCompletion,
+          DEFAULTS.scoreWeights.profileCompletion,
+          0,
+          100,
+        ),
+        contentQuality: clampNumber(
+          doc?.scoreWeights?.contentQuality,
+          DEFAULTS.scoreWeights.contentQuality,
+          0,
+          100,
+        ),
+        postingConsistency: clampNumber(
+          doc?.scoreWeights?.postingConsistency,
+          DEFAULTS.scoreWeights.postingConsistency,
+          0,
+          100,
+        ),
+        professionalBranding: clampNumber(
+          doc?.scoreWeights?.professionalBranding,
+          DEFAULTS.scoreWeights.professionalBranding,
+          0,
+          100,
+        ),
+        campaignReadiness: clampNumber(
+          doc?.scoreWeights?.campaignReadiness,
+          DEFAULTS.scoreWeights.campaignReadiness,
+          0,
+          100,
+        ),
+      },
       version2Enabled: doc.version2Enabled === true,
       version1Name: String(doc.version1Name || DEFAULTS.version1Name),
       version2Name: String(doc.version2Name || DEFAULTS.version2Name),
@@ -198,10 +353,22 @@ export class CollaborationScoreSettingsService {
     };
   }
 
-  private buildUpdate(body: any, current: CollaborationScoreSettingsDoc): any {
+  private async buildUpdate(body: any, current: CollaborationScoreSettingsDoc): Promise<any> {
     if (!body || typeof body !== "object") {
       throw new BadRequestException("Settings payload must be an object");
     }
+
+    // Validate the fields we have typed rules for. Deliberately NOT used as
+    // the controller's @Body() type — see UpdateAuditSettingsDto's header
+    // comment for why (global ValidationPipe would silently strip unknown
+    // fields, breaking forward-compatibility).
+    const dtoInstance = plainToInstance(UpdateAuditSettingsDto, body);
+    const errors = await validate(dtoInstance, { whitelist: false });
+    if (errors.length) {
+      const messages = errors.flatMap((e) => Object.values(e.constraints || {}));
+      throw new BadRequestException(messages.length ? messages : "Invalid settings payload");
+    }
+
     const next: any = {};
     if (body.aiEnabled !== undefined) next.aiEnabled = body.aiEnabled === true;
     if (body.anonymousPreviewEnabled !== undefined) {
@@ -322,6 +489,15 @@ export class CollaborationScoreSettingsService {
           ),
         },
       };
+      if (next.weights.contentQuality.rulesPercent + next.weights.contentQuality.aiPercent !== 100) {
+        throw new BadRequestException("weights.contentQuality.rulesPercent + aiPercent must sum to 100");
+      }
+      if (
+        next.weights.professionalBranding.rulesPercent + next.weights.professionalBranding.aiPercent !==
+        100
+      ) {
+        throw new BadRequestException("weights.professionalBranding.rulesPercent + aiPercent must sum to 100");
+      }
     }
     if (body.thresholds) {
       next.thresholds = {
@@ -345,6 +521,59 @@ export class CollaborationScoreSettingsService {
         ),
       };
     }
+    if (body.scoreWeights) {
+      next.scoreWeights = {
+        profileCompletion: clampNumber(
+          body.scoreWeights?.profileCompletion,
+          current.scoreWeights.profileCompletion,
+          0,
+          100,
+        ),
+        contentQuality: clampNumber(
+          body.scoreWeights?.contentQuality,
+          current.scoreWeights.contentQuality,
+          0,
+          100,
+        ),
+        postingConsistency: clampNumber(
+          body.scoreWeights?.postingConsistency,
+          current.scoreWeights.postingConsistency,
+          0,
+          100,
+        ),
+        professionalBranding: clampNumber(
+          body.scoreWeights?.professionalBranding,
+          current.scoreWeights.professionalBranding,
+          0,
+          100,
+        ),
+        campaignReadiness: clampNumber(
+          body.scoreWeights?.campaignReadiness,
+          current.scoreWeights.campaignReadiness,
+          0,
+          100,
+        ),
+      };
+      const sum =
+        next.scoreWeights.profileCompletion +
+        next.scoreWeights.contentQuality +
+        next.scoreWeights.postingConsistency +
+        next.scoreWeights.professionalBranding +
+        next.scoreWeights.campaignReadiness;
+      if (sum !== 100) {
+        throw new BadRequestException(`scoreWeights must sum to 100 (got ${sum})`);
+      }
+    }
+
+    // Forward-compatibility: any top-level key in the request that isn't one
+    // of the known/handled settings above is stored as-is (schema is
+    // strict:false — see collaboration-score-settings.schema.ts).
+    for (const key of Object.keys(body)) {
+      if (!KNOWN_FIELDS.has(key) && next[key] === undefined) {
+        next[key] = body[key];
+      }
+    }
+
     return next;
   }
 }

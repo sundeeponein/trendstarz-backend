@@ -24,6 +24,16 @@ export interface CollaborationScoreSettingsSnapshot {
     campaignReadyMinScore: number;
     partiallyReadyMinScore: number;
   };
+  // Top-level criteria weights for the overall collaborationScore — must sum
+  // to 100 (enforced in CollaborationScoreSettingsService.buildUpdate()).
+  // Defaults (15/25/20/20/20) match what was previously hardcoded here.
+  scoreWeights: {
+    profileCompletion: number;
+    contentQuality: number;
+    postingConsistency: number;
+    professionalBranding: number;
+    campaignReadiness: number;
+  };
 }
 
 export interface ComputeScoresInput {
@@ -126,12 +136,13 @@ export class CollaborationScoreRulesService {
     const professionalBrandingScore = this.computeProfessionalBranding(input);
     const campaignReadinessScore = this.computeCampaignReadinessScore(input);
 
+    const w = input.settings.scoreWeights;
     const collaborationScore = Math.round(
-      0.15 * profileCompletenessScore +
-        0.25 * contentQualityScore +
-        0.2 * postingConsistencyScore +
-        0.2 * professionalBrandingScore +
-        0.2 * campaignReadinessScore,
+      (w.profileCompletion / 100) * profileCompletenessScore +
+        (w.contentQuality / 100) * contentQualityScore +
+        (w.postingConsistency / 100) * postingConsistencyScore +
+        (w.professionalBranding / 100) * professionalBrandingScore +
+        (w.campaignReadiness / 100) * campaignReadinessScore,
     );
 
     const campaignReadiness = this.campaignReadinessLabel(

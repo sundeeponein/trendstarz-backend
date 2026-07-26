@@ -7,6 +7,7 @@ import {
 } from "../database/schemas/profile.schemas";
 import { CollaborationAuditSchema } from "../database/schemas/collaboration-audit.schema";
 import { CollaborationScoreSettingsSchema } from "../database/schemas/collaboration-score-settings.schema";
+import { CollaborationSettingsAuditLogSchema } from "../database/schemas/collaboration-settings-audit-log.schema";
 import { PaymentSchema } from "../database/schemas/payment.schema";
 import { TransactionSchema } from "../database/schemas/transaction.schema";
 import { ProfileVerificationModule } from "../profile-verification/profile-verification.module";
@@ -30,6 +31,11 @@ import { LinkedinCollectorService } from "./collectors/linkedin-collector.servic
         name: "CollaborationScoreSettings",
         schema: CollaborationScoreSettingsSchema,
         collection: "collaboration_score_settings",
+      },
+      {
+        name: "CollaborationSettingsAuditLog",
+        schema: CollaborationSettingsAuditLogSchema,
+        collection: "collaboration_settings_audit_logs",
       },
       // Read-only in this module — never written back to. Quality/
       // verification fields on these collections stay owned exclusively by

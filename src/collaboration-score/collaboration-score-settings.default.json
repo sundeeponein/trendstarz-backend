@@ -1,4 +1,5 @@
 {
+  "schemaVersion": 1,
   "aiEnabled": false,
   "aiModel": "claude-sonnet-5",
   "anonymousPreviewEnabled": true,
@@ -12,6 +13,13 @@
     "trendstarzRecommendedMinScore": 80,
     "campaignReadyMinScore": 70,
     "partiallyReadyMinScore": 40
+  },
+  "scoreWeights": {
+    "profileCompletion": 15,
+    "contentQuality": 25,
+    "postingConsistency": 20,
+    "professionalBranding": 20,
+    "campaignReadiness": 20
   },
   "version2Enabled": false,
   "version1Name": "Collaboration Score",
