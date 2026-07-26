@@ -10,8 +10,10 @@ import { CollaborationScoreSettingsSchema } from "../database/schemas/collaborat
 import { CollaborationSettingsAuditLogSchema } from "../database/schemas/collaboration-settings-audit-log.schema";
 import { PaymentSchema } from "../database/schemas/payment.schema";
 import { TransactionSchema } from "../database/schemas/transaction.schema";
+import { SocialOAuthConnectionSchema } from "../database/schemas/social-oauth-connection.schema";
 import { ProfileVerificationModule } from "../profile-verification/profile-verification.module";
 import { RazorpayService } from "../payment/razorpay.service";
+import { MetaOAuthService } from "../meta-oauth/meta-oauth.service";
 import { CollaborationScoreController } from "./collaboration-score.controller";
 import { CollaborationScoreService } from "./collaboration-score.service";
 import { CollaborationScoreRulesService } from "./collaboration-score-rules.service";
@@ -45,6 +47,11 @@ import { LinkedinCollectorService } from "./collectors/linkedin-collector.servic
       { name: "Photographer", schema: PhotographerSchema, collection: "photographers" },
       { name: "Payment", schema: PaymentSchema, collection: "payments" },
       { name: "Transaction", schema: TransactionSchema, collection: "transactions" },
+      {
+        name: "SocialOAuthConnection",
+        schema: SocialOAuthConnectionSchema,
+        collection: "social_oauth_connections",
+      },
     ]),
     ProfileVerificationModule,
   ],
@@ -63,6 +70,7 @@ import { LinkedinCollectorService } from "./collectors/linkedin-collector.servic
     // MonetizationModule does; RazorpayService has no injected deps, so a
     // second instance is harmless (see razorpay.service.ts).
     RazorpayService,
+    MetaOAuthService,
   ],
   exports: [CollaborationScoreService],
 })

@@ -12,7 +12,9 @@ describe("CollaborationScoreService", () => {
   let settingsService: any;
   let paymentModel: any;
   let transactionModel: any;
+  let connectionModel: any;
   let razorpayService: any;
+  let metaOAuthService: any;
   let youtubeCollector: any;
 
   const fakeProfile = {
@@ -107,13 +109,26 @@ describe("CollaborationScoreService", () => {
       }),
     };
     transactionModel = { create: jest.fn().mockResolvedValue({}), updateMany: jest.fn().mockResolvedValue({}) };
+    connectionModel = {
+      find: jest.fn().mockReturnValue({ select: jest.fn().mockReturnValue({ lean: jest.fn().mockResolvedValue([]) }) }),
+      findOne: jest.fn().mockReturnValue({ select: jest.fn().mockResolvedValue(null) }),
+      findOneAndUpdate: jest.fn().mockResolvedValue({}),
+      deleteOne: jest.fn().mockResolvedValue({}),
+    };
     razorpayService = {
       createOrder: jest.fn().mockResolvedValue({ orderId: "order_1", amount: 9900, currency: "INR", keyId: "key_1" }),
       verifySignature: jest.fn().mockReturnValue(true),
     };
+    metaOAuthService = {
+      getAuthorizationUrl: jest.fn().mockReturnValue("https://facebook.com/dialog/oauth?..."),
+      exchangeCodeForToken: jest.fn().mockResolvedValue({ accessToken: "short", expiresInSeconds: 3600 }),
+      exchangeForLongLivedToken: jest.fn().mockResolvedValue({ accessToken: "long", expiresInSeconds: 5184000 }),
+      resolveFacebookPages: jest.fn().mockResolvedValue([]),
+      revokePermissions: jest.fn().mockResolvedValue(undefined),
+    };
     youtubeCollector = { platform: "YouTube" as const, collect: jest.fn().mockResolvedValue(null) };
-    const instagramCollector = { platform: "Instagram" as const, collect: jest.fn().mockResolvedValue(null) };
-    const facebookCollector = { platform: "Facebook" as const, collect: jest.fn().mockResolvedValue(null) };
+    const instagramCollector = { platform: "Instagram" as const, collect: jest.fn().mockResolvedValue(null) } as any;
+    const facebookCollector = { platform: "Facebook" as const, collect: jest.fn().mockResolvedValue(null) } as any;
     const linkedinCollector = { platform: "LinkedIn" as const, collect: jest.fn().mockResolvedValue(null) };
 
     service = new CollaborationScoreService(
@@ -123,11 +138,13 @@ describe("CollaborationScoreService", () => {
       photographerModel,
       paymentModel,
       transactionModel,
+      connectionModel,
       profileVerificationService,
       rulesService,
       aiService,
       settingsService,
       razorpayService,
+      metaOAuthService,
       youtubeCollector,
       instagramCollector,
       facebookCollector,
@@ -531,6 +548,98 @@ describe("CollaborationScoreService", () => {
         paymentStatus: "captured",
         archived: false,
       });
+    });
+  });
+
+  describe("Meta OAuth connect/disconnect/connections", () => {
+    it("getConnectAuthorizationUrl rejects an unsupported platform", () => {
+      expect(() => service.getConnectAuthorizationUrl("user-1", "influencer", "linkedin" as any)).toThrow(
+        "Unsupported platform",
+      );
+    });
+
+    it("getConnectAuthorizationUrl signs a state and asks MetaOAuthService for the URL with the right scopes", () => {
+      const result = service.getConnectAuthorizationUrl("507f1f77bcf86cd799439011", "influencer", "instagram");
+
+      expect(result.authorizationUrl).toBe("https://facebook.com/dialog/oauth?...");
+      expect(metaOAuthService.getAuthorizationUrl).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.arrayContaining(["instagram_basic"]),
+      );
+    });
+
+    it("handleOAuthCallback rejects an invalid/expired state with no side effects", async () => {
+      await expect(service.handleOAuthCallback("code", "not-a-real-jwt")).rejects.toThrow(
+        "Invalid or expired connect request",
+      );
+      expect(metaOAuthService.exchangeCodeForToken).not.toHaveBeenCalled();
+    });
+
+    it("handleOAuthCallback exchanges tokens, resolves the Page, and upserts the connection", async () => {
+      metaOAuthService.resolveFacebookPages.mockResolvedValue([
+        { id: "page-1", name: "Creator Page", followersCount: 100, instagramBusinessAccountId: "ig-1" },
+      ]);
+      const jwt = require("jsonwebtoken");
+      const { getJwtSecret } = require("../auth/jwt-secret");
+      const signedState = jwt.sign(
+        { userId: "507f1f77bcf86cd799439011", role: "influencer", platform: "instagram" },
+        getJwtSecret(),
+        { expiresIn: "10m" },
+      );
+
+      const redirectUrl = await service.handleOAuthCallback("auth-code", signedState);
+
+      expect(metaOAuthService.exchangeCodeForToken).toHaveBeenCalledWith("auth-code");
+      expect(metaOAuthService.exchangeForLongLivedToken).toHaveBeenCalledWith("short");
+      expect(connectionModel.findOneAndUpdate).toHaveBeenCalledWith(
+        { userId: "507f1f77bcf86cd799439011", platform: "instagram" },
+        expect.objectContaining({
+          $set: expect.objectContaining({
+            accessToken: "long",
+            facebookPageId: "page-1",
+            instagramBusinessAccountId: "ig-1",
+          }),
+        }),
+        { upsert: true },
+      );
+      expect(redirectUrl).toContain("/influencer-dashboard?connected=instagram");
+    });
+
+    it("disconnectPlatform revokes and deletes an existing connection", async () => {
+      connectionModel.findOne.mockReturnValue({
+        select: jest.fn().mockResolvedValue({
+          _id: "conn-1",
+          instagramBusinessAccountId: "ig-1",
+          accessToken: "token-abc",
+        }),
+      });
+
+      const result = await service.disconnectPlatform("507f1f77bcf86cd799439011", "instagram");
+
+      expect(metaOAuthService.revokePermissions).toHaveBeenCalledWith("ig-1", "token-abc");
+      expect(connectionModel.deleteOne).toHaveBeenCalledWith({ _id: "conn-1" });
+      expect(result).toEqual({ success: true });
+    });
+
+    it("disconnectPlatform is a no-op (still succeeds) when no connection exists", async () => {
+      connectionModel.findOne.mockReturnValue({ select: jest.fn().mockResolvedValue(null) });
+
+      const result = await service.disconnectPlatform("507f1f77bcf86cd799439011", "facebook");
+
+      expect(metaOAuthService.revokePermissions).not.toHaveBeenCalled();
+      expect(result).toEqual({ success: true });
+    });
+
+    it("getConnections reports only non-revoked platforms", async () => {
+      connectionModel.find.mockReturnValue({
+        select: jest.fn().mockReturnValue({
+          lean: jest.fn().mockResolvedValue([{ platform: "instagram" }]),
+        }),
+      });
+
+      const result = await service.getConnections("507f1f77bcf86cd799439011");
+
+      expect(result).toEqual({ instagram: true, facebook: false });
     });
   });
 });

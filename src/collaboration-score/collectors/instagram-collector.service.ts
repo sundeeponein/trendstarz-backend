@@ -1,26 +1,73 @@
 import { Injectable } from "@nestjs/common";
-import { CollectedPlatformData, ProfileCollector } from "./collector.interface";
+import { InjectModel } from "@nestjs/mongoose";
+import { Model } from "mongoose";
+import { MetaOAuthService } from "../../meta-oauth/meta-oauth.service";
+import { CollectedPlatformData, CollectedPost, ProfileCollector } from "./collector.interface";
 
 /**
- * PHASE D TODO: replace this internals-only implementation with a real
- * Instagram Graph API OAuth connect flow once Meta business verification is
- * provisioned (new SocialOAuthConnection collection, authorize/callback
- * routes, token refresh). The ProfileCollector interface and every caller
- * stay unchanged — only this file's body needs to change.
- *
- * Until then: Instagram has no ToS-compliant way to pull real metrics from
- * just a public URL with no login, so this reads whatever the creator
- * self-entered on their profile (socialMedia[].selfReportedStats) and tags
- * the result unverified/self-reported.
+ * Real data once the creator has connected via Meta OAuth (see
+ * collaboration-score.controller.ts's connect/callback endpoints); falls
+ * back to the pre-existing self-reported reading when no
+ * SocialOAuthConnection exists yet — no regression for creators who
+ * haven't connected.
  */
 @Injectable()
 export class InstagramCollectorService implements ProfileCollector {
   readonly platform = "Instagram" as const;
 
-  async collect(socialMediaEntry: any): Promise<CollectedPlatformData | null> {
-    const handle = String(socialMediaEntry?.handle || "").trim();
-    if (!handle) return null;
+  constructor(
+    @InjectModel("SocialOAuthConnection") private readonly connectionModel: Model<any>,
+    private readonly metaOAuthService: MetaOAuthService,
+  ) {}
 
+  async collect(socialMediaEntry: any, userId?: string): Promise<CollectedPlatformData | null> {
+    const handle = String(socialMediaEntry?.handle || "").trim();
+
+    if (userId) {
+      const connection: any = await this.connectionModel
+        .findOne({ userId: String(userId), platform: "instagram", revokedAt: null })
+        .select("+accessToken")
+        .lean();
+      if (connection?.instagramBusinessAccountId && connection?.accessToken) {
+        const collected = await this.collectViaApi(connection, handle);
+        if (collected) return collected;
+      }
+    }
+
+    if (!handle) return null;
+    return this.collectSelfReported(socialMediaEntry, handle);
+  }
+
+  private async collectViaApi(connection: any, fallbackHandle: string): Promise<CollectedPlatformData | null> {
+    const stats = await this.metaOAuthService.getInstagramBusinessAccountStats(
+      connection.instagramBusinessAccountId,
+      connection.accessToken,
+    );
+    if (!stats) return null;
+
+    const recentPosts: CollectedPost[] = stats.posts.map((p) => ({
+      title: "",
+      description: "",
+      publishedAt: p.createdAt,
+      likes: p.likes,
+      comments: p.comments,
+    }));
+    const { confidence, confidenceReason } = this.computeConfidence(recentPosts);
+
+    return {
+      platform: "Instagram",
+      method: "API",
+      handle: fallbackHandle || connection.instagramBusinessAccountId,
+      followersOrSubscribers: stats.followersCount,
+      recentPosts,
+      collectedAt: new Date(),
+      raw: { instagramBusinessAccountId: connection.instagramBusinessAccountId },
+      confidence,
+      confidenceReason,
+    };
+  }
+
+  private collectSelfReported(socialMediaEntry: any, handle: string): CollectedPlatformData {
     const stats = socialMediaEntry?.selfReportedStats || {};
     const hasStats = stats.avgLikes != null && stats.avgComments != null;
     return {
@@ -36,12 +83,25 @@ export class InstagramCollectorService implements ProfileCollector {
         postFrequencyPerWeek: stats.postFrequencyPerWeek ?? null,
         lastUpdatedAt: stats.lastUpdatedAt ?? null,
       },
-      // Instagram collection is not yet automated (Phase D) — never imply
-      // real analysis. Confidence stays low even with self-reported stats.
       confidence: hasStats ? 35 : 0,
       confidenceReason: hasStats
         ? "Self-reported by creator — not independently verified (Beta)."
-        : "Analysis not available yet — creator hasn't added their stats for this platform.",
+        : "Analysis not available yet — connect your Instagram account or add your stats for this platform.",
     };
+  }
+
+  // Same tiering as YoutubeCollectorService.computeConfidence — real API
+  // data with more recent posts deserves proportionally higher confidence.
+  private computeConfidence(recentPosts: CollectedPost[]): { confidence: number; confidenceReason: string } {
+    if (recentPosts.length >= 10) {
+      return { confidence: 95, confidenceReason: "Instagram Business account analyzed via Meta Graph API — sufficient recent posts." };
+    }
+    if (recentPosts.length >= 3) {
+      return { confidence: 75, confidenceReason: "Instagram Business account analyzed via Meta Graph API — limited recent posts." };
+    }
+    if (recentPosts.length > 0) {
+      return { confidence: 55, confidenceReason: "Instagram account connected, but very few recent posts to analyze." };
+    }
+    return { confidence: 30, confidenceReason: "Instagram account connected, but no recent posts available to analyze." };
   }
 }

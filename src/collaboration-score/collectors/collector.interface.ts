@@ -38,8 +38,11 @@ export interface ProfileCollector {
   /**
    * `socialMediaEntry` is the profile's existing socialMedia[] sub-document
    * for this platform (handle, followersCount, and — for
-   * self-reported-only platforms — selfReportedStats). Never fetches
-   * anything requiring a login the creator hasn't explicitly granted.
+   * self-reported-only platforms — selfReportedStats). `userId` lets
+   * Instagram/Facebook look up a SocialOAuthConnection and pull real data
+   * when the creator has connected their account; YouTube/LinkedIn ignore
+   * it. Never fetches anything requiring a login the creator hasn't
+   * explicitly granted.
    */
-  collect(socialMediaEntry: any): Promise<CollectedPlatformData | null>;
+  collect(socialMediaEntry: any, userId?: string): Promise<CollectedPlatformData | null>;
 }

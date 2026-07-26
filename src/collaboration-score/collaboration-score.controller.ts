@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Body,
   Controller,
   ForbiddenException,
@@ -8,12 +9,22 @@ import {
   Put,
   Query,
   Req,
+  Res,
   UseGuards,
 } from "@nestjs/common";
+import type { Response } from "express";
 import { Throttle } from "@nestjs/throttler";
 import { JwtAuthGuard } from "../auth/jwt-auth.guard";
 import { CollaborationScoreService } from "./collaboration-score.service";
 import { CollaborationScoreSettingsService } from "./collaboration-score-settings.service";
+
+function assertSupportedPlatform(platform: string): "instagram" | "facebook" {
+  const normalized = String(platform || "").toLowerCase();
+  if (normalized !== "instagram" && normalized !== "facebook") {
+    throw new BadRequestException("Unsupported platform — only instagram/facebook support OAuth connect.");
+  }
+  return normalized;
+}
 
 // Route ordering matters here: literal segments ("run", "admin", "settings")
 // must be declared before the ":userId" wildcard GET, or Express/Nest will
@@ -79,6 +90,55 @@ export class CollaborationScoreController {
       paymentId: body?.paymentId,
       signature: body?.signature,
     });
+  }
+
+  /**
+   * GET /api/audit/connect/callback — Meta redirects the bare browser here
+   * (no Authorization header), so this is intentionally NOT JWT-guarded;
+   * the signed `state` param (from getConnectAuthorizationUrl) carries who
+   * this is for. Registered before "connect/:platform" — a literal segment
+   * must come first or Nest would try to match "callback" as :platform.
+   */
+  @Get("connect/callback")
+  async oauthCallback(@Query() query: any, @Res() res: Response) {
+    const { code, state, error, error_description } = query;
+    const frontendUrl = process.env.FRONTEND_URL || "https://trendstarz.in";
+    if (error) {
+      return res.redirect(`${frontendUrl}/?connectError=${encodeURIComponent(error_description || error)}`);
+    }
+    if (!code || !state) {
+      return res.redirect(`${frontendUrl}/?connectError=missing_code_or_state`);
+    }
+    try {
+      const redirectUrl = await this.service.handleOAuthCallback(code, state);
+      return res.redirect(redirectUrl);
+    } catch (err: any) {
+      return res.redirect(`${frontendUrl}/?connectError=${encodeURIComponent(err?.message || "connect_failed")}`);
+    }
+  }
+
+  /** GET /api/audit/connect/:platform — self-only; returns the Meta consent URL to redirect to. */
+  @UseGuards(JwtAuthGuard)
+  @Get("connect/:platform")
+  getConnectUrl(@Req() req: any, @Param("platform") platform: string) {
+    const requesterId = this.requesterId(req);
+    return this.service.getConnectAuthorizationUrl(requesterId, req?.user?.role, assertSupportedPlatform(platform));
+  }
+
+  /** POST /api/audit/disconnect/:platform — self-only. */
+  @UseGuards(JwtAuthGuard)
+  @Post("disconnect/:platform")
+  disconnect(@Req() req: any, @Param("platform") platform: string) {
+    const requesterId = this.requesterId(req);
+    return this.service.disconnectPlatform(requesterId, assertSupportedPlatform(platform));
+  }
+
+  /** GET /api/audit/connections — self-only; which platforms are connected. */
+  @UseGuards(JwtAuthGuard)
+  @Get("connections")
+  getConnections(@Req() req: any) {
+    const requesterId = this.requesterId(req);
+    return this.service.getConnections(requesterId);
   }
 
   /** GET /api/audit/admin — paginated list + optional ?summary=true. */

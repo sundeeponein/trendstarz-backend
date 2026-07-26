@@ -7,7 +7,10 @@ import {
 } from "@nestjs/common";
 import { InjectModel } from "@nestjs/mongoose";
 import { Model, Types } from "mongoose";
+import * as jwt from "jsonwebtoken";
+import { getJwtSecret } from "../auth/jwt-secret";
 import { RazorpayService } from "../payment/razorpay.service";
+import { MetaOAuthService } from "../meta-oauth/meta-oauth.service";
 import { ProfileVerificationService } from "../profile-verification/profile-verification.service";
 import { CollaborationScoreRulesService } from "./collaboration-score-rules.service";
 import { CollaborationScoreAiService } from "./collaboration-score-ai.service";
@@ -55,11 +58,13 @@ export class CollaborationScoreService {
     @InjectModel("Photographer") private readonly photographerModel: Model<any>,
     @InjectModel("Payment") private readonly paymentModel: Model<any>,
     @InjectModel("Transaction") private readonly transactionModel: Model<any>,
+    @InjectModel("SocialOAuthConnection") private readonly connectionModel: Model<any>,
     private readonly profileVerificationService: ProfileVerificationService,
     private readonly rulesService: CollaborationScoreRulesService,
     private readonly aiService: CollaborationScoreAiService,
     private readonly settingsService: CollaborationScoreSettingsService,
     private readonly razorpayService: RazorpayService,
+    private readonly metaOAuthService: MetaOAuthService,
     youtubeCollector: YoutubeCollectorService,
     instagramCollector: InstagramCollectorService,
     facebookCollector: FacebookCollectorService,
@@ -97,6 +102,7 @@ export class CollaborationScoreService {
   private async collectPlatforms(
     profile: any,
     platformsEnabled: Record<string, boolean>,
+    userId: string,
   ): Promise<CollectedPlatformData[]> {
     const entries: any[] = Array.isArray(profile?.socialMedia) ? profile.socialMedia : [];
     const results: CollectedPlatformData[] = [];
@@ -104,7 +110,7 @@ export class CollaborationScoreService {
       const platform = this.matchPlatform(entry?.platform);
       if (!platform) continue;
       if (platformsEnabled[platform.toLowerCase()] === false) continue;
-      const collected = await this.collectors[platform].collect(entry);
+      const collected = await this.collectors[platform].collect(entry, userId);
       if (collected) results.push(collected);
     }
     return results;
@@ -247,6 +253,7 @@ export class CollaborationScoreService {
     const collectedPlatforms = await this.collectPlatforms(
       profile,
       settings.platformsEnabled as unknown as Record<string, boolean>,
+      String(userId),
     );
 
     let aiResult = null;
@@ -635,5 +642,105 @@ export class CollaborationScoreService {
     }
 
     return result;
+  }
+
+  private oauthScopesFor(platform: "instagram" | "facebook"): string[] {
+    if (platform === "instagram") {
+      return ["pages_show_list", "instagram_basic", "instagram_manage_insights", "pages_read_engagement"];
+    }
+    return ["pages_show_list", "pages_read_engagement", "pages_read_user_content"];
+  }
+
+  private dashboardPathForRole(role: any): string {
+    const normalized = String(role || "").toLowerCase();
+    if (normalized === "brand") return "/brand-dashboard";
+    if (normalized === "photographer") return "/photographer-dashboard";
+    return "/influencer-dashboard";
+  }
+
+  /**
+   * Signs a short-lived state param so the bare-browser callback (Meta
+   * redirects with no Authorization header) still knows which user/role/
+   * platform this connection is for — reuses the app's existing JWT secret
+   * rather than standing up a session store.
+   */
+  getConnectAuthorizationUrl(userId: string, role: any, platform: "instagram" | "facebook") {
+    if (platform !== "instagram" && platform !== "facebook") {
+      throw new BadRequestException("Unsupported platform");
+    }
+    const state = jwt.sign({ userId: String(userId), role, platform }, getJwtSecret(), { expiresIn: "10m" });
+    const authorizationUrl = this.metaOAuthService.getAuthorizationUrl(state, this.oauthScopesFor(platform));
+    return { authorizationUrl };
+  }
+
+  /**
+   * Exchanges the OAuth code, resolves the linked Facebook Page (and, for
+   * Instagram, the Page's linked Instagram Business Account), and upserts
+   * the SocialOAuthConnection. Returns a URL for the controller to redirect
+   * the browser back to — never runs a new audit itself; the next
+   * Re-Analyze is what picks up the newly connected platform's real data.
+   */
+  async handleOAuthCallback(code: string, state: string): Promise<string> {
+    let decoded: { userId: string; role: any; platform: "instagram" | "facebook" };
+    try {
+      decoded = jwt.verify(state, getJwtSecret()) as any;
+    } catch {
+      throw new BadRequestException("Invalid or expired connect request. Please try again.");
+    }
+
+    const shortLived = await this.metaOAuthService.exchangeCodeForToken(code);
+    const longLived = await this.metaOAuthService.exchangeForLongLivedToken(shortLived.accessToken);
+    const pages = await this.metaOAuthService.resolveFacebookPages(longLived.accessToken);
+    const page = pages[0]; // first Page — matches the common single-Page creator setup
+
+    const expiresAt = longLived.expiresInSeconds
+      ? new Date(Date.now() + longLived.expiresInSeconds * 1000)
+      : null;
+
+    await this.connectionModel.findOneAndUpdate(
+      { userId: decoded.userId, platform: decoded.platform },
+      {
+        $set: {
+          userId: decoded.userId,
+          userType: this.paymentUserType(decoded.role),
+          platform: decoded.platform,
+          accessToken: longLived.accessToken,
+          longLivedTokenExpiresAt: expiresAt,
+          facebookPageId: page?.id || null,
+          instagramBusinessAccountId:
+            decoded.platform === "instagram" ? page?.instagramBusinessAccountId || null : null,
+          scopes: this.oauthScopesFor(decoded.platform),
+          connectedAt: new Date(),
+          revokedAt: null,
+        },
+      },
+      { upsert: true },
+    );
+
+    const dashboardPath = this.dashboardPathForRole(decoded.role);
+    return `${process.env.FRONTEND_URL || "https://trendstarz.in"}${dashboardPath}?connected=${decoded.platform}`;
+  }
+
+  async disconnectPlatform(userId: string, platform: "instagram" | "facebook"): Promise<{ success: boolean }> {
+    const connection: any = await this.connectionModel
+      .findOne({ userId: String(userId), platform })
+      .select("+accessToken");
+    if (connection) {
+      const targetId = platform === "instagram" ? connection.instagramBusinessAccountId : connection.facebookPageId;
+      if (targetId && connection.accessToken) {
+        await this.metaOAuthService.revokePermissions(targetId, connection.accessToken);
+      }
+      await this.connectionModel.deleteOne({ _id: connection._id });
+    }
+    return { success: true };
+  }
+
+  async getConnections(userId: string): Promise<{ instagram: boolean; facebook: boolean }> {
+    const connections = await this.connectionModel
+      .find({ userId: String(userId), revokedAt: null })
+      .select("platform")
+      .lean();
+    const platforms = new Set(connections.map((c: any) => c.platform));
+    return { instagram: platforms.has("instagram"), facebook: platforms.has("facebook") };
   }
 }
