@@ -8,9 +8,14 @@ describe("UsersService profile update guards", () => {
     campaignInviteModel?: any;
     campaignModel?: any;
     profileFlagModel?: any;
+    collaborationAuditModel?: any;
+    paymentModel?: any;
+    transactionModel?: any;
+    cloudinaryService?: any;
+    firebaseAdminService?: any;
   }) => {
-    const cloudinaryService = {} as any;
-    const firebaseAdminService = {} as any;
+    const cloudinaryService = overrides?.cloudinaryService || ({} as any);
+    const firebaseAdminService = overrides?.firebaseAdminService || ({} as any);
     const userModel = {} as any;
     const influencerModel = overrides?.influencerModel || ({} as any);
     const brandModel = overrides?.brandModel || ({} as any);
@@ -19,7 +24,9 @@ describe("UsersService profile update guards", () => {
       overrides?.campaignInviteModel || ({} as any);
     const campaignModel = overrides?.campaignModel || ({} as any);
     const profileFlagModel = overrides?.profileFlagModel || ({} as any);
-    const collaborationAuditModel = {} as any;
+    const collaborationAuditModel = overrides?.collaborationAuditModel || ({} as any);
+    const paymentModel = overrides?.paymentModel || ({} as any);
+    const transactionModel = overrides?.transactionModel || ({} as any);
     const plansService = {
       canViewSocialLinks: jest.fn().mockResolvedValue(true),
       listActive: jest.fn().mockResolvedValue({ plans: [] }),
@@ -36,6 +43,8 @@ describe("UsersService profile update guards", () => {
       campaignModel,
       profileFlagModel,
       collaborationAuditModel,
+      paymentModel,
+      transactionModel,
       plansService,
     );
   };
@@ -341,5 +350,74 @@ describe("UsersService profile update guards", () => {
 
     const result = (service as any).compareSearchRank(localPremium, localFree, viewer);
     expect(result).toBeLessThan(0);
+  });
+
+  describe("deletePermanently — Collaboration Score cascade cleanup", () => {
+    const fakeInfluencer = { _id: "507f1f77bcf86cd799439011", profileImages: [], verificationDocuments: [] };
+
+    it("hard-deletes CollaborationAudit docs and archives (not deletes) reanalysis payments/transactions", async () => {
+      const influencerModel = {
+        findById: jest
+          .fn()
+          .mockResolvedValueOnce(fakeInfluencer) // initial lookup
+          .mockResolvedValueOnce(null), // post-delete double-check
+        findByIdAndDelete: jest.fn().mockResolvedValue(fakeInfluencer),
+      };
+      const collaborationAuditModel = { deleteMany: jest.fn().mockResolvedValue({}) };
+      const paymentModel = { updateMany: jest.fn().mockResolvedValue({}) };
+      const transactionModel = { updateMany: jest.fn().mockResolvedValue({}) };
+      const firebaseAdminService = { isConfigured: jest.fn().mockReturnValue(false) };
+
+      const service = makeService({
+        influencerModel,
+        collaborationAuditModel,
+        paymentModel,
+        transactionModel,
+        firebaseAdminService,
+      });
+
+      await service.deletePermanently("507f1f77bcf86cd799439011");
+
+      expect(collaborationAuditModel.deleteMany).toHaveBeenCalledWith({ userId: "507f1f77bcf86cd799439011" });
+      expect(paymentModel.updateMany).toHaveBeenCalledWith(
+        expect.objectContaining({ purpose: "collab_score_reanalysis" }),
+        expect.objectContaining({
+          $set: expect.objectContaining({
+            archivedAt: expect.any(Date),
+            "userSnapshot.name": null,
+            "userSnapshot.email": null,
+          }),
+        }),
+      );
+      expect(transactionModel.updateMany).toHaveBeenCalledWith(
+        expect.objectContaining({ purpose: "collab_score_reanalysis" }),
+        expect.objectContaining({ $set: expect.objectContaining({ archivedAt: expect.any(Date) }) }),
+      );
+    });
+
+    it("does not throw or block deletion when the cascade cleanup itself fails", async () => {
+      const influencerModel = {
+        findById: jest.fn().mockResolvedValueOnce(fakeInfluencer).mockResolvedValueOnce(null),
+        findByIdAndDelete: jest.fn().mockResolvedValue(fakeInfluencer),
+      };
+      const collaborationAuditModel = {
+        deleteMany: jest.fn().mockRejectedValue(new Error("Mongo unavailable")),
+      };
+      const paymentModel = { updateMany: jest.fn().mockRejectedValue(new Error("Mongo unavailable")) };
+      const transactionModel = { updateMany: jest.fn().mockResolvedValue({}) };
+      const firebaseAdminService = { isConfigured: jest.fn().mockReturnValue(false) };
+
+      const service = makeService({
+        influencerModel,
+        collaborationAuditModel,
+        paymentModel,
+        transactionModel,
+        firebaseAdminService,
+      });
+
+      await expect(service.deletePermanently("507f1f77bcf86cd799439011")).resolves.toMatchObject({
+        message: "Influencer permanently deleted",
+      });
+    });
   });
 });

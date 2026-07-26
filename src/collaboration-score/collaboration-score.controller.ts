@@ -127,4 +127,11 @@ export class CollaborationScoreController {
   getAuditHistory(@Req() req: any, @Param("userId") userId: string, @Query("limit") limit?: string) {
     return this.service.getAuditHistory(userId, req?.user, limit ? Number(limit) : undefined);
   }
+
+  /** GET /api/audit/:userId/payments — admin-only; every re-analysis payment for one creator. */
+  @UseGuards(JwtAuthGuard)
+  @Get(":userId/payments")
+  getReanalysisPayments(@Req() req: any, @Param("userId") userId: string) {
+    return this.service.getReanalysisPayments(userId, req?.user);
+  }
 }

@@ -522,6 +522,25 @@ export class CollaborationScoreService {
     return { history: withDeltas };
   }
 
+  /** Admin-only — every re-analysis payment for one creator, for the admin detail page. */
+  async getReanalysisPayments(targetUserId: string, actor: any) {
+    this.assertAdmin(actor);
+    const payments = await this.paymentModel
+      .find({ userId: toObjectId(targetUserId), purpose: "collab_score_reanalysis" })
+      .sort({ createdAt: -1 })
+      .select("amount paymentStatus status createdAt archivedAt")
+      .lean();
+    return {
+      payments: payments.map((p: any) => ({
+        amountRupees: Math.round((p.amount || 0) / 100),
+        paymentStatus: p.paymentStatus,
+        status: p.status,
+        createdAt: p.createdAt,
+        archived: !!p.archivedAt,
+      })),
+    };
+  }
+
   async adminList(actor: any, query: any) {
     this.assertAdmin(actor);
     const page = Math.max(1, Number(query?.page || 1));

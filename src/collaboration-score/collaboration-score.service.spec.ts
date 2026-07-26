@@ -100,6 +100,11 @@ describe("CollaborationScoreService", () => {
       deleteMany: jest.fn().mockResolvedValue({}),
       create: jest.fn().mockResolvedValue({}),
       findOne: jest.fn().mockResolvedValue(null),
+      find: jest.fn().mockReturnValue({
+        sort: jest.fn().mockReturnValue({
+          select: jest.fn().mockReturnValue({ lean: jest.fn().mockResolvedValue([]) }),
+        }),
+      }),
     };
     transactionModel = { create: jest.fn().mockResolvedValue({}), updateMany: jest.fn().mockResolvedValue({}) };
     razorpayService = {
@@ -498,6 +503,34 @@ describe("CollaborationScoreService", () => {
 
       expect(result.summary.totalAiCostUsd).toBe(12.5);
       expect(result.todaySummary.estimatedCostUsd).toBe(12.5);
+    });
+  });
+
+  describe("getReanalysisPayments — admin-only per-user payment list", () => {
+    it("rejects a non-admin caller", async () => {
+      await expect(
+        service.getReanalysisPayments("507f1f77bcf86cd799439011", { role: "influencer" }),
+      ).rejects.toThrow("Admin access required");
+    });
+
+    it("only queries collab_score_reanalysis payments for that user, converting paise to rupees", async () => {
+      const selectMock = jest.fn().mockReturnValue({
+        lean: jest.fn().mockResolvedValue([
+          { amount: 4900, paymentStatus: "captured", status: "approved", createdAt: new Date(), archivedAt: null },
+        ]),
+      });
+      paymentModel.find.mockReturnValue({ sort: jest.fn().mockReturnValue({ select: selectMock }) });
+
+      const result = await service.getReanalysisPayments("507f1f77bcf86cd799439011", { role: "admin" });
+
+      expect(paymentModel.find).toHaveBeenCalledWith(
+        expect.objectContaining({ purpose: "collab_score_reanalysis" }),
+      );
+      expect(result.payments[0]).toMatchObject({
+        amountRupees: 49,
+        paymentStatus: "captured",
+        archived: false,
+      });
     });
   });
 });

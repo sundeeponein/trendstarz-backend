@@ -583,6 +583,34 @@ export class UsersService {
   }
 
   // Only use this for GDPR requests. Otherwise, always use soft delete.
+  /**
+   * Only called from deletePermanently (the true GDPR hard-delete path) —
+   * the regular admin "Delete" is a soft delete that keeps the record, so
+   * Collaboration Score data must stay intact there in case of restore.
+   * Audits/history are hard-deleted; ₹49 re-analysis payments are archived
+   * and anonymized instead (kept for accounting), never deleted.
+   */
+  private async cleanupCollaborationScoreData(userId: string): Promise<void> {
+    try {
+      await this.collaborationAuditModel.deleteMany({ userId: String(userId) });
+    } catch (err) {
+      console.error(`[CLEANUP][ERROR] Failed to delete CollaborationAudit docs for ${userId}:`, err);
+    }
+    try {
+      const filter = { userId: new Types.ObjectId(userId), purpose: "collab_score_reanalysis" };
+      await this.paymentModel.updateMany(filter, {
+        $set: {
+          archivedAt: new Date(),
+          "userSnapshot.name": null,
+          "userSnapshot.email": null,
+        },
+      });
+      await this.transactionModel.updateMany(filter, { $set: { archivedAt: new Date() } });
+    } catch (err) {
+      console.error(`[CLEANUP][ERROR] Failed to archive reanalysis payments for ${userId}:`, err);
+    }
+  }
+
   async deletePermanently(id: string) {
     // Try influencer first
     let user = await this.influencerModel.findById(id);
@@ -628,6 +656,7 @@ export class UsersService {
         );
       } else {
       }
+      await this.cleanupCollaborationScoreData(id);
       // Double-check for any remaining influencer with this id
       const checkUser = await this.influencerModel.findById(id);
       if (checkUser) {
@@ -709,6 +738,7 @@ export class UsersService {
         );
       } else {
       }
+      await this.cleanupCollaborationScoreData(id);
       // Double-check for any remaining brand with this id
       const checkBrand = await this.brandModel.findById(id);
       if (checkBrand) {
@@ -770,6 +800,7 @@ export class UsersService {
           `[CLEANUP][ERROR] Photographer not found for deletion after Cloudinary cleanup: ${id}`,
         );
       }
+      await this.cleanupCollaborationScoreData(id);
 
       const checkPhotographer = await this.photographerModel.findById(id);
       if (checkPhotographer) {
@@ -874,6 +905,8 @@ export class UsersService {
     @InjectModel("ProfileFlag") private readonly profileFlagModel: Model<any>,
     @InjectModel("CollaborationAudit")
     private readonly collaborationAuditModel: Model<any>,
+    @InjectModel("Payment") private readonly paymentModel: Model<any>,
+    @InjectModel("Transaction") private readonly transactionModel: Model<any>,
     private readonly plansService: PlansService,
   ) {}
 

@@ -46,6 +46,9 @@ export const TransactionSchema = new Schema(
       default: "none",
     },
     metadata: { type: Schema.Types.Mixed, default: {} },
+    // Set when the paying user is permanently deleted — kept for accounting.
+    // See UsersService.cleanupCollaborationScoreData().
+    archivedAt: { type: Date, default: null },
     logs: {
       type: [
         {
@@ -84,4 +87,5 @@ export interface Transaction extends Document {
   paymentStatus: "created" | "authorized" | "captured" | "failed" | "refunded";
   refundStatus: "none" | "requested" | "processed" | "failed";
   metadata: Record<string, any>;
+  archivedAt?: Date | null;
 }

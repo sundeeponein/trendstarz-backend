@@ -61,6 +61,10 @@ export const PaymentSchema = new Schema(
     refundReason: { type: String },
     createdAt: { type: Date, default: Date.now },
     approvedAt: { type: Date },
+    // Set when the paying user is permanently deleted — the record itself is
+    // kept for accounting, but userSnapshot is nulled out. See
+    // UsersService.cleanupCollaborationScoreData().
+    archivedAt: { type: Date, default: null },
   },
   { timestamps: true },
 );
@@ -98,4 +102,5 @@ export interface Payment extends Document {
   refundReason?: string;
   createdAt: Date;
   approvedAt?: Date;
+  archivedAt?: Date | null;
 }
