@@ -14,6 +14,7 @@ import {
 } from "../database/schemas/profile.schemas";
 import { CampaignInviteSchema } from "../database/schemas/campaign-invite.schema";
 import { ProfileFlagSchema } from "../database/schemas/profile-flag.schema";
+import { CollaborationAuditSchema } from "../database/schemas/collaboration-audit.schema";
 import { UsageCounterSchema } from "../database/schemas/usage-counter.schema";
 import { PlansModule } from "../plans/plans.module";
 import { MonetizationModule } from "../monetization/monetization.module";
@@ -54,6 +55,11 @@ import { PhotographersModule } from "../photographers/photographers.module";
         name: "ProfileFlag",
         schema: ProfileFlagSchema,
         collection: "profile_flags",
+      },
+      {
+        name: "CollaborationAudit",
+        schema: CollaborationAuditSchema,
+        collection: "collaboration_audits",
       },
     ]),
     PlansModule,

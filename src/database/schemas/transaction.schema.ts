@@ -15,6 +15,7 @@ export const TransactionSchema = new Schema(
         "subscription_payment",
         "invite_unlock_payment",
         "campaign_payment",
+        "collab_score_reanalysis_payment",
         "refund",
       ],
       required: true,
@@ -69,6 +70,7 @@ export interface Transaction extends Document {
     | "subscription_payment"
     | "invite_unlock_payment"
     | "campaign_payment"
+    | "collab_score_reanalysis_payment"
     | "refund";
   relatedId?: string;
   amount: number;

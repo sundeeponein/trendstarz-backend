@@ -11,6 +11,7 @@ import {
 import { CloudinaryService } from "../cloudinary.service";
 import { UsageCounterSchema } from "../database/schemas/usage-counter.schema";
 import { ProfileFlagSchema } from "../database/schemas/profile-flag.schema";
+import { CollaborationAuditSchema } from "../database/schemas/collaboration-audit.schema";
 import { PlansModule } from "../plans/plans.module";
 
 @Module({
@@ -35,6 +36,7 @@ import { PlansModule } from "../plans/plans.module";
       { name: "State", schema: StateSchema, collection: "states" },
       { name: "District", schema: DistrictSchema, collection: "districts" },
       { name: "ProfileFlag", schema: ProfileFlagSchema, collection: "profile_flags" },
+      { name: "CollaborationAudit", schema: CollaborationAuditSchema, collection: "collaboration_audits" },
     ]),
   ],
   controllers: [PhotographersController],

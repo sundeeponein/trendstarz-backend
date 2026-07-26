@@ -38,6 +38,7 @@
     "migrate:email-verified-field": "node cron/migrateEmailVerifiedToIsEmailVerified.js"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.115.0",
     "@nestjs/cli": "^11.0.16",
     "@nestjs/common": "^11.0.1",
     "@nestjs/config": "^4.0.2",

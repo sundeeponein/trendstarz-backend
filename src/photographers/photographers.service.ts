@@ -88,9 +88,33 @@ export class PhotographersService {
     @InjectModel("ProfileFlag") private readonly profileFlagModel: Model<any>,
     @InjectModel("State") private readonly stateModel: Model<any>,
     @InjectModel("District") private readonly districtModel: Model<any>,
+    @InjectModel("CollaborationAudit")
+    private readonly collaborationAuditModel: Model<any>,
     private readonly cloudinaryService: CloudinaryService,
     private readonly plansService: PlansService,
   ) {}
+
+  /** Brand-safe Collaboration Score fields only — see UsersService's sibling helper. */
+  private async collaborationAuditSummaryMap(
+    userIds: Array<string | undefined>,
+  ): Promise<Map<string, any>> {
+    const ids = Array.from(new Set(userIds.filter(Boolean).map(String)));
+    if (!ids.length) return new Map();
+    const audits = await this.collaborationAuditModel
+      .find(
+        { userId: { $in: ids }, isCurrent: true },
+        {
+          userId: 1,
+          collaborationScore: 1,
+          campaignReadiness: 1,
+          trendstarzRecommended: 1,
+          pricingSuggestion: 1,
+          categoryMatch: 1,
+        },
+      )
+      .lean();
+    return new Map(audits.map((audit: any) => [String(audit.userId), audit]));
+  }
 
   private async canViewPhotographerContact(
     photographer: any,
@@ -747,10 +771,20 @@ export class PhotographersService {
       ])
       .exec();
 
-    docs = docs.map((d: any) => ({
-      ...d,
-      profileImage: d?.profileImages?.[0]?.url || null,
-    }));
+    const auditByUserId = await this.collaborationAuditSummaryMap(
+      docs.map((d: any) => d?._id),
+    );
+    docs = docs.map((d: any) => {
+      const audit = auditByUserId.get(String(d._id));
+      return {
+        ...d,
+        profileImage: d?.profileImages?.[0]?.url || null,
+        collaborationScore: audit?.collaborationScore ?? null,
+        campaignReadiness: audit?.campaignReadiness ?? null,
+        trendstarzRecommended: audit?.trendstarzRecommended ?? false,
+        suggestedPriceRange: audit?.pricingSuggestion ?? null,
+      };
+    });
 
     const hasManualLocationFilter = !!String(query.location || "").trim();
     const useSmartPriority =

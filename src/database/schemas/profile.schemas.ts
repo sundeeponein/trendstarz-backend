@@ -296,6 +296,15 @@ export const InfluencerSchema = new Schema(
             price: { type: Number, default: 0 },
           },
         ],
+        // Additive, optional — used by Collaboration Score for platforms
+        // without an official no-login API (Instagram/Facebook/LinkedIn)
+        // until real OAuth connect ships. Flagged as unverified in the score.
+        selfReportedStats: {
+          avgLikes: { type: Number, default: null },
+          avgComments: { type: Number, default: null },
+          postFrequencyPerWeek: { type: Number, default: null },
+          lastUpdatedAt: { type: Date, default: null },
+        },
       },
     ],
     socialMediaEditLog: [
@@ -448,6 +457,12 @@ export const BrandSchema = new Schema(
             price: { type: Number, default: 0 },
           },
         ],
+        selfReportedStats: {
+          avgLikes: { type: Number, default: null },
+          avgComments: { type: Number, default: null },
+          postFrequencyPerWeek: { type: Number, default: null },
+          lastUpdatedAt: { type: Date, default: null },
+        },
       },
     ],
     socialMediaEditLog: [
@@ -723,6 +738,12 @@ export const PhotographerSchema = new Schema(
         handle: { type: String },
         tier: { type: String },
         followersCount: { type: Number },
+        selfReportedStats: {
+          avgLikes: { type: Number, default: null },
+          avgComments: { type: Number, default: null },
+          postFrequencyPerWeek: { type: Number, default: null },
+          lastUpdatedAt: { type: Date, default: null },
+        },
       },
     ],
     socialMediaEditLog: [

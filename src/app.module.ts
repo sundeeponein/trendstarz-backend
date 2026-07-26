@@ -75,6 +75,7 @@ import { PhotographersModule } from "./photographers/photographers.module";
 import { MonetizationModule } from "./monetization/monetization.module";
 import { ProfileVerificationModule } from "./profile-verification/profile-verification.module";
 import { WhatsAppModule } from "./whatsapp/whatsapp.module";
+import { CollaborationScoreModule } from "./collaboration-score/collaboration-score.module";
 
 @Module({
   imports: [
@@ -178,6 +179,7 @@ import { WhatsAppModule } from "./whatsapp/whatsapp.module";
     MonetizationModule,
     ProfileVerificationModule,
     WhatsAppModule,
+    CollaborationScoreModule,
   ],
   controllers: [
     AppController,

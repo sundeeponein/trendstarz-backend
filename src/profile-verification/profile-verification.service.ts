@@ -430,6 +430,24 @@ export class ProfileVerificationService {
     return hasPhoto && hasLoc && this.hasSocialTier(profile);
   }
 
+  /**
+   * Read-only completeness snapshot for external consumers (e.g. Collaboration
+   * Score) that need `profileCompletion` without triggering getDashboard()'s
+   * side-effecting write-back of profileCompletion/profileQualityScore/
+   * profileQualityLabel/profileTier onto the profile document.
+   */
+  async getCompletionSnapshot(
+    userId: string,
+    role: any,
+  ): Promise<{ userType: ProfileUserType; completion: number; flags: any[] }> {
+    const { userType, profile } = await this.loadProfile(userId, role);
+    const flags = await this.flagModel
+      .find({ userId: String(userId), userType, status: "Open" })
+      .lean();
+    const completion = this.computeCompletion(profile, userType, flags);
+    return { userType, completion, flags };
+  }
+
   private looksLikeScreenshot(url: string): boolean {
     return /(screenshot|screen-shot|instagram|youtube|facebook|whatsapp|statusbar|status-bar|story|reel-ui|mobile-ui)/i.test(
       url || "",

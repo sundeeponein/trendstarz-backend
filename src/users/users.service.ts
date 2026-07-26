@@ -872,8 +872,36 @@ export class UsersService {
     private readonly campaignInviteModel: Model<any>,
     @InjectModel("Campaign") private readonly campaignModel: Model<any>,
     @InjectModel("ProfileFlag") private readonly profileFlagModel: Model<any>,
+    @InjectModel("CollaborationAudit")
+    private readonly collaborationAuditModel: Model<any>,
     private readonly plansService: PlansService,
   ) {}
+
+  /**
+   * Brand-safe Collaboration Score fields only, keyed by userId — never the
+   * AI analysis, raw platform data, or sub-score breakdown. Used to enrich
+   * Search results without exposing internal calculations to brands.
+   */
+  private async collaborationAuditSummaryMap(
+    userIds: Array<string | undefined>,
+  ): Promise<Map<string, any>> {
+    const ids = Array.from(new Set(userIds.filter(Boolean).map(String)));
+    if (!ids.length) return new Map();
+    const audits = await this.collaborationAuditModel
+      .find(
+        { userId: { $in: ids }, isCurrent: true },
+        {
+          userId: 1,
+          collaborationScore: 1,
+          campaignReadiness: 1,
+          trendstarzRecommended: 1,
+          pricingSuggestion: 1,
+          categoryMatch: 1,
+        },
+      )
+      .lean();
+    return new Map(audits.map((audit: any) => [String(audit.userId), audit]));
+  }
 
   private async publicProfileBlockedIds(
     userType: "Influencer" | "Brand" | "Photographer",
@@ -2019,6 +2047,10 @@ export class UsersService {
         this.influencerModel.countDocuments(baseFilter),
       ]);
 
+      const auditByUserId = await this.collaborationAuditSummaryMap(
+        (pagedRows || []).map((inf: any) => inf?._id),
+      );
+
       const data = await Promise.all(
         (pagedRows || []).map(async (inf: any) => {
           const hideGallery = await this.hasOpenGalleryBlock(
@@ -2029,6 +2061,7 @@ export class UsersService {
             inf?.profileImages,
             hideGallery,
           );
+          const audit = auditByUserId.get(String(inf._id));
           return {
             ...inf,
             profileImages: visibleProfileImages,
@@ -2045,6 +2078,10 @@ export class UsersService {
             phoneNumber: undefined,
             website: undefined,
             contactRestricted: true,
+            collaborationScore: audit?.collaborationScore ?? null,
+            campaignReadiness: audit?.campaignReadiness ?? null,
+            trendstarzRecommended: audit?.trendstarzRecommended ?? false,
+            suggestedPriceRange: audit?.pricingSuggestion ?? null,
           };
         }),
       );

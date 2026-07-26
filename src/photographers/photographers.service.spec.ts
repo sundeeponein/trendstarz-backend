@@ -10,6 +10,7 @@ describe("PhotographersService profile update guards", () => {
       {} as any,
       {} as any,
       {} as any,
+      {} as any,
     );
 
   it("resets mobile verification when verified phone is changed", async () => {
@@ -121,6 +122,7 @@ describe("PhotographersService profile update guards", () => {
     const service = new PhotographersService(
       {} as any,
       campaignInviteModel as any,
+      {} as any,
       {} as any,
       {} as any,
       {} as any,

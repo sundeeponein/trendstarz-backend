@@ -16,7 +16,7 @@ export const PaymentSchema = new Schema(
     premiumDuration: { type: String, enum: ['1m', '3m', '1y'], required: true },
     purpose: {
       type: String,
-      enum: ['subscription', 'invite_unlock', 'campaign_payment'],
+      enum: ['subscription', 'invite_unlock', 'campaign_payment', 'collab_score_reanalysis'],
       default: 'subscription',
       index: true,
     },
@@ -73,7 +73,7 @@ export interface Payment extends Document {
   paymentId?: string;
   amount: number;
   premiumDuration: '1m' | '3m' | '1y';
-  purpose: 'subscription' | 'invite_unlock' | 'campaign_payment';
+  purpose: 'subscription' | 'invite_unlock' | 'campaign_payment' | 'collab_score_reanalysis';
   paymentStatus: 'created' | 'authorized' | 'captured' | 'failed' | 'refunded';
   refundStatus: 'none' | 'requested' | 'processed' | 'failed';
   gatewayProvider: 'manual_upi' | 'razorpay';

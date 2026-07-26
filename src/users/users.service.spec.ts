@@ -19,6 +19,7 @@ describe("UsersService profile update guards", () => {
       overrides?.campaignInviteModel || ({} as any);
     const campaignModel = overrides?.campaignModel || ({} as any);
     const profileFlagModel = overrides?.profileFlagModel || ({} as any);
+    const collaborationAuditModel = {} as any;
     const plansService = {
       canViewSocialLinks: jest.fn().mockResolvedValue(true),
       listActive: jest.fn().mockResolvedValue({ plans: [] }),
@@ -34,6 +35,7 @@ describe("UsersService profile update guards", () => {
       campaignInviteModel,
       campaignModel,
       profileFlagModel,
+      collaborationAuditModel,
       plansService,
     );
   };
