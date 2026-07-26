@@ -139,6 +139,11 @@ export class CollaborationScoreService {
     const handle = String(youtubeUrl || "").trim();
     if (!handle) throw new BadRequestException("A YouTube channel URL is required");
 
+    const settings = await this.settingsService.getSettings();
+    if (!settings.anonymousPreviewEnabled) {
+      throw new BadRequestException("The free score preview is currently unavailable. Please register to check your score.");
+    }
+
     const collected = await this.collectors.YouTube.collect({ handle });
     if (!collected) {
       throw new BadRequestException(
@@ -146,7 +151,6 @@ export class CollaborationScoreService {
       );
     }
 
-    const settings = await this.settingsService.getSettings();
     const { previewScore } = this.rulesService.computePreviewScores([collected], settings);
 
     return {
@@ -181,13 +185,15 @@ export class CollaborationScoreService {
   }
 
   /**
-   * First audit ever is free; every one after that requires a captured
-   * payment (see createReanalysisOrder/verifyReanalysisPayment) — applies
-   * uniformly to existing and new accounts alike, no grandfathering.
+   * The first `freeAuditCount` audits (default 1) are free; every one after
+   * that requires a captured payment (see createReanalysisOrder/
+   * verifyReanalysisPayment) — applies uniformly to existing and new
+   * accounts alike, no grandfathering.
    */
-  private async assertFreeAuditAvailable(userId: string): Promise<void> {
-    const hasAnyAudit = await this.auditModel.exists({ userId: String(userId) });
-    if (hasAnyAudit) {
+  private async assertFreeAuditAvailable(userId: string, freeAuditCount: number): Promise<void> {
+    if (freeAuditCount <= 0) return;
+    const priorAuditCount = await this.auditModel.countDocuments({ userId: String(userId) });
+    if (priorAuditCount >= freeAuditCount) {
       throw new HttpException(
         {
           code: "PAYMENT_REQUIRED",
@@ -217,7 +223,7 @@ export class CollaborationScoreService {
     if (trigger === "USER") {
       await this.assertCooldownElapsed(userId, settings.reanalysisCooldownDays);
       if (!opts.skipFreeGate) {
-        await this.assertFreeAuditAvailable(userId);
+        await this.assertFreeAuditAvailable(userId, settings.freeAuditCount);
       }
     }
 
@@ -545,6 +551,8 @@ export class CollaborationScoreService {
     const result: any = { items, total, page, limit };
 
     if (String(query?.summary) === "true") {
+      const settings = await this.settingsService.getSettings();
+      const trackAuditCost = settings.analytics.trackAuditCost;
       const summaryAgg = await this.auditModel.aggregate([
         { $match: { isCurrent: true } },
         {
@@ -567,6 +575,11 @@ export class CollaborationScoreService {
         avgScore: 0,
         recommendedCount: 0,
       };
+      if (!trackAuditCost) {
+        result.summary.totalAiCostUsd = null;
+        result.summary.totalAiInputTokens = null;
+        result.summary.totalAiOutputTokens = null;
+      }
 
       const startOfToday = new Date();
       startOfToday.setHours(0, 0, 0, 0);
@@ -596,6 +609,10 @@ export class CollaborationScoreService {
         ...today,
         averageCostUsd: today.aiCalls > 0 ? today.estimatedCostUsd / today.aiCalls : 0,
       };
+      if (!trackAuditCost) {
+        result.todaySummary.estimatedCostUsd = null;
+        result.todaySummary.averageCostUsd = null;
+      }
     }
 
     return result;

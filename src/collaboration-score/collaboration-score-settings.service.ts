@@ -2,6 +2,7 @@ import { BadRequestException, Injectable } from "@nestjs/common";
 import { InjectModel } from "@nestjs/mongoose";
 import { Model } from "mongoose";
 import { CollaborationScoreSettingsSnapshot } from "./collaboration-score-rules.service";
+import defaultSettingsJson from "./collaboration-score-settings.default.json";
 
 export interface CollaborationScorePlatformsEnabled {
   instagram: boolean;
@@ -10,44 +11,46 @@ export interface CollaborationScorePlatformsEnabled {
   linkedin: boolean;
 }
 
+export interface CollaborationScoreAnalyticsToggles {
+  trackAuditCost: boolean;
+  trackAverageScore: boolean;
+  trackPlatformUsage: boolean;
+  trackAuditHistory: boolean;
+}
+
 export interface CollaborationScoreSettingsDoc extends CollaborationScoreSettingsSnapshot {
   aiEnabled: boolean;
   aiModel: string;
+  // Kill-switch for the anonymous, pre-registration YouTube preview endpoint.
+  anonymousPreviewEnabled: boolean;
+  // How many audits (ever) are free before an account must pay to re-analyze.
+  freeAuditCount: number;
+  // Stored for future use — nothing currently treats an audit as "stale"
+  // past this many days; see collaboration-score-settings.service.ts.
+  auditValidityDays: number;
   version2Enabled: boolean;
+  version1Name: string;
+  version2Name: string;
   platformsEnabled: CollaborationScorePlatformsEnabled;
   reanalysisCooldownDays: number;
   reanalysisFeeRupees: number;
   nightlyReauditEnabled: boolean;
   nightlyReauditCronHour: number;
   youtubeApiQuotaGuardPerDay: number;
+  // Only trackAuditCost is currently wired (gates the cost fields in
+  // adminList's summary/todaySummary). The other three are stored/editable
+  // but not yet read anywhere — reserved for future dashboard granularity.
+  analytics: CollaborationScoreAnalyticsToggles;
   lastNightlyRunAt: Date | null;
   lastNightlyRunCount: number;
   lastNightlyRunCostUsd: number;
 }
 
-const DEFAULTS: CollaborationScoreSettingsDoc = {
-  aiEnabled: false,
-  aiModel: "claude-sonnet-5",
-  weights: {
-    contentQuality: { rulesPercent: 60, aiPercent: 40 },
-    professionalBranding: { rulesPercent: 70, aiPercent: 30 },
-  },
-  thresholds: {
-    trendstarzRecommendedMinScore: 80,
-    campaignReadyMinScore: 70,
-    partiallyReadyMinScore: 40,
-  },
-  version2Enabled: false,
-  platformsEnabled: { instagram: true, youtube: true, facebook: true, linkedin: true },
-  reanalysisCooldownDays: 30,
-  reanalysisFeeRupees: 99,
-  nightlyReauditEnabled: false,
-  nightlyReauditCronHour: 2,
-  youtubeApiQuotaGuardPerDay: 8000,
-  lastNightlyRunAt: null,
-  lastNightlyRunCount: 0,
-  lastNightlyRunCostUsd: 0,
-};
+// Single source of truth for defaults — loaded from the JSON file so the
+// starting configuration is reviewable/diffable without reading TS. Any
+// admin edit via PUT /api/audit/settings is layered on top of this in Mongo
+// (see getSettings/updateSettings below); this file never changes at runtime.
+const DEFAULTS: CollaborationScoreSettingsDoc = defaultSettingsJson as CollaborationScoreSettingsDoc;
 
 function clampNumber(value: unknown, fallback: number, min: number, max: number): number {
   const n = Number(value);
@@ -96,6 +99,9 @@ export class CollaborationScoreSettingsService {
     return {
       aiEnabled: doc.aiEnabled === true,
       aiModel: String(doc.aiModel || DEFAULTS.aiModel),
+      anonymousPreviewEnabled: doc.anonymousPreviewEnabled !== false,
+      freeAuditCount: clampNumber(doc.freeAuditCount, DEFAULTS.freeAuditCount, 0, 100),
+      auditValidityDays: clampNumber(doc.auditValidityDays, DEFAULTS.auditValidityDays, 0, 3650),
       weights: {
         contentQuality: {
           rulesPercent: clampNumber(
@@ -147,6 +153,8 @@ export class CollaborationScoreSettingsService {
         ),
       },
       version2Enabled: doc.version2Enabled === true,
+      version1Name: String(doc.version1Name || DEFAULTS.version1Name),
+      version2Name: String(doc.version2Name || DEFAULTS.version2Name),
       platformsEnabled: {
         instagram: doc?.platformsEnabled?.instagram !== false,
         youtube: doc?.platformsEnabled?.youtube !== false,
@@ -178,6 +186,12 @@ export class CollaborationScoreSettingsService {
         0,
         1_000_000,
       ),
+      analytics: {
+        trackAuditCost: doc?.analytics?.trackAuditCost !== false,
+        trackAverageScore: doc?.analytics?.trackAverageScore !== false,
+        trackPlatformUsage: doc?.analytics?.trackPlatformUsage !== false,
+        trackAuditHistory: doc?.analytics?.trackAuditHistory !== false,
+      },
       lastNightlyRunAt: doc.lastNightlyRunAt || null,
       lastNightlyRunCount: Number(doc.lastNightlyRunCount || 0),
       lastNightlyRunCostUsd: Number(doc.lastNightlyRunCostUsd || 0),
@@ -190,7 +204,18 @@ export class CollaborationScoreSettingsService {
     }
     const next: any = {};
     if (body.aiEnabled !== undefined) next.aiEnabled = body.aiEnabled === true;
+    if (body.anonymousPreviewEnabled !== undefined) {
+      next.anonymousPreviewEnabled = body.anonymousPreviewEnabled === true;
+    }
+    if (body.freeAuditCount !== undefined) {
+      next.freeAuditCount = clampNumber(body.freeAuditCount, current.freeAuditCount, 0, 100);
+    }
+    if (body.auditValidityDays !== undefined) {
+      next.auditValidityDays = clampNumber(body.auditValidityDays, current.auditValidityDays, 0, 3650);
+    }
     if (body.version2Enabled !== undefined) next.version2Enabled = body.version2Enabled === true;
+    if (body.version1Name !== undefined) next.version1Name = String(body.version1Name || current.version1Name);
+    if (body.version2Name !== undefined) next.version2Name = String(body.version2Name || current.version2Name);
     if (body.platformsEnabled) {
       next.platformsEnabled = {
         instagram:
@@ -245,6 +270,26 @@ export class CollaborationScoreSettingsService {
         0,
         1_000_000,
       );
+    }
+    if (body.analytics) {
+      next.analytics = {
+        trackAuditCost:
+          body.analytics.trackAuditCost !== undefined
+            ? body.analytics.trackAuditCost === true
+            : current.analytics.trackAuditCost,
+        trackAverageScore:
+          body.analytics.trackAverageScore !== undefined
+            ? body.analytics.trackAverageScore === true
+            : current.analytics.trackAverageScore,
+        trackPlatformUsage:
+          body.analytics.trackPlatformUsage !== undefined
+            ? body.analytics.trackPlatformUsage === true
+            : current.analytics.trackPlatformUsage,
+        trackAuditHistory:
+          body.analytics.trackAuditHistory !== undefined
+            ? body.analytics.trackAuditHistory === true
+            : current.analytics.trackAuditHistory,
+      };
     }
     if (body.weights) {
       next.weights = {

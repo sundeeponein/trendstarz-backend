@@ -36,9 +36,8 @@ describe("CollaborationScoreService", () => {
       updateOne: jest.fn().mockResolvedValue({}),
       create: jest.fn().mockResolvedValue(createdDoc),
       find: jest.fn(),
-      countDocuments: jest.fn(),
+      countDocuments: jest.fn().mockResolvedValue(0),
       aggregate: jest.fn(),
-      exists: jest.fn().mockResolvedValue(null),
     };
     influencerModel = {
       findById: jest.fn().mockReturnValue({ lean: jest.fn().mockResolvedValue(fakeProfile) }),
@@ -84,9 +83,17 @@ describe("CollaborationScoreService", () => {
       getSettings: jest.fn().mockResolvedValue({
         aiEnabled: false,
         aiModel: "claude-sonnet-5",
+        anonymousPreviewEnabled: true,
+        freeAuditCount: 1,
         platformsEnabled: { instagram: true, youtube: true, facebook: true, linkedin: true },
         reanalysisCooldownDays: 0,
         reanalysisFeeRupees: 99,
+        analytics: {
+          trackAuditCost: true,
+          trackAverageScore: true,
+          trackPlatformUsage: true,
+          trackAuditHistory: true,
+        },
       }),
     };
     paymentModel = {
@@ -147,9 +154,12 @@ describe("CollaborationScoreService", () => {
     settingsService.getSettings.mockResolvedValue({
       aiEnabled: true,
       aiModel: "claude-sonnet-5",
+      anonymousPreviewEnabled: true,
+      freeAuditCount: 1,
       platformsEnabled: { instagram: true, youtube: true, facebook: true, linkedin: true },
       reanalysisCooldownDays: 0,
       reanalysisFeeRupees: 99,
+      analytics: { trackAuditCost: true, trackAverageScore: true, trackPlatformUsage: true, trackAuditHistory: true },
     });
     const aiResult = {
       captionQuality: { score: 80, notes: "" },
@@ -201,7 +211,7 @@ describe("CollaborationScoreService", () => {
     });
 
     it("rejects a direct run with 402 once a prior audit already exists", async () => {
-      auditModel.exists.mockResolvedValue({ _id: "existing-audit" });
+      auditModel.countDocuments.mockResolvedValue(1);
 
       await expect(service.runAudit("user-1", "influencer", "USER")).rejects.toMatchObject({
         status: 402,
@@ -210,7 +220,7 @@ describe("CollaborationScoreService", () => {
     });
 
     it("skipFreeGate lets the paid-verification path run a 2nd+ audit", async () => {
-      auditModel.exists.mockResolvedValue({ _id: "existing-audit" });
+      auditModel.countDocuments.mockResolvedValue(1);
 
       await expect(
         service.runAudit("user-1", "influencer", "USER", { skipFreeGate: true }),
@@ -219,19 +229,41 @@ describe("CollaborationScoreService", () => {
     });
 
     it("admin/nightly triggers are exempt from the free-audit gate", async () => {
-      auditModel.exists.mockResolvedValue({ _id: "existing-audit" });
+      auditModel.countDocuments.mockResolvedValue(1);
 
       await expect(service.runAudit("user-1", "influencer", "ADMIN")).resolves.toBeDefined();
       await expect(service.runAudit("user-1", "influencer", "SYSTEM_NIGHTLY")).resolves.toBeDefined();
+    });
+
+    it("respects an admin-raised freeAuditCount — a 2nd audit is still free when the limit is 2", async () => {
+      settingsService.getSettings.mockResolvedValue({
+        aiEnabled: false,
+        aiModel: "claude-sonnet-5",
+        anonymousPreviewEnabled: true,
+        freeAuditCount: 2,
+        platformsEnabled: { instagram: true, youtube: true, facebook: true, linkedin: true },
+        reanalysisCooldownDays: 0,
+        reanalysisFeeRupees: 99,
+        analytics: { trackAuditCost: true, trackAverageScore: true, trackPlatformUsage: true, trackAuditHistory: true },
+      });
+      auditModel.countDocuments.mockResolvedValue(1); // one prior audit already
+
+      await expect(service.runAudit("user-1", "influencer", "USER")).resolves.toBeDefined();
+
+      auditModel.countDocuments.mockResolvedValue(2); // now at the limit
+      await expect(service.runAudit("user-1", "influencer", "USER")).rejects.toMatchObject({ status: 402 });
     });
 
     it("createReanalysisOrder rejects while the cooldown hasn't elapsed", async () => {
       settingsService.getSettings.mockResolvedValue({
         aiEnabled: false,
         aiModel: "claude-sonnet-5",
+        anonymousPreviewEnabled: true,
+        freeAuditCount: 1,
         platformsEnabled: { instagram: true, youtube: true, facebook: true, linkedin: true },
         reanalysisCooldownDays: 30,
         reanalysisFeeRupees: 99,
+        analytics: { trackAuditCost: true, trackAverageScore: true, trackPlatformUsage: true, trackAuditHistory: true },
       });
       auditModel.findOne.mockReturnValue({
         select: jest.fn().mockReturnValue({
@@ -278,7 +310,7 @@ describe("CollaborationScoreService", () => {
         save: jest.fn().mockResolvedValue({}),
       };
       paymentModel.findOne.mockResolvedValue(payment);
-      auditModel.exists.mockResolvedValue({ _id: "existing-audit" });
+      auditModel.countDocuments.mockResolvedValue(1);
       auditModel.findOne.mockReturnValue({
         lean: jest.fn().mockResolvedValue({ userId: "507f1f77bcf86cd799439011", collaborationScore: 82 }),
       });
@@ -374,6 +406,24 @@ describe("CollaborationScoreService", () => {
       );
     });
 
+    it("respects the anonymousPreviewEnabled kill switch — never calls the collector when off", async () => {
+      settingsService.getSettings.mockResolvedValue({
+        aiEnabled: false,
+        aiModel: "claude-sonnet-5",
+        anonymousPreviewEnabled: false,
+        freeAuditCount: 1,
+        platformsEnabled: { instagram: true, youtube: true, facebook: true, linkedin: true },
+        reanalysisCooldownDays: 0,
+        reanalysisFeeRupees: 99,
+        analytics: { trackAuditCost: true, trackAverageScore: true, trackPlatformUsage: true, trackAuditHistory: true },
+      });
+
+      await expect(service.previewFromYoutubeUrl("https://youtube.com/@test")).rejects.toThrow(
+        "currently unavailable",
+      );
+      expect(youtubeCollector.collect).not.toHaveBeenCalled();
+    });
+
     it("never touches the audit collection — nothing persisted for anonymous lookups", async () => {
       youtubeCollector.collect.mockResolvedValue({
         platform: "YouTube",
@@ -394,6 +444,60 @@ describe("CollaborationScoreService", () => {
       expect(result.handle).toBe("test");
       expect(result.confidence).toBe(55);
       expect(typeof result.previewScore).toBe("number");
+    });
+  });
+
+  describe("adminList — analytics.trackAuditCost gating", () => {
+    beforeEach(() => {
+      auditModel.find.mockReturnValue({
+        sort: jest.fn().mockReturnThis(),
+        skip: jest.fn().mockReturnThis(),
+        limit: jest.fn().mockReturnThis(),
+        lean: jest.fn().mockResolvedValue([]),
+      });
+      auditModel.countDocuments.mockResolvedValue(0);
+      auditModel.aggregate.mockResolvedValue([
+        {
+          totalAiCostUsd: 12.5,
+          totalAiInputTokens: 100,
+          totalAiOutputTokens: 50,
+          aiAuditCount: 3,
+          avgScore: 70,
+          recommendedCount: 1,
+          audits: 5,
+          aiCalls: 3,
+          estimatedCostUsd: 12.5,
+          successCount: 5,
+          failureCount: 0,
+        },
+      ]);
+    });
+
+    it("nulls out cost fields when trackAuditCost is off", async () => {
+      settingsService.getSettings.mockResolvedValue({
+        aiEnabled: false,
+        aiModel: "claude-sonnet-5",
+        anonymousPreviewEnabled: true,
+        freeAuditCount: 1,
+        platformsEnabled: { instagram: true, youtube: true, facebook: true, linkedin: true },
+        reanalysisCooldownDays: 0,
+        reanalysisFeeRupees: 99,
+        analytics: { trackAuditCost: false, trackAverageScore: true, trackPlatformUsage: true, trackAuditHistory: true },
+      });
+
+      const result = await service.adminList({ role: "admin" }, { summary: "true" });
+
+      expect(result.summary.totalAiCostUsd).toBeNull();
+      expect(result.todaySummary.estimatedCostUsd).toBeNull();
+      expect(result.todaySummary.averageCostUsd).toBeNull();
+      expect(result.summary.avgScore).toBe(70); // unaffected — only cost fields are gated
+    });
+
+    it("keeps cost fields populated when trackAuditCost is on", async () => {
+      const result = await service.adminList({ role: "admin" }, { summary: "true" });
+
+      expect(result.summary.totalAiCostUsd).toBe(12.5);
+      expect(result.todaySummary.estimatedCostUsd).toBe(12.5);
     });
   });
 });
