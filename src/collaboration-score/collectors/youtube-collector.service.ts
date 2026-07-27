@@ -157,10 +157,14 @@ export class YoutubeCollectorService implements ProfileCollector {
     return items.map((item) => {
       const videoId = item?.snippet?.resourceId?.videoId;
       const stats = statsById.get(videoId) || {};
+      // A malformed/unexpected publishedAt from the API would otherwise
+      // produce an Invalid Date whose getTime() is NaN, silently poisoning
+      // every downstream score calculation for this run.
+      const parsedDate = new Date(item?.snippet?.publishedAt || Date.now());
       return {
         title: String(item?.snippet?.title || ""),
         description: String(item?.snippet?.description || ""),
-        publishedAt: new Date(item?.snippet?.publishedAt || Date.now()),
+        publishedAt: Number.isNaN(parsedDate.getTime()) ? new Date() : parsedDate,
         views: Number(stats.viewCount || 0),
         likes: Number(stats.likeCount || 0),
         comments: Number(stats.commentCount || 0),

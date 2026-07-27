@@ -200,4 +200,54 @@ describe("CollaborationScoreRulesService", () => {
     );
     expect(selfReported.contentQualityScore).toBeLessThanOrEqual(50);
   });
+
+  describe("computePreviewScores — anonymous preview never returns NaN", () => {
+    it("returns 0, not NaN, when a platform's data would otherwise produce an invalid computation", () => {
+      const platform: any = {
+        platform: "YouTube",
+        method: "API",
+        handle: "test",
+        followersOrSubscribers: 1000,
+        // An Invalid Date's getTime() is NaN — this must not leak through
+        // to previewScore (see youtube-collector.service.ts's guard too).
+        recentPosts: [{ title: "a", description: "", publishedAt: new Date(NaN), views: 100, likes: 10, comments: 1 }],
+        collectedAt: new Date(),
+        raw: {},
+        confidence: 95,
+        confidenceReason: "",
+      };
+
+      const result = service.computePreviewScores([platform], settings);
+
+      expect(Number.isFinite(result.previewScore)).toBe(true);
+      expect(Number.isFinite(result.contentQualityScore)).toBe(true);
+      expect(Number.isFinite(result.postingConsistencyScore)).toBe(true);
+    });
+
+    it("computes a real, finite score for a normal, healthy channel", () => {
+      const platform: any = {
+        platform: "YouTube",
+        method: "API",
+        handle: "test",
+        followersOrSubscribers: 5000,
+        recentPosts: Array.from({ length: 5 }, (_, i) => ({
+          title: "a",
+          description: "",
+          publishedAt: new Date(Date.now() - i * 5 * 24 * 60 * 60 * 1000),
+          views: 1000,
+          likes: 100,
+          comments: 20,
+        })),
+        collectedAt: new Date(),
+        raw: {},
+        confidence: 95,
+        confidenceReason: "",
+      };
+
+      const result = service.computePreviewScores([platform], settings);
+
+      expect(result.previewScore).toBeGreaterThan(0);
+      expect(Number.isFinite(result.previewScore)).toBe(true);
+    });
+  });
 });

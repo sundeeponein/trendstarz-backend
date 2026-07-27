@@ -120,9 +120,16 @@ export class CollaborationScoreRulesService {
       settings,
       aiResult: null,
     };
-    const contentQualityScore = this.computeContentQuality(input);
-    const postingConsistencyScore = this.computePostingConsistency(input);
-    const previewScore = Math.round(0.55 * contentQualityScore + 0.45 * postingConsistencyScore);
+    // Fail-safe to 0 rather than propagating NaN — this endpoint is
+    // anonymous and unauthenticated, fed by arbitrary public URLs and a
+    // live third-party API response we don't control (e.g. an unusual
+    // publishedAt value producing an Invalid Date somewhere upstream).
+    // JSON.stringify(NaN) serializes as `null`, which Angular renders as
+    // nothing — exactly the blank "/100" bug this guards against.
+    const safe = (n: number) => (Number.isFinite(n) ? n : 0);
+    const contentQualityScore = safe(this.computeContentQuality(input));
+    const postingConsistencyScore = safe(this.computePostingConsistency(input));
+    const previewScore = safe(Math.round(0.55 * contentQualityScore + 0.45 * postingConsistencyScore));
     return { contentQualityScore, postingConsistencyScore, previewScore };
   }
 
