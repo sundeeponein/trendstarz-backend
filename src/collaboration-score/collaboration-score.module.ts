@@ -20,6 +20,7 @@ import { CollaborationScoreRulesService } from "./collaboration-score-rules.serv
 import { CollaborationScoreAiService } from "./collaboration-score-ai.service";
 import { CollaborationScoreSettingsService } from "./collaboration-score-settings.service";
 import { CollaborationScoreNightlyService } from "./collaboration-score-nightly.service";
+import { SocialOAuthRefreshService } from "./social-oauth-refresh.service";
 import { YoutubeCollectorService } from "./collectors/youtube-collector.service";
 import { InstagramCollectorService } from "./collectors/instagram-collector.service";
 import { FacebookCollectorService } from "./collectors/facebook-collector.service";
@@ -66,6 +67,7 @@ import { LinkedinCollectorService } from "./collectors/linkedin-collector.servic
     FacebookCollectorService,
     LinkedinCollectorService,
     CollaborationScoreNightlyService,
+    SocialOAuthRefreshService,
     // Not exported by PaymentModule — re-declared here the same way
     // MonetizationModule does; RazorpayService has no injected deps, so a
     // second instance is harmless (see razorpay.service.ts).

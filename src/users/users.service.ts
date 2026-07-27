@@ -9,6 +9,7 @@ import * as bcrypt from "bcryptjs";
 import { InjectModel } from "@nestjs/mongoose";
 import { Model, Types } from "mongoose";
 import { PlansService } from "../plans/plans.service";
+import { MetaOAuthService } from "../meta-oauth/meta-oauth.service";
 import { normalizeCollaborationAvailability } from "../utils/collaboration-availability.util";
 import { FirebaseAdminService } from "../utils/firebase-admin.service";
 import {
@@ -609,6 +610,29 @@ export class UsersService {
     } catch (err) {
       console.error(`[CLEANUP][ERROR] Failed to archive reanalysis payments for ${userId}:`, err);
     }
+    try {
+      const connections = await this.socialOAuthConnectionModel
+        .find({ userId: String(userId) })
+        .select("+accessToken")
+        .lean();
+      for (const conn of connections as any[]) {
+        if (conn.accessToken) {
+          const targetId = conn.platform === "instagram" ? conn.instagramBusinessAccountId : conn.facebookPageId;
+          if (targetId) {
+            // Best-effort — a revoke failure must never leave the connection
+            // doc (and its access token) stranded in the database.
+            await this.metaOAuthService.revokePermissions(targetId, conn.accessToken).catch((err) => {
+              console.error(`[CLEANUP][ERROR] Failed to revoke Meta permissions for ${userId}:`, err);
+            });
+          }
+        }
+      }
+      // Hard-deleted, unlike Payment/Transaction above — not financial
+      // records, nothing to retain.
+      await this.socialOAuthConnectionModel.deleteMany({ userId: String(userId) });
+    } catch (err) {
+      console.error(`[CLEANUP][ERROR] Failed to remove SocialOAuthConnection docs for ${userId}:`, err);
+    }
   }
 
   async deletePermanently(id: string) {
@@ -907,7 +931,9 @@ export class UsersService {
     private readonly collaborationAuditModel: Model<any>,
     @InjectModel("Payment") private readonly paymentModel: Model<any>,
     @InjectModel("Transaction") private readonly transactionModel: Model<any>,
+    @InjectModel("SocialOAuthConnection") private readonly socialOAuthConnectionModel: Model<any>,
     private readonly plansService: PlansService,
+    private readonly metaOAuthService: MetaOAuthService,
   ) {}
 
   /**

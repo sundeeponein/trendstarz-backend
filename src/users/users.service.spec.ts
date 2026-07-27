@@ -11,8 +11,10 @@ describe("UsersService profile update guards", () => {
     collaborationAuditModel?: any;
     paymentModel?: any;
     transactionModel?: any;
+    socialOAuthConnectionModel?: any;
     cloudinaryService?: any;
     firebaseAdminService?: any;
+    metaOAuthService?: any;
   }) => {
     const cloudinaryService = overrides?.cloudinaryService || ({} as any);
     const firebaseAdminService = overrides?.firebaseAdminService || ({} as any);
@@ -27,10 +29,12 @@ describe("UsersService profile update guards", () => {
     const collaborationAuditModel = overrides?.collaborationAuditModel || ({} as any);
     const paymentModel = overrides?.paymentModel || ({} as any);
     const transactionModel = overrides?.transactionModel || ({} as any);
+    const socialOAuthConnectionModel = overrides?.socialOAuthConnectionModel || ({} as any);
     const plansService = {
       canViewSocialLinks: jest.fn().mockResolvedValue(true),
       listActive: jest.fn().mockResolvedValue({ plans: [] }),
     } as any;
+    const metaOAuthService = overrides?.metaOAuthService || ({ revokePermissions: jest.fn().mockResolvedValue(undefined) } as any);
 
     return new UsersService(
       cloudinaryService,
@@ -45,7 +49,9 @@ describe("UsersService profile update guards", () => {
       collaborationAuditModel,
       paymentModel,
       transactionModel,
+      socialOAuthConnectionModel,
       plansService,
+      metaOAuthService,
     );
   };
 
@@ -418,6 +424,86 @@ describe("UsersService profile update guards", () => {
       await expect(service.deletePermanently("507f1f77bcf86cd799439011")).resolves.toMatchObject({
         message: "Influencer permanently deleted",
       });
+    });
+
+    it("best-effort revokes and hard-deletes SocialOAuthConnection docs (not archived)", async () => {
+      const influencerModel = {
+        findById: jest.fn().mockResolvedValueOnce(fakeInfluencer).mockResolvedValueOnce(null),
+        findByIdAndDelete: jest.fn().mockResolvedValue(fakeInfluencer),
+      };
+      const collaborationAuditModel = { deleteMany: jest.fn().mockResolvedValue({}) };
+      const paymentModel = { updateMany: jest.fn().mockResolvedValue({}) };
+      const transactionModel = { updateMany: jest.fn().mockResolvedValue({}) };
+      const firebaseAdminService = { isConfigured: jest.fn().mockReturnValue(false) };
+      const socialOAuthConnectionModel = {
+        find: jest.fn().mockReturnValue({
+          select: jest.fn().mockReturnValue({
+            lean: jest.fn().mockResolvedValue([
+              { _id: "conn-1", platform: "instagram", instagramBusinessAccountId: "ig-1", accessToken: "token-a" },
+              { _id: "conn-2", platform: "facebook", facebookPageId: "page-1", accessToken: "token-b" },
+            ]),
+          }),
+        }),
+        deleteMany: jest.fn().mockResolvedValue({}),
+      };
+      const metaOAuthService = { revokePermissions: jest.fn().mockResolvedValue(undefined) };
+
+      const service = makeService({
+        influencerModel,
+        collaborationAuditModel,
+        paymentModel,
+        transactionModel,
+        firebaseAdminService,
+        socialOAuthConnectionModel,
+        metaOAuthService,
+      });
+
+      await service.deletePermanently("507f1f77bcf86cd799439011");
+
+      expect(metaOAuthService.revokePermissions).toHaveBeenCalledWith("ig-1", "token-a");
+      expect(metaOAuthService.revokePermissions).toHaveBeenCalledWith("page-1", "token-b");
+      expect(socialOAuthConnectionModel.deleteMany).toHaveBeenCalledWith({ userId: "507f1f77bcf86cd799439011" });
+    });
+
+    it("still deletes SocialOAuthConnection docs even if the Meta revoke call fails", async () => {
+      const influencerModel = {
+        findById: jest.fn().mockResolvedValueOnce(fakeInfluencer).mockResolvedValueOnce(null),
+        findByIdAndDelete: jest.fn().mockResolvedValue(fakeInfluencer),
+      };
+      const collaborationAuditModel = { deleteMany: jest.fn().mockResolvedValue({}) };
+      const paymentModel = { updateMany: jest.fn().mockResolvedValue({}) };
+      const transactionModel = { updateMany: jest.fn().mockResolvedValue({}) };
+      const firebaseAdminService = { isConfigured: jest.fn().mockReturnValue(false) };
+      const socialOAuthConnectionModel = {
+        find: jest.fn().mockReturnValue({
+          select: jest.fn().mockReturnValue({
+            lean: jest
+              .fn()
+              .mockResolvedValue([
+                { _id: "conn-1", platform: "instagram", instagramBusinessAccountId: "ig-1", accessToken: "token-a" },
+              ]),
+          }),
+        }),
+        deleteMany: jest.fn().mockResolvedValue({}),
+      };
+      const metaOAuthService = { revokePermissions: jest.fn().mockRejectedValue(new Error("Meta API down")) };
+
+      const service = makeService({
+        influencerModel,
+        collaborationAuditModel,
+        paymentModel,
+        transactionModel,
+        firebaseAdminService,
+        socialOAuthConnectionModel,
+        metaOAuthService,
+      });
+
+      await expect(service.deletePermanently("507f1f77bcf86cd799439011")).resolves.toMatchObject({
+        message: "Influencer permanently deleted",
+      });
+      // A failed remote revoke must not strand the connection doc (and its
+      // access token) in the database — deleteMany still runs.
+      expect(socialOAuthConnectionModel.deleteMany).toHaveBeenCalledWith({ userId: "507f1f77bcf86cd799439011" });
     });
   });
 });
