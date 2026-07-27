@@ -45,6 +45,17 @@ export class InstagramCollectorService implements ProfileCollector {
     );
     if (!stats) return null;
 
+    // Keep the profile-edit page's "Username"/"Followers" display cache
+    // fresh on every real audit, without a dedicated sync job.
+    try {
+      await this.connectionModel.updateOne(
+        { _id: connection._id },
+        { $set: { handle: stats.username || connection.handle || null, followersCount: stats.followersCount } },
+      );
+    } catch {
+      // Display-cache refresh is best-effort — never blocks the audit itself.
+    }
+
     const recentPosts: CollectedPost[] = stats.posts.map((p) => ({
       title: "",
       description: "",
@@ -57,7 +68,7 @@ export class InstagramCollectorService implements ProfileCollector {
     return {
       platform: "Instagram",
       method: "API",
-      handle: fallbackHandle || connection.instagramBusinessAccountId,
+      handle: stats.username || fallbackHandle || connection.instagramBusinessAccountId,
       followersOrSubscribers: stats.followersCount,
       recentPosts,
       collectedAt: new Date(),

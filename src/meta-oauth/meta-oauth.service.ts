@@ -142,11 +142,15 @@ export class MetaOAuthService {
   async getInstagramBusinessAccountStats(
     igAccountId: string,
     accessToken: string,
-  ): Promise<{ followersCount: number; posts: Array<{ likes: number; comments: number; createdAt: Date }> } | null> {
+  ): Promise<{
+    username: string | null;
+    followersCount: number;
+    posts: Array<{ likes: number; comments: number; createdAt: Date }>;
+  } | null> {
     try {
       const [accountResp, mediaResp] = await Promise.all([
         axios.get(`${GRAPH_API_BASE}/${igAccountId}`, {
-          params: { access_token: accessToken, fields: "followers_count" },
+          params: { access_token: accessToken, fields: "followers_count,username" },
         }),
         axios.get(`${GRAPH_API_BASE}/${igAccountId}/media`, {
           params: { access_token: accessToken, fields: "like_count,comments_count,timestamp", limit: 20 },
@@ -154,6 +158,7 @@ export class MetaOAuthService {
       ]);
       const media: any[] = mediaResp.data?.data || [];
       return {
+        username: accountResp.data?.username || null,
         followersCount: Number(accountResp.data?.followers_count || 0),
         posts: media.map((m) => ({
           likes: Number(m.like_count || 0),

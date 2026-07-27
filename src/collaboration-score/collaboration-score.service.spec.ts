@@ -124,6 +124,9 @@ describe("CollaborationScoreService", () => {
       exchangeCodeForToken: jest.fn().mockResolvedValue({ accessToken: "short", expiresInSeconds: 3600 }),
       exchangeForLongLivedToken: jest.fn().mockResolvedValue({ accessToken: "long", expiresInSeconds: 5184000 }),
       resolveFacebookPages: jest.fn().mockResolvedValue([]),
+      getInstagramBusinessAccountStats: jest
+        .fn()
+        .mockResolvedValue({ username: "creator_handle", followersCount: 1000, posts: [] }),
       revokePermissions: jest.fn().mockResolvedValue(undefined),
     };
     youtubeCollector = { platform: "YouTube" as const, collect: jest.fn().mockResolvedValue(null) };
@@ -598,11 +601,41 @@ describe("CollaborationScoreService", () => {
             accessToken: "long",
             facebookPageId: "page-1",
             instagramBusinessAccountId: "ig-1",
+            handle: "creator_handle",
+            followersCount: 1000,
           }),
         }),
         { upsert: true },
       );
+      expect(metaOAuthService.getInstagramBusinessAccountStats).toHaveBeenCalledWith("ig-1", "long");
       expect(redirectUrl).toContain("/influencer-dashboard?connected=instagram");
+    });
+
+    it("handleOAuthCallback populates handle/followersCount from the Page itself for facebook connects", async () => {
+      metaOAuthService.resolveFacebookPages.mockResolvedValue([
+        { id: "page-1", name: "Creator Page", followersCount: 250, instagramBusinessAccountId: null },
+      ]);
+      const jwt = require("jsonwebtoken");
+      const { getJwtSecret } = require("../auth/jwt-secret");
+      const signedState = jwt.sign(
+        { userId: "507f1f77bcf86cd799439011", role: "influencer", platform: "facebook" },
+        getJwtSecret(),
+        { expiresIn: "10m" },
+      );
+
+      await service.handleOAuthCallback("auth-code", signedState);
+
+      expect(connectionModel.findOneAndUpdate).toHaveBeenCalledWith(
+        { userId: "507f1f77bcf86cd799439011", platform: "facebook" },
+        expect.objectContaining({
+          $set: expect.objectContaining({
+            handle: "Creator Page",
+            followersCount: 250,
+          }),
+        }),
+        { upsert: true },
+      );
+      expect(metaOAuthService.getInstagramBusinessAccountStats).not.toHaveBeenCalled();
     });
 
     it("disconnectPlatform revokes and deletes an existing connection", async () => {
@@ -630,16 +663,24 @@ describe("CollaborationScoreService", () => {
       expect(result).toEqual({ success: true });
     });
 
-    it("getConnections reports only non-revoked platforms", async () => {
+    it("getConnections reports connection details only for non-revoked platforms", async () => {
+      const connectedAt = new Date();
       connectionModel.find.mockReturnValue({
         select: jest.fn().mockReturnValue({
-          lean: jest.fn().mockResolvedValue([{ platform: "instagram" }]),
+          lean: jest
+            .fn()
+            .mockResolvedValue([
+              { platform: "instagram", handle: "creator_handle", followersCount: 1000, connectedAt },
+            ]),
         }),
       });
 
       const result = await service.getConnections("507f1f77bcf86cd799439011");
 
-      expect(result).toEqual({ instagram: true, facebook: false });
+      expect(result).toEqual({
+        instagram: { handle: "creator_handle", followersCount: 1000, connectedAt },
+        facebook: null,
+      });
     });
   });
 });

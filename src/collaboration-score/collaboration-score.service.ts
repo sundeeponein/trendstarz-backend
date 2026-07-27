@@ -28,6 +28,12 @@ import {
 type CollaborationScoreUserType = "Influencer" | "Brand" | "Photographer";
 type AuditTrigger = "USER" | "ADMIN" | "SYSTEM_NIGHTLY";
 
+export interface SocialConnectionDetail {
+  handle: string | null;
+  followersCount: number | null;
+  connectedAt: Date;
+}
+
 // Fields a brand-role caller is allowed to see, per spec: "Never show AI
 // prompts. Never show internal calculations." Enforced server-side here,
 // not just hidden in the UI.
@@ -697,6 +703,21 @@ export class CollaborationScoreService {
       ? new Date(Date.now() + longLived.expiresInSeconds * 1000)
       : null;
 
+    // Display cache for the profile-edit/registration UI ("Username: ...",
+    // "Followers: Auto Imported") — never used for scoring itself.
+    let displayHandle: string | null = page?.name || null;
+    let displayFollowers: number | null = page?.followersCount ?? null;
+    if (decoded.platform === "instagram" && page?.instagramBusinessAccountId) {
+      const igStats = await this.metaOAuthService.getInstagramBusinessAccountStats(
+        page.instagramBusinessAccountId,
+        longLived.accessToken,
+      );
+      if (igStats) {
+        displayHandle = igStats.username;
+        displayFollowers = igStats.followersCount;
+      }
+    }
+
     await this.connectionModel.findOneAndUpdate(
       { userId: decoded.userId, platform: decoded.platform },
       {
@@ -709,6 +730,8 @@ export class CollaborationScoreService {
           facebookPageId: page?.id || null,
           instagramBusinessAccountId:
             decoded.platform === "instagram" ? page?.instagramBusinessAccountId || null : null,
+          handle: displayHandle,
+          followersCount: displayFollowers,
           scopes: this.oauthScopesFor(decoded.platform),
           connectedAt: new Date(),
           revokedAt: null,
@@ -735,12 +758,20 @@ export class CollaborationScoreService {
     return { success: true };
   }
 
-  async getConnections(userId: string): Promise<{ instagram: boolean; facebook: boolean }> {
+  async getConnections(userId: string): Promise<{
+    instagram: SocialConnectionDetail | null;
+    facebook: SocialConnectionDetail | null;
+  }> {
     const connections = await this.connectionModel
       .find({ userId: String(userId), revokedAt: null })
-      .select("platform")
+      .select("platform handle followersCount connectedAt")
       .lean();
-    const platforms = new Set(connections.map((c: any) => c.platform));
-    return { instagram: platforms.has("instagram"), facebook: platforms.has("facebook") };
+    const byPlatform = new Map(connections.map((c: any) => [c.platform, c]));
+    const toDetail = (platform: string): SocialConnectionDetail | null => {
+      const c: any = byPlatform.get(platform);
+      if (!c) return null;
+      return { handle: c.handle || null, followersCount: c.followersCount ?? null, connectedAt: c.connectedAt };
+    };
+    return { instagram: toDetail("instagram"), facebook: toDetail("facebook") };
   }
 }

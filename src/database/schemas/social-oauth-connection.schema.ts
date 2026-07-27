@@ -20,6 +20,11 @@ export const SocialOAuthConnectionSchema = new Schema(
     longLivedTokenExpiresAt: { type: Date, default: null },
     facebookPageId: { type: String, default: null },
     instagramBusinessAccountId: { type: String, default: null },
+    // Display cache only — populated at connect time and refreshed on every
+    // real collector run (see InstagramCollectorService/FacebookCollectorService),
+    // never used for scoring itself (that always re-fetches live).
+    handle: { type: String, default: null },
+    followersCount: { type: Number, default: null },
     scopes: { type: [String], default: [] },
     connectedAt: { type: Date, default: Date.now },
     revokedAt: { type: Date, default: null },

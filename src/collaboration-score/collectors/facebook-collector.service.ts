@@ -40,6 +40,18 @@ export class FacebookCollectorService implements ProfileCollector {
     const stats = await this.metaOAuthService.getFacebookPageStats(connection.facebookPageId, connection.accessToken);
     if (!stats) return null;
 
+    // Keep the profile-edit page's "Followers" display cache fresh on every
+    // real audit. The Page name itself only comes from resolveFacebookPages()
+    // at connect time — rarely changes, so it isn't re-fetched here.
+    try {
+      await this.connectionModel.updateOne(
+        { _id: connection._id },
+        { $set: { followersCount: stats.followersCount } },
+      );
+    } catch {
+      // Display-cache refresh is best-effort — never blocks the audit itself.
+    }
+
     const recentPosts: CollectedPost[] = stats.posts.map((p) => ({
       title: "",
       description: "",

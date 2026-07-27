@@ -105,15 +105,16 @@ describe("MetaOAuthService", () => {
     expect(stats).toBeNull();
   });
 
-  it("getInstagramBusinessAccountStats maps followers + media into the expected shape", async () => {
+  it("getInstagramBusinessAccountStats maps username + followers + media into the expected shape", async () => {
     mockedAxios.get
-      .mockResolvedValueOnce({ data: { followers_count: 500 } })
+      .mockResolvedValueOnce({ data: { followers_count: 500, username: "creator_handle" } })
       .mockResolvedValueOnce({
         data: { data: [{ like_count: 10, comments_count: 2, timestamp: "2026-01-01T00:00:00Z" }] },
       });
 
     const stats = await service.getInstagramBusinessAccountStats("ig-1", "token");
 
+    expect(stats?.username).toBe("creator_handle");
     expect(stats?.followersCount).toBe(500);
     expect(stats?.posts).toHaveLength(1);
     expect(stats?.posts[0]).toMatchObject({ likes: 10, comments: 2 });

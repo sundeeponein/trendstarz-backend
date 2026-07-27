@@ -10,6 +10,7 @@ describe("FacebookCollectorService", () => {
       findOne: jest.fn().mockReturnValue({
         select: jest.fn().mockReturnValue({ lean: jest.fn().mockResolvedValue(null) }),
       }),
+      updateOne: jest.fn().mockResolvedValue({ acknowledged: true }),
     };
     metaOAuthService = {
       getFacebookPageStats: jest.fn(),
@@ -50,6 +51,34 @@ describe("FacebookCollectorService", () => {
     expect(result?.followersOrSubscribers).toBe(8000);
     expect(result?.confidence).toBe(55); // 1 post -> the ">0" tier
     expect(metaOAuthService.getFacebookPageStats).toHaveBeenCalledWith("page-1", "token-abc");
+  });
+
+  it("refreshes the connection's followersCount display-cache on every real audit run", async () => {
+    connectionModel.findOne.mockReturnValue({
+      select: jest.fn().mockReturnValue({
+        lean: jest.fn().mockResolvedValue({ _id: "conn-1", facebookPageId: "page-1", accessToken: "token-abc" }),
+      }),
+    });
+    metaOAuthService.getFacebookPageStats.mockResolvedValue({ followersCount: 8000, posts: [] });
+
+    await service.collect({ handle: "creatorpage" }, "user-1");
+
+    expect(connectionModel.updateOne).toHaveBeenCalledWith({ _id: "conn-1" }, { $set: { followersCount: 8000 } });
+  });
+
+  it("does not let a display-cache refresh failure block the audit result", async () => {
+    connectionModel.findOne.mockReturnValue({
+      select: jest.fn().mockReturnValue({
+        lean: jest.fn().mockResolvedValue({ _id: "conn-1", facebookPageId: "page-1", accessToken: "token-abc" }),
+      }),
+    });
+    connectionModel.updateOne.mockRejectedValue(new Error("db down"));
+    metaOAuthService.getFacebookPageStats.mockResolvedValue({ followersCount: 8000, posts: [] });
+
+    const result = await service.collect({ handle: "creatorpage" }, "user-1");
+
+    expect(result?.method).toBe("API");
+    expect(result?.followersOrSubscribers).toBe(8000);
   });
 
   it("falls back to self-reported when connected but the Graph API call fails", async () => {
