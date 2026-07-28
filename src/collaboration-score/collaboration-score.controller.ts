@@ -188,6 +188,17 @@ export class CollaborationScoreController {
     return this.service.getAuditHistory(userId, req?.user, limit ? Number(limit) : undefined);
   }
 
+  /** GET /api/audit/:userId/version/:version — self/admin only; a specific past audit's full snapshot. */
+  @UseGuards(JwtAuthGuard)
+  @Get(":userId/version/:version")
+  getAuditVersion(
+    @Req() req: any,
+    @Param("userId") userId: string,
+    @Param("version") version: string,
+  ) {
+    return this.service.getAuditVersion(userId, Number(version), req?.user);
+  }
+
   /** GET /api/audit/:userId/payments — admin-only; every re-analysis payment for one creator. */
   @UseGuards(JwtAuthGuard)
   @Get(":userId/payments")

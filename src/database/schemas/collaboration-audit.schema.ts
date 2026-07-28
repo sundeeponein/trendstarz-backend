@@ -140,6 +140,11 @@ export const CollaborationAuditSchema = new Schema(
     status: { type: String, enum: COLLABORATION_AUDIT_STATUSES, default: "completed", index: true },
     failureReason: { type: String, default: "" },
     triggeredBy: { type: String, enum: COLLABORATION_AUDIT_TRIGGERS, default: "USER" },
+    // True only for a re-analysis that completed a paid Razorpay flow — see
+    // CollaborationScoreService.verifyReanalysisPayment. Every other run
+    // (first-ever free audit, nightly system re-audit, admin trigger)
+    // defaults false, which is correct since none of those are paid.
+    isPaid: { type: Boolean, default: false },
     runId: { type: String, default: "", index: true },
     durationMs: { type: Number, default: 0 },
   },

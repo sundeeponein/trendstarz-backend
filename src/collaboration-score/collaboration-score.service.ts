@@ -227,7 +227,7 @@ export class CollaborationScoreService {
     userId: string,
     role: any,
     trigger: AuditTrigger = "USER",
-    opts: { skipFreeGate?: boolean } = {},
+    opts: { skipFreeGate?: boolean; isPaid?: boolean } = {},
   ) {
     const startedAt = Date.now();
     const settings = await this.settingsService.getSettings();
@@ -348,6 +348,7 @@ export class CollaborationScoreService {
       recommendations: scores.recommendations,
       status: "completed",
       triggeredBy: trigger,
+      isPaid: !!opts.isPaid,
       durationMs: Date.now() - startedAt,
     });
 
@@ -494,7 +495,7 @@ export class CollaborationScoreService {
       },
     );
 
-    await this.runAudit(userId, role, "USER", { skipFreeGate: true });
+    await this.runAudit(userId, role, "USER", { skipFreeGate: true, isPaid: true });
     return this.getAuditForUser(userId, { userId, role });
   }
 
@@ -517,7 +518,7 @@ export class CollaborationScoreService {
       .find({ userId: String(targetUserId) })
       .sort({ version: -1 })
       .limit(Math.min(50, Math.max(1, limit)))
-      .select("version collaborationScore campaignReadiness trendstarzRecommended createdAt")
+      .select("version collaborationScore campaignReadiness trendstarzRecommended isPaid createdAt")
       .lean();
 
     const withDeltas = versions.map((entry: any, i: number) => ({
@@ -525,6 +526,7 @@ export class CollaborationScoreService {
       collaborationScore: entry.collaborationScore,
       campaignReadiness: entry.campaignReadiness,
       trendstarzRecommended: entry.trendstarzRecommended,
+      isPaid: !!entry.isPaid,
       createdAt: entry.createdAt,
       scoreDelta:
         i + 1 < versions.length
@@ -533,6 +535,31 @@ export class CollaborationScoreService {
     }));
 
     return { history: withDeltas };
+  }
+
+  /**
+   * A specific past audit version's full data — old versions are never
+   * deleted (just superseded via isCurrent, see runAudit), so the Score
+   * Center's history "View" can show the real historical snapshot rather
+   * than just the summary line getAuditHistory returns. Self/admin only,
+   * same guard as getAuditHistory.
+   */
+  async getAuditVersion(targetUserId: string, version: number, requester: any) {
+    const requesterId = String(
+      requester?.userId || requester?.sub || requester?.id || "",
+    ).trim();
+    const isSelf = requesterId && requesterId === String(targetUserId);
+    const isAdmin = String(requester?.role || "").toLowerCase() === "admin";
+    if (!isSelf && !isAdmin) {
+      throw new ForbiddenException("Not authorized to view this audit");
+    }
+
+    const audit: any = await this.auditModel
+      .findOne({ userId: String(targetUserId), version })
+      .lean();
+    if (!audit) throw new NotFoundException("No audit found for that version");
+
+    return audit;
   }
 
   /** Admin-only — every re-analysis payment for one creator, for the admin detail page. */

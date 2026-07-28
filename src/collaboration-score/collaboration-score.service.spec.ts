@@ -351,6 +351,7 @@ describe("CollaborationScoreService", () => {
       expect(payment.save).toHaveBeenCalled();
       expect(transactionModel.updateMany).toHaveBeenCalled();
       expect(auditModel.create).toHaveBeenCalled(); // the skipFreeGate runAudit call
+      expect(auditModel.create).toHaveBeenCalledWith(expect.objectContaining({ isPaid: true }));
       expect(result).toMatchObject({ userId: "507f1f77bcf86cd799439011" });
     });
 
@@ -369,6 +370,93 @@ describe("CollaborationScoreService", () => {
 
       expect(payment.save).not.toHaveBeenCalled();
       expect(auditModel.create).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("runAudit — isPaid defaulting", () => {
+    it("defaults isPaid to false for a normal (non-paid) run", async () => {
+      auditModel.countDocuments.mockResolvedValue(0);
+
+      await service.runAudit("507f1f77bcf86cd799439011", "influencer", "USER");
+
+      expect(auditModel.create).toHaveBeenCalledWith(expect.objectContaining({ isPaid: false }));
+    });
+  });
+
+  describe("getAuditHistory", () => {
+    const historyDocs = [
+      { version: 2, collaborationScore: 82, campaignReadiness: "Campaign Ready", trendstarzRecommended: true, isPaid: true, createdAt: new Date("2026-07-26") },
+      { version: 1, collaborationScore: 70, campaignReadiness: "Partially Ready", trendstarzRecommended: false, isPaid: false, createdAt: new Date("2026-06-15") },
+    ];
+
+    function mockFindChain(docs: any[]) {
+      auditModel.find.mockReturnValue({
+        sort: jest.fn().mockReturnValue({
+          limit: jest.fn().mockReturnValue({
+            select: jest.fn().mockReturnValue({ lean: jest.fn().mockResolvedValue(docs) }),
+          }),
+        }),
+      });
+    }
+
+    it("includes isPaid per entry alongside the score delta", async () => {
+      mockFindChain(historyDocs);
+
+      const result = await service.getAuditHistory("507f1f77bcf86cd799439011", {
+        userId: "507f1f77bcf86cd799439011",
+        role: "influencer",
+      });
+
+      expect(result.history).toEqual([
+        expect.objectContaining({ version: 2, isPaid: true, scoreDelta: 12 }),
+        expect.objectContaining({ version: 1, isPaid: false, scoreDelta: null }),
+      ]);
+    });
+
+    it("rejects a non-self, non-admin requester", async () => {
+      mockFindChain(historyDocs);
+
+      await expect(
+        service.getAuditHistory("507f1f77bcf86cd799439011", { userId: "someone-else", role: "brand" }),
+      ).rejects.toThrow("Not authorized to view this history");
+    });
+  });
+
+  describe("getAuditVersion", () => {
+    it("returns the full historical snapshot for self", async () => {
+      auditModel.findOne.mockReturnValue({
+        lean: jest.fn().mockResolvedValue({
+          userId: "507f1f77bcf86cd799439011",
+          version: 1,
+          collaborationScore: 70,
+          isPaid: false,
+        }),
+      });
+
+      const result = await service.getAuditVersion("507f1f77bcf86cd799439011", 1, {
+        userId: "507f1f77bcf86cd799439011",
+        role: "influencer",
+      });
+
+      expect(auditModel.findOne).toHaveBeenCalledWith({ userId: "507f1f77bcf86cd799439011", version: 1 });
+      expect(result).toMatchObject({ version: 1, collaborationScore: 70 });
+    });
+
+    it("rejects a non-self, non-admin requester", async () => {
+      await expect(
+        service.getAuditVersion("507f1f77bcf86cd799439011", 1, { userId: "someone-else", role: "brand" }),
+      ).rejects.toThrow("Not authorized to view this audit");
+    });
+
+    it("404s when that version does not exist", async () => {
+      auditModel.findOne.mockReturnValue({ lean: jest.fn().mockResolvedValue(null) });
+
+      await expect(
+        service.getAuditVersion("507f1f77bcf86cd799439011", 99, {
+          userId: "507f1f77bcf86cd799439011",
+          role: "influencer",
+        }),
+      ).rejects.toThrow("No audit found for that version");
     });
   });
 
