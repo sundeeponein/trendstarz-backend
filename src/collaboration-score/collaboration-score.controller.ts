@@ -174,6 +174,18 @@ export class CollaborationScoreController {
     return this.settingsService.resetToDefaults({ userId: this.requesterId(req), role: req?.user?.role });
   }
 
+  /**
+   * GET /api/audit/platform-flags — public, no JWT. Exposes only
+   * platformsEnabled (never the rest of settings — AI prompts/costs/
+   * thresholds stay admin-only) so every surface that shows a platform
+   * (the anonymous /audit page, Connect buttons, Platform Status) can hide
+   * one an admin has disabled, without needing an admin JWT to ask.
+   */
+  @Get("platform-flags")
+  async getPlatformFlags() {
+    return this.service.getPlatformFlags();
+  }
+
   /** GET /api/audit/:userId — full detail for self, brand-safe filtered otherwise. */
   @UseGuards(JwtAuthGuard)
   @Get(":userId")

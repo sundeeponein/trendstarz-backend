@@ -383,6 +383,28 @@ describe("CollaborationScoreService", () => {
     });
   });
 
+  describe("runAudit — concurrent-request race protection", () => {
+    it("translates a duplicate-key error (unique {userId, version} index) into a clear 400, not a raw Mongo error", async () => {
+      auditModel.countDocuments.mockResolvedValue(0);
+      const duplicateKeyError: any = new Error("E11000 duplicate key error collection");
+      duplicateKeyError.code = 11000;
+      auditModel.create.mockRejectedValueOnce(duplicateKeyError);
+
+      await expect(
+        service.runAudit("507f1f77bcf86cd799439011", "influencer", "USER"),
+      ).rejects.toThrow("An audit is already being generated for this account. Please wait a moment and try again.");
+    });
+
+    it("re-throws any other, unrelated error unchanged", async () => {
+      auditModel.countDocuments.mockResolvedValue(0);
+      auditModel.create.mockRejectedValueOnce(new Error("some other db failure"));
+
+      await expect(
+        service.runAudit("507f1f77bcf86cd799439011", "influencer", "USER"),
+      ).rejects.toThrow("some other db failure");
+    });
+  });
+
   describe("getAuditHistory", () => {
     const historyDocs = [
       { version: 2, collaborationScore: 82, campaignReadiness: "Campaign Ready", trendstarzRecommended: true, isPaid: true, createdAt: new Date("2026-07-26") },
@@ -457,6 +479,24 @@ describe("CollaborationScoreService", () => {
           role: "influencer",
         }),
       ).rejects.toThrow("No audit found for that version");
+    });
+  });
+
+  describe("getPlatformFlags — public, no auth required", () => {
+    it("returns only platformsEnabled, nothing else from settings", async () => {
+      settingsService.getSettings.mockResolvedValue({
+        platformsEnabled: { instagram: false, youtube: true, facebook: true, linkedin: false },
+        aiModel: "claude-sonnet-5", // must never leak through this endpoint
+        reanalysisFeeRupees: 49,
+      });
+
+      const result = await service.getPlatformFlags();
+
+      expect(result).toEqual({
+        platformsEnabled: { instagram: false, youtube: true, facebook: true, linkedin: false },
+      });
+      expect(result).not.toHaveProperty("aiModel");
+      expect(result).not.toHaveProperty("reanalysisFeeRupees");
     });
   });
 
@@ -611,6 +651,49 @@ describe("CollaborationScoreService", () => {
 
       expect(result.summary.totalAiCostUsd).toBe(12.5);
       expect(result.todaySummary.estimatedCostUsd).toBe(12.5);
+    });
+  });
+
+  describe("adminList — today's per-platform breakdown", () => {
+    beforeEach(() => {
+      auditModel.find.mockReturnValue({
+        sort: jest.fn().mockReturnThis(),
+        skip: jest.fn().mockReturnThis(),
+        limit: jest.fn().mockReturnThis(),
+        lean: jest.fn().mockResolvedValue([]),
+      });
+      auditModel.countDocuments.mockResolvedValue(0);
+      settingsService.getSettings.mockResolvedValue({
+        analytics: { trackAuditCost: true, trackAverageScore: true, trackPlatformUsage: true, trackAuditHistory: true },
+      });
+    });
+
+    it("groups today's collected platforms with counts, most-collected first", async () => {
+      auditModel.aggregate
+        .mockResolvedValueOnce([{ totalAiCostUsd: 0, aiAuditCount: 0, avgScore: 0, recommendedCount: 0 }]) // summaryAgg
+        .mockResolvedValueOnce([{ audits: 3, aiCalls: 0, estimatedCostUsd: 0, successCount: 3, failureCount: 0 }]) // todayAgg
+        .mockResolvedValueOnce([
+          { _id: "YouTube", count: 3 },
+          { _id: "Instagram", count: 2 },
+        ]); // platformAgg
+
+      const result = await service.adminList({ role: "admin" }, { summary: "true" });
+
+      expect(result.todaySummary.platformBreakdown).toEqual([
+        { platform: "YouTube", count: 3 },
+        { platform: "Instagram", count: 2 },
+      ]);
+    });
+
+    it("is an empty array on a day with no audits at all", async () => {
+      auditModel.aggregate
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([]);
+
+      const result = await service.adminList({ role: "admin" }, { summary: "true" });
+
+      expect(result.todaySummary.platformBreakdown).toEqual([]);
     });
   });
 

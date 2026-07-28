@@ -310,47 +310,61 @@ export class CollaborationScoreService {
       );
     }
 
-    const created = await this.auditModel.create({
-      userId: String(userId),
-      userType,
-      version: nextVersion,
-      isCurrent: true,
-      platformsCollected: collectedPlatforms.map((p) => ({
-        platform: p.platform,
-        method: p.method,
-        handle: p.handle,
-        collectedAt: p.collectedAt,
-        raw: p.raw,
-        confidence: p.confidence,
-        confidenceReason: p.confidenceReason,
-      })),
-      profileCompletenessScore: scores.profileCompletenessScore,
-      contentQualityScore: scores.contentQualityScore,
-      postingConsistencyScore: scores.postingConsistencyScore,
-      professionalBrandingScore: scores.professionalBrandingScore,
-      campaignReadinessScore: scores.campaignReadinessScore,
-      collaborationScore: scores.collaborationScore,
-      portfolioScore: scores.portfolioScore,
-      campaignReadiness: scores.campaignReadiness,
-      trendstarzRecommended: scores.trendstarzRecommended,
-      trendstarzRecommendedMinScore: scores.trendstarzRecommendedMinScore,
-      pricingSuggestion: scores.pricingSuggestion,
-      categoryMatch: scores.categoryMatch,
-      aiAnalysis: aiResult,
-      aiUsed,
-      aiModel: aiUsed ? settings.aiModel : null,
-      aiCallType: aiUsed ? "sync" : null,
-      aiInputTokens,
-      aiOutputTokens,
-      aiCostUsd,
-      strengths: scores.strengths,
-      improvements: scores.improvements,
-      recommendations: scores.recommendations,
-      status: "completed",
-      triggeredBy: trigger,
-      isPaid: !!opts.isPaid,
-      durationMs: Date.now() - startedAt,
-    });
+    let created: any;
+    try {
+      created = await this.auditModel.create({
+        userId: String(userId),
+        userType,
+        version: nextVersion,
+        isCurrent: true,
+        platformsCollected: collectedPlatforms.map((p) => ({
+          platform: p.platform,
+          method: p.method,
+          handle: p.handle,
+          collectedAt: p.collectedAt,
+          raw: p.raw,
+          confidence: p.confidence,
+          confidenceReason: p.confidenceReason,
+        })),
+        profileCompletenessScore: scores.profileCompletenessScore,
+        contentQualityScore: scores.contentQualityScore,
+        postingConsistencyScore: scores.postingConsistencyScore,
+        professionalBrandingScore: scores.professionalBrandingScore,
+        campaignReadinessScore: scores.campaignReadinessScore,
+        collaborationScore: scores.collaborationScore,
+        portfolioScore: scores.portfolioScore,
+        campaignReadiness: scores.campaignReadiness,
+        trendstarzRecommended: scores.trendstarzRecommended,
+        trendstarzRecommendedMinScore: scores.trendstarzRecommendedMinScore,
+        pricingSuggestion: scores.pricingSuggestion,
+        categoryMatch: scores.categoryMatch,
+        aiAnalysis: aiResult,
+        aiUsed,
+        aiModel: aiUsed ? settings.aiModel : null,
+        aiCallType: aiUsed ? "sync" : null,
+        aiInputTokens,
+        aiOutputTokens,
+        aiCostUsd,
+        strengths: scores.strengths,
+        improvements: scores.improvements,
+        recommendations: scores.recommendations,
+        status: "completed",
+        triggeredBy: trigger,
+        isPaid: !!opts.isPaid,
+        durationMs: Date.now() - startedAt,
+      });
+    } catch (err: any) {
+      // Unique index on {userId, version} — a concurrent request (double
+      // click, refresh-and-retry, two open tabs) already created this same
+      // next version first. Fail fast with a clear message instead of a
+      // raw duplicate-key error.
+      if (err?.code === 11000) {
+        throw new BadRequestException(
+          "An audit is already being generated for this account. Please wait a moment and try again.",
+        );
+      }
+      throw err;
+    }
 
     return created.toObject();
   }
@@ -562,6 +576,12 @@ export class CollaborationScoreService {
     return audit;
   }
 
+  /** Public — see CollaborationScoreController.getPlatformFlags for why only this one field is exposed unauthenticated. */
+  async getPlatformFlags() {
+    const settings = await this.settingsService.getSettings();
+    return { platformsEnabled: settings.platformsEnabled };
+  }
+
   /** Admin-only — every re-analysis payment for one creator, for the admin detail page. */
   async getReanalysisPayments(targetUserId: string, actor: any) {
     this.assertAdmin(actor);
@@ -664,9 +684,21 @@ export class CollaborationScoreService {
         successCount: 0,
         failureCount: 0,
       };
+
+      // Same window as todayAgg above, just unwound per collected platform
+      // instead of a flat count — one audit can (and usually does) contribute
+      // to more than one platform's count.
+      const platformAgg = await this.auditModel.aggregate([
+        { $match: { createdAt: { $gte: startOfToday } } },
+        { $unwind: "$platformsCollected" },
+        { $group: { _id: "$platformsCollected.platform", count: { $sum: 1 } } },
+        { $sort: { count: -1 } },
+      ]);
+
       result.todaySummary = {
         ...today,
         averageCostUsd: today.aiCalls > 0 ? today.estimatedCostUsd / today.aiCalls : 0,
+        platformBreakdown: platformAgg.map((p: any) => ({ platform: p._id, count: p.count })),
       };
       if (!trackAuditCost) {
         result.todaySummary.estimatedCostUsd = null;

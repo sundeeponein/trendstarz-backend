@@ -152,5 +152,10 @@ export const CollaborationAuditSchema = new Schema(
 );
 
 CollaborationAuditSchema.index({ userId: 1, isCurrent: 1 });
-CollaborationAuditSchema.index({ userId: 1, version: -1 });
+// unique: closes the race window where two concurrent runAudit() calls for
+// the same user (double-click, refresh-and-retry, two tabs) both read the
+// same previousCurrent.version and try to create the same next version —
+// the second insert now fails fast with a duplicate-key error instead of
+// silently creating two "current" audits. See runAudit()'s catch block.
+CollaborationAuditSchema.index({ userId: 1, version: -1 }, { unique: true });
 CollaborationAuditSchema.index({ trendstarzRecommended: 1, isCurrent: 1 });
