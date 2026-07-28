@@ -381,8 +381,8 @@ export class CollaborationScoreSettingsService implements OnModuleInit {
       next.auditValidityDays = clampNumber(body.auditValidityDays, current.auditValidityDays, 0, 3650);
     }
     if (body.version2Enabled !== undefined) next.version2Enabled = body.version2Enabled === true;
-    if (body.version1Name !== undefined) next.version1Name = String(body.version1Name || current.version1Name);
-    if (body.version2Name !== undefined) next.version2Name = String(body.version2Name || current.version2Name);
+    if (body.version1Name !== undefined) next.version1Name = String(body.version1Name);
+    if (body.version2Name !== undefined) next.version2Name = String(body.version2Name);
     if (body.platformsEnabled) {
       next.platformsEnabled = {
         instagram:
