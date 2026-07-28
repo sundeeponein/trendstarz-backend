@@ -687,18 +687,33 @@ export class CollaborationScoreService {
 
       // Same window as todayAgg above, just unwound per collected platform
       // instead of a flat count — one audit can (and usually does) contribute
-      // to more than one platform's count.
+      // to more than one platform's count. aiUsed/isPaid live on the audit
+      // itself (not per platform), so they're just carried along on each
+      // duplicated row the $unwind produces — correct either way, since
+      // "this audit used AI" is true for every platform it collected.
       const platformAgg = await this.auditModel.aggregate([
         { $match: { createdAt: { $gte: startOfToday } } },
         { $unwind: "$platformsCollected" },
-        { $group: { _id: "$platformsCollected.platform", count: { $sum: 1 } } },
+        {
+          $group: {
+            _id: "$platformsCollected.platform",
+            count: { $sum: 1 },
+            aiCount: { $sum: { $cond: ["$aiUsed", 1, 0] } },
+            paidCount: { $sum: { $cond: ["$isPaid", 1, 0] } },
+          },
+        },
         { $sort: { count: -1 } },
       ]);
 
       result.todaySummary = {
         ...today,
         averageCostUsd: today.aiCalls > 0 ? today.estimatedCostUsd / today.aiCalls : 0,
-        platformBreakdown: platformAgg.map((p: any) => ({ platform: p._id, count: p.count })),
+        platformBreakdown: platformAgg.map((p: any) => ({
+          platform: p._id,
+          count: p.count,
+          aiCount: p.aiCount,
+          paidCount: p.paidCount,
+        })),
       };
       if (!trackAuditCost) {
         result.todaySummary.estimatedCostUsd = null;

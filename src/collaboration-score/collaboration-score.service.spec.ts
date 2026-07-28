@@ -673,15 +673,15 @@ describe("CollaborationScoreService", () => {
         .mockResolvedValueOnce([{ totalAiCostUsd: 0, aiAuditCount: 0, avgScore: 0, recommendedCount: 0 }]) // summaryAgg
         .mockResolvedValueOnce([{ audits: 3, aiCalls: 0, estimatedCostUsd: 0, successCount: 3, failureCount: 0 }]) // todayAgg
         .mockResolvedValueOnce([
-          { _id: "YouTube", count: 3 },
-          { _id: "Instagram", count: 2 },
+          { _id: "YouTube", count: 3, aiCount: 2, paidCount: 1 },
+          { _id: "Instagram", count: 2, aiCount: 0, paidCount: 0 },
         ]); // platformAgg
 
       const result = await service.adminList({ role: "admin" }, { summary: "true" });
 
       expect(result.todaySummary.platformBreakdown).toEqual([
-        { platform: "YouTube", count: 3 },
-        { platform: "Instagram", count: 2 },
+        { platform: "YouTube", count: 3, aiCount: 2, paidCount: 1 },
+        { platform: "Instagram", count: 2, aiCount: 0, paidCount: 0 },
       ]);
     });
 
