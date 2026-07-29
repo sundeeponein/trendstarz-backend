@@ -85,11 +85,11 @@ const PROFILE_PHOTO_ISSUE_CODES = new Set([
 // rules (own settings, not hardcoded here) once real transaction-price data
 // exists to calibrate against.
 const TIER_BASE_REEL_RATE: Array<{ maxFollowers: number; rate: number }> = [
-  { maxFollowers: 1000, rate: 500 },
-  { maxFollowers: 10000, rate: 1500 },
-  { maxFollowers: 100000, rate: 5000 },
-  { maxFollowers: 1000000, rate: 20000 },
-  { maxFollowers: Infinity, rate: 75000 },
+  { maxFollowers: 1000, rate: 200 - 500 },
+  { maxFollowers: 10000, rate: 1000 - 1500 },
+  { maxFollowers: 100000, rate: 2000 - 5000 },
+  { maxFollowers: 1000000, rate: 12000 - 20000 },
+  { maxFollowers: Infinity, rate: 35000 - 75000 },
 ];
 
 /**
