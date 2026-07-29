@@ -135,7 +135,27 @@ export class CollaborationScoreSettingsService implements OnModuleInit {
 
   /** Self-heals on every boot — inserts defaults once, never touches an existing doc. */
   async onModuleInit(): Promise<void> {
+    await this.dedupeSingleton();
     await this.seedDefaults();
+  }
+
+  /**
+   * This collection is meant to hold exactly one document, read via
+   * findOne({}) everywhere (see the schema's "Singleton doc" comment) — but
+   * nothing has ever enforced that at the DB level (no unique index, no
+   * fixed _id). If more than one document ever existed (e.g. a race during
+   * an early deploy), findOne({}) with no sort isn't guaranteed to return
+   * the same document on every call: an admin's Save could write to one
+   * doc while the next page load's GET reads a different, older one — the
+   * saved value appearing to silently "revert" on refresh. Keeps the most
+   * recently updated document, removes any others, so every future
+   * findOne({}) is unambiguous. No-op in the normal case (0 or 1 docs).
+   */
+  private async dedupeSingleton(): Promise<void> {
+    const docs = await this.settingsModel.find({}).sort({ updatedAt: -1 }).select("_id").lean();
+    if (docs.length <= 1) return;
+    const [, ...extras] = docs;
+    await this.settingsModel.deleteMany({ _id: { $in: extras.map((d: any) => d._id) } });
   }
 
   async getSettings(): Promise<CollaborationScoreSettingsDoc> {

@@ -10,6 +10,9 @@ describe("CollaborationScoreSettingsService", () => {
     settingsModel = {
       findOne: jest.fn().mockReturnValue({ lean: jest.fn().mockResolvedValue(null) }),
       findOneAndUpdate: jest.fn().mockReturnValue({ lean: jest.fn().mockResolvedValue(null) }),
+      find: jest.fn().mockReturnValue({
+        sort: jest.fn().mockReturnValue({ select: jest.fn().mockReturnValue({ lean: jest.fn().mockResolvedValue([]) }) }),
+      }),
       create: jest.fn().mockResolvedValue({ toObject: () => ({ ...defaultSettingsJson }) }),
       deleteMany: jest.fn().mockResolvedValue({}),
     };
@@ -76,6 +79,39 @@ describe("CollaborationScoreSettingsService", () => {
       await service.onModuleInit();
 
       expect(settingsModel.create).not.toHaveBeenCalled();
+    });
+
+    it("onModuleInit deletes extra singleton documents, keeping only the most recently updated one", async () => {
+      settingsModel.find.mockReturnValue({
+        sort: jest.fn().mockReturnValue({
+          select: jest.fn().mockReturnValue({
+            lean: jest.fn().mockResolvedValue([{ _id: "newest" }, { _id: "older-1" }, { _id: "older-2" }]),
+          }),
+        }),
+      });
+      settingsModel.findOne.mockReturnValue({
+        lean: jest.fn().mockResolvedValue({ aiEnabled: true }), // an existing doc — create() must not fire
+      });
+
+      await service.onModuleInit();
+
+      expect(settingsModel.deleteMany).toHaveBeenCalledWith({ _id: { $in: ["older-1", "older-2"] } });
+      expect(settingsModel.create).not.toHaveBeenCalled();
+    });
+
+    it("onModuleInit does nothing to the collection when 0 or 1 documents exist", async () => {
+      settingsModel.find.mockReturnValue({
+        sort: jest.fn().mockReturnValue({
+          select: jest.fn().mockReturnValue({ lean: jest.fn().mockResolvedValue([{ _id: "only-one" }]) }),
+        }),
+      });
+      settingsModel.findOne.mockReturnValue({
+        lean: jest.fn().mockResolvedValue({ aiEnabled: true }),
+      });
+
+      await service.onModuleInit();
+
+      expect(settingsModel.deleteMany).not.toHaveBeenCalled();
     });
   });
 
