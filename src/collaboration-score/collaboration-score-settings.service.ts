@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable, OnModuleInit } from "@nestjs/common";
+import { BadRequestException, Injectable, Logger, OnModuleInit } from "@nestjs/common";
 import { InjectModel } from "@nestjs/mongoose";
 import { Model } from "mongoose";
 import { plainToInstance } from "class-transformer";
@@ -23,6 +23,10 @@ export interface CollaborationScoreAnalyticsToggles {
 }
 
 export interface CollaborationScoreSettingsDoc extends CollaborationScoreSettingsSnapshot {
+  // Debug-only — see normalize()'s comment. Never used for logic, only
+  // displayed so a save's persistence can be visually confirmed.
+  _id?: string | null;
+  updatedAt?: Date | string | null;
   schemaVersion: number;
   aiEnabled: boolean;
   aiModel: string;
@@ -122,6 +126,7 @@ function unknownFieldsOf(doc: any): Record<string, unknown> {
 
 @Injectable()
 export class CollaborationScoreSettingsService implements OnModuleInit {
+  private readonly logger = new Logger(CollaborationScoreSettingsService.name);
   private cachedSettings: CollaborationScoreSettingsDoc | null = null;
   private cacheExpiresAt = 0;
   private static readonly CACHE_TTL_MS = 5 * 60 * 1000;
@@ -153,8 +158,12 @@ export class CollaborationScoreSettingsService implements OnModuleInit {
    */
   private async dedupeSingleton(): Promise<void> {
     const docs = await this.settingsModel.find({}).sort({ updatedAt: -1 }).select("_id").lean();
+    this.logger.log(`Settings document count at boot: ${docs.length}${docs.length ? ` (ids: ${docs.map((d: any) => d._id).join(", ")})` : ""}`);
     if (docs.length <= 1) return;
-    const [, ...extras] = docs;
+    const [keep, ...extras] = docs;
+    this.logger.warn(
+      `Found ${docs.length} settings documents — keeping most recently updated (${keep._id}), deleting ${extras.length} extra(s): ${extras.map((d: any) => d._id).join(", ")}`,
+    );
     await this.settingsModel.deleteMany({ _id: { $in: extras.map((d: any) => d._id) } });
   }
 
@@ -163,6 +172,7 @@ export class CollaborationScoreSettingsService implements OnModuleInit {
       return this.cachedSettings;
     }
     const doc = await this.settingsModel.findOne({}).lean();
+    this.logger.debug(`getSettings() cache miss — read doc _id=${(doc as any)?._id} reanalysisFeeRupees=${(doc as any)?.reanalysisFeeRupees} platformsEnabled.youtube=${(doc as any)?.platformsEnabled?.youtube}`);
     const normalized = this.normalize(doc);
     this.cachedSettings = normalized;
     this.cacheExpiresAt = Date.now() + CollaborationScoreSettingsService.CACHE_TTL_MS;
@@ -172,9 +182,20 @@ export class CollaborationScoreSettingsService implements OnModuleInit {
   async updateSettings(body: any, actor?: { userId?: string; role?: string }): Promise<CollaborationScoreSettingsDoc> {
     const current = await this.getSettings();
     const next = await this.buildUpdate(body, current);
+    // upsert:true — if findOne({}) matched zero documents at this instant
+    // (should never happen post-boot, but would be catastrophic if it did:
+    // Mongoose fills in *schema* defaults for every field not present in
+    // `next`, silently discarding any previously-customized value for a
+    // field this particular save didn't touch). Logged loudly so that
+    // scenario is provable from logs instead of guessed at from a screenshot.
+    const preUpdateCount = await this.settingsModel.countDocuments({});
+    if (preUpdateCount === 0) {
+      this.logger.error("updateSettings(): 0 settings documents exist — this write will upsert-insert and reset every untouched field to its schema default.");
+    }
     const doc = await this.settingsModel
       .findOneAndUpdate({}, { $set: next }, { upsert: true, new: true })
       .lean();
+    this.logger.log(`updateSettings() wrote doc _id=${(doc as any)?._id}, fields changed: ${Object.keys(next).join(", ")}`);
     this.invalidateCache();
     const normalized = this.normalize(doc);
     await this.logChange("settings_updated", actor, Object.keys(next), current, normalized);
@@ -249,6 +270,13 @@ export class CollaborationScoreSettingsService implements OnModuleInit {
     if (!doc) return { ...DEFAULTS };
     return {
       ...unknownFieldsOf(doc),
+      // Exposed purely for admin-visible debugging (see the settings page's
+      // small "Doc: ... · Updated: ..." line) — lets anyone confirm a Save
+      // actually persisted (a changed updatedAt) and that repeated GETs are
+      // reading the same document (a stable _id), without needing server
+      // log access.
+      _id: doc._id ? String(doc._id) : null,
+      updatedAt: doc.updatedAt || null,
       schemaVersion: clampNumber(doc.schemaVersion, DEFAULTS.schemaVersion as number, 0, 1_000_000),
       aiEnabled: doc.aiEnabled === true,
       aiModel: String(doc.aiModel || DEFAULTS.aiModel),

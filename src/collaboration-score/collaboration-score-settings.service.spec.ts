@@ -15,6 +15,7 @@ describe("CollaborationScoreSettingsService", () => {
       }),
       create: jest.fn().mockResolvedValue({ toObject: () => ({ ...defaultSettingsJson }) }),
       deleteMany: jest.fn().mockResolvedValue({}),
+      countDocuments: jest.fn().mockResolvedValue(1),
     };
     auditLogModel = { create: jest.fn().mockResolvedValue({}) };
     service = new CollaborationScoreSettingsService(settingsModel, auditLogModel);
