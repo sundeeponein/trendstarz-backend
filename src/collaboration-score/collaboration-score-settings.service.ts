@@ -41,6 +41,12 @@ export interface CollaborationScoreSettingsDoc extends CollaborationScoreSetting
   reanalysisFeeRupees: number;
   nightlyReauditEnabled: boolean;
   nightlyReauditCronHour: number;
+  // Manual "Sync Latest Profile" — free comparison step gating the paid
+  // Re-analyze flow. See CollaborationScoreService.syncLatestProfile.
+  syncEnabled: boolean;
+  syncCooldownMinutes: number;
+  allowManualSync: boolean;
+  requireSyncBeforeReanalysis: boolean;
   youtubeApiQuotaGuardPerDay: number;
   // Only trackAuditCost is currently wired (gates the cost fields in
   // adminList's summary/todaySummary). The other three are stored/editable
@@ -85,6 +91,10 @@ const KNOWN_FIELDS = new Set([
   "reanalysisFeeRupees",
   "nightlyReauditEnabled",
   "nightlyReauditCronHour",
+  "syncEnabled",
+  "syncCooldownMinutes",
+  "allowManualSync",
+  "requireSyncBeforeReanalysis",
   "youtubeApiQuotaGuardPerDay",
   "analytics",
   "lastNightlyRunAt",
@@ -335,6 +345,15 @@ export class CollaborationScoreSettingsService implements OnModuleInit {
         0,
         23,
       ),
+      syncEnabled: doc.syncEnabled !== false,
+      syncCooldownMinutes: clampNumber(
+        doc.syncCooldownMinutes,
+        DEFAULTS.syncCooldownMinutes,
+        0,
+        1440,
+      ),
+      allowManualSync: doc.allowManualSync !== false,
+      requireSyncBeforeReanalysis: doc.requireSyncBeforeReanalysis !== false,
       youtubeApiQuotaGuardPerDay: clampNumber(
         doc.youtubeApiQuotaGuardPerDay,
         DEFAULTS.youtubeApiQuotaGuardPerDay,
@@ -429,6 +448,14 @@ export class CollaborationScoreSettingsService implements OnModuleInit {
         0,
         23,
       );
+    }
+    if (body.syncEnabled !== undefined) next.syncEnabled = body.syncEnabled === true;
+    if (body.syncCooldownMinutes !== undefined) {
+      next.syncCooldownMinutes = clampNumber(body.syncCooldownMinutes, current.syncCooldownMinutes, 0, 1440);
+    }
+    if (body.allowManualSync !== undefined) next.allowManualSync = body.allowManualSync === true;
+    if (body.requireSyncBeforeReanalysis !== undefined) {
+      next.requireSyncBeforeReanalysis = body.requireSyncBeforeReanalysis === true;
     }
     if (body.youtubeApiQuotaGuardPerDay !== undefined) {
       next.youtubeApiQuotaGuardPerDay = clampNumber(

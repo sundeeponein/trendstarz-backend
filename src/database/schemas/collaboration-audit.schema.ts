@@ -28,6 +28,11 @@ export const COLLABORATION_AUDIT_TRIGGERS = [
   "USER",
   "ADMIN",
   "SYSTEM_NIGHTLY",
+  // Fired once, automatically, the first time a creator connects a given
+  // platform (Instagram/Facebook OAuth) — see
+  // CollaborationScoreService.handleOAuthCallback. Never fired on a
+  // reconnect of an already-connected platform.
+  "SYSTEM_CONNECT",
 ] as const;
 
 export const COLLABORATION_AUDIT_STATUSES = [

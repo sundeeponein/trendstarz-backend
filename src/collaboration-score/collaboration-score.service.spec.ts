@@ -13,6 +13,7 @@ describe("CollaborationScoreService", () => {
   let paymentModel: any;
   let transactionModel: any;
   let connectionModel: any;
+  let syncStatusModel: any;
   let razorpayService: any;
   let metaOAuthService: any;
   let youtubeCollector: any;
@@ -111,9 +112,16 @@ describe("CollaborationScoreService", () => {
     transactionModel = { create: jest.fn().mockResolvedValue({}), updateMany: jest.fn().mockResolvedValue({}) };
     connectionModel = {
       find: jest.fn().mockReturnValue({ select: jest.fn().mockReturnValue({ lean: jest.fn().mockResolvedValue([]) }) }),
-      findOne: jest.fn().mockReturnValue({ select: jest.fn().mockResolvedValue(null) }),
+      findOne: jest.fn().mockReturnValue({
+        select: jest.fn().mockResolvedValue(null),
+        lean: jest.fn().mockResolvedValue(null),
+      }),
       findOneAndUpdate: jest.fn().mockResolvedValue({}),
       deleteOne: jest.fn().mockResolvedValue({}),
+    };
+    syncStatusModel = {
+      findOne: jest.fn().mockReturnValue({ lean: jest.fn().mockResolvedValue(null) }),
+      updateOne: jest.fn().mockResolvedValue({}),
     };
     razorpayService = {
       createOrder: jest.fn().mockResolvedValue({ orderId: "order_1", amount: 9900, currency: "INR", keyId: "key_1" }),
@@ -142,6 +150,7 @@ describe("CollaborationScoreService", () => {
       paymentModel,
       transactionModel,
       connectionModel,
+      syncStatusModel,
       profileVerificationService,
       rulesService,
       aiService,
@@ -523,12 +532,24 @@ describe("CollaborationScoreService", () => {
 
     it("returns full detail to the profile owner", async () => {
       const result = await service.getAuditForUser("user-1", { userId: "user-1", role: "influencer" });
-      expect(result).toEqual({ ...fullAudit, canReanalyze: true, reanalysisAvailableAt: null, reanalysisFeeRupees: 99 });
+      expect(result).toEqual({
+        ...fullAudit,
+        canReanalyze: true,
+        reanalysisAvailableAt: null,
+        reanalysisFeeRupees: 99,
+        hasChanges: false,
+      });
     });
 
     it("returns full detail to admins", async () => {
       const result = await service.getAuditForUser("user-1", { userId: "admin-1", role: "admin" });
-      expect(result).toEqual({ ...fullAudit, canReanalyze: true, reanalysisAvailableAt: null, reanalysisFeeRupees: 99 });
+      expect(result).toEqual({
+        ...fullAudit,
+        canReanalyze: true,
+        reanalysisAvailableAt: null,
+        reanalysisFeeRupees: 99,
+        hasChanges: false,
+      });
     });
 
     it("strips AI analysis, raw platform data, and sub-scores from a brand-role caller", async () => {
@@ -809,6 +830,55 @@ describe("CollaborationScoreService", () => {
       expect(metaOAuthService.getInstagramBusinessAccountStats).not.toHaveBeenCalled();
     });
 
+    it("handleOAuthCallback fires one free SYSTEM_CONNECT rescore on a brand-new connection", async () => {
+      connectionModel.findOne.mockReturnValue({
+        select: jest.fn().mockResolvedValue(null),
+        lean: jest.fn().mockResolvedValue(null), // no existing connection — first-time connect
+      });
+      metaOAuthService.resolveFacebookPages.mockResolvedValue([
+        { id: "page-1", name: "Creator Page", followersCount: 100, instagramBusinessAccountId: "ig-1" },
+      ]);
+      const runAuditSpy = jest.spyOn(service, "runAudit").mockResolvedValue({} as any);
+      const jwt = require("jsonwebtoken");
+      const { getJwtSecret } = require("../auth/jwt-secret");
+      const signedState = jwt.sign(
+        { userId: "507f1f77bcf86cd799439011", role: "influencer", platform: "instagram" },
+        getJwtSecret(),
+        { expiresIn: "10m" },
+      );
+
+      await service.handleOAuthCallback("auth-code", signedState);
+
+      expect(runAuditSpy).toHaveBeenCalledWith(
+        "507f1f77bcf86cd799439011",
+        "influencer",
+        "SYSTEM_CONNECT",
+        { isPaid: false },
+      );
+    });
+
+    it("handleOAuthCallback does not rescore on a reconnect of an already-connected platform", async () => {
+      connectionModel.findOne.mockReturnValue({
+        select: jest.fn().mockResolvedValue({ _id: "conn-1" }),
+        lean: jest.fn().mockResolvedValue({ _id: "conn-1" }), // already connected
+      });
+      metaOAuthService.resolveFacebookPages.mockResolvedValue([
+        { id: "page-1", name: "Creator Page", followersCount: 100, instagramBusinessAccountId: "ig-1" },
+      ]);
+      const runAuditSpy = jest.spyOn(service, "runAudit").mockResolvedValue({} as any);
+      const jwt = require("jsonwebtoken");
+      const { getJwtSecret } = require("../auth/jwt-secret");
+      const signedState = jwt.sign(
+        { userId: "507f1f77bcf86cd799439011", role: "influencer", platform: "instagram" },
+        getJwtSecret(),
+        { expiresIn: "10m" },
+      );
+
+      await service.handleOAuthCallback("auth-code", signedState);
+
+      expect(runAuditSpy).not.toHaveBeenCalled();
+    });
+
     it("disconnectPlatform revokes and deletes an existing connection", async () => {
       connectionModel.findOne.mockReturnValue({
         select: jest.fn().mockResolvedValue({
@@ -852,6 +922,211 @@ describe("CollaborationScoreService", () => {
         instagram: { handle: "creator_handle", followersCount: 1000, connectedAt },
         facebook: null,
       });
+    });
+  });
+
+  describe("syncLatestProfile — free comparison step, never scores/charges/persists an audit", () => {
+    const collectedYoutube = {
+      platform: "YouTube",
+      method: "API",
+      handle: "test",
+      followersOrSubscribers: 1000,
+      recentPosts: [],
+      collectedAt: new Date(),
+      raw: {},
+      confidence: 90,
+      confidenceReason: "",
+    };
+
+    beforeEach(() => {
+      // A current audit must exist for Sync to run against.
+      auditModel.findOne.mockReturnValue({
+        select: jest.fn().mockReturnValue({ lean: jest.fn().mockResolvedValue({ _id: "audit-1" }) }),
+        lean: jest.fn().mockResolvedValue({ _id: "audit-1" }),
+      });
+      youtubeCollector.collect.mockResolvedValue(collectedYoutube);
+    });
+
+    it("rejects when sync is disabled in settings", async () => {
+      settingsService.getSettings.mockResolvedValue({
+        platformsEnabled: { instagram: true, youtube: true, facebook: true, linkedin: true },
+        syncEnabled: false,
+        allowManualSync: true,
+        syncCooldownMinutes: 0,
+      });
+
+      await expect(service.syncLatestProfile("user-1", "influencer")).rejects.toThrow(
+        "Manual sync is currently unavailable",
+      );
+    });
+
+    it("requires an existing audit to compare against", async () => {
+      settingsService.getSettings.mockResolvedValue({
+        platformsEnabled: { instagram: true, youtube: true, facebook: true, linkedin: true },
+        syncEnabled: true,
+        allowManualSync: true,
+        syncCooldownMinutes: 0,
+      });
+      auditModel.findOne.mockReturnValue({
+        select: jest.fn().mockReturnValue({ lean: jest.fn().mockResolvedValue(null) }),
+        lean: jest.fn().mockResolvedValue(null),
+      });
+
+      await expect(service.syncLatestProfile("user-1", "influencer")).rejects.toThrow(
+        "Generate your free Collaboration Score first.",
+      );
+    });
+
+    it("reports hasChanges:false when no baseline has been recorded yet (backward compatibility)", async () => {
+      settingsService.getSettings.mockResolvedValue({
+        platformsEnabled: { instagram: true, youtube: true, facebook: true, linkedin: true },
+        syncEnabled: true,
+        allowManualSync: true,
+        syncCooldownMinutes: 0,
+      });
+      syncStatusModel.findOne.mockReturnValue({ lean: jest.fn().mockResolvedValue(null) });
+
+      const result = await service.syncLatestProfile("user-1", "influencer");
+
+      expect(result.hasChanges).toBe(false);
+      expect(syncStatusModel.updateOne).toHaveBeenCalledWith(
+        { userId: "user-1" },
+        expect.objectContaining({
+          $set: expect.objectContaining({ "platforms.YouTube.hasChanges": false }),
+        }),
+        { upsert: true },
+      );
+    });
+
+    it("reports hasChanges:true when the fresh snapshot differs from the last-audit baseline", async () => {
+      settingsService.getSettings.mockResolvedValue({
+        platformsEnabled: { instagram: true, youtube: true, facebook: true, linkedin: true },
+        syncEnabled: true,
+        allowManualSync: true,
+        syncCooldownMinutes: 0,
+      });
+      syncStatusModel.findOne.mockReturnValue({
+        lean: jest.fn().mockResolvedValue({ platforms: { YouTube: { lastAuditHash: "stale-hash" } } }),
+      });
+
+      const result = await service.syncLatestProfile("user-1", "influencer");
+
+      expect(result.hasChanges).toBe(true);
+      const platformResult = result.platforms.find((p) => p.platform === "YouTube");
+      expect(platformResult?.hasChanges).toBe(true);
+    });
+
+    it("reports hasChanges:false when the fresh snapshot matches the last-audit baseline exactly", async () => {
+      const { buildSyncSnapshot, hashSnapshot } = require("./collaboration-score-sync.util");
+      const matchingHash = hashSnapshot(buildSyncSnapshot(collectedYoutube as any));
+      settingsService.getSettings.mockResolvedValue({
+        platformsEnabled: { instagram: true, youtube: true, facebook: true, linkedin: true },
+        syncEnabled: true,
+        allowManualSync: true,
+        syncCooldownMinutes: 0,
+      });
+      syncStatusModel.findOne.mockReturnValue({
+        lean: jest.fn().mockResolvedValue({ platforms: { YouTube: { lastAuditHash: matchingHash } } }),
+      });
+
+      const result = await service.syncLatestProfile("user-1", "influencer");
+
+      expect(result.hasChanges).toBe(false);
+    });
+
+    it("never touches auditModel.create, aiService, or payment/transaction models", async () => {
+      settingsService.getSettings.mockResolvedValue({
+        platformsEnabled: { instagram: true, youtube: true, facebook: true, linkedin: true },
+        syncEnabled: true,
+        allowManualSync: true,
+        syncCooldownMinutes: 0,
+      });
+
+      await service.syncLatestProfile("user-1", "influencer");
+
+      expect(auditModel.create).not.toHaveBeenCalled();
+      expect(aiService.analyzeContentSync).not.toHaveBeenCalled();
+      expect(paymentModel.create).not.toHaveBeenCalled();
+      expect(transactionModel.create).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("runAudit — recordSyncBaseline", () => {
+    it("resets the sync baseline (hasChanges:false, fresh lastAuditHash) after every successful audit", async () => {
+      youtubeCollector.collect.mockResolvedValue({
+        platform: "YouTube",
+        method: "API",
+        handle: "test",
+        followersOrSubscribers: 1000,
+        recentPosts: [],
+        collectedAt: new Date(),
+        raw: {},
+        confidence: 90,
+        confidenceReason: "",
+      });
+
+      await service.runAudit("user-1", "influencer", "USER");
+
+      expect(syncStatusModel.updateOne).toHaveBeenCalledWith(
+        { userId: "user-1" },
+        expect.objectContaining({
+          $set: expect.objectContaining({
+            "platforms.YouTube.hasChanges": false,
+            "platforms.YouTube.lastAuditHash": expect.any(String),
+          }),
+        }),
+        { upsert: true },
+      );
+    });
+
+    it("does nothing when no platforms were collected", async () => {
+      await service.runAudit("user-1", "influencer", "USER"); // youtubeCollector.collect resolves null by default
+
+      expect(syncStatusModel.updateOne).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("createReanalysisOrder — requireSyncBeforeReanalysis gate", () => {
+    it("rejects when no changes have been detected since the last audit", async () => {
+      settingsService.getSettings.mockResolvedValue({
+        aiEnabled: false,
+        aiModel: "claude-sonnet-5",
+        anonymousPreviewEnabled: true,
+        freeAuditCount: 1,
+        platformsEnabled: { instagram: true, youtube: true, facebook: true, linkedin: true },
+        reanalysisCooldownDays: 0,
+        reanalysisFeeRupees: 99,
+        requireSyncBeforeReanalysis: true,
+        analytics: { trackAuditCost: true, trackAverageScore: true, trackPlatformUsage: true, trackAuditHistory: true },
+      });
+      syncStatusModel.findOne.mockReturnValue({ lean: jest.fn().mockResolvedValue(null) }); // no changes recorded
+
+      await expect(service.createReanalysisOrder("user-1", "influencer")).rejects.toThrow(
+        "Sync your profile first",
+      );
+      expect(razorpayService.createOrder).not.toHaveBeenCalled();
+    });
+
+    it("allows the order once a Sync has detected changes", async () => {
+      settingsService.getSettings.mockResolvedValue({
+        aiEnabled: false,
+        aiModel: "claude-sonnet-5",
+        anonymousPreviewEnabled: true,
+        freeAuditCount: 1,
+        platformsEnabled: { instagram: true, youtube: true, facebook: true, linkedin: true },
+        reanalysisCooldownDays: 0,
+        reanalysisFeeRupees: 99,
+        requireSyncBeforeReanalysis: true,
+        analytics: { trackAuditCost: true, trackAverageScore: true, trackPlatformUsage: true, trackAuditHistory: true },
+      });
+      syncStatusModel.findOne.mockReturnValue({
+        lean: jest.fn().mockResolvedValue({ platforms: { YouTube: { hasChanges: true } } }),
+      });
+
+      await expect(
+        service.createReanalysisOrder("507f1f77bcf86cd799439011", "influencer"),
+      ).resolves.toBeDefined();
+      expect(razorpayService.createOrder).toHaveBeenCalled();
     });
   });
 });

@@ -86,5 +86,10 @@ export class UpdateAuditSettingsDto {
   @IsOptional() @IsInt() @Min(0) @Max(23) nightlyReauditCronHour?: number;
   @IsOptional() @IsInt() @Min(0) youtubeApiQuotaGuardPerDay?: number;
 
+  @IsOptional() @IsBoolean() syncEnabled?: boolean;
+  @IsOptional() @IsInt() @Min(0) @Max(1440) syncCooldownMinutes?: number;
+  @IsOptional() @IsBoolean() allowManualSync?: boolean;
+  @IsOptional() @IsBoolean() requireSyncBeforeReanalysis?: boolean;
+
   @IsOptional() @ValidateNested() @Type(() => AnalyticsDto) analytics?: AnalyticsDto;
 }

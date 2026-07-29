@@ -24,9 +24,17 @@ import {
   CollectedPlatformData,
   ProfileCollector,
 } from "./collectors/collector.interface";
+import { buildSyncSnapshot, hashSnapshot } from "./collaboration-score-sync.util";
+import { COLLABORATION_AUDIT_PLATFORMS } from "../database/schemas/collaboration-audit.schema";
 
 type CollaborationScoreUserType = "Influencer" | "Brand" | "Photographer";
-type AuditTrigger = "USER" | "ADMIN" | "SYSTEM_NIGHTLY";
+type AuditTrigger = "USER" | "ADMIN" | "SYSTEM_NIGHTLY" | "SYSTEM_CONNECT";
+
+export interface SyncPlatformStatus {
+  platform: CollaborationScorePlatform;
+  lastSyncedAt: Date | null;
+  hasChanges: boolean;
+}
 
 export interface SocialConnectionDetail {
   handle: string | null;
@@ -65,6 +73,7 @@ export class CollaborationScoreService {
     @InjectModel("Payment") private readonly paymentModel: Model<any>,
     @InjectModel("Transaction") private readonly transactionModel: Model<any>,
     @InjectModel("SocialOAuthConnection") private readonly connectionModel: Model<any>,
+    @InjectModel("CollaborationSyncStatus") private readonly syncStatusModel: Model<any>,
     private readonly profileVerificationService: ProfileVerificationService,
     private readonly rulesService: CollaborationScoreRulesService,
     private readonly aiService: CollaborationScoreAiService,
@@ -366,7 +375,130 @@ export class CollaborationScoreService {
       throw err;
     }
 
+    await this.recordSyncBaseline(String(userId), collectedPlatforms);
+
     return created.toObject();
+  }
+
+  /**
+   * Re-establishes the Sync baseline after every successful audit (free,
+   * paid, nightly, admin, or connect-triggered) — a Sync click's fresh
+   * snapshot is always compared against what the *current* score is based
+   * on, never against a stale prior sync. Never touches auditModel; purely
+   * bookkeeping for the free Sync/paid Re-analyze gate.
+   */
+  private async recordSyncBaseline(
+    userId: string,
+    collectedPlatforms: CollectedPlatformData[],
+  ): Promise<void> {
+    if (!collectedPlatforms.length) return;
+    const set: Record<string, unknown> = { userId };
+    for (const collected of collectedPlatforms) {
+      const hash = hashSnapshot(buildSyncSnapshot(collected));
+      set[`platforms.${collected.platform}.lastAuditHash`] = hash;
+      set[`platforms.${collected.platform}.hasChanges`] = false;
+    }
+    await this.syncStatusModel.updateOne({ userId }, { $set: set }, { upsert: true });
+  }
+
+  /**
+   * Per-platform Sync state (Instagram/Facebook/YouTube/LinkedIn) — read-only,
+   * used both by the Score Center's "Platform Status" section and to fold
+   * `hasChanges` into `canReanalyze` in getAuditForUser below.
+   */
+  async getSyncStatus(userId: string): Promise<{ platforms: SyncPlatformStatus[]; hasChanges: boolean }> {
+    const doc: any = await this.syncStatusModel.findOne({ userId: String(userId) }).lean();
+    const platformsMap: Record<string, any> = doc?.platforms || {};
+    const platforms: SyncPlatformStatus[] = COLLABORATION_AUDIT_PLATFORMS.map((platform) => {
+      const entry = platformsMap[platform];
+      return {
+        platform,
+        lastSyncedAt: entry?.lastSyncedAt || null,
+        hasChanges: !!entry?.hasChanges,
+      };
+    });
+    return { platforms, hasChanges: platforms.some((p) => p.hasChanges) };
+  }
+
+  /**
+   * Free, explicit "Sync Latest Profile" — fetches fresh data from every
+   * connected platform and compares it against the snapshot captured at the
+   * last real audit (see recordSyncBaseline). Never scores anything, never
+   * calls AI, never creates a CollaborationAudit, never charges — purely
+   * updates CollaborationSyncStatus so the Re-analyze button knows whether
+   * paying for a re-analysis is actually worth it.
+   */
+  async syncLatestProfile(userId: string, role: any): Promise<{ platforms: SyncPlatformStatus[]; hasChanges: boolean }> {
+    const settings = await this.settingsService.getSettings();
+    if (!settings.syncEnabled || !settings.allowManualSync) {
+      throw new BadRequestException("Manual sync is currently unavailable.");
+    }
+
+    if (settings.syncCooldownMinutes > 0) {
+      const existing: any = await this.syncStatusModel.findOne({ userId: String(userId) }).lean();
+      const lastSyncedTimes: number[] = Object.values(existing?.platforms || {})
+        .map((p: any) => (p?.lastSyncedAt ? new Date(p.lastSyncedAt).getTime() : 0))
+        .filter((t: number) => t > 0);
+      const mostRecent = lastSyncedTimes.length ? Math.max(...lastSyncedTimes) : 0;
+      if (mostRecent && Date.now() - mostRecent < settings.syncCooldownMinutes * 60 * 1000) {
+        throw new BadRequestException("Please wait a bit before syncing again.");
+      }
+    }
+
+    const currentAudit = await this.auditModel
+      .findOne({ userId: String(userId), isCurrent: true })
+      .select("_id")
+      .lean();
+    if (!currentAudit) {
+      throw new BadRequestException("Generate your free Collaboration Score first.");
+    }
+
+    const snapshot = await this.profileVerificationService.getCompletionSnapshot(userId, role);
+    if (snapshot.userType === "User") {
+      throw new NotFoundException("Collaboration Score is not available for this account type");
+    }
+    const userType = snapshot.userType as CollaborationScoreUserType;
+    const profile = await this.modelForUserType(userType).findById(userId).lean();
+    if (!profile) throw new NotFoundException("Profile not found");
+
+    const collectedPlatforms = await this.collectPlatforms(
+      profile,
+      settings.platformsEnabled as unknown as Record<string, boolean>,
+      String(userId),
+    );
+
+    const existing: any = await this.syncStatusModel.findOne({ userId: String(userId) }).lean();
+    const existingPlatforms: Record<string, any> = existing?.platforms || {};
+
+    const set: Record<string, unknown> = { userId: String(userId) };
+    const now = new Date();
+    // Keyed by platform so the final response reflects what was just
+    // computed, not a re-read of the mocked/eventually-consistent doc.
+    const freshByPlatform: Record<string, { lastSyncedAt: Date; hasChanges: boolean }> = {};
+    for (const collected of collectedPlatforms) {
+      const snap = buildSyncSnapshot(collected);
+      const hash = hashSnapshot(snap);
+      const lastAuditHash = existingPlatforms[collected.platform]?.lastAuditHash ?? null;
+      // No baseline yet (e.g. an audit that predates this feature) — treat
+      // as "nothing to compare," not as a false-positive change.
+      const hasChanges = lastAuditHash != null && hash !== lastAuditHash;
+      freshByPlatform[collected.platform] = { lastSyncedAt: now, hasChanges };
+      set[`platforms.${collected.platform}.lastSyncedAt`] = now;
+      set[`platforms.${collected.platform}.hasChanges`] = hasChanges;
+      set[`platforms.${collected.platform}.snapshotHash`] = hash;
+      set[`platforms.${collected.platform}.latestSnapshot`] = snap;
+    }
+    if (collectedPlatforms.length) {
+      await this.syncStatusModel.updateOne({ userId: String(userId) }, { $set: set }, { upsert: true });
+    }
+
+    const platforms: SyncPlatformStatus[] = COLLABORATION_AUDIT_PLATFORMS.map((platform) => {
+      const fresh = freshByPlatform[platform];
+      if (fresh) return { platform, lastSyncedAt: fresh.lastSyncedAt, hasChanges: fresh.hasChanges };
+      const entry = existingPlatforms[platform];
+      return { platform, lastSyncedAt: entry?.lastSyncedAt || null, hasChanges: !!entry?.hasChanges };
+    });
+    return { platforms, hasChanges: platforms.some((p) => p.hasChanges) };
   }
 
   async getAuditForUser(targetUserId: string, requester: any) {
@@ -388,12 +520,18 @@ export class CollaborationScoreService {
         new Date(audit.createdAt).getTime() +
           settings.reanalysisCooldownDays * 24 * 60 * 60 * 1000,
       );
-      const canReanalyze = settings.reanalysisCooldownDays <= 0 || Date.now() >= availableAt.getTime();
+      const cooldownElapsed = settings.reanalysisCooldownDays <= 0 || Date.now() >= availableAt.getTime();
+      const syncStatus = await this.getSyncStatus(targetUserId);
+      // Both gates must pass: the cooldown window, and (when required) an
+      // actual detected change since the last audit — see syncLatestProfile.
+      const canReanalyze =
+        cooldownElapsed && (!settings.requireSyncBeforeReanalysis || syncStatus.hasChanges);
       return {
         ...audit,
         canReanalyze,
-        reanalysisAvailableAt: canReanalyze ? null : availableAt,
+        reanalysisAvailableAt: cooldownElapsed ? null : availableAt,
         reanalysisFeeRupees: settings.reanalysisFeeRupees,
+        hasChanges: syncStatus.hasChanges,
       };
     }
     if (isBrand) {
@@ -423,6 +561,15 @@ export class CollaborationScoreService {
   async createReanalysisOrder(userId: string, role: any) {
     const settings = await this.settingsService.getSettings();
     await this.assertCooldownElapsed(userId, settings.reanalysisCooldownDays);
+
+    if (settings.requireSyncBeforeReanalysis) {
+      const syncStatus = await this.getSyncStatus(userId);
+      if (!syncStatus.hasChanges) {
+        throw new BadRequestException(
+          "Sync your profile first — no changes detected since your last audit.",
+        );
+      }
+    }
 
     await this.paymentModel.deleteMany({
       userId: toObjectId(userId),
@@ -757,8 +904,10 @@ export class CollaborationScoreService {
    * Exchanges the OAuth code, resolves the linked Facebook Page (and, for
    * Instagram, the Page's linked Instagram Business Account), and upserts
    * the SocialOAuthConnection. Returns a URL for the controller to redirect
-   * the browser back to — never runs a new audit itself; the next
-   * Re-Analyze is what picks up the newly connected platform's real data.
+   * the browser back to. The very first time a given platform is connected,
+   * fires one free automatic rescore (SYSTEM_CONNECT) afterward so the newly
+   * connected data shows up immediately — a *reconnect* of an
+   * already-connected platform does not re-trigger this.
    */
   async handleOAuthCallback(code: string, state: string): Promise<string> {
     let decoded: { userId: string; role: any; platform: "instagram" | "facebook" };
@@ -767,6 +916,10 @@ export class CollaborationScoreService {
     } catch {
       throw new BadRequestException("Invalid or expired connect request. Please try again.");
     }
+
+    const existingConnection = await this.connectionModel
+      .findOne({ userId: decoded.userId, platform: decoded.platform })
+      .lean();
 
     const shortLived = await this.metaOAuthService.exchangeCodeForToken(code);
     const longLived = await this.metaOAuthService.exchangeForLongLivedToken(shortLived.accessToken);
@@ -813,6 +966,13 @@ export class CollaborationScoreService {
       },
       { upsert: true },
     );
+
+    if (!existingConnection) {
+      // Best-effort — a failed free rescore must never break the OAuth
+      // redirect the creator is mid-flow on. They'll still pick this up via
+      // Sync/Re-analyze on their next visit either way.
+      await this.runAudit(decoded.userId, decoded.role, "SYSTEM_CONNECT", { isPaid: false }).catch(() => {});
+    }
 
     const dashboardPath = this.dashboardPathForRole(decoded.role);
     return `${process.env.FRONTEND_URL || "https://trendstarz.in"}${dashboardPath}?connected=${decoded.platform}`;

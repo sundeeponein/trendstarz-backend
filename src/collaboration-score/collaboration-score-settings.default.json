@@ -34,6 +34,10 @@
   "reanalysisFeeRupees": 49,
   "nightlyReauditEnabled": false,
   "nightlyReauditCronHour": 2,
+  "syncEnabled": true,
+  "syncCooldownMinutes": 0,
+  "allowManualSync": true,
+  "requireSyncBeforeReanalysis": true,
   "youtubeApiQuotaGuardPerDay": 8000,
   "analytics": {
     "trackAuditCost": true,

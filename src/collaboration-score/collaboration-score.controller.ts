@@ -72,6 +72,24 @@ export class CollaborationScoreController {
     return this.service.runAudit(requesterId, req?.user?.role, "USER");
   }
 
+  /**
+   * POST /api/audit/sync — self-only; free "Sync Latest Profile" comparison
+   * step. Never scores, never charges, never creates audit history — see
+   * CollaborationScoreService.syncLatestProfile.
+   */
+  @UseGuards(JwtAuthGuard)
+  @Post("sync")
+  syncMyProfile(@Req() req: any) {
+    return this.service.syncLatestProfile(this.requesterId(req), req?.user?.role);
+  }
+
+  /** GET /api/audit/sync-status — self-only; per-platform last-synced/hasChanges state. */
+  @UseGuards(JwtAuthGuard)
+  @Get("sync-status")
+  getMySyncStatus(@Req() req: any) {
+    return this.service.getSyncStatus(this.requesterId(req));
+  }
+
   /** POST /api/audit/reanalysis/order — self-only; creates a Razorpay order for the paid re-analysis. */
   @UseGuards(JwtAuthGuard)
   @Post("reanalysis/order")

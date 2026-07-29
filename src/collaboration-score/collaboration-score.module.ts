@@ -6,6 +6,7 @@ import {
   PhotographerSchema,
 } from "../database/schemas/profile.schemas";
 import { CollaborationAuditSchema } from "../database/schemas/collaboration-audit.schema";
+import { CollaborationSyncStatusSchema } from "../database/schemas/collaboration-sync-status.schema";
 import { CollaborationScoreSettingsSchema } from "../database/schemas/collaboration-score-settings.schema";
 import { CollaborationSettingsAuditLogSchema } from "../database/schemas/collaboration-settings-audit-log.schema";
 import { PaymentSchema } from "../database/schemas/payment.schema";
@@ -30,6 +31,11 @@ import { LinkedinCollectorService } from "./collectors/linkedin-collector.servic
   imports: [
     MongooseModule.forFeature([
       { name: "CollaborationAudit", schema: CollaborationAuditSchema, collection: "collaboration_audits" },
+      {
+        name: "CollaborationSyncStatus",
+        schema: CollaborationSyncStatusSchema,
+        collection: "collaboration_sync_status",
+      },
       {
         name: "CollaborationScoreSettings",
         schema: CollaborationScoreSettingsSchema,

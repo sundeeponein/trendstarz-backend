@@ -102,9 +102,15 @@ const TIER_BASE_REEL_RATE: Array<{ maxFollowers: number; rate: number }> = [
 export class CollaborationScoreRulesService {
   /**
    * Anonymous, pre-registration preview — only Content Quality (25%) and
-   * Posting Consistency (20%) are computable with no registered profile, so
-   * this re-normalizes just those two (25:20 -> 55:45) rather than faking the
-   * other three criteria. Never used for the real, post-registration score.
+   * Posting Consistency (20%) are computable with no registered profile.
+   * Deliberately scored against their real top-level weights (not
+   * renormalized to 100%): Profile Completion, Professional Branding, and
+   * Campaign Readiness genuinely can't be assessed pre-registration, so they
+   * contribute 0 here rather than having content/posting's share inflated to
+   * cover for them. That keeps this an honest partial subset of the real
+   * formula — capped at ~45/100 by default — instead of a number that can
+   * outscore the real post-registration audit for the same channel. Never
+   * used for the real, post-registration score.
    */
   computePreviewScores(
     collectedPlatforms: CollectedPlatformData[],
@@ -129,7 +135,12 @@ export class CollaborationScoreRulesService {
     const safe = (n: number) => (Number.isFinite(n) ? n : 0);
     const contentQualityScore = safe(this.computeContentQuality(input));
     const postingConsistencyScore = safe(this.computePostingConsistency(input));
-    const previewScore = safe(Math.round(0.55 * contentQualityScore + 0.45 * postingConsistencyScore));
+    const w = settings.scoreWeights;
+    const previewScore = safe(
+      Math.round(
+        (w.contentQuality / 100) * contentQualityScore + (w.postingConsistency / 100) * postingConsistencyScore,
+      ),
+    );
     return { contentQualityScore, postingConsistencyScore, previewScore };
   }
 
