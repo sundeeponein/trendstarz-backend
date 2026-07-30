@@ -65,6 +65,14 @@ export interface CollaborationScoreSettingsDoc extends CollaborationScoreSetting
   [unknownField: string]: unknown;
 }
 
+// Debug-only — one random id generated when this process starts. Attached to
+// every getSettings() response so the admin settings page can show it; if
+// that value changes between reloads with no deploy in between, more than
+// one backend process is answering requests, each with its own in-memory
+// cache (see CACHE_TTL_MS below) — proving/disproving that without needing
+// hosting-dashboard access. Remove once the settings-revert bug is diagnosed.
+const SERVER_INSTANCE_ID = `${process.pid}-${Math.random().toString(36).slice(2, 8)}`;
+
 // Single source of truth for defaults — loaded from the JSON file so the
 // starting configuration is reviewable/diffable without reading TS. Any
 // admin edit via PUT /api/audit/settings is layered on top of this in Mongo
@@ -169,16 +177,19 @@ export class CollaborationScoreSettingsService implements OnModuleInit {
 
   async getSettings(): Promise<CollaborationScoreSettingsDoc> {
     if (this.cachedSettings && Date.now() < this.cacheExpiresAt) {
-      return this.cachedSettings;
+      this.logger.debug(
+        `getSettings() cache HIT — instance=${SERVER_INSTANCE_ID} reanalysisFeeRupees=${this.cachedSettings.reanalysisFeeRupees} platformsEnabled=${JSON.stringify(this.cachedSettings.platformsEnabled)}`,
+      );
+      return { ...this.cachedSettings, _serverInstanceId: SERVER_INSTANCE_ID } as any;
     }
     const doc = await this.settingsModel.findOne({}).lean();
     this.logger.debug(
-      `getSettings() cache miss — read doc _id=${(doc as any)?._id} reanalysisFeeRupees=${(doc as any)?.reanalysisFeeRupees} platformsEnabled=${JSON.stringify((doc as any)?.platformsEnabled)}`,
+      `getSettings() cache MISS — instance=${SERVER_INSTANCE_ID} read doc _id=${(doc as any)?._id} reanalysisFeeRupees=${(doc as any)?.reanalysisFeeRupees} platformsEnabled=${JSON.stringify((doc as any)?.platformsEnabled)}`,
     );
     const normalized = this.normalize(doc);
     this.cachedSettings = normalized;
     this.cacheExpiresAt = Date.now() + CollaborationScoreSettingsService.CACHE_TTL_MS;
-    return normalized;
+    return { ...normalized, _serverInstanceId: SERVER_INSTANCE_ID } as any;
   }
 
   async updateSettings(body: any, actor?: { userId?: string; role?: string }): Promise<CollaborationScoreSettingsDoc> {
