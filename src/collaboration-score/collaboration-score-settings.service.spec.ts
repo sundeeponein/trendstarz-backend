@@ -133,24 +133,26 @@ describe("CollaborationScoreSettingsService", () => {
     });
   });
 
-  describe("in-memory cache (5 min TTL)", () => {
-    it("does not re-query Mongo on a second getSettings() call within the TTL", async () => {
+  describe("no in-memory cache — every read hits Mongo directly", () => {
+    // A settings-page revert bug traced back to this cache serving stale
+    // data (see collaboration-score-settings.service.ts's getSettings()
+    // comment) — removed entirely rather than tuning the TTL, so a stale
+    // read can never again be explained by caching, on this or any replica.
+    it("re-queries Mongo on every getSettings() call, even back-to-back", async () => {
       await service.getSettings();
-      await service.getSettings();
-
-      expect(settingsModel.findOne).toHaveBeenCalledTimes(1);
-    });
-
-    it("re-queries Mongo after updateSettings() invalidates the cache", async () => {
-      settingsModel.findOneAndUpdate.mockReturnValue({
-        lean: jest.fn().mockResolvedValue({ aiEnabled: true }),
-      });
-
-      await service.getSettings();
-      await service.updateSettings({ aiEnabled: true });
       await service.getSettings();
 
       expect(settingsModel.findOne).toHaveBeenCalledTimes(2);
+    });
+
+    it("reads with readPreference primary and a bounded maxTimeMS", async () => {
+      await service.getSettings();
+
+      expect(settingsModel.findOne).toHaveBeenCalledWith(
+        {},
+        null,
+        expect.objectContaining({ readPreference: "primary", maxTimeMS: expect.any(Number) }),
+      );
     });
   });
 

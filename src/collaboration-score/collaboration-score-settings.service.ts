@@ -68,10 +68,15 @@ export interface CollaborationScoreSettingsDoc extends CollaborationScoreSetting
 // Debug-only — one random id generated when this process starts. Attached to
 // every getSettings() response so the admin settings page can show it; if
 // that value changes between reloads with no deploy in between, more than
-// one backend process is answering requests, each with its own in-memory
-// cache (see CACHE_TTL_MS below) — proving/disproving that without needing
-// hosting-dashboard access. Remove once the settings-revert bug is diagnosed.
+// one backend process is answering requests — proving/disproving that
+// without needing hosting-dashboard access. Remove once the settings-revert
+// bug is diagnosed.
 const SERVER_INSTANCE_ID = `${process.pid}-${Math.random().toString(36).slice(2, 8)}`;
+
+// Bounds a single settings read so a Mongo hiccup degrades to "a bit
+// slower," not a silent multi-second stall — same defensive pattern as
+// JwtAuthGuard's account-status check (see jwt-auth.guard.ts).
+const GET_SETTINGS_QUERY_TIMEOUT_MS = 3000;
 
 // Single source of truth for defaults — loaded from the JSON file so the
 // starting configuration is reviewable/diffable without reading TS. Any
@@ -135,9 +140,6 @@ function unknownFieldsOf(doc: any): Record<string, unknown> {
 @Injectable()
 export class CollaborationScoreSettingsService implements OnModuleInit {
   private readonly logger = new Logger(CollaborationScoreSettingsService.name);
-  private cachedSettings: CollaborationScoreSettingsDoc | null = null;
-  private cacheExpiresAt = 0;
-  private static readonly CACHE_TTL_MS = 5 * 60 * 1000;
 
   constructor(
     @InjectModel("CollaborationScoreSettings")
@@ -175,20 +177,18 @@ export class CollaborationScoreSettingsService implements OnModuleInit {
     await this.settingsModel.deleteMany({ _id: { $in: extras.map((d: any) => d._id) } });
   }
 
+  // No in-memory cache: this collection holds one small document and every
+  // read forces readPreference "primary" + a bounded maxTimeMS, so a stale
+  // cache (single- or multi-replica) can never be the explanation for a
+  // save appearing to "revert" — every call hits Mongo's primary directly.
   async getSettings(): Promise<CollaborationScoreSettingsDoc> {
-    if (this.cachedSettings && Date.now() < this.cacheExpiresAt) {
-      this.logger.debug(
-        `getSettings() cache HIT — instance=${SERVER_INSTANCE_ID} reanalysisFeeRupees=${this.cachedSettings.reanalysisFeeRupees} platformsEnabled=${JSON.stringify(this.cachedSettings.platformsEnabled)}`,
-      );
-      return { ...this.cachedSettings, _serverInstanceId: SERVER_INSTANCE_ID } as any;
-    }
-    const doc = await this.settingsModel.findOne({}).lean();
+    const doc = await this.settingsModel
+      .findOne({}, null, { readPreference: "primary", maxTimeMS: GET_SETTINGS_QUERY_TIMEOUT_MS })
+      .lean();
     this.logger.debug(
-      `getSettings() cache MISS — instance=${SERVER_INSTANCE_ID} read doc _id=${(doc as any)?._id} reanalysisFeeRupees=${(doc as any)?.reanalysisFeeRupees} platformsEnabled=${JSON.stringify((doc as any)?.platformsEnabled)}`,
+      `getSettings() instance=${SERVER_INSTANCE_ID} read doc _id=${(doc as any)?._id} reanalysisCooldownDays=${(doc as any)?.reanalysisCooldownDays} reanalysisFeeRupees=${(doc as any)?.reanalysisFeeRupees} platformsEnabled=${JSON.stringify((doc as any)?.platformsEnabled)}`,
     );
     const normalized = this.normalize(doc);
-    this.cachedSettings = normalized;
-    this.cacheExpiresAt = Date.now() + CollaborationScoreSettingsService.CACHE_TTL_MS;
     return { ...normalized, _serverInstanceId: SERVER_INSTANCE_ID } as any;
   }
 
@@ -214,7 +214,6 @@ export class CollaborationScoreSettingsService implements OnModuleInit {
     this.logger.log(
       `updateSettings() wrote doc _id=${(doc as any)?._id}, fields changed: ${Object.keys(next).join(", ")}${next.platformsEnabled ? `, platformsEnabled=${JSON.stringify(next.platformsEnabled)}` : ""}, reanalysisCooldownDays=${(doc as any)?.reanalysisCooldownDays}, reanalysisFeeRupees=${(doc as any)?.reanalysisFeeRupees}`,
     );
-    this.invalidateCache();
     const normalized = this.normalize(doc);
     await this.logChange("settings_updated", actor, Object.keys(next), current, normalized);
     return normalized;
@@ -228,7 +227,6 @@ export class CollaborationScoreSettingsService implements OnModuleInit {
       ...DEFAULTS,
       schemaVersion: CURRENT_AUDIT_SETTINGS_SCHEMA_VERSION,
     });
-    this.invalidateCache();
     return this.normalize(created.toObject ? created.toObject() : created);
   }
 
@@ -236,7 +234,6 @@ export class CollaborationScoreSettingsService implements OnModuleInit {
   async resetToDefaults(actor?: { userId?: string; role?: string }): Promise<CollaborationScoreSettingsDoc> {
     const before = await this.getSettings();
     await this.settingsModel.deleteMany({});
-    this.invalidateCache();
     const fresh = await this.seedDefaults();
     await this.logChange("settings_reset", actor, Object.keys(DEFAULTS), before, fresh);
     return fresh;
@@ -255,12 +252,6 @@ export class CollaborationScoreSettingsService implements OnModuleInit {
       },
       { upsert: true },
     );
-    this.invalidateCache();
-  }
-
-  private invalidateCache(): void {
-    this.cachedSettings = null;
-    this.cacheExpiresAt = 0;
   }
 
   private async logChange(
