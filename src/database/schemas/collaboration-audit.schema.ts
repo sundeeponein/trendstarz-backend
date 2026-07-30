@@ -93,6 +93,11 @@ export const CollaborationAuditSchema = new Schema(
         // confidence than the data supports. See collector.interface.ts.
         confidence: { type: Number, default: 0 },
         confidenceReason: { type: String, default: "" },
+        // This platform's own Content Quality + Posting Consistency in
+        // isolation (renormalized to 0-100) — see
+        // CollaborationScoreRulesService.platformMiniScore. Shown in
+        // Platform Status alongside, never instead of, collaborationScore.
+        miniScore: { type: Number, default: 0 },
         _id: false,
       },
     ],

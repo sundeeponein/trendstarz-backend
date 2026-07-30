@@ -250,4 +250,67 @@ describe("CollaborationScoreRulesService", () => {
       expect(Number.isFinite(result.previewScore)).toBe(true);
     });
   });
+
+  describe("platformMiniScore — per-platform Content Quality + Posting Consistency in isolation", () => {
+    it("renormalizes 55/45 between just Content Quality and Posting Consistency for one platform", () => {
+      // High engagement (>=8%) -> contentQualityForPlatform 100; posted
+      // within the last 60 days with low gap variance -> postingConsistency
+      // near 100 too. 0.55*100 + 0.45*100 = 100.
+      const platform: any = {
+        platform: "YouTube",
+        method: "API",
+        handle: "test",
+        followersOrSubscribers: 5000,
+        recentPosts: Array.from({ length: 5 }, (_, i) => ({
+          title: "a",
+          description: "",
+          publishedAt: new Date(Date.now() - i * 2 * 24 * 60 * 60 * 1000),
+          views: 1000,
+          likes: 100,
+          comments: 20,
+        })),
+        collectedAt: new Date(),
+        raw: {},
+        confidence: 95,
+        confidenceReason: "",
+      };
+
+      expect(service.platformMiniScore(platform)).toBe(100);
+    });
+
+    it("caps self-reported platforms the same way contentQualityForPlatform/postingConsistencyForPlatform already do", () => {
+      const platform: any = {
+        platform: "Instagram",
+        method: "SELF_REPORTED",
+        handle: "test",
+        followersOrSubscribers: 1000,
+        recentPosts: [],
+        collectedAt: new Date(),
+        raw: { avgLikes: null, avgComments: null },
+        confidence: 0,
+        confidenceReason: "",
+      };
+
+      // contentQualityForPlatform: incomplete self-reported stats -> 20.
+      // postingConsistencyForPlatform: flat 50 for any self-reported platform.
+      // 0.55*20 + 0.45*50 = 33.5 -> 34 (rounds up).
+      expect(service.platformMiniScore(platform)).toBe(34);
+    });
+
+    it("is 0 for a platform with no posts and no data", () => {
+      const platform: any = {
+        platform: "YouTube",
+        method: "API",
+        handle: "test",
+        followersOrSubscribers: 0,
+        recentPosts: [],
+        collectedAt: new Date(),
+        raw: {},
+        confidence: 30,
+        confidenceReason: "",
+      };
+
+      expect(service.platformMiniScore(platform)).toBe(0);
+    });
+  });
 });

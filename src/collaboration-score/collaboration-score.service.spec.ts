@@ -80,6 +80,7 @@ describe("CollaborationScoreService", () => {
         postingConsistencyScore: 50,
         previewScore: 56,
       }),
+      platformMiniScore: jest.fn().mockReturnValue(0),
     };
     aiService = { analyzeContentSync: jest.fn() };
     settingsService = {

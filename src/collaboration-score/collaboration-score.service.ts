@@ -334,6 +334,7 @@ export class CollaborationScoreService {
           raw: p.raw,
           confidence: p.confidence,
           confidenceReason: p.confidenceReason,
+          miniScore: this.rulesService.platformMiniScore(p),
         })),
         profileCompletenessScore: scores.profileCompletenessScore,
         contentQualityScore: scores.contentQualityScore,

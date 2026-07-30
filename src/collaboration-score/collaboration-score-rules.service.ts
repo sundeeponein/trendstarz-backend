@@ -231,6 +231,23 @@ export class CollaborationScoreRulesService {
     );
   }
 
+  /**
+   * A single platform's own performance in isolation — Content Quality (55%)
+   * + Posting Consistency (45%) for just this platform's data, renormalized
+   * to fill 0-100 between those two criteria only. Shown in Platform
+   * Status next to (never instead of) the real, fully-weighted
+   * collaborationScore — unlike the anonymous preview's unrenormalized
+   * score (which deliberately stays capped so it can never outscore the
+   * real audit), this is explicitly labeled as a per-platform indicator,
+   * not a stand-in for the whole score, so renormalizing here is honest
+   * rather than inflationary.
+   */
+  platformMiniScore(platform: CollectedPlatformData): number {
+    const contentQuality = this.contentQualityForPlatform(platform);
+    const postingConsistency = this.postingConsistencyForPlatform(platform);
+    return Math.round(0.55 * contentQuality + 0.45 * postingConsistency);
+  }
+
   // ── Content Quality (25%) ──────────────────────────────────────────────
   private computeContentQuality(input: ComputeScoresInput): number {
     const rulesScore = this.confidenceWeightedAverage(input.collectedPlatforms, (platform) =>
