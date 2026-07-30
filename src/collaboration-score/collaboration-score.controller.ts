@@ -4,6 +4,7 @@ import {
   Controller,
   ForbiddenException,
   Get,
+  Header,
   Param,
   Post,
   Put,
@@ -169,9 +170,16 @@ export class CollaborationScoreController {
   /**
    * GET/PUT /api/audit/settings — GET is an additive extension of the spec's
    * 4 endpoints so the admin settings UI has something to read before it PUTs.
+   *
+   * no-store: this is live admin config the settings page must always read
+   * fresh — any intermediary (CDN, reverse proxy, corporate/ISP cache) that
+   * caches a plain GET without this header would keep serving a stale
+   * platformsEnabled/etc. snapshot after a save, in a way neither a hard
+   * refresh nor incognito can bypass (those only clear the *browser's* cache).
    */
   @UseGuards(JwtAuthGuard)
   @Get("settings")
+  @Header("Cache-Control", "no-store")
   async getSettings(@Req() req: any) {
     this.assertAdmin(req);
     return this.settingsService.getSettings();
