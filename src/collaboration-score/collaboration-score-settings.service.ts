@@ -198,7 +198,10 @@ export class CollaborationScoreSettingsService implements OnModuleInit {
       .findOneAndUpdate({}, { $set: next }, { upsert: true, new: true })
       .lean();
     this.logger.log(
-      `updateSettings() wrote doc _id=${(doc as any)?._id}, fields changed: ${Object.keys(next).join(", ")}${next.platformsEnabled ? `, platformsEnabled=${JSON.stringify(next.platformsEnabled)}` : ""}`,
+      `updateSettings() body keys: ${Object.keys(body || {}).join(", ")} | reanalysisCooldownDays(raw)=${JSON.stringify(body?.reanalysisCooldownDays)} reanalysisFeeRupees(raw)=${JSON.stringify(body?.reanalysisFeeRupees)}`,
+    );
+    this.logger.log(
+      `updateSettings() wrote doc _id=${(doc as any)?._id}, fields changed: ${Object.keys(next).join(", ")}${next.platformsEnabled ? `, platformsEnabled=${JSON.stringify(next.platformsEnabled)}` : ""}, reanalysisCooldownDays=${(doc as any)?.reanalysisCooldownDays}, reanalysisFeeRupees=${(doc as any)?.reanalysisFeeRupees}`,
     );
     this.invalidateCache();
     const normalized = this.normalize(doc);
