@@ -172,7 +172,9 @@ export class CollaborationScoreSettingsService implements OnModuleInit {
       return this.cachedSettings;
     }
     const doc = await this.settingsModel.findOne({}).lean();
-    this.logger.debug(`getSettings() cache miss — read doc _id=${(doc as any)?._id} reanalysisFeeRupees=${(doc as any)?.reanalysisFeeRupees} platformsEnabled.youtube=${(doc as any)?.platformsEnabled?.youtube}`);
+    this.logger.debug(
+      `getSettings() cache miss — read doc _id=${(doc as any)?._id} reanalysisFeeRupees=${(doc as any)?.reanalysisFeeRupees} platformsEnabled=${JSON.stringify((doc as any)?.platformsEnabled)}`,
+    );
     const normalized = this.normalize(doc);
     this.cachedSettings = normalized;
     this.cacheExpiresAt = Date.now() + CollaborationScoreSettingsService.CACHE_TTL_MS;
@@ -195,7 +197,9 @@ export class CollaborationScoreSettingsService implements OnModuleInit {
     const doc = await this.settingsModel
       .findOneAndUpdate({}, { $set: next }, { upsert: true, new: true })
       .lean();
-    this.logger.log(`updateSettings() wrote doc _id=${(doc as any)?._id}, fields changed: ${Object.keys(next).join(", ")}`);
+    this.logger.log(
+      `updateSettings() wrote doc _id=${(doc as any)?._id}, fields changed: ${Object.keys(next).join(", ")}${next.platformsEnabled ? `, platformsEnabled=${JSON.stringify(next.platformsEnabled)}` : ""}`,
+    );
     this.invalidateCache();
     const normalized = this.normalize(doc);
     await this.logChange("settings_updated", actor, Object.keys(next), current, normalized);
