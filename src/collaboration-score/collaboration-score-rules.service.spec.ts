@@ -251,11 +251,14 @@ describe("CollaborationScoreRulesService", () => {
     });
   });
 
-  describe("platformMiniScore — per-platform Content Quality + Posting Consistency in isolation", () => {
-    it("renormalizes 55/45 between just Content Quality and Posting Consistency for one platform", () => {
+  describe("platformMiniScore — must stay numerically identical to computePreviewScores for the same platform", () => {
+    it("uses the real scoreWeights, unrenormalized — same formula as the anonymous preview", () => {
       // High engagement (>=8%) -> contentQualityForPlatform 100; posted
       // within the last 60 days with low gap variance -> postingConsistency
-      // near 100 too. 0.55*100 + 0.45*100 = 100.
+      // near 100 too. (25/100)*100 + (20/100)*100 = 45 — same ceiling the
+      // anonymous preview has for this exact input (see
+      // "computes a real, finite score for a normal, healthy channel" above,
+      // which uses the same platform shape).
       const platform: any = {
         platform: "YouTube",
         method: "API",
@@ -275,10 +278,12 @@ describe("CollaborationScoreRulesService", () => {
         confidenceReason: "",
       };
 
-      expect(service.platformMiniScore(platform)).toBe(100);
+      expect(service.platformMiniScore(platform, settings)).toBe(45);
+      // Cross-check against the actual preview path for the identical platform.
+      expect(service.computePreviewScores([platform], settings).previewScore).toBe(45);
     });
 
-    it("caps self-reported platforms the same way contentQualityForPlatform/postingConsistencyForPlatform already do", () => {
+    it("is 0 for a 0-confidence self-reported platform — excluded entirely, same as the anonymous preview would show", () => {
       const platform: any = {
         platform: "Instagram",
         method: "SELF_REPORTED",
@@ -291,10 +296,32 @@ describe("CollaborationScoreRulesService", () => {
         confidenceReason: "",
       };
 
+      // confidenceWeightedAverage filters out any platform with weight<=0
+      // before it can contribute a raw contentQuality/postingConsistency
+      // value at all — 0-confidence means "excluded," not "included at a
+      // low score." Matches computePreviewScores exactly (same code path).
+      expect(service.platformMiniScore(platform, settings)).toBe(0);
+      expect(service.computePreviewScores([platform], settings).previewScore).toBe(0);
+    });
+
+    it("caps self-reported platforms the same way contentQualityForPlatform/postingConsistencyForPlatform already do, once confidence is above 0", () => {
+      const platform: any = {
+        platform: "Instagram",
+        method: "SELF_REPORTED",
+        handle: "test",
+        followersOrSubscribers: 1000,
+        recentPosts: [],
+        collectedAt: new Date(),
+        raw: { avgLikes: null, avgComments: null },
+        confidence: 35,
+        confidenceReason: "",
+      };
+
       // contentQualityForPlatform: incomplete self-reported stats -> 20.
       // postingConsistencyForPlatform: flat 50 for any self-reported platform.
-      // 0.55*20 + 0.45*50 = 33.5 -> 34 (rounds up).
-      expect(service.platformMiniScore(platform)).toBe(34);
+      // (25/100)*20 + (20/100)*50 = 5 + 10 = 15.
+      expect(service.platformMiniScore(platform, settings)).toBe(15);
+      expect(service.computePreviewScores([platform], settings).previewScore).toBe(15);
     });
 
     it("is 0 for a platform with no posts and no data", () => {
@@ -310,7 +337,28 @@ describe("CollaborationScoreRulesService", () => {
         confidenceReason: "",
       };
 
-      expect(service.platformMiniScore(platform)).toBe(0);
+      expect(service.platformMiniScore(platform, settings)).toBe(0);
+    });
+
+    it("respects admin-configured scoreWeights instead of hardcoded percentages", () => {
+      const platform: any = {
+        platform: "Instagram",
+        method: "SELF_REPORTED",
+        handle: "test",
+        followersOrSubscribers: 1000,
+        recentPosts: [],
+        collectedAt: new Date(),
+        raw: { avgLikes: null, avgComments: null },
+        confidence: 35,
+        confidenceReason: "",
+      };
+      const customSettings = {
+        ...settings,
+        scoreWeights: { ...settings.scoreWeights, contentQuality: 50, postingConsistency: 50 },
+      };
+
+      // contentQuality=20, postingConsistency=50 -> (50/100)*20 + (50/100)*50 = 10+25=35.
+      expect(service.platformMiniScore(platform, customSettings)).toBe(35);
     });
   });
 });

@@ -232,20 +232,24 @@ export class CollaborationScoreRulesService {
   }
 
   /**
-   * A single platform's own performance in isolation — Content Quality (55%)
-   * + Posting Consistency (45%) for just this platform's data, renormalized
-   * to fill 0-100 between those two criteria only. Shown in Platform
-   * Status next to (never instead of) the real, fully-weighted
-   * collaborationScore — unlike the anonymous preview's unrenormalized
-   * score (which deliberately stays capped so it can never outscore the
-   * real audit), this is explicitly labeled as a per-platform indicator,
-   * not a stand-in for the whole score, so renormalizing here is honest
-   * rather than inflationary.
+   * A single platform's own performance in isolation — literally delegates
+   * to computePreviewScores([platform], settings) so this is guaranteed to
+   * stay numerically identical to the anonymous, pre-registration preview
+   * for the same platform data (same confidence-weighted exclusion of
+   * 0-confidence platforms, same real unrenormalized scoreWeights, same
+   * lack of renormalization) — not just "the same formula" duplicated in
+   * two places, but literally the same code path, so the two can never
+   * silently drift apart. A creator who checks a channel anonymously
+   * before registering, then registers, sees the exact same number under
+   * Platform Status. Shown next to (never instead of) the real,
+   * fully-weighted collaborationScore; realistically caps out around the
+   * combined weight (~45/100 by default), same ceiling the anonymous
+   * preview already has, and only changes when a new audit actually runs
+   * (Sync detecting changes + a paid Re-analyze, or an admin/free re-run) —
+   * never silently between audits.
    */
-  platformMiniScore(platform: CollectedPlatformData): number {
-    const contentQuality = this.contentQualityForPlatform(platform);
-    const postingConsistency = this.postingConsistencyForPlatform(platform);
-    return Math.round(0.55 * contentQuality + 0.45 * postingConsistency);
+  platformMiniScore(platform: CollectedPlatformData, settings: CollaborationScoreSettingsSnapshot): number {
+    return this.computePreviewScores([platform], settings).previewScore;
   }
 
   // ── Content Quality (25%) ──────────────────────────────────────────────
