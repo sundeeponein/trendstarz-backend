@@ -118,6 +118,11 @@ export class InfluencerProfileDto {
   @IsArray()
   @IsString({ each: true })
   @IsOptional()
+  creatorTypes?: string[];
+
+  @IsArray()
+  @IsString({ each: true })
+  @IsOptional()
   adminTags?: string[];
 
   @IsDateString()

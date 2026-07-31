@@ -2,24 +2,51 @@ import {
   Injectable,
   UnauthorizedException,
   BadRequestException,
+  ForbiddenException,
 } from "@nestjs/common";
 import * as bcrypt from "bcryptjs";
 import * as crypto from "crypto";
 import * as jwt from "jsonwebtoken";
 import { InjectModel } from "@nestjs/mongoose";
 import { Model } from "mongoose";
+import { Cron, CronExpression } from "@nestjs/schedule";
 import { sendAppEmail } from "../utils/app-email.service";
+import { WhatsAppService } from "../whatsapp/whatsapp.service";
+import {
+  verifyEmailTemplate,
+  resetPasswordTemplate,
+} from "../email/templates/auth.templates";
 import { getJwtSecret } from "./jwt-secret";
+import { SELF_DELETION_GRACE_PERIOD_DAYS } from "../users/users.service";
+import { normalizeCollaborationAvailability } from "../utils/collaboration-availability.util";
+import {
+  PROFILE_SELECTION_LIMITS,
+  normalizeSelectionList,
+} from "../utils/profile-selection-limits.util";
+import { FirebaseAdminService } from "../utils/firebase-admin.service";
+import {
+  normalizeSocialHandle,
+  normalizeSocialMediaList,
+  validateSocialHandle,
+} from "../utils/social-handle.util";
+import { consumeOtpVerificationToken } from "../otp/otp.controller";
+import { CloudinaryService } from "../cloudinary.service";
+import { CloudinaryFolders } from "../cloudinary-folders";
 
 type AnyUserDoc = {
   email: string;
   name?: string;
+  password?: string;
   isEmailVerified?: boolean;
+  firebaseUid?: string | null;
   resetToken?: string;
   resetTokenExpires?: number;
   save: () => Promise<unknown>;
   [key: string]: unknown;
 };
+
+type FirebaseContactType = "email" | "phone";
+type TrendstarzRole = "admin" | "influencer" | "brand" | "photographer";
 
 @Injectable()
 export class AuthService {
@@ -45,6 +72,24 @@ export class AuthService {
     }
   }
 
+  private async promoteLegacyEmailVerified(
+    user: any,
+    model: Model<any>,
+  ): Promise<void> {
+    if (!user || user.isEmailVerified === true || user.emailVerified !== true) {
+      return;
+    }
+    const verifiedAt = user.emailVerifiedAt || new Date();
+    user.isEmailVerified = true;
+    user.emailVerifiedAt = verifiedAt;
+    await model.updateOne(
+      { _id: user._id },
+      {
+        $set: { isEmailVerified: true, emailVerifiedAt: verifiedAt },
+      },
+    );
+  }
+
   private async findAnyUserByEmail(email: string): Promise<AnyUserDoc | null> {
     // Parallel queries — eliminates sequential round-trips and prevents
     // timing-based user-enumeration across collections.
@@ -57,53 +102,218 @@ export class AuthService {
     return adminUser || influencer || brand || photographer || null;
   }
 
+  private async findAnyUserWithRole(
+    email: string,
+  ): Promise<{ user: any; role: TrendstarzRole } | null> {
+    const [adminUser, influencer, brand, photographer] = await Promise.all([
+      this.userModel.findOne({ email }),
+      this.influencerModel.findOne({ email }),
+      this.brandModel.findOne({ email }),
+      this.photographerModel.findOne({ email }),
+    ]);
+    if (adminUser) {
+      await this.promoteLegacyEmailVerified(adminUser, this.userModel);
+      return { user: adminUser, role: "admin" };
+    }
+    if (influencer) {
+      await this.promoteLegacyEmailVerified(influencer, this.influencerModel);
+      return { user: influencer, role: "influencer" };
+    }
+    if (brand) {
+      await this.promoteLegacyEmailVerified(brand, this.brandModel);
+      return { user: brand, role: "brand" };
+    }
+    if (photographer) {
+      await this.promoteLegacyEmailVerified(photographer, this.photographerModel);
+      return { user: photographer, role: "photographer" };
+    }
+    return null;
+  }
+
+  private activateAfterEmailOwnership(
+    user: any,
+    role: TrendstarzRole | null,
+    firebaseUid?: string,
+  ): boolean {
+    user.isEmailVerified = true;
+    user.emailVerifiedAt = user.emailVerifiedAt || new Date();
+    if (firebaseUid) user.firebaseUid = firebaseUid;
+    if (role && role !== "admin" && user.status === "pending") {
+      user.status = "accepted";
+      return true;
+    }
+    return false;
+  }
+
+  private validateCreatorSocialMediaRates(socialMedia: any[]) {
+    for (const sm of socialMedia || []) {
+      if (!String(sm?.platform || "").trim()) {
+        throw new BadRequestException("Platform is required.");
+      }
+      if (!String(sm?.handle || "").trim()) {
+        throw new BadRequestException(
+          "Username is required for every selected platform.",
+        );
+      }
+      if (!String(sm?.tier || "").trim()) {
+        throw new BadRequestException(
+          "Tier is required for every selected platform.",
+        );
+      }
+      if (!Array.isArray(sm?.contentTypes) || sm.contentTypes.length === 0) {
+        throw new BadRequestException(
+          "Please select at least one content type and enter a starting rate.",
+        );
+      }
+    }
+  }
+
+  private async generateVerifyUrl(
+    normalizedEmail: string,
+    role: TrendstarzRole,
+  ): Promise<string> {
+    if (this.firebaseAdminService.isConfigured()) {
+      const verifyUrl =
+        await this.firebaseAdminService.generateEmailVerificationLink(
+          normalizedEmail,
+        );
+      await this.firebaseAdminService.setUserRoleClaim(normalizedEmail, role);
+      return verifyUrl;
+    }
+    const token = jwt.sign(
+      { email: normalizedEmail, purpose: "email_verification" },
+      getJwtSecret(),
+      { expiresIn: "1h" },
+    );
+    const backendUrl = (
+      process.env.BACKEND_URL || "https://api.trendstarz.in"
+    ).replace(/\/$/, "");
+    return `${backendUrl}/api/auth/verify-email?token=${encodeURIComponent(token)}`;
+  }
+
   async sendEmailVerificationLink(email: string) {
     const normalizedEmail = (email || "").trim().toLowerCase();
     if (!normalizedEmail) {
       throw new BadRequestException("Email is required");
     }
 
-    const user = await this.findAnyUserByEmail(normalizedEmail);
-    if (!user) {
+    const match = await this.findAnyUserWithRole(normalizedEmail);
+    if (!match) {
       // Avoid exposing user existence details.
       return {
         success: true,
         message: "If the email exists, a verification link has been sent.",
       };
     }
+    const user = match.user;
 
     if (user.isEmailVerified) {
       return { success: true, message: "Email is already verified." };
     }
 
-    const token = jwt.sign(
-      { email: normalizedEmail, purpose: "email_verification" },
-      getJwtSecret(),
-      { expiresIn: "1h" },
-    );
+    const verifyUrl = await this.generateVerifyUrl(normalizedEmail, match.role);
+    const { subject, html, text } = verifyEmailTemplate(verifyUrl);
 
-    const backendUrl = (
-      process.env.BACKEND_URL || "https://api.trendstarz.in"
-    ).replace(/\/$/, "");
-    const verifyUrl = `${backendUrl}/api/auth/verify-email?token=${encodeURIComponent(token)}`;
-    const html = `
-      <p>Hi,</p>
-      <p>Please verify your Trendstarz email address by clicking the link below:</p>
-      <p><a href="${verifyUrl}">Verify Email</a></p>
-      <p>If you did not request this, you can ignore this email.</p>
-    `;
-    const text = `Please verify your Trendstarz email address: ${verifyUrl}`;
+    await sendAppEmail({ to: normalizedEmail, subject, html, text });
 
-    await sendAppEmail({
-      to: normalizedEmail,
-      subject: "Verify your Trendstarz email",
-      text,
-      html,
-    });
-    // Keep html for future providers that support rich templates.
-    void html;
+    // Reset so the 30-minute WhatsApp reminder cron re-arms for this fresh link
+    // instead of treating it as already reminded-about.
+    user.emailVerificationSentAt = new Date();
+    user.emailVerificationWhatsappReminderSentAt = null;
+    await user.save();
 
     return { success: true, message: "Verification email sent." };
+  }
+
+  /**
+   * One-time WhatsApp nudge for accounts still unverified 30 minutes after
+   * their last verification email went out (the link itself stays valid for
+   * 1h, so the reminder's fresh link still works). Guarded by
+   * emailVerificationWhatsappReminderSentAt so a missed/delayed cron run
+   * can't cause a duplicate send; re-armed by sendEmailVerificationLink()
+   * whenever a fresh link is sent. Silently a no-op until the WhatsApp Cloud
+   * API credentials are set AND the "email_verification_reminder" template
+   * below is approved — see sendWhatsAppTemplateMessage in
+   * whatsapp-cloud-api.util.ts.
+   *
+   * email_verification_reminder template body to submit in Meta Business
+   * Manager → WhatsApp Manager → Message Templates (category: Utility,
+   * 2 body params — display name, verification link):
+   *
+   *   Hi {{1}}, just a reminder to verify your email so you can start using
+   *   TrendStarz.
+   *
+   *   Verify now (valid for 1 hour): {{2}}
+   *
+   *   If you've already verified, please ignore this message.
+   */
+  @Cron(CronExpression.EVERY_5_MINUTES)
+  async sendEmailVerificationWhatsappRemindersCron() {
+    try {
+      await this.sendEmailVerificationWhatsappReminders();
+    } catch (e) {
+      console.error("sendEmailVerificationWhatsappRemindersCron failed:", e);
+    }
+  }
+
+  async sendEmailVerificationWhatsappReminders(): Promise<{ sent: number }> {
+    const MIN_MS = 60 * 1000;
+    const now = Date.now();
+    // Wide-ish band (25-40 min) so a 5-minute cron cadence can't skip a row
+    // between runs; emailVerificationWhatsappReminderSentAt prevents repeats.
+    const query = {
+      isEmailVerified: { $ne: true },
+      emailVerificationSentAt: {
+        $gte: new Date(now - 40 * MIN_MS),
+        $lte: new Date(now - 25 * MIN_MS),
+      },
+      emailVerificationWhatsappReminderSentAt: null,
+    };
+    const roleModels: Array<{ model: Model<any>; role: TrendstarzRole }> = [
+      { model: this.userModel, role: "admin" },
+      { model: this.influencerModel, role: "influencer" },
+      { model: this.brandModel, role: "brand" },
+      { model: this.photographerModel, role: "photographer" },
+    ];
+
+    let sent = 0;
+    for (const { model, role } of roleModels) {
+      const dueUsers = await model.find(query).lean();
+      for (const dueUser of dueUsers) {
+        const email = String((dueUser as any).email || "");
+        const displayName =
+          (dueUser as any).name ||
+          (dueUser as any).contactPersonName ||
+          (dueUser as any).brandName ||
+          "there";
+        try {
+          const verifyUrl = await this.generateVerifyUrl(email, role);
+          await this.whatsAppService
+            .sendToUser(
+              String((dueUser as any)._id),
+              (dueUser as any).phoneNumber,
+              (dueUser as any).isMobileVerified,
+              {
+                name: "email_verification_reminder",
+                bodyParams: [displayName, verifyUrl],
+              },
+            )
+            .catch(() => {});
+        } catch (e) {
+          console.error(
+            `Failed to send email-verification WhatsApp reminder to ${email}:`,
+            e,
+          );
+        } finally {
+          await model.updateOne(
+            { _id: (dueUser as any)._id },
+            { $set: { emailVerificationWhatsappReminderSentAt: new Date() } },
+          );
+          sent++;
+        }
+      }
+    }
+    return { sent };
   }
 
   async verifyEmailByToken(token: string) {
@@ -132,58 +342,32 @@ export class AuthService {
       this.photographerModel.findOne({ email: normalizedEmail }),
     ]);
 
-    const user = adminUser || influencer || brand || photographer;
-    if (!user) {
-      throw new BadRequestException("User not found for verification token");
-    }
+	    const user = adminUser || influencer || brand || photographer;
+	    if (!user) {
+	      throw new BadRequestException("User not found for verification token");
+	    }
+	    await this.promoteLegacyEmailVerified(
+	      user,
+	      adminUser
+	        ? this.userModel
+	        : influencer
+	          ? this.influencerModel
+	          : brand
+	            ? this.brandModel
+	            : this.photographerModel,
+	    );
 
-    if (!user.isEmailVerified) {
-      user.isEmailVerified = true;
-      let autoApproved = false;
-
-      // Auto-approve only after email is verified (secure: not at registration time).
-      // The email condition is inherently satisfied here (we just verified it).
-      // Mobile condition gates approval until mobile verification is also done (future feature).
-      if (influencer && !adminUser) {
-        const settings = (await this.appSettingsModel
-          .findOne({})
-          .lean()) as any;
-        const mobileOk =
-          !settings?.influencerRequireMobileVerified ||
-          !!influencer.isMobileVerified;
-        if (
-          settings?.preApproveInfluencers &&
-          mobileOk &&
-          influencer.status === "pending"
-        ) {
-          influencer.status = "accepted";
-          autoApproved = true;
-        }
-      } else if (brand && !adminUser) {
-        const settings = (await this.appSettingsModel
-          .findOne({})
-          .lean()) as any;
-        const mobileOk =
-          !settings?.brandRequireMobileVerified || !!brand.isMobileVerified;
-        if (
-          settings?.preApproveBrands &&
-          mobileOk &&
-          brand.status === "pending"
-        ) {
-          brand.status = "accepted";
-          autoApproved = true;
-        }
-      } else if (photographer && !adminUser) {
-        // Photographers auto-approve on email verification if preApproveInfluencers is enabled
-        // (reuse the influencer approval setting as a shared "creator" toggle)
-        const settings = (await this.appSettingsModel
-          .findOne({})
-          .lean()) as any;
-        if (settings?.preApproveInfluencers && photographer.status === "pending") {
-          photographer.status = "accepted";
-          autoApproved = true;
-        }
-      }
+	    if (!user.isEmailVerified) {
+      const role = adminUser
+        ? "admin"
+        : influencer
+          ? "influencer"
+          : brand
+            ? "brand"
+            : photographer
+              ? "photographer"
+              : null;
+      const autoApproved = this.activateAfterEmailOwnership(user, role);
 
       await user.save();
       return {
@@ -200,33 +384,116 @@ export class AuthService {
     };
   }
 
+  async syncFirebaseEmailVerification(email: string) {
+    const normalizedEmail = String(email || "")
+      .trim()
+      .toLowerCase();
+    if (!normalizedEmail) {
+      throw new BadRequestException("Email is required.");
+    }
+    if (!this.firebaseAdminService.isConfigured()) {
+      throw new BadRequestException("Firebase Admin is not configured.");
+    }
+    let firebaseUser: any = null;
+    try {
+      firebaseUser =
+        await this.firebaseAdminService.getUserByEmail(normalizedEmail);
+    } catch {
+      throw new BadRequestException("Firebase user not found.");
+    }
+    if (!firebaseUser?.emailVerified) {
+      throw new BadRequestException("Firebase email is not verified yet.");
+    }
+
+    const [adminUser, influencer, brand, photographer] = await Promise.all([
+      this.userModel.findOne({ email: normalizedEmail }),
+      this.influencerModel.findOne({ email: normalizedEmail }),
+      this.brandModel.findOne({ email: normalizedEmail }),
+      this.photographerModel.findOne({ email: normalizedEmail }),
+    ]);
+	    const user = adminUser || influencer || brand || photographer;
+	    const role = adminUser
+	      ? "admin"
+      : influencer
+        ? "influencer"
+        : brand
+          ? "brand"
+          : photographer
+            ? "photographer"
+            : null;
+    if (!user) throw new BadRequestException("User not found.");
+
+    const autoApproved = this.activateAfterEmailOwnership(
+      user,
+      role,
+      firebaseUser?.uid,
+    );
+    await user.save();
+
+    return {
+      success: true,
+      autoApproved,
+      message: "Email verified successfully.",
+    };
+  }
+
   async forgotPassword(email: string) {
-    // Try to find user in all collections
-    const user =
-      (await this.userModel.findOne({ email })) ||
-      (await this.influencerModel.findOne({ email })) ||
-      (await this.brandModel.findOne({ email })) ||
-      (await this.photographerModel.findOne({ email }));
+    const normalizedEmail = (email || "").trim().toLowerCase();
+    if (!normalizedEmail) {
+      throw new BadRequestException("Email is required.");
+    }
+    // Parallel lookup across all collections — normalized email prevents case-mismatch misses
+    const [adminUser, influencer, brand, photographer] = await Promise.all([
+      this.userModel.findOne({ email: normalizedEmail }),
+      this.influencerModel.findOne({ email: normalizedEmail }),
+      this.brandModel.findOne({ email: normalizedEmail }),
+      this.photographerModel.findOne({ email: normalizedEmail }),
+    ]);
+    const user = adminUser || influencer || brand || photographer;
     if (!user) {
-      throw new Error("Email not found. Please enter a registered email.");
+      // Silently return — never reveal whether the email is registered (OWASP)
+      return;
     }
     // Generate a cryptographically secure reset token
     const resetToken = crypto.randomBytes(32).toString("hex");
-    // Save token to user (or a real token store in production)
-    user.resetToken = resetToken;
-    user.resetTokenExpires = Date.now() + 1000 * 60 * 60; // 1 hour expiry
-    await user.save();
-    // Send email (use your email util)
+    const resetTokenHash = crypto
+      .createHash("sha256")
+      .update(resetToken)
+      .digest("hex");
     const frontendBase = (
       process.env.FRONTEND_URL || "https://www.trendstarz.in"
     ).replace(/\/$/, "");
     const resetUrl = `${frontendBase}/reset-password?token=${resetToken}`;
-    const text = `Reset your Trendstarz password: ${resetUrl}`;
-    await sendAppEmail({
-      to: user.email,
-      subject: "Reset your password",
-      text,
-    });
+    user.resetToken = resetTokenHash;
+    user.resetTokenExpires = Date.now() + 1000 * 60 * 60; // 1 hour expiry
+    await user.save();
+    const { subject, html, text } = resetPasswordTemplate(resetUrl);
+    await sendAppEmail({ to: user.email, subject, html, text });
+  }
+
+  async validateResetToken(token: string): Promise<boolean> {
+    if (!token) return false;
+    const tokenHash = crypto.createHash("sha256").update(token).digest("hex");
+    const now = Date.now();
+    const [adminUser, influencer, brand, photographer] = await Promise.all([
+      this.userModel.findOne({
+        resetToken: { $in: [token, tokenHash] },
+        resetTokenExpires: { $gt: now },
+      }),
+      this.influencerModel.findOne({
+        resetToken: { $in: [token, tokenHash] },
+        resetTokenExpires: { $gt: now },
+      }),
+      this.brandModel.findOne({
+        resetToken: { $in: [token, tokenHash] },
+        resetTokenExpires: { $gt: now },
+      }),
+      this.photographerModel.findOne({
+        resetToken: { $in: [token, tokenHash] },
+        resetTokenExpires: { $gt: now },
+      }),
+    ]);
+    return !!(adminUser || influencer || brand || photographer);
   }
 
   async resetPassword(token: string, newPassword: string) {
@@ -240,34 +507,138 @@ export class AuthService {
     const now = Date.now();
 
     // Parallel lookup across collections.
+    // Accept both the legacy raw token and the hashed token so existing reset
+    // emails continue to work while new tokens are stored hashed.
     const [adminUser, influencer, brand, photographer] = await Promise.all([
       this.userModel.findOne({
-        resetToken: tokenHash,
+        resetToken: { $in: [token, tokenHash] },
         resetTokenExpires: { $gt: now },
       }),
       this.influencerModel.findOne({
-        resetToken: tokenHash,
+        resetToken: { $in: [token, tokenHash] },
         resetTokenExpires: { $gt: now },
       }),
       this.brandModel.findOne({
-        resetToken: tokenHash,
+        resetToken: { $in: [token, tokenHash] },
         resetTokenExpires: { $gt: now },
       }),
       this.photographerModel.findOne({
-        resetToken: tokenHash,
+        resetToken: { $in: [token, tokenHash] },
         resetTokenExpires: { $gt: now },
       }),
     ]);
     const user = adminUser || influencer || brand || photographer;
+    const role = adminUser
+      ? "admin"
+      : influencer
+        ? "influencer"
+        : brand
+          ? "brand"
+          : photographer
+            ? "photographer"
+	            : null;
 
-    if (!user) {
-      throw new BadRequestException("Invalid or expired reset token");
+	    if (!user) {
+	      throw new BadRequestException("Invalid or expired reset token");
+	    }
+	    await this.promoteLegacyEmailVerified(
+	      user,
+	      adminUser
+	        ? this.userModel
+	        : influencer
+	          ? this.influencerModel
+	          : brand
+	            ? this.brandModel
+	            : this.photographerModel,
+	    );
+	    if (this.firebaseAdminService.isConfigured()) {
+      const firebaseUser = await this.firebaseAdminService.setEmailUserPassword(
+        user.email,
+        newPassword,
+        true,
+      );
+      this.activateAfterEmailOwnership(user, role, firebaseUser.uid);
+    } else {
+      this.activateAfterEmailOwnership(user, role);
     }
     user.password = await bcrypt.hash(newPassword, 10);
     user.resetToken = null;
     user.resetTokenExpires = null;
     await user.save();
     return { success: true, message: "Password reset successfully." };
+  }
+
+  async ensureFirebasePasswordResetUser(email: string) {
+    const normalizedEmail = String(email || "")
+      .trim()
+      .toLowerCase();
+    if (!normalizedEmail) {
+      throw new BadRequestException("Email is required.");
+    }
+
+    const match = await this.findAnyUserWithRole(normalizedEmail);
+    if (!match) {
+      return {
+        success: true,
+        canSendFirebaseReset: false,
+        message: "If that email is registered, a reset link has been sent.",
+      };
+    }
+
+    if (this.firebaseAdminService.isConfigured()) {
+      await this.firebaseAdminService.ensureEmailUser(normalizedEmail);
+    }
+
+    return {
+      success: true,
+      canSendFirebaseReset: true,
+      message: "If that email is registered, a reset link has been sent.",
+    };
+  }
+
+  async completeFirebasePasswordReset(idToken: string, newPassword: string) {
+    if (!idToken || !newPassword) {
+      throw new BadRequestException(
+        "Firebase token and new password are required.",
+      );
+    }
+    this.validatePasswordStrength(newPassword);
+
+    const decoded = await this.firebaseAdminService.verifyIdToken(idToken);
+    const email = String(decoded.email || "")
+      .trim()
+      .toLowerCase();
+    if (!email) {
+      throw new BadRequestException(
+        "Firebase token does not include an email.",
+      );
+    }
+
+    const match = await this.findAnyUserWithRole(email);
+    if (!match) {
+      throw new BadRequestException("User not found.");
+    }
+
+    match.user.password = await bcrypt.hash(newPassword, 10);
+    match.user.isEmailVerified = true;
+    match.user.emailVerifiedAt = match.user.emailVerifiedAt || new Date();
+    match.user.firebaseUid = decoded.uid;
+    match.user.resetToken = null;
+    match.user.resetTokenExpires = null;
+    const autoApproved =
+      match.role !== "admin"
+        ? await this.maybeAutoApproveAfterContactVerification(
+            match.user,
+            match.role,
+          )
+        : false;
+    await match.user.save();
+
+    return {
+      success: true,
+      autoApproved,
+      message: "Password reset successfully.",
+    };
   }
 
   async changePassword(
@@ -328,6 +699,14 @@ export class AuthService {
       throw new BadRequestException("Existing password is incorrect.");
     }
 
+    if (this.firebaseAdminService.isConfigured()) {
+      const firebaseUser = await this.firebaseAdminService.setEmailUserPassword(
+        user.email,
+        newPassword,
+        !!user.isEmailVerified,
+      );
+      user.firebaseUid = firebaseUser.uid;
+    }
     user.password = await bcrypt.hash(newPassword, 10);
     await user.save();
 
@@ -345,7 +724,376 @@ export class AuthService {
     @InjectModel("Language") private readonly languageModel: Model<any>,
     @InjectModel("SocialMedia") private readonly socialMediaModel: Model<any>,
     @InjectModel("AppSettings") private readonly appSettingsModel: Model<any>,
+    @InjectModel("Counter") private readonly counterModel: Model<any>,
+    @InjectModel("TrackingLink") private readonly trackingLinkModel: Model<any>,
+    @InjectModel("LinkConversion") private readonly linkConversionModel: Model<any>,
+    private readonly firebaseAdminService: FirebaseAdminService,
+    private readonly cloudinaryService: CloudinaryService,
+    private readonly whatsAppService: WhatsAppService,
   ) {}
+
+  // Generates the next sequential, role-prefixed human-readable ID (e.g.
+  // "INF100057") using the shared `counters` collection (same mechanism as
+  // Campaign.campaignNumber). Note: findOneAndUpdate+upsert does NOT apply
+  // the schema's `default` on insert, so `seq` starts at 1 on first use —
+  // the +100000 display offset is applied here rather than stored, keeping
+  // this independent of that Mongoose quirk.
+  private async nextPublicId(
+    prefix: string,
+    counterKey: string,
+  ): Promise<string> {
+    const doc = await this.counterModel.findOneAndUpdate(
+      { _id: counterKey },
+      { $inc: { seq: 1 } },
+      { new: true, upsert: true },
+    );
+    return `${prefix}${100000 + doc.seq}`;
+  }
+
+  // Best-effort: if this signup came in through a referral tracking link (`?tlc=<code>`
+  // captured by the registration form), record the conversion. Never blocks registration.
+  private async recordSignupConversion(
+    trackingLinkCode: unknown,
+    userId: string,
+    userType: "brand" | "influencer" | "photographer",
+  ): Promise<void> {
+    const code = String(trackingLinkCode || "").trim().toUpperCase();
+    if (!code) return;
+    try {
+      const trackingLink = await this.trackingLinkModel.findOne({
+        code,
+        moduleType: "referral",
+      });
+      if (!trackingLink) return;
+      await this.linkConversionModel.updateOne(
+        { trackingLinkId: trackingLink._id, userId, conversionType: "signup" },
+        { $setOnInsert: { trackingLinkId: trackingLink._id, userId, userType, conversionType: "signup", convertedAt: new Date() } },
+        { upsert: true },
+      );
+    } catch (err) {
+      console.error("Failed to record signup conversion:", err);
+    }
+  }
+
+  // Moves images/docs uploaded to a `_pending` staging folder into their
+  // final entity-scoped folder now that the document's _id is known. Called
+  // after `new this.xModel(...)` (Mongoose assigns _id client-side) and
+  // before `.save()`, so the doc is only written once.
+  private async relocateAssets<T extends { url: string; public_id: string }>(
+    assets: T[],
+    folder: string,
+  ): Promise<T[]> {
+    if (!assets?.length) return assets;
+    return Promise.all(
+      assets.map(async (asset) => {
+        const relocated = await this.cloudinaryService.relocateAsset(
+          asset,
+          folder,
+        );
+        return { ...asset, ...relocated };
+      }),
+    );
+  }
+
+  private modelForRole(role: string): Model<any> | null {
+    const normalized = String(role || "").toLowerCase();
+    if (normalized === "admin" || normalized === "subadmin" || normalized === "user") return this.userModel;
+    if (normalized === "influencer") return this.influencerModel;
+    if (normalized === "brand") return this.brandModel;
+    if (normalized === "photographer") return this.photographerModel;
+    return null;
+  }
+
+  // Fresh DB read — the JWT payload deliberately excludes isEmailVerified
+  // (kept minimal at sign time), so this can't be trusted from req.user alone.
+  async assertEmailVerified(userId: string, role: string): Promise<void> {
+    const model = this.modelForRole(role);
+    const doc = model
+      ? await model.findById(userId).select("isEmailVerified").lean()
+      : null;
+    if (!doc || (doc as any).isEmailVerified !== true) {
+      throw new ForbiddenException(
+        "Verify your email before uploading files.",
+      );
+    }
+  }
+
+  /** Lightweight lookup so the live checkout page can show Founder Offer bonus eligibility without loading the full dashboard. */
+  async getMyRegistration(userId: string, role: string) {
+    const model = this.modelForRole(role);
+    if (!model || !userId) {
+      throw new BadRequestException("Invalid user session.");
+    }
+    const user = await model
+      .findById(userId)
+      .select("firstRegisteredAt createdAt")
+      .lean();
+    return {
+      success: true,
+      firstRegisteredAt:
+        (user as any)?.firstRegisteredAt || (user as any)?.createdAt || null,
+    };
+  }
+
+  async markSessionOpened(userId: string, role: string) {
+    const model = this.modelForRole(role);
+    if (!model || !userId) {
+      throw new BadRequestException("Invalid user session.");
+    }
+    const lastOpenedAt = new Date();
+    await model.updateOne({ _id: userId }, { $set: { lastOpenedAt } });
+    return { success: true, lastOpenedAt };
+  }
+
+  /** Marks the first-login Founder Launch Offer modal as shown so it never re-shows full-screen for this user again. */
+  async markFounderOfferSeen(userId: string, role: string) {
+    const model = this.modelForRole(role);
+    if (!model || !userId) {
+      throw new BadRequestException("Invalid user session.");
+    }
+    const founderOfferSeenAt = new Date();
+    await model.updateOne(
+      { _id: userId, founderOfferSeenAt: null },
+      { $set: { founderOfferSeenAt } },
+    );
+    return { success: true, founderOfferSeenAt };
+  }
+
+  async markCommunityJoined(
+    userId: string,
+    role: string,
+    communityName: string,
+    communityState = "",
+  ) {
+    const model = this.modelForRole(role);
+    if (!model || !userId) {
+      throw new BadRequestException("Invalid user session.");
+    }
+    const name = String(communityName || "").trim();
+    const state = String(communityState || "").trim();
+    if (!name) {
+      throw new BadRequestException("Community name is required.");
+    }
+    const communityJoinedAt = new Date();
+    await model.updateOne(
+      { _id: userId },
+      {
+        $set: {
+          communityJoined: true,
+          communityState: state,
+          communityName: name,
+          communityJoinedAt,
+          communityJoinedDate: communityJoinedAt,
+        },
+      },
+    );
+    return {
+      success: true,
+      communityJoined: true,
+      communityState: state,
+      communityName: name,
+      communityJoinedAt,
+      communityJoinedDate: communityJoinedAt,
+    };
+  }
+
+  private normalizePhone(value: unknown): string {
+    if (value === null || value === undefined) return "";
+    if (typeof value !== "string" && typeof value !== "number") return "";
+    return String(value).replace(/\D/g, "");
+  }
+
+  private phoneLookupValues(value: unknown): string[] {
+    const digits = this.normalizePhone(value);
+    if (!digits) return [];
+    const values = new Set<string>([digits]);
+    if (digits.length > 10) values.add(digits.slice(-10));
+    if (digits.length === 10) {
+      values.add(`91${digits}`);
+      values.add(`+91${digits}`);
+    }
+    return Array.from(values);
+  }
+
+  private async maybeAutoApproveAfterContactVerification(
+    user: any,
+    role: "influencer" | "brand" | "photographer",
+  ): Promise<boolean> {
+    const settings = (await this.appSettingsModel.findOne({}).lean()) as any;
+    if (!user?.isEmailVerified) return false;
+
+    const mobileRequired =
+      role === "influencer"
+        ? !!settings?.influencerRequireMobileVerified
+        : role === "brand"
+          ? !!settings?.brandRequireMobileVerified
+          : !!settings?.photographerRequireMobileVerified;
+
+    if (mobileRequired && !user?.isMobileVerified) return false;
+
+    const preApproveEnabled =
+      role === "influencer"
+        ? !!settings?.preApproveInfluencers
+        : role === "brand"
+          ? !!settings?.preApproveBrands
+          : !!settings?.preApprovePhotographers;
+
+    if (!preApproveEnabled || user.status !== "pending") return false;
+    user.status = "accepted";
+    return true;
+  }
+
+  private async bestEffortSyncFirebaseEmailVerified(
+    email: string,
+    isEmailVerified = true,
+  ): Promise<void> {
+    if (!this.firebaseAdminService.isConfigured()) return;
+    try {
+      await this.firebaseAdminService.setEmailVerified(email, isEmailVerified);
+    } catch {
+      // MongoDB remains the source of truth for admin/manual verification.
+      // Firebase sync is best-effort so login is not blocked by provider drift.
+    }
+  }
+
+  private async assertVerifiedFirebaseLogin(
+    normalizedEmail: string,
+    firebaseIdToken: string | undefined,
+    user: any,
+    role: "influencer" | "brand" | "photographer",
+    options?: { localAuthBypass?: boolean },
+  ): Promise<void> {
+    if (options?.localAuthBypass) {
+      user.isEmailVerified = true;
+      user.emailVerifiedAt = user.emailVerifiedAt || new Date();
+      if (!user.firebaseUid)
+        user.firebaseUid = `local-dev:${role}:${normalizedEmail}`;
+      await this.maybeAutoApproveAfterContactVerification(user, role);
+      await user.save();
+      return;
+    }
+    if (user?.isEmailVerified === true) {
+      user.isEmailVerified = true;
+      user.emailVerifiedAt = user.emailVerifiedAt || new Date();
+      await this.maybeAutoApproveAfterContactVerification(user, role);
+      await user.save();
+      await this.bestEffortSyncFirebaseEmailVerified(normalizedEmail, true);
+      return;
+    }
+    if (!this.firebaseAdminService.isConfigured()) {
+      throw new UnauthorizedException(
+        "Firebase verification is required before login.",
+      );
+    }
+    if (!firebaseIdToken) {
+      throw new UnauthorizedException(
+        "Please verify your email before logging in.",
+      );
+    }
+
+    const decoded =
+      await this.firebaseAdminService.verifyIdToken(firebaseIdToken);
+    const firebaseEmail = String(decoded.email || "")
+      .trim()
+      .toLowerCase();
+    if (firebaseEmail !== normalizedEmail || !decoded.email_verified) {
+      throw new UnauthorizedException(
+        "Please verify your email before logging in.",
+      );
+    }
+
+    user.isEmailVerified = true;
+    user.emailVerifiedAt = user.emailVerifiedAt || new Date();
+    user.firebaseUid = decoded.uid;
+    await this.maybeAutoApproveAfterContactVerification(user, role);
+    await user.save();
+  }
+
+  async verifyFirebaseContact(idToken: string, type: FirebaseContactType) {
+    if (type !== "email" && type !== "phone") {
+      throw new BadRequestException(
+        "Verification type must be email or phone.",
+      );
+    }
+
+    const decoded = await this.firebaseAdminService.verifyIdToken(idToken);
+    let user: any = null;
+    let role: "influencer" | "brand" | "photographer" | "admin" | null = null;
+
+    if (type === "email") {
+      const email = String(decoded.email || "")
+        .trim()
+        .toLowerCase();
+      if (!email || !decoded.email_verified) {
+        throw new BadRequestException("Firebase email is not verified.");
+      }
+      const [adminUser, influencer, brand, photographer] = await Promise.all([
+        this.userModel.findOne({ email }),
+        this.influencerModel.findOne({ email }),
+        this.brandModel.findOne({ email }),
+        this.photographerModel.findOne({ email }),
+      ]);
+      user = adminUser || influencer || brand || photographer;
+      role = adminUser
+        ? "admin"
+        : influencer
+          ? "influencer"
+          : brand
+            ? "brand"
+            : photographer
+              ? "photographer"
+              : null;
+      if (!user)
+        throw new BadRequestException(
+          "No TrendStarz user matches this Firebase email.",
+        );
+      this.activateAfterEmailOwnership(user, role, decoded.uid);
+    } else {
+      const phoneValues = this.phoneLookupValues(decoded.phone_number);
+      if (!phoneValues.length) {
+        throw new BadRequestException("Firebase phone number is not verified.");
+      }
+      const [influencer, brand, photographer] = await Promise.all([
+        this.influencerModel.findOne({ phoneNumber: { $in: phoneValues } }),
+        this.brandModel.findOne({ phoneNumber: { $in: phoneValues } }),
+        this.photographerModel.findOne({ phoneNumber: { $in: phoneValues } }),
+      ]);
+      user = influencer || brand || photographer;
+      role = influencer
+        ? "influencer"
+        : brand
+          ? "brand"
+          : photographer
+            ? "photographer"
+            : null;
+	    if (!user)
+	        throw new BadRequestException(
+	          "No TrendStarz user matches this Firebase phone.",
+	        );
+      user.isMobileVerified = true;
+      user.mobileVerified = true;
+      user.mobileVerifiedAt = user.mobileVerifiedAt || new Date();
+      user.mobileVerificationDate = user.mobileVerificationDate || new Date();
+      user.mobileVerificationMethod = "OTP";
+	    }
+
+    const autoApproved =
+      type === "email" && role !== "admin"
+        ? user.status === "accepted"
+        : role && role !== "admin"
+          ? await this.maybeAutoApproveAfterContactVerification(user, role)
+          : false;
+    await user.save();
+
+    return {
+      success: true,
+      autoApproved,
+      message:
+        type === "email"
+          ? "Email verified successfully."
+          : "Mobile verified successfully.",
+    };
+  }
 
   private isObjectId(val: string): boolean {
     return typeof val === "string" && /^[a-fA-F0-9]{24}$/.test(val);
@@ -405,7 +1153,29 @@ export class AuthService {
     const socialMediaMapped = socialMedia.map((sm: any) => ({
       ...sm,
       platform: smMap.get(sm.platform) || sm.platform,
+      handle: normalizeSocialHandle(
+        sm.handle,
+        smMap.get(sm.platform) || sm.platform,
+      ),
+      contentTypes: Array.isArray(sm.contentTypes)
+        ? sm.contentTypes
+            .filter((ct: any) => {
+              const price = Number(ct?.price);
+              const selected = ct?.enabled === true || ct?.selected === true;
+              return selected && Number.isFinite(price) && price > 0;
+            })
+            .map((ct: any) => ({
+              name: String(ct?.name || ct?.label || "").trim(),
+              enabled: true,
+              price: Number(ct.price),
+            }))
+            .filter((ct: any) => !!ct.name)
+        : [],
     }));
+    for (const sm of socialMediaMapped) {
+      const handleError = validateSocialHandle(sm.handle, sm.platform);
+      if (handleError) throw new BadRequestException(handleError);
+    }
 
     return {
       categoryNames,
@@ -417,38 +1187,64 @@ export class AuthService {
   }
 
   // Admin / influencer / brand login
-  async login(email: string, password: string) {
+  /**
+   * Short-lived, restricted login response for accounts with a pending
+   * self-deletion request (status "deletion_pending") — the token this
+   * issues can only be used to view deletion status or cancel it
+   * (JwtAuthGuard blocks every other endpoint for this status). Lets the
+   * frontend route straight to a "cancel deletion?" screen instead of the
+   * normal dashboard.
+   */
+  private buildDeletionPendingLoginResponse(
+    user: any,
+    role: "influencer" | "brand" | "photographer",
+  ) {
+    const token = jwt.sign(
+      { userId: user._id, email: user.email, role },
+      getJwtSecret(),
+      { expiresIn: "1h" },
+    );
+    const deletedAt = user.deletedAt ? new Date(user.deletedAt) : new Date();
+    const deletionGracePeriodEndsAt = new Date(
+      deletedAt.getTime() +
+        SELF_DELETION_GRACE_PERIOD_DAYS * 24 * 60 * 60 * 1000,
+    );
+    return {
+      token,
+      userType: role,
+      accountDeletionPending: true,
+      deletionGracePeriodEndsAt,
+      user: { id: user._id, email: user.email, role },
+    };
+  }
+
+  async login(
+    email: string,
+    password: string,
+    firebaseIdToken?: string,
+    options?: { localAuthBypass?: boolean },
+  ) {
     const normalizedEmail = (email || "").trim().toLowerCase();
 
     // Fetch all collections in parallel to eliminate sequential DB round-trips
     // and prevent timing-based enumeration of which collection a user belongs to.
-    const [adminUser, influencer, brandRaw, photographer] = await Promise.all([
+    const [adminUser, influencer, brand, photographer] = await Promise.all([
       this.userModel.findOne({ email: normalizedEmail, role: "admin" }),
       this.influencerModel.findOne({ email: normalizedEmail }),
       this.brandModel.findOne({ email: normalizedEmail }),
       this.photographerModel.findOne({ email: normalizedEmail }),
     ]);
 
-    // If user is a brand but no brand profile exists, auto-create a minimal profile
-    let brand = brandRaw;
-    if (!brand && !adminUser && !influencer && !photographer) {
-      // Create minimal brand profile
-      const minimalBrand = new this.brandModel({
-        brandName: normalizedEmail.split("@")[0] || "Brand",
-        email: normalizedEmail,
-        phoneNumber: "",
-        password: await bcrypt.hash(password, 10),
-        firstRegisteredAt: new Date(),
-        status: "pending",
-      });
-      try {
-        brand = await minimalBrand.save();
-      } catch {
-        throw new UnauthorizedException(
-          "Could not auto-create brand profile for this user.",
-        );
-      }
+    if (!adminUser && !influencer && !brand && !photographer) {
+      throw new UnauthorizedException("Invalid credentials");
     }
+
+    await Promise.all([
+      this.promoteLegacyEmailVerified(adminUser, this.userModel),
+      this.promoteLegacyEmailVerified(influencer, this.influencerModel),
+      this.promoteLegacyEmailVerified(brand, this.brandModel),
+      this.promoteLegacyEmailVerified(photographer, this.photographerModel),
+    ]);
 
     if (adminUser) {
       const isMatch = await bcrypt.compare(password, adminUser.password);
@@ -467,7 +1263,7 @@ export class AuthService {
       const token = jwt.sign(
         { userId: adminUser._id, email: adminUser.email, role: adminUser.role },
         getJwtSecret(),
-        { expiresIn: "7d" },
+        { expiresIn: "90d" },
       );
       return {
         token,
@@ -477,6 +1273,8 @@ export class AuthService {
           name: adminUser.name,
           email: adminUser.email,
           role: adminUser.role,
+          lastLoginAt: now,
+          lastOpenedAt: adminUser.lastOpenedAt || null,
           profileImage:
             Array.isArray(adminUser.profileImages) &&
             adminUser.profileImages.length > 0
@@ -490,11 +1288,24 @@ export class AuthService {
       const isMatch = await bcrypt.compare(password, influencer.password);
       if (!isMatch) throw new UnauthorizedException("Invalid credentials");
       if (influencer.isDeleted === true || influencer.isDeleted === "true") {
+        if (influencer.status === "deletion_pending") {
+          return this.buildDeletionPendingLoginResponse(
+            influencer,
+            "influencer",
+          );
+        }
         throw new UnauthorizedException(
           "Your account has been deleted. Please contact support.",
         );
       }
-      if (influencer.status === "pending") {
+      await this.assertVerifiedFirebaseLogin(
+        normalizedEmail,
+        firebaseIdToken,
+        influencer,
+        "influencer",
+        options,
+      );
+      if (influencer.status === "pending" && !options?.localAuthBypass) {
         throw new UnauthorizedException(
           "Your account is pending approval. Please wait for admin to activate your account.",
         );
@@ -525,7 +1336,7 @@ export class AuthService {
       const token = jwt.sign(
         { userId: influencer._id, email: influencer.email, role: "influencer" },
         getJwtSecret(),
-        { expiresIn: "7d" },
+        { expiresIn: "90d" },
       );
       return {
         token,
@@ -535,6 +1346,8 @@ export class AuthService {
           name: displayName,
           email: influencer.email,
           role: "influencer",
+          lastLoginAt: now,
+          lastOpenedAt: influencer.lastOpenedAt || null,
           profileImage: profileImageUrl,
           isPremium: !!influencer.isPremium,
           premiumEnd: influencer.premiumEnd || null,
@@ -546,19 +1359,33 @@ export class AuthService {
       const isMatch = await bcrypt.compare(password, brand.password);
       if (!isMatch) throw new UnauthorizedException("Invalid credentials");
       if (brand.isDeleted === true || brand.isDeleted === "true") {
+        if (brand.status === "deletion_pending") {
+          return this.buildDeletionPendingLoginResponse(brand, "brand");
+        }
         throw new UnauthorizedException(
           "Your account has been deleted. Please contact support.",
         );
       }
-      // Allow login even if status is pending for auto-created minimal brands
-      // (optionally, you can enforce approval here if needed)
+      await this.assertVerifiedFirebaseLogin(
+        normalizedEmail,
+        firebaseIdToken,
+        brand,
+        "brand",
+        options,
+      );
+      if (brand.status === "pending" && !options?.localAuthBypass) {
+        throw new UnauthorizedException(
+          "Your account is pending approval. Please wait for admin to activate your account.",
+        );
+      }
       const now = new Date();
       await this.brandModel.updateOne(
         { _id: brand._id },
         {
           $set: {
             lastLoginAt: now,
-            firstRegisteredAt: brand.firstRegisteredAt || brand.createdAt || now,
+            firstRegisteredAt:
+              brand.firstRegisteredAt || brand.createdAt || now,
           },
         },
       );
@@ -571,7 +1398,7 @@ export class AuthService {
       const token = jwt.sign(
         { userId: brand._id, email: brand.email, role: "brand" },
         getJwtSecret(),
-        { expiresIn: "7d" },
+        { expiresIn: "90d" },
       );
       return {
         token,
@@ -581,6 +1408,8 @@ export class AuthService {
           name: displayName,
           email: brand.email,
           role: "brand",
+          lastLoginAt: now,
+          lastOpenedAt: brand.lastOpenedAt || null,
           brandLogo: brandLogoArr,
           isPremium: !!brand.isPremium,
           premiumEnd: brand.premiumEnd || null,
@@ -591,12 +1420,28 @@ export class AuthService {
     if (photographer) {
       const isMatch = await bcrypt.compare(password, photographer.password);
       if (!isMatch) throw new UnauthorizedException("Invalid credentials");
-      if (photographer.isDeleted === true || photographer.isDeleted === "true") {
+      if (
+        photographer.isDeleted === true ||
+        photographer.isDeleted === "true"
+      ) {
+        if (photographer.status === "deletion_pending") {
+          return this.buildDeletionPendingLoginResponse(
+            photographer,
+            "photographer",
+          );
+        }
         throw new UnauthorizedException(
           "Your account has been deleted. Please contact support.",
         );
       }
-      if (photographer.status === "pending") {
+      await this.assertVerifiedFirebaseLogin(
+        normalizedEmail,
+        firebaseIdToken,
+        photographer,
+        "photographer",
+        options,
+      );
+      if (photographer.status === "pending" && !options?.localAuthBypass) {
         throw new UnauthorizedException(
           "Your account is pending approval. Please wait for admin to activate your account.",
         );
@@ -620,9 +1465,13 @@ export class AuthService {
           : null;
 
       const token = jwt.sign(
-        { userId: photographer._id, email: photographer.email, role: "photographer" },
+        {
+          userId: photographer._id,
+          email: photographer.email,
+          role: "photographer",
+        },
         getJwtSecret(),
-        { expiresIn: "7d" },
+        { expiresIn: "90d" },
       );
       return {
         token,
@@ -632,7 +1481,11 @@ export class AuthService {
           name: photographer.name || "",
           email: photographer.email,
           role: "photographer",
+          lastLoginAt: now,
+          lastOpenedAt: photographer.lastOpenedAt || null,
           profileImage: profileImageUrl,
+          isPremium: !!photographer.isPremium,
+          premiumEnd: photographer.premiumEnd || null,
         },
       };
     }
@@ -710,14 +1563,25 @@ export class AuthService {
       districtName,
       socialMediaMapped,
     } = await this.resolveIdsToNames(data);
+    const normalizedCategoryNames = normalizeSelectionList(
+      categoryNames,
+      PROFILE_SELECTION_LIMITS.influencer.categories,
+    );
+    this.validateCreatorSocialMediaRates(socialMediaMapped);
+    const normalizedCreatorTypes = normalizeSelectionList(
+      data?.creatorTypes,
+      PROFILE_SELECTION_LIMITS.influencer.creatorTypes,
+    );
     // Hash password
     const hashedPassword = await bcrypt.hash(data.password, 10);
+    // Registration only accepts a single profile photo, regardless of plan —
+    // gallery images are only available post-verification from the profile-edit
+    // page (see users.controller.ts updateUserImages / checkImageUploadLimit).
     const normalizedProfileImages = Array.isArray(data.profileImages)
       ? data.profileImages
           .filter((img: any) => img?.url && img?.public_id)
-          .slice(0, 10)
+          .slice(0, 1)
       : [];
-
     const signupAttribution = {
       source:
         data?.signupAttribution?.source ||
@@ -725,8 +1589,20 @@ export class AuthService {
         data?.utm_source ||
         null,
       audience: data?.signupAttribution?.audience || data?.audience || null,
+      campaign:
+        data?.signupAttribution?.campaign ||
+        data?.campaign ||
+        data?.utm_campaign ||
+        null,
+      content:
+        data?.signupAttribution?.content ||
+        data?.content ||
+        data?.utm_content ||
+        null,
       referrerPath:
         data?.signupAttribution?.referrerPath || data?.referrerPath || null,
+      referrerUrl:
+        data?.signupAttribution?.referrerUrl || data?.referrerUrl || null,
       capturedAt: new Date(),
     };
 
@@ -767,10 +1643,15 @@ export class AuthService {
       phoneNumber: normalizedPhone || data.phoneNumber,
       password: hashedPassword,
       firstRegisteredAt: new Date(),
-      categories: categoryNames,
+      categories: normalizedCategoryNames,
+      creatorTypes: normalizedCreatorTypes,
       location: { state: stateName, district: districtName },
       languages: languageNames,
       socialMedia: socialMediaMapped,
+      collaborationAvailability: normalizeCollaborationAvailability(
+        data?.collaborationAvailability,
+        "influencer",
+      ),
       profileImages: normalizedProfileImages,
       signupAttribution,
       verificationDocuments: verificationDocs,
@@ -780,17 +1661,19 @@ export class AuthService {
       verificationAdminNotes: "",
       verificationAuditLog,
     });
-    // Status stays "pending" until email is verified — auto-approve (if enabled) is applied in verifyEmailByToken.
+    influencer.publicId = await this.nextPublicId(
+      "INF",
+      "influencer_public_id",
+    );
+
+    // Save first while assets still reference their `_pending/...` staging
+    // path. Relocating before the doc exists would leave images permanently
+    // moved into an `influencers/{id}/...` folder with no owning record if
+    // `.save()` then failed — an orphan the `_pending` cleanup job can't see
+    // because it isn't in `_pending` anymore. Only relocate once we know the
+    // registration actually succeeded.
     try {
-      const saved = await influencer.save();
-      try {
-        await this.sendEmailVerificationLink(saved.email);
-      } catch (verifyMailErr) {
-        console.error(
-          "Failed to send influencer verification email:",
-          verifyMailErr,
-        );
-      }
+      await influencer.save();
     } catch (err) {
       const error = err instanceof Error ? err : new Error(String(err));
       const mongoErr = err as { name?: string; errors?: unknown };
@@ -803,7 +1686,47 @@ export class AuthService {
         "Failed to save influencer: " + error.message,
       );
     }
-    return { success: true, message: "Influencer registered", influencer };
+
+    await this.recordSignupConversion(
+      data?.trackingLinkCode,
+      String(influencer._id),
+      "influencer",
+    );
+
+    // Relocate staged uploads into their final influencers/{_id}/... folder
+    // now that the document is confirmed saved.
+    const influencerId = String(influencer._id);
+    let relocationChanged = false;
+    if (influencer.profileImages?.length) {
+      const [profilePhoto, ...gallery] = influencer.profileImages;
+      const [relocatedProfile] = await this.relocateAssets(
+        [profilePhoto],
+        CloudinaryFolders.influencer.profile(influencerId),
+      );
+      const relocatedGallery = await this.relocateAssets(
+        gallery,
+        CloudinaryFolders.influencer.gallery(influencerId),
+      );
+      influencer.profileImages = [relocatedProfile, ...relocatedGallery];
+      relocationChanged = true;
+    }
+    if (influencer.verificationDocuments?.length) {
+      influencer.verificationDocuments = await this.relocateAssets(
+        influencer.verificationDocuments,
+        CloudinaryFolders.influencer.verification(influencerId),
+      );
+      relocationChanged = true;
+    }
+    // Status stays "pending" until email is verified — auto-approve (if enabled) is applied in verifyEmailByToken.
+    if (relocationChanged) {
+      await influencer.save();
+    }
+
+    return {
+      success: true,
+      message: "Influencer registered",
+      influencer,
+    };
   }
 
   async registerBrand(data: any) {
@@ -897,10 +1820,31 @@ export class AuthService {
         data?.utm_source ||
         null,
       audience: data?.signupAttribution?.audience || data?.audience || null,
+      campaign:
+        data?.signupAttribution?.campaign ||
+        data?.campaign ||
+        data?.utm_campaign ||
+        null,
+      content:
+        data?.signupAttribution?.content ||
+        data?.content ||
+        data?.utm_content ||
+        null,
       referrerPath:
         data?.signupAttribution?.referrerPath || data?.referrerPath || null,
+      referrerUrl:
+        data?.signupAttribution?.referrerUrl || data?.referrerUrl || null,
       capturedAt: new Date(),
     };
+    // Registration only accepts a single brand logo and no product images,
+    // regardless of plan — product images are only available post-verification
+    // from the profile-edit page (see users.controller.ts updateUserImages /
+    // checkImageUploadLimit).
+    const normalizedBrandLogo = Array.isArray(data.brandLogo)
+      ? data.brandLogo
+          .filter((img: any) => img?.url && img?.public_id)
+          .slice(0, 1)
+      : [];
     const brand = new this.brandModel({
       ...data,
       email: normalizedEmail || data.email,
@@ -912,15 +1856,50 @@ export class AuthService {
       languages: languageNames,
       socialMedia: socialMediaMapped,
       signupAttribution,
+      brandLogo: normalizedBrandLogo,
+      products: [],
     });
-    // Status stays "pending" until email is verified — auto-approve (if enabled) is applied in verifyEmailByToken.
-    const savedBrand = await brand.save();
-    try {
-      await this.sendEmailVerificationLink(savedBrand.email);
-    } catch (verifyMailErr) {
-      console.error("Failed to send brand verification email:", verifyMailErr);
+    brand.publicId = await this.nextPublicId("BRD", "brand_public_id");
+
+    // Save first while assets still reference their `_pending/...` staging
+    // path — see the matching comment in registerInfluencer for why relocate
+    // must not run before the document is confirmed saved.
+    let savedBrand = await brand.save();
+
+    await this.recordSignupConversion(
+      data?.trackingLinkCode,
+      String(savedBrand._id),
+      "brand",
+    );
+
+    // Relocate staged uploads into their final brands/{_id}/... folder now
+    // that the document is confirmed saved.
+    const brandId = String(brand._id);
+    let relocationChanged = false;
+    if (brand.brandLogo?.length) {
+      brand.brandLogo = await this.relocateAssets(
+        brand.brandLogo,
+        CloudinaryFolders.brand.logo(brandId),
+      );
+      relocationChanged = true;
     }
-    return { success: true, message: "Brand registered", brand: savedBrand };
+    if (brand.products?.length) {
+      brand.products = await this.relocateAssets(
+        brand.products,
+        CloudinaryFolders.brand.products(brandId),
+      );
+      relocationChanged = true;
+    }
+    // Status stays "pending" until email is verified — auto-approve (if enabled) is applied in verifyEmailByToken.
+    if (relocationChanged) {
+      savedBrand = await brand.save();
+    }
+
+    return {
+      success: true,
+      message: "Brand registered",
+      brand: savedBrand,
+    };
   }
 
   async registerPhotographer(data: any) {
@@ -1038,11 +2017,21 @@ export class AuthService {
       : data?.location?.district || "";
 
     const hashedPassword = await bcrypt.hash(data.password, 10);
+    // Registration only accepts a single profile photo, regardless of plan —
+    // gallery images are only available post-verification from the profile-edit
+    // page (see users.controller.ts updateUserImages / checkImageUploadLimit).
     const normalizedProfileImages = Array.isArray(data.profileImages)
       ? data.profileImages
           .filter((img: any) => img?.url && img?.public_id)
-          .slice(0, 10)
+          .slice(0, 1)
       : [];
+    const normalizedSocialMedia = normalizeSocialMediaList(data?.socialMedia);
+    this.validateCreatorSocialMediaRates(normalizedSocialMedia);
+    const mobileOtpVerified = consumeOtpVerificationToken(
+      "phone",
+      normalizedPhone || data.phoneNumber,
+      data?.mobileOtpVerificationToken,
+    );
 
     const signupAttribution = {
       source:
@@ -1051,8 +2040,20 @@ export class AuthService {
         data?.utm_source ||
         null,
       audience: data?.signupAttribution?.audience || data?.audience || null,
+      campaign:
+        data?.signupAttribution?.campaign ||
+        data?.campaign ||
+        data?.utm_campaign ||
+        null,
+      content:
+        data?.signupAttribution?.content ||
+        data?.content ||
+        data?.utm_content ||
+        null,
       referrerPath:
         data?.signupAttribution?.referrerPath || data?.referrerPath || null,
+      referrerUrl:
+        data?.signupAttribution?.referrerUrl || data?.referrerUrl || null,
       capturedAt: new Date(),
     };
 
@@ -1061,22 +2062,65 @@ export class AuthService {
       username: normalizedUsername,
       email: normalizedEmail || data.email,
       phoneNumber: normalizedPhone || data.phoneNumber,
+      isMobileVerified: mobileOtpVerified,
+      mobileVerified: mobileOtpVerified,
+      mobileVerifiedAt: mobileOtpVerified ? new Date() : null,
+      mobileVerificationMethod: mobileOtpVerified ? "OTP" : "",
       password: hashedPassword,
       firstRegisteredAt: new Date(),
       location: { state: stateName, district: districtName },
+      skills: normalizeSelectionList(
+        data?.skills,
+        PROFILE_SELECTION_LIMITS.photographer.skills,
+      ),
+      collaborationAvailability: normalizeCollaborationAvailability(
+        data?.collaborationAvailability,
+        "photographer",
+      ),
+      socialMedia: normalizedSocialMedia,
       profileImages: normalizedProfileImages,
       signupAttribution,
     });
 
+    photographer.publicId = await this.nextPublicId(
+      "PHO",
+      "photographer_public_id",
+    );
+
+    // Save first while assets still reference their `_pending/...` staging
+    // path — see the matching comment in registerInfluencer for why relocate
+    // must not run before the document is confirmed saved.
     try {
-      const saved = await photographer.save();
-      void this.sendEmailVerificationLink(saved.email).catch((verifyMailErr) => {
-        console.error(
-          "Failed to send photographer verification email:",
-          verifyMailErr,
+      let saved = await photographer.save();
+
+      await this.recordSignupConversion(
+        data?.trackingLinkCode,
+        String(saved._id),
+        "photographer",
+      );
+
+      // Relocate staged uploads into their final photographers/{_id}/...
+      // folder now that the document is confirmed saved.
+      if (photographer.profileImages?.length) {
+        const photographerId = String(photographer._id);
+        const [profilePhoto, ...gallery] = photographer.profileImages;
+        const [relocatedProfile] = await this.relocateAssets(
+          [profilePhoto],
+          CloudinaryFolders.photographer.profile(photographerId),
         );
-      });
-      return { success: true, message: "Photographer registered", photographer: saved };
+        const relocatedGallery = await this.relocateAssets(
+          gallery,
+          CloudinaryFolders.photographer.gallery(photographerId),
+        );
+        photographer.profileImages = [relocatedProfile, ...relocatedGallery];
+        saved = await photographer.save();
+      }
+
+      return {
+        success: true,
+        message: "Photographer registered",
+        photographer: saved,
+      };
     } catch (err) {
       const error = err instanceof Error ? err : new Error(String(err));
       console.error("Photographer save error:", err);
@@ -1099,9 +2143,39 @@ export class AuthService {
       brandRequireMobileVerified: !!settings?.brandRequireMobileVerified,
       platformFeeEnabled: !!settings?.platformFeeEnabled,
       platformFeePercent: settings?.platformFeePercent ?? 10,
+      brandFeePercent: settings?.brandFeePercent ?? settings?.platformFeePercent ?? 10,
+      influencerFeePercent: settings?.influencerFeePercent ?? 0,
+      photographerFeePercent: settings?.photographerFeePercent ?? 0,
+      influencerRecipientFeePercent: settings?.influencerRecipientFeePercent ?? 0,
+      photographerRecipientFeePercent: settings?.photographerRecipientFeePercent ?? 0,
+      brandRecipientFeePercent: settings?.brandRecipientFeePercent ?? 0,
+      platformCommissionPercent: settings?.platformCommissionPercent ?? 12,
+      inviteUnlockFee: settings?.inviteUnlockFee ?? 499,
+      minimumCampaignFee: settings?.minimumCampaignFee ?? 1000,
       gstPercent: settings?.gstPercent ?? 18,
+      submissionApprovalWaitHours: settings?.submissionApprovalWaitHours ?? 24,
+      submissionAutoCompleteGraceHours:
+        settings?.submissionAutoCompleteGraceHours ?? 48,
+      payoutReleaseWaitHours: settings?.payoutReleaseWaitHours ?? 24,
+      minCampaignStartDays: settings?.minCampaignStartDays ?? 3,
+      maxCampaignDurationDays: settings?.maxCampaignDurationDays ?? 15,
+      otpVerificationEnabled: !!settings?.otpVerificationEnabled,
       // Campaign payment UPI shown to brands on the payment screen
       paymentUpiId: settings?.paymentUpiId || "trendstarzin@kotak",
+      // Premium upgrade payment method gating
+      paymentGatewayMode: settings?.paymentGatewayMode || "razorpay_fallback",
+      razorpayConfigured: !!(
+        process.env.RAZORPAY_KEY_ID && process.env.RAZORPAY_KEY_SECRET
+      ),
+      showSearchLink: settings?.showSearchLink !== false,
+      showRegisterInfluencerLink:
+        settings?.showRegisterInfluencerLink !== false,
+      showRegisterBrandLink: settings?.showRegisterBrandLink !== false,
+      showRegisterPhotographerLink:
+        settings?.showRegisterPhotographerLink !== false,
+      showInfluencerSearchTab: settings?.showInfluencerSearchTab !== false,
+      showPhotographerSearchTab:
+        settings?.showPhotographerSearchTab !== false,
     };
   }
 

@@ -1,6 +1,7 @@
 import { Module } from "@nestjs/common";
 import { APP_GUARD } from "@nestjs/core";
 import { ThrottlerModule, ThrottlerGuard } from "@nestjs/throttler";
+import { ScheduleModule } from "@nestjs/schedule";
 import { DashboardController } from "./dashboard.controller";
 import { DashboardService } from "./dashboard.service";
 import { OtpModule } from "./otp/otp.module";
@@ -14,10 +15,14 @@ import {
   SocialMediaController,
   TiersController,
   LanguagesController,
+  PublicWhatsAppCommunityController,
   PublicSupportContactController,
+  PublicCampaignTypeConfigsController,
   EquipmentOptionsController,
   PricingOptionsController,
   UserTagOptionsController,
+  CollaborationAvailabilityOptionsController,
+  CreatorTypeOptionsController,
 } from "./public-lists.controller";
 import { MongooseModule } from "@nestjs/mongoose";
 import { ConfigModule } from "@nestjs/config";
@@ -36,15 +41,25 @@ import {
   TierSchema,
   AppSettingsSchema,
   CampaignSchema,
+  WhatsAppCommunitySchema,
+  CounterSchema,
 } from "./database/schemas/profile.schemas";
 import { PaymentSchema } from "./database/schemas/payment.schema";
 import { CampaignInviteSchema } from "./database/schemas/campaign-invite.schema";
 import { CampaignSubmissionSchema } from "./database/schemas/campaign-submission.schema";
+import { CampaignTransactionSchema } from "./database/schemas/campaign-transaction.schema";
+import { ProfileFlagSchema } from "./database/schemas/profile-flag.schema";
+import { TrackingLinkSchema } from "./database/schemas/tracking-link.schema";
+import { LinkConversionSchema } from "./database/schemas/link-conversion.schema";
 
 import { AuthService } from "./auth/auth.service";
 import { AuthController } from "./auth/auth.controller";
+import { FirebaseAdminService } from "./utils/firebase-admin.service";
 import { AdminUserTableController } from "./admin/admin-user-table.controller";
 import { EarlyAccessAssignmentService } from "./admin/early-access-assignment.service";
+import { PendingUserCleanupService } from "./admin/pending-user-cleanup.service";
+import { PendingUploadCleanupService } from "./admin/pending-upload-cleanup.service";
+import { AssetFolderBackfillService } from "./admin/asset-folder-backfill.service";
 import { PaymentModule } from "./payment/payment.module";
 import { UsersModule } from "./users/users.module";
 import { CampaignsModule } from "./campaigns/campaigns.module";
@@ -57,6 +72,10 @@ import { PaymentsPayoutsModule } from "./payments-payouts/payments-payouts.modul
 import { PushModule } from "./push/push.module";
 import { NotificationsModule } from "./notifications/notifications.module";
 import { PhotographersModule } from "./photographers/photographers.module";
+import { MonetizationModule } from "./monetization/monetization.module";
+import { ProfileVerificationModule } from "./profile-verification/profile-verification.module";
+import { WhatsAppModule } from "./whatsapp/whatsapp.module";
+import { CollaborationScoreModule } from "./collaboration-score/collaboration-score.module";
 
 @Module({
   imports: [
@@ -70,7 +89,12 @@ import { PhotographersModule } from "./photographers/photographers.module";
         limit: 60,  // 60 requests per minute (general)
       },
     ]),
-    MongooseModule.forRoot(process.env.MONGODB_URI as string),
+    ScheduleModule.forRoot(),
+    MongooseModule.forRoot(process.env.MONGODB_URI as string, {
+      serverSelectionTimeoutMS: 8000,
+      connectTimeoutMS: 8000,
+      socketTimeoutMS: 20000,
+    }),
     MongooseModule.forFeature([
       { name: "Category", schema: CategorySchema, collection: "categories" },
       { name: "State", schema: StateSchema, collection: "states" },
@@ -82,6 +106,7 @@ import { PhotographersModule } from "./photographers/photographers.module";
       },
       { name: "Language", schema: LanguageSchema, collection: "languages" },
       { name: "User", schema: UserSchema, collection: "users" },
+      { name: "Counter", schema: CounterSchema, collection: "counters" },
       {
         name: "Influencer",
         schema: InfluencerSchema,
@@ -115,6 +140,31 @@ import { PhotographersModule } from "./photographers/photographers.module";
         schema: CampaignSchema,
         collection: "campaigns",
       },
+      {
+        name: "CampaignTransaction",
+        schema: CampaignTransactionSchema,
+        collection: "campaigntransactions",
+      },
+      {
+        name: "WhatsAppCommunity",
+        schema: WhatsAppCommunitySchema,
+        collection: "whatsappcommunities",
+      },
+      {
+        name: "ProfileFlag",
+        schema: ProfileFlagSchema,
+        collection: "profile_flags",
+      },
+      {
+        name: "TrackingLink",
+        schema: TrackingLinkSchema,
+        collection: "trackinglinks",
+      },
+      {
+        name: "LinkConversion",
+        schema: LinkConversionSchema,
+        collection: "linkconversions",
+      },
     ]),
     UsersModule,
     CampaignsModule,
@@ -126,6 +176,10 @@ import { PhotographersModule } from "./photographers/photographers.module";
     PushModule,
     NotificationsModule,
     PhotographersModule,
+    MonetizationModule,
+    ProfileVerificationModule,
+    WhatsAppModule,
+    CollaborationScoreModule,
   ],
   controllers: [
     AppController,
@@ -136,10 +190,14 @@ import { PhotographersModule } from "./photographers/photographers.module";
     SocialMediaController,
     TiersController,
     LanguagesController,
+    PublicWhatsAppCommunityController,
     PublicSupportContactController,
+    PublicCampaignTypeConfigsController,
     EquipmentOptionsController,
     PricingOptionsController,
     UserTagOptionsController,
+    CollaborationAvailabilityOptionsController,
+    CreatorTypeOptionsController,
     AuthController,
     HealthController,
     AdminUserTableController,
@@ -151,8 +209,12 @@ import { PhotographersModule } from "./photographers/photographers.module";
     AppService,
     AuthService,
     EarlyAccessAssignmentService,
+    PendingUserCleanupService,
+    PendingUploadCleanupService,
+    AssetFolderBackfillService,
     MongoLogger,
     CloudinaryService,
+    FirebaseAdminService,
     DashboardService,
     {
       provide: APP_GUARD,

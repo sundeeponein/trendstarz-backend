@@ -30,6 +30,7 @@ export class DashboardService {
     const newInvites: any[] = [];
     const activeCampaigns: any[] = [];
     const completedCampaigns: any[] = [];
+    const withdrawnCampaigns: any[] = [];
     for (const invite of invites) {
       const st = invite.status as string;
       // Debug: count all raw statuses
@@ -63,6 +64,21 @@ export class DashboardService {
           inviteId: invite._id,
           inviteStatus: st,
           metrics: invite.analytics,
+          selectedPlatform: invite.selectedPlatform,
+          selectedContentType: invite.selectedContentType,
+        });
+      }
+      if (st === "withdrawn") {
+        // Auto-closed (campaign reached its accepted-slot limit) reads differently
+        // to the creator than a host explicitly pulling their invite.
+        const autoClosed = /^Auto-closed/i.test(String(invite.withdrawnReason || ""));
+        withdrawnCampaigns.push({
+          ...invite.campaignId,
+          inviteId: invite._id,
+          inviteStatus: st,
+          withdrawnAt: invite.withdrawnAt,
+          withdrawnReason: invite.withdrawnReason,
+          autoClosed,
         });
       }
     }
@@ -72,10 +88,21 @@ export class DashboardService {
       user: {
         name: user?.name || "",
         isEmailVerified: user?.isEmailVerified ?? false,
+        isMobileVerified: user?.isMobileVerified ?? false,
         isPremium: user?.isPremium ?? false,
         premiumDuration: user?.premiumDuration ?? null,
         premiumStart: user?.premiumStart ?? null,
         premiumEnd: user?.premiumEnd ?? null,
+        firstRegisteredAt: user?.firstRegisteredAt ?? user?.createdAt ?? null,
+        createdAt: user?.createdAt ?? null,
+        lastLoginAt: user?.lastLoginAt ?? null,
+        lastOpenedAt: user?.lastOpenedAt ?? null,
+        profileCompletion: user?.profileCompletion ?? 0,
+        communityJoined: user?.communityJoined ?? false,
+        communityState: user?.communityState ?? "",
+        communityName: user?.communityName ?? "",
+        communityJoinedAt: user?.communityJoinedAt ?? user?.communityJoinedDate ?? null,
+        communityJoinedDate: user?.communityJoinedDate ?? null,
         categories: user?.categories ?? [],
         socialMedia: user?.socialMedia ?? [],
         location: user?.location ?? {},
@@ -90,6 +117,7 @@ export class DashboardService {
       invites: { ...stats, newInvites, statusDebug },
       activeCampaigns,
       completedCampaigns,
+      withdrawnCampaigns,
     };
   }
 
@@ -112,8 +140,6 @@ export class DashboardService {
     const campaigns = await this.campaignModel.find({
       $or: brandMatchers,
     });
-    // Debug: log all campaign brandId values
-    const allCampaigns = await this.campaignModel.find({}).lean();
     let totalInvites = 0;
     let accepted = 0;
     let completed = 0;
@@ -157,10 +183,21 @@ export class DashboardService {
       brand: {
         brandName: brand?.brandName || "",
         isEmailVerified: brand?.isEmailVerified ?? false,
+        isMobileVerified: brand?.isMobileVerified ?? false,
         isPremium: brand?.isPremium ?? false,
         premiumDuration: brand?.premiumDuration ?? null,
         premiumStart: brand?.premiumStart ?? null,
         premiumEnd: brand?.premiumEnd ?? null,
+        firstRegisteredAt: brand?.firstRegisteredAt ?? brand?.createdAt ?? null,
+        createdAt: brand?.createdAt ?? null,
+        lastLoginAt: brand?.lastLoginAt ?? null,
+        lastOpenedAt: brand?.lastOpenedAt ?? null,
+        profileCompletion: brand?.profileCompletion ?? 0,
+        communityJoined: brand?.communityJoined ?? false,
+        communityState: brand?.communityState ?? "",
+        communityName: brand?.communityName ?? "",
+        communityJoinedAt: brand?.communityJoinedAt ?? brand?.communityJoinedDate ?? null,
+        communityJoinedDate: brand?.communityJoinedDate ?? null,
         categories: brand?.categories ?? [],
         socialMedia: brand?.socialMedia ?? [],
         location: brand?.location ?? {},

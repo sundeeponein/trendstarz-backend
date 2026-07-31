@@ -1,7 +1,7 @@
 import { Module } from "@nestjs/common";
 import { UsersController } from "./users.controller";
 import { BrandsController } from "./brands.controller";
-import { InfluencersController } from './influencers.controller';
+import { InfluencersController } from "./influencers.controller";
 import { UsersService } from "./users.service";
 import { CloudinaryService } from "../cloudinary.service";
 import { MongooseModule } from "@nestjs/mongoose";
@@ -10,9 +10,20 @@ import {
   InfluencerSchema,
   BrandSchema,
   PhotographerSchema,
+  CampaignSchema,
 } from "../database/schemas/profile.schemas";
 import { CampaignInviteSchema } from "../database/schemas/campaign-invite.schema";
+import { ProfileFlagSchema } from "../database/schemas/profile-flag.schema";
+import { CollaborationAuditSchema } from "../database/schemas/collaboration-audit.schema";
+import { PaymentSchema } from "../database/schemas/payment.schema";
+import { TransactionSchema } from "../database/schemas/transaction.schema";
+import { SocialOAuthConnectionSchema } from "../database/schemas/social-oauth-connection.schema";
+import { UsageCounterSchema } from "../database/schemas/usage-counter.schema";
 import { PlansModule } from "../plans/plans.module";
+import { MonetizationModule } from "../monetization/monetization.module";
+import { FirebaseAdminService } from "../utils/firebase-admin.service";
+import { MetaOAuthService } from "../meta-oauth/meta-oauth.service";
+import { PhotographersModule } from "../photographers/photographers.module";
 
 @Module({
   imports: [
@@ -34,10 +45,39 @@ import { PlansModule } from "../plans/plans.module";
         schema: CampaignInviteSchema,
         collection: "campaigninvites",
       },
+      {
+        name: "Campaign",
+        schema: CampaignSchema,
+        collection: "campaigns",
+      },
+      {
+        name: "UsageCounter",
+        schema: UsageCounterSchema,
+        collection: "usage_counters",
+      },
+      {
+        name: "ProfileFlag",
+        schema: ProfileFlagSchema,
+        collection: "profile_flags",
+      },
+      {
+        name: "CollaborationAudit",
+        schema: CollaborationAuditSchema,
+        collection: "collaboration_audits",
+      },
+      { name: "Payment", schema: PaymentSchema, collection: "payments" },
+      { name: "Transaction", schema: TransactionSchema, collection: "transactions" },
+      {
+        name: "SocialOAuthConnection",
+        schema: SocialOAuthConnectionSchema,
+        collection: "social_oauth_connections",
+      },
     ]),
     PlansModule,
+    MonetizationModule,
+    PhotographersModule,
   ],
   controllers: [UsersController, BrandsController, InfluencersController],
-  providers: [UsersService, CloudinaryService],
+  providers: [UsersService, CloudinaryService, FirebaseAdminService, MetaOAuthService],
 })
 export class UsersModule {}

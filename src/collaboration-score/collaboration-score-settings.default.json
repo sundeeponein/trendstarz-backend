@@ -1,0 +1,51 @@
+{
+  "schemaVersion": 1,
+  "aiEnabled": false,
+  "aiModel": "claude-sonnet-5",
+  "anonymousPreviewEnabled": true,
+  "freeAuditCount": 1,
+  "auditValidityDays": 365,
+  "weights": {
+    "contentQuality": { "rulesPercent": 60, "aiPercent": 40 },
+    "professionalBranding": { "rulesPercent": 70, "aiPercent": 30 }
+  },
+  "thresholds": {
+    "trendstarzRecommendedMinScore": 80,
+    "campaignReadyMinScore": 70,
+    "partiallyReadyMinScore": 40
+  },
+  "scoreWeights": {
+    "profileCompletion": 15,
+    "contentQuality": 25,
+    "postingConsistency": 20,
+    "professionalBranding": 20,
+    "campaignReadiness": 20
+  },
+  "version2Enabled": false,
+  "version1Name": "Collaboration Score",
+  "version2Name": "Marketplace Insights",
+  "platformsEnabled": {
+    "instagram": true,
+    "youtube": true,
+    "facebook": true,
+    "linkedin": true
+  },
+  "reanalysisCooldownDays": 30,
+  "reanalysisFeeRupees": 49,
+  "nightlyReauditEnabled": false,
+  "nightlyReauditCronHour": 2,
+  "syncEnabled": true,
+  "syncCooldownMinutes": 0,
+  "allowManualSync": true,
+  "requireSyncBeforeReanalysis": true,
+  "youtubeApiQuotaGuardPerDay": 8000,
+  "analytics": {
+    "trackAuditCost": true,
+    "trackAverageScore": true,
+    "trackPlatformUsage": true,
+    "trackAuditHistory": true
+  },
+  "lastNightlyRunAt": null,
+  "lastNightlyRunCount": 0,
+  "lastNightlyRunCostUsd": 0
+}

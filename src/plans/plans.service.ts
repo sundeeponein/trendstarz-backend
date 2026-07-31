@@ -60,6 +60,18 @@ export class PlansService {
       userType,
       discountLabel:
         dto?.discountLabel ?? existing?.discountLabel ?? "",
+      founderOfferName:
+        dto?.founderOfferName ?? existing?.founderOfferName ?? "Founder Launch Offer",
+      founderOfferWindowDays:
+        dto?.founderOfferWindowDays ?? existing?.founderOfferWindowDays ?? 7,
+      founderOfferForNewUsers:
+        dto?.founderOfferForNewUsers ?? existing?.founderOfferForNewUsers ?? true,
+      founderOfferForExistingUsers:
+        dto?.founderOfferForExistingUsers ?? existing?.founderOfferForExistingUsers ?? true,
+      founderOfferAudienceCap:
+        dto?.founderOfferAudienceCap ?? existing?.founderOfferAudienceCap ?? 0,
+      founderOfferEndsAt:
+        dto?.founderOfferEndsAt ?? existing?.founderOfferEndsAt ?? null,
       price: {
         monthly: dto?.price?.monthly ?? existing?.price?.monthly ?? 0,
         quarterly: dto?.price?.quarterly ?? existing?.price?.quarterly ?? 0,
@@ -82,6 +94,18 @@ export class PlansService {
         yearly: plan?.price?.yearly ?? 0,
       },
       features: Array.isArray(plan?.features) ? plan.features : [],
+      founderOfferAudienceCap: Number(plan?.founderOfferAudienceCap || 0),
+      founderOfferEndsAt: plan?.founderOfferEndsAt ?? null,
+    };
+  }
+
+  private async withFounderOfferAudienceStats(plan: any) {
+    const normalized = this.normalizePlanDocument(plan);
+    if (!normalized?.userType) return normalized;
+    const count = await this.modelForUserType(normalized.userType).countDocuments({});
+    return {
+      ...normalized,
+      founderOfferAudienceCount: count,
     };
   }
 
@@ -98,6 +122,53 @@ export class PlansService {
     return "INFLUENCER";
   }
 
+  private modelForUserType(
+    userType: "INFLUENCER" | "BRAND" | "PHOTOGRAPHER",
+  ): Model<any> {
+    if (userType === "BRAND") return this.brandModel;
+    if (userType === "PHOTOGRAPHER") return this.photographerModel;
+    return this.influencerModel;
+  }
+
+  /**
+   * Re-derives Founder Offer eligibility at payment-approval time, mirroring
+   * the frontend's isNewUserForFounderOffer/matchesFounderOfferAudience logic
+   * (founder-offer.util.ts) so the bonus actually granted always matches what
+   * the popup promised at the moment of approval — not at checkout time, since
+   * admin approval can lag behind checkout by days.
+   */
+  private async isEligibleForFounderOffer(
+    userId: string,
+    userType: "INFLUENCER" | "BRAND" | "PHOTOGRAPHER",
+    plan: any,
+  ): Promise<boolean> {
+    const model = this.modelForUserType(userType);
+    const user = await model
+      .findById(userId)
+      .select("firstRegisteredAt createdAt")
+      .lean();
+    const registeredAt = (user as any)?.firstRegisteredAt || (user as any)?.createdAt;
+    const windowDays = Number(plan?.founderOfferWindowDays ?? 7);
+    const endsAt = plan?.founderOfferEndsAt ? new Date(plan.founderOfferEndsAt) : null;
+    if (endsAt && Number.isFinite(endsAt.getTime()) && endsAt < new Date()) {
+      return false;
+    }
+    const audienceCap = Number(plan?.founderOfferAudienceCap || 0);
+    if (audienceCap > 0) {
+      const audienceCount = await model.countDocuments({});
+      if (audienceCount >= audienceCap) return false;
+    }
+    let isNew = true;
+    if (registeredAt) {
+      const elapsedDays =
+        (Date.now() - new Date(registeredAt).getTime()) / (1000 * 60 * 60 * 24);
+      isNew = elapsedDays <= windowDays;
+    }
+    return isNew
+      ? (plan?.founderOfferForNewUsers ?? true)
+      : (plan?.founderOfferForExistingUsers ?? true);
+  }
+
   // ── Admin: CRUD Plans ────────────────────────────────────────────────────
 
   async listAll() {
@@ -107,14 +178,14 @@ export class PlansService {
       .lean();
     return {
       success: true,
-      plans: plans.map((plan: any) => this.normalizePlanDocument(plan)),
+      plans: await Promise.all(plans.map((plan: any) => this.withFounderOfferAudienceStats(plan))),
     };
   }
 
   async getById(id: string) {
     const plan = await this.planModel.findById(id).lean();
     if (!plan) throw new NotFoundException("Plan not found");
-    return { success: true, plan: this.normalizePlanDocument(plan) };
+    return { success: true, plan: await this.withFounderOfferAudienceStats(plan) };
   }
 
   async create(dto: any) {
@@ -122,7 +193,7 @@ export class PlansService {
     const plan = await this.planModel.create({
       ...normalized,
     });
-    return { success: true, plan: this.normalizePlanDocument(plan.toObject()) };
+    return { success: true, plan: await this.withFounderOfferAudienceStats(plan.toObject()) };
   }
 
   async replaceAllFromConfig(configPlans: any[]) {
@@ -158,6 +229,12 @@ export class PlansService {
             limits: normalized.limits ?? existing.limits,
             offers: normalized.offers ?? existing.offers ?? [],
             discountLabel: normalized.discountLabel ?? existing.discountLabel ?? "",
+            founderOfferName: normalized.founderOfferName ?? existing.founderOfferName ?? "Founder Launch Offer",
+            founderOfferWindowDays: normalized.founderOfferWindowDays ?? existing.founderOfferWindowDays ?? 7,
+            founderOfferForNewUsers: normalized.founderOfferForNewUsers ?? existing.founderOfferForNewUsers ?? true,
+            founderOfferForExistingUsers: normalized.founderOfferForExistingUsers ?? existing.founderOfferForExistingUsers ?? true,
+            founderOfferAudienceCap: normalized.founderOfferAudienceCap ?? existing.founderOfferAudienceCap ?? 0,
+            founderOfferEndsAt: normalized.founderOfferEndsAt ?? existing.founderOfferEndsAt ?? null,
             policies: normalized.policies ?? existing.policies,
             highlight: normalized.highlight ?? existing.highlight,
             isActive: normalized.isActive ?? existing.isActive,
@@ -168,7 +245,7 @@ export class PlansService {
       )
       .lean();
     if (!plan) throw new NotFoundException("Plan not found");
-    return { success: true, plan: this.normalizePlanDocument(plan) };
+    return { success: true, plan: await this.withFounderOfferAudienceStats(plan) };
   }
 
   async remove(id: string) {
@@ -189,7 +266,7 @@ export class PlansService {
       .lean();
     return {
       success: true,
-      plans: plans.map((plan: any) => this.normalizePlanDocument(plan)),
+      plans: await Promise.all(plans.map((plan: any) => this.withFounderOfferAudienceStats(plan))),
     };
   }
 
@@ -220,6 +297,45 @@ export class PlansService {
     else if (duration === "3m") end.setMonth(end.getMonth() + 3);
     else if (duration === "1y") end.setFullYear(end.getFullYear() + 1);
     const billingCycle = this.durationToBillingCycle(duration);
+
+    // Admin-granted premium should use the exact requested duration and not
+    // inherit promo/offer bonus months from the plan. Normal purchases still
+    // keep the existing bonus logic.
+    if (source !== "admin") {
+      // Admin-configurable bonus duration (e.g. "pay 1 month, get 2" promos),
+      // set per-cycle in Admin → Plans → Pricing & Discounts. Same mechanism as
+      // the existing discount offers — no separate fee/plan type needed. This
+      // "standing" bonus applies to every purchase of this cycle, regardless of
+      // Founder Offer eligibility.
+      const cycleSuffix =
+        billingCycle === "monthly"
+          ? "Monthly"
+          : billingCycle === "quarterly"
+            ? "Quarterly"
+            : "Yearly";
+      const bonusMonths = Number(
+        (plan.offers || []).find((o: any) => o.key === `bonusMonths${cycleSuffix}`)
+          ?.value || 0,
+      );
+      if (bonusMonths > 0) end.setMonth(end.getMonth() + bonusMonths);
+
+      // Founder Offer bonus stacks on top of the standing bonus above, but only
+      // when the user is still eligible at approval time (Admin → Plans →
+      // First-Login Founder Offer Popup → audience checkboxes + window days).
+      const founderBonusMonths = Number(
+        (plan.offers || []).find(
+          (o: any) => o.key === `founderBonusMonths${cycleSuffix}`,
+        )?.value || 0,
+      );
+      if (founderBonusMonths > 0) {
+        const eligible = await this.isEligibleForFounderOffer(
+          userId,
+          this.normalizeUserType(userType),
+          plan,
+        );
+        if (eligible) end.setMonth(end.getMonth() + founderBonusMonths);
+      }
+    }
 
     const subscription = await this.subscriptionModel.create({
       userId: new Types.ObjectId(userId),
@@ -259,6 +375,13 @@ export class PlansService {
     const sub = await this.getActiveSubscription(userId);
     if (!sub) {
       const userType = await this.resolveUserTypeById(userId);
+      const freePlan = await this.findFreePlanForUserType(
+        userType === "BRAND"
+          ? "Brand"
+          : userType === "PHOTOGRAPHER"
+            ? "Photographer"
+            : "Influencer",
+      );
       const userModel =
         userType === "BRAND"
           ? this.brandModel
@@ -296,10 +419,17 @@ export class PlansService {
         };
       }
 
-      const defaults = FREE_PLAN_DEFAULTS[userType] as any;
+      const defaults = freePlan
+        ? {
+            features: freePlan.features ?? [],
+            limits: freePlan.limits ?? [],
+            policies:
+              freePlan.policies ?? { imageRetentionDaysAfterExpiry: 45 },
+          }
+        : (FREE_PLAN_DEFAULTS[userType] as any);
       return {
         hasPremium: false,
-        planName: "Free",
+        planName: freePlan?.name || "Free",
         features: defaults.features,
         limits: defaults.limits,
         policies: defaults.policies,
@@ -309,9 +439,11 @@ export class PlansService {
     return {
       hasPremium: true,
       planName: sub.planName,
-      features: sub.featuresSnapshot,
-      limits: sub.limitsSnapshot,
-      policies: sub.policiesSnapshot,
+      features: Array.isArray(sub.featuresSnapshot)
+        ? sub.featuresSnapshot
+        : [],
+      limits: Array.isArray(sub.limitsSnapshot) ? sub.limitsSnapshot : [],
+      policies: sub.policiesSnapshot ?? { imageRetentionDaysAfterExpiry: 45 },
       endDate: sub.endDate,
     };
   }
@@ -321,6 +453,27 @@ export class PlansService {
     const caps = await this.getUserPlanCapabilities(userId);
     const feature = caps.features.find((f: any) => f.key === featureKey);
     return feature ? feature.value === true : false;
+  }
+
+  /**
+   * Reusable, role-agnostic gate for whether a viewer may open another profile's
+   * social media links/handles. Guests (no viewerId) are always denied; logged-in
+   * viewers are gated on their own plan's socialMediaVisibility/viewSocialLinks
+   * feature (Free plans typically have it off, Premium/Pro plans on). Used by
+   * Influencer, Brand, and Photographer public-profile lookups alike so the
+   * Guest/Free/Premium rule stays in one place instead of being copied per role.
+   */
+  async canViewSocialLinks(viewerId?: string | null): Promise<boolean> {
+    if (!viewerId) return false;
+    const caps = await this.getUserPlanCapabilities(String(viewerId));
+    return (caps?.features || []).some((f: any) => {
+      const key = String(f?.key || "");
+      const enabled = !!f?.value;
+      return (
+        enabled &&
+        (key === "socialMediaVisibility" || key === "viewSocialLinks")
+      );
+    });
   }
 
   /** Get a numeric limit for a user */
@@ -407,5 +560,30 @@ export class PlansService {
     if (!plan)
       throw new BadRequestException("No active plan found for user type");
     return plan;
+  }
+
+  /** Find the free plan for user type from DB (admin-managed), fallback to null. */
+  async findFreePlanForUserType(
+    userType: "Influencer" | "Brand" | "Photographer",
+  ) {
+    const mapped = this.normalizeUserType(userType);
+    let plan = (await this.planModel
+      .findOne({ isActive: true, userType: mapped, code: `${mapped.toLowerCase()}-free` })
+      .sort({ sortOrder: 1 })
+      .lean()) as any;
+
+    if (!plan) {
+      plan = (await this.planModel
+        .findOne({
+          isActive: true,
+          userType: mapped,
+          "price.monthly": 0,
+          "price.quarterly": 0,
+          "price.yearly": 0,
+        })
+        .sort({ sortOrder: 1 })
+        .lean()) as any;
+    }
+    return plan || null;
   }
 }

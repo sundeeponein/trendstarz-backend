@@ -1,4 +1,5 @@
-import { Injectable, BadRequestException } from "@nestjs/common";
+import { Injectable, BadRequestException, NotFoundException } from "@nestjs/common";
+import { Cron, CronExpression } from "@nestjs/schedule";
 import * as fs from "fs";
 import * as path from "path";
 import { randomUUID } from "crypto";
@@ -6,8 +7,32 @@ import { CloudinaryService } from "../cloudinary.service";
 import { InfluencerProfileDto, BrandProfileDto } from "./dto/profile.dto";
 import * as bcrypt from "bcryptjs";
 import { InjectModel } from "@nestjs/mongoose";
-import { Model } from "mongoose";
+import { Model, Types } from "mongoose";
 import { PlansService } from "../plans/plans.service";
+import { MetaOAuthService } from "../meta-oauth/meta-oauth.service";
+import { normalizeCollaborationAvailability } from "../utils/collaboration-availability.util";
+import { FirebaseAdminService } from "../utils/firebase-admin.service";
+import {
+  PROFILE_SELECTION_LIMITS,
+  normalizeSelectionList,
+} from "../utils/profile-selection-limits.util";
+import { normalizeSocialMediaList } from "../utils/social-handle.util";
+import { withCloudinaryHeroTransform } from "../utils/cloudinary-transform.util";
+import { invalidateAccountStatusCache } from "../auth/jwt-auth.guard";
+import { consumeOtpVerificationToken } from "../otp/otp.controller";
+import {
+  applyDiscoverableProfileFilter,
+  applySearchEligibilityFilter,
+  applyApprovedEligibilityFilter,
+  buildSearchRankingStages,
+  fetchFeaturedProfilesByScore,
+  normalizeLocationValue,
+  ViewerLocationContext,
+} from "../utils/profile-eligibility.util";
+
+/** Self-service "Delete Account" grace period — see requestSelfDeletion. */
+export const SELF_DELETION_GRACE_PERIOD_DAYS =
+  Number.parseInt(process.env.SELF_DELETION_GRACE_PERIOD_DAYS || "", 10) || 30;
 
 const USE_LOCAL_IMAGES = process.env.USE_LOCAL_IMAGES === "true";
 const LOCAL_IMAGE_DIR = path.resolve(__dirname, "../../assets/local-images");
@@ -15,8 +40,94 @@ if (USE_LOCAL_IMAGES && !fs.existsSync(LOCAL_IMAGE_DIR)) {
   fs.mkdirSync(LOCAL_IMAGE_DIR, { recursive: true });
 }
 
+// Minor quality issues: hide from public search only, campaigns still allowed
+// All photo quality issues — hide from public search/discovery only
+export const PROFILE_PHOTO_QUALITY_FLAG_CODES = [
+  "PROFILE_PHOTO_QUALITY",
+  "PROFILE_PHOTO_PENDING_REVIEW",
+  "PROFILE_PHOTO_MISSING",
+  "PROFILE_PHOTO_GROUP",
+  "PROFILE_PHOTO_BLURRY",
+  "PROFILE_PHOTO_LOGO",
+  "PROFILE_PHOTO_LOW_QUALITY",
+  "FACE_NOT_VISIBLE",
+  "PROFILE_PHOTO_SCREENSHOT",
+];
+
+// Identity/trust safety violations — hide from search AND block campaign invites
+export const PROFILE_PHOTO_SAFETY_FLAG_CODES = [
+  "PROFILE_PHOTO_POLICY",
+  "PROFILE_PHOTO_CELEBRITY",
+  "PROFILE_PHOTO_CONTACT_INFO",
+  "PROFILE_PHOTO_QR_CODE",
+];
+
+// Legacy alias kept for backward compat
+export const PROFILE_PHOTO_POLICY_FLAG_CODES = PROFILE_PHOTO_SAFETY_FLAG_CODES;
+
+// All photo flags block from public search/discovery (quality + safety)
+const PROFILE_PHOTO_VISIBILITY_BLOCK_FLAG_CODES = [
+  ...PROFILE_PHOTO_QUALITY_FLAG_CODES,
+  ...PROFILE_PHOTO_SAFETY_FLAG_CODES,
+];
+
+const SOCIAL_TIER_VISIBILITY_BLOCK_FLAG_CODES = [
+  "SOCIAL_LINK_MISSING",
+  "SOCIAL_LINK_BROKEN",
+  "SOCIAL_LINK_PRIVATE",
+  "SOCIAL_LINK_MISMATCH",
+  "SOCIAL_LINK_DUPLICATE",
+  "FOLLOWER_COUNT_MISMATCH",
+  "TIER_MISMATCH",
+];
+
+const LOCATION_VISIBILITY_BLOCK_FLAG_CODES = [
+  "LOCATION_MISSING",
+  "LOCATION_MISMATCH",
+  "INTERNATIONAL_LOCATION",
+];
+
+const GALLERY_VISIBILITY_BLOCK_FLAG_CODES = [
+  "PORTFOLIO_MISSING",
+  "PORTFOLIO_SCREENSHOT",
+  "PORTFOLIO_LOW_QUALITY",
+  "PORTFOLIO_DUPLICATE",
+  "PORTFOLIO_WATERMARK",
+];
+
+const PUBLIC_PROFILE_VISIBILITY_BLOCK_FLAG_CODES = [
+  ...PROFILE_PHOTO_VISIBILITY_BLOCK_FLAG_CODES,
+  ...SOCIAL_TIER_VISIBILITY_BLOCK_FLAG_CODES,
+  ...LOCATION_VISIBILITY_BLOCK_FLAG_CODES,
+];
+
 @Injectable()
 export class UsersService {
+  // TTL cache for the public homepage hero-showcase-images endpoint. Cache is
+  // keyed by viewer location bucket so location-aware ranking does not leak
+  // one region's recommendation into another region's response.
+  private heroShowcaseCache = new Map<
+    string,
+    {
+      value: {
+        influencer: { url: string; alt: string } | null;
+        brand: { url: string; alt: string } | null;
+      };
+      expiresAt: number;
+    }
+  >();
+  private static readonly HERO_SHOWCASE_CACHE_TTL_MS = 10 * 60 * 1000;
+
+  private normalizePhone(value: any): string {
+    return String(value ?? "").replace(/\D/g, "");
+  }
+
+  private normalizeEmail(value: any): string {
+    return String(value ?? "")
+      .trim()
+      .toLowerCase();
+  }
+
   private slugify(text: string): string {
     return (text || "")
       .toString()
@@ -28,10 +139,46 @@ export class UsersService {
       .replace(/-+$/, "");
   }
 
+  private async deleteFirebaseAuthUserForPermanentDelete(user: any): Promise<{
+    firebaseDeleted: boolean;
+    firebaseDeleteSkipped: boolean;
+    firebaseDeleteError?: string;
+  }> {
+    if (!this.firebaseAdminService.isConfigured()) {
+      return { firebaseDeleted: false, firebaseDeleteSkipped: true };
+    }
+
+    try {
+      const firebaseUid = String(user?.firebaseUid || "").trim();
+      if (firebaseUid) {
+        const deleted =
+          await this.firebaseAdminService.deleteUserByUid(firebaseUid);
+        if (deleted)
+          return { firebaseDeleted: true, firebaseDeleteSkipped: false };
+      }
+
+      const deletedByEmail = await this.firebaseAdminService.deleteUserByEmail(
+        user?.email,
+      );
+      return { firebaseDeleted: deletedByEmail, firebaseDeleteSkipped: false };
+    } catch (error: any) {
+      console.error(
+        "[DELETE] Error deleting Firebase Auth user during permanent delete:",
+        error?.message || error,
+      );
+      return {
+        firebaseDeleted: false,
+        firebaseDeleteSkipped: false,
+        firebaseDeleteError: error?.message || "Firebase user deletion failed.",
+      };
+    }
+  }
+
   private async findBrandByNameOrSlug(brandName: string): Promise<any> {
     const normalized = (brandName || "").trim();
     if (!normalized) return null;
 
+    // 1. Exact brandName match (case-insensitive, hyphens treated as spaces)
     const brand = await this.brandModel
       .findOne({
         brandName: new RegExp(
@@ -43,17 +190,22 @@ export class UsersService {
 
     if (brand) return brand;
 
-    const decoded = this.slugify(normalized);
-    const candidates = await this.brandModel
-      .find({})
-      .select("_id brandName")
+    // 2. Exact brandUsername match (handles slugs like "carols-cosmetics")
+    const byUsername = await this.brandModel
+      .findOne({
+        brandUsername: new RegExp(`^${this.escapeRegex(normalized)}$`, "i"),
+      })
       .lean();
-    const match = candidates.find(
-      (b: any) => this.slugify(b.brandName || "") === decoded,
-    );
-    if (!match) return null;
 
-    return this.brandModel.findById(match._id).lean();
+    if (byUsername) return byUsername;
+
+    // 3. Slug fallback: slugify the incoming string and match against brandName
+    const decoded = this.slugify(normalized);
+    const slugRegex = new RegExp(
+      `^${decoded}$|^${decoded}-|\\b${decoded}\\b`,
+      "i",
+    );
+    return this.brandModel.findOne({ brandName: slugRegex }).lean();
   }
 
   async trackInfluencerProfileImpression(username: string) {
@@ -148,6 +300,102 @@ export class UsersService {
         console.error("[MEDIA CLEANUP] Failed to delete image:", publicId, err);
       }
     }
+  }
+
+  // Verification docs can be a PDF (Cloudinary `raw` resource) or an image —
+  // unlike profile/gallery media, which is always `image` — so each one
+  // needs its own resource type resolved from the stored mimeType rather
+  // than defaulting to "image" like removeStoredMedia() does.
+  private async deleteVerificationDocuments(
+    docs: any[] | undefined,
+    errors: any[],
+    errorType: string,
+  ): Promise<void> {
+    if (!Array.isArray(docs)) return;
+    for (const doc of docs) {
+      const publicId =
+        typeof doc === "object"
+          ? doc?.public_id
+          : typeof doc === "string"
+            ? doc
+            : null;
+      if (!publicId) continue;
+      const resourceType = doc?.mimeType === "application/pdf" ? "raw" : "image";
+      try {
+        await this.cloudinaryService.deleteImage(publicId, resourceType);
+      } catch (cloudErr) {
+        console.error(
+          `[DELETE] Error deleting ${errorType} verification document from Cloudinary:`,
+          cloudErr,
+          doc,
+        );
+        errors.push({ type: errorType, publicId, error: cloudErr });
+      }
+    }
+  }
+
+  private getImagePublicId(image: any): string {
+    if (!image) return "";
+    if (typeof image === "string") return image.trim();
+    return String(image?.public_id || image?.publicId || "").trim();
+  }
+
+  private uniquePublicIds(values: string[]): string[] {
+    return [
+      ...new Set(
+        values.map((value) => String(value || "").trim()).filter(Boolean),
+      ),
+    ];
+  }
+
+  private prepareSoftDeletedMediaSnapshot(
+    user: any,
+    userType: "Influencer" | "Brand" | "Photographer",
+  ): string[] {
+    const publicIdsToDelete: string[] = [];
+
+    if (userType === "Brand") {
+      const logos = Array.isArray(user?.brandLogo) ? user.brandLogo : [];
+      const primaryLogo = logos[0] || null;
+      publicIdsToDelete.push(
+        ...logos.slice(1).map((img: any) => this.getImagePublicId(img)),
+        ...(Array.isArray(user?.products)
+          ? user.products.map((img: any) => this.getImagePublicId(img))
+          : []),
+        ...(Array.isArray(user?.galleryImages)
+          ? user.galleryImages.map((img: any) => this.getImagePublicId(img))
+          : []),
+      );
+      user.brandLogo = primaryLogo ? [primaryLogo] : [];
+      user.products = [];
+      user.galleryImages = [];
+      return this.uniquePublicIds(publicIdsToDelete);
+    }
+
+    const images = Array.isArray(user?.profileImages) ? user.profileImages : [];
+    const primaryImage = images[0] || null;
+    publicIdsToDelete.push(
+      ...images.slice(1).map((img: any) => this.getImagePublicId(img)),
+      ...(Array.isArray(user?.galleryImages)
+        ? user.galleryImages.map((img: any) => this.getImagePublicId(img))
+        : []),
+    );
+
+    user.profileImages = primaryImage ? [primaryImage] : [];
+    user.galleryImages = [];
+    if (primaryImage && typeof primaryImage === "object") {
+      user.profileImage =
+        user.profileImage ||
+        primaryImage.url ||
+        primaryImage.secure_url ||
+        null;
+      user.profileImagePublicId =
+        user.profileImagePublicId ||
+        primaryImage.public_id ||
+        primaryImage.publicId ||
+        null;
+    }
+    return this.uniquePublicIds(publicIdsToDelete);
   }
 
   private clearUserMediaFields(user: any) {
@@ -291,7 +539,10 @@ export class UsersService {
     }
 
     if (brandName && normalizedUserType !== "INFLUENCER") {
-      const brandNameRegex = new RegExp(`^${this.escapeRegex(brandName)}$`, "i");
+      const brandNameRegex = new RegExp(
+        `^${this.escapeRegex(brandName)}$`,
+        "i",
+      );
       const brandByName = await this.brandModel
         .findOne({ brandName: brandNameRegex })
         .select("_id")
@@ -333,11 +584,67 @@ export class UsersService {
   }
 
   // Only use this for GDPR requests. Otherwise, always use soft delete.
+  /**
+   * Only called from deletePermanently (the true GDPR hard-delete path) —
+   * the regular admin "Delete" is a soft delete that keeps the record, so
+   * Collaboration Score data must stay intact there in case of restore.
+   * Audits/history are hard-deleted; ₹49 re-analysis payments are archived
+   * and anonymized instead (kept for accounting), never deleted.
+   */
+  private async cleanupCollaborationScoreData(userId: string): Promise<void> {
+    try {
+      await this.collaborationAuditModel.deleteMany({ userId: String(userId) });
+    } catch (err) {
+      console.error(`[CLEANUP][ERROR] Failed to delete CollaborationAudit docs for ${userId}:`, err);
+    }
+    try {
+      const filter = { userId: new Types.ObjectId(userId), purpose: "collab_score_reanalysis" };
+      await this.paymentModel.updateMany(filter, {
+        $set: {
+          archivedAt: new Date(),
+          "userSnapshot.name": null,
+          "userSnapshot.email": null,
+        },
+      });
+      await this.transactionModel.updateMany(filter, { $set: { archivedAt: new Date() } });
+    } catch (err) {
+      console.error(`[CLEANUP][ERROR] Failed to archive reanalysis payments for ${userId}:`, err);
+    }
+    try {
+      const connections = await this.socialOAuthConnectionModel
+        .find({ userId: String(userId) })
+        .select("+accessToken")
+        .lean();
+      for (const conn of connections as any[]) {
+        if (conn.accessToken) {
+          const targetId = conn.platform === "instagram" ? conn.instagramBusinessAccountId : conn.facebookPageId;
+          if (targetId) {
+            // Best-effort — a revoke failure must never leave the connection
+            // doc (and its access token) stranded in the database.
+            await this.metaOAuthService.revokePermissions(targetId, conn.accessToken).catch((err) => {
+              console.error(`[CLEANUP][ERROR] Failed to revoke Meta permissions for ${userId}:`, err);
+            });
+          }
+        }
+      }
+      // Hard-deleted, unlike Payment/Transaction above — not financial
+      // records, nothing to retain.
+      await this.socialOAuthConnectionModel.deleteMany({ userId: String(userId) });
+    } catch (err) {
+      console.error(`[CLEANUP][ERROR] Failed to remove SocialOAuthConnection docs for ${userId}:`, err);
+    }
+  }
+
   async deletePermanently(id: string) {
     // Try influencer first
     let user = await this.influencerModel.findById(id);
     if (user) {
       const errors: any[] = [];
+      const firebaseDelete =
+        await this.deleteFirebaseAuthUserForPermanentDelete(user);
+      if (firebaseDelete.firebaseDeleteError) {
+        throw new BadRequestException(firebaseDelete.firebaseDeleteError);
+      }
       // Delete all images from Cloudinary
       if (user.profileImages && Array.isArray(user.profileImages)) {
         for (const img of user.profileImages) {
@@ -361,6 +668,11 @@ export class UsersService {
           }
         }
       }
+      await this.deleteVerificationDocuments(
+        user.verificationDocuments,
+        errors,
+        "influencerVerification",
+      );
       const deleteResult = await this.influencerModel.findByIdAndDelete(id);
       if (!deleteResult) {
         console.error(
@@ -368,6 +680,7 @@ export class UsersService {
         );
       } else {
       }
+      await this.cleanupCollaborationScoreData(id);
       // Double-check for any remaining influencer with this id
       const checkUser = await this.influencerModel.findById(id);
       if (checkUser) {
@@ -380,14 +693,24 @@ export class UsersService {
           message: "Influencer deleted with some image deletion errors",
           user,
           errors,
+          ...firebaseDelete,
         };
       }
-      return { message: "Influencer permanently deleted", user };
+      return {
+        message: "Influencer permanently deleted",
+        user,
+        ...firebaseDelete,
+      };
     }
     // Try brand
     user = await this.brandModel.findById(id);
     if (user) {
       const errors: any[] = [];
+      const firebaseDelete =
+        await this.deleteFirebaseAuthUserForPermanentDelete(user);
+      if (firebaseDelete.firebaseDeleteError) {
+        throw new BadRequestException(firebaseDelete.firebaseDeleteError);
+      }
       if (user.brandLogo && Array.isArray(user.brandLogo)) {
         for (const img of user.brandLogo) {
           const publicId =
@@ -439,6 +762,7 @@ export class UsersService {
         );
       } else {
       }
+      await this.cleanupCollaborationScoreData(id);
       // Double-check for any remaining brand with this id
       const checkBrand = await this.brandModel.findById(id);
       if (checkBrand) {
@@ -451,15 +775,21 @@ export class UsersService {
           message: "Brand deleted with some image deletion errors",
           user,
           errors,
+          ...firebaseDelete,
         };
       }
-      return { message: "Brand permanently deleted", user };
+      return { message: "Brand permanently deleted", user, ...firebaseDelete };
     }
 
     // Try photographer
     user = await this.photographerModel.findById(id);
     if (user) {
       const errors: any[] = [];
+      const firebaseDelete =
+        await this.deleteFirebaseAuthUserForPermanentDelete(user);
+      if (firebaseDelete.firebaseDeleteError) {
+        throw new BadRequestException(firebaseDelete.firebaseDeleteError);
+      }
       if (user.profileImages && Array.isArray(user.profileImages)) {
         for (const img of user.profileImages) {
           const publicId =
@@ -482,6 +812,11 @@ export class UsersService {
           }
         }
       }
+      await this.deleteVerificationDocuments(
+        user.verificationDocuments,
+        errors,
+        "photographerVerification",
+      );
 
       const deleteResult = await this.photographerModel.findByIdAndDelete(id);
       if (!deleteResult) {
@@ -489,6 +824,7 @@ export class UsersService {
           `[CLEANUP][ERROR] Photographer not found for deletion after Cloudinary cleanup: ${id}`,
         );
       }
+      await this.cleanupCollaborationScoreData(id);
 
       const checkPhotographer = await this.photographerModel.findById(id);
       if (checkPhotographer) {
@@ -502,23 +838,556 @@ export class UsersService {
           message: "Photographer deleted with some image deletion errors",
           user,
           errors,
+          ...firebaseDelete,
         };
       }
-      return { message: "Photographer permanently deleted", user };
+      return {
+        message: "Photographer permanently deleted",
+        user,
+        ...firebaseDelete,
+      };
     }
 
     return { message: "User not found", id };
   }
+
+  /**
+   * Anonymizes (rather than hard-deletes) an account whose self-requested
+   * deletion grace period has expired — see cleanupExpiredSelfDeletionRequests.
+   * Keeps the document (and its _id), so Payment/Campaign/CampaignInvite rows
+   * that reference it by ObjectId still resolve for reporting/audit, but
+   * strips all personally-identifying data and media. Distinct from
+   * deletePermanently, which is the admin-only explicit-GDPR-request hard
+   * delete and is left untouched by this.
+   */
+  async anonymizeUser(id: string): Promise<{ message: string }> {
+    let user: any = await this.influencerModel.findById(id);
+    let userType: "Influencer" | "Brand" | "Photographer" | null = user
+      ? "Influencer"
+      : null;
+    if (!user) {
+      user = await this.brandModel.findById(id);
+      userType = user ? "Brand" : null;
+    }
+    if (!user) {
+      user = await this.photographerModel.findById(id);
+      userType = user ? "Photographer" : null;
+    }
+    if (!user || !userType) return { message: "User not found" };
+
+    const errors: any[] = [];
+    try {
+      await this.deleteFirebaseAuthUserForPermanentDelete(user);
+    } catch (err) {
+      errors.push({ type: "firebase", error: err });
+    }
+
+    const publicIds = this.extractMediaPublicIds(user);
+    await this.removeStoredMedia(publicIds);
+    this.clearUserMediaFields(user);
+    await this.deleteVerificationDocuments(
+      user.verificationDocuments,
+      errors,
+      `${userType.toLowerCase()}Verification`,
+    );
+
+    user.email = `deleted-${user._id}@trendstarz.invalid`;
+    user.phoneNumber = "";
+    user.password = randomUUID() + randomUUID();
+    user.name = userType === "Brand" ? undefined : "Deleted User";
+    user.brandName = userType === "Brand" ? "Deleted Brand" : user.brandName;
+    user.contactPersonName = "";
+    user.socialMedia = [];
+    user.location = { state: "", district: "" };
+    user.verificationDocuments = [];
+    user.website = "";
+    user.googleMapAddress = "";
+    user.status = "deleted";
+    user.isDeleted = true;
+    user.anonymized = true;
+
+    await user.save();
+
+    if (errors.length > 0) {
+      console.error(
+        `[anonymizeUser] Completed for ${userType} ${id} with some cleanup errors:`,
+        errors,
+      );
+    }
+    return { message: `${userType} anonymized` };
+  }
   constructor(
     private readonly cloudinaryService: CloudinaryService,
+    private readonly firebaseAdminService: FirebaseAdminService,
     @InjectModel("User") private readonly userModel: Model<any>,
     @InjectModel("Influencer") private readonly influencerModel: Model<any>,
     @InjectModel("Brand") private readonly brandModel: Model<any>,
     @InjectModel("Photographer") private readonly photographerModel: Model<any>,
     @InjectModel("CampaignInvite")
     private readonly campaignInviteModel: Model<any>,
+    @InjectModel("Campaign") private readonly campaignModel: Model<any>,
+    @InjectModel("ProfileFlag") private readonly profileFlagModel: Model<any>,
+    @InjectModel("CollaborationAudit")
+    private readonly collaborationAuditModel: Model<any>,
+    @InjectModel("Payment") private readonly paymentModel: Model<any>,
+    @InjectModel("Transaction") private readonly transactionModel: Model<any>,
+    @InjectModel("SocialOAuthConnection") private readonly socialOAuthConnectionModel: Model<any>,
     private readonly plansService: PlansService,
+    private readonly metaOAuthService: MetaOAuthService,
   ) {}
+
+  /**
+   * Brand-safe Collaboration Score fields only, keyed by userId — never the
+   * AI analysis, raw platform data, or sub-score breakdown. Used to enrich
+   * Search results without exposing internal calculations to brands.
+   */
+  private async collaborationAuditSummaryMap(
+    userIds: Array<string | undefined>,
+  ): Promise<Map<string, any>> {
+    const ids = Array.from(new Set(userIds.filter(Boolean).map(String)));
+    if (!ids.length) return new Map();
+    const audits = await this.collaborationAuditModel
+      .find(
+        { userId: { $in: ids }, isCurrent: true },
+        {
+          userId: 1,
+          collaborationScore: 1,
+          campaignReadiness: 1,
+          trendstarzRecommended: 1,
+          pricingSuggestion: 1,
+          categoryMatch: 1,
+        },
+      )
+      .lean();
+    return new Map(audits.map((audit: any) => [String(audit.userId), audit]));
+  }
+
+  private async publicProfileBlockedIds(
+    userType: "Influencer" | "Brand" | "Photographer",
+  ) {
+    // Social media is optional for Brands — social tier flags are informational
+    // only and must not block a brand from search or campaign-creation.
+    const blockCodes =
+      userType === "Brand"
+        ? [
+            ...PROFILE_PHOTO_VISIBILITY_BLOCK_FLAG_CODES,
+            ...LOCATION_VISIBILITY_BLOCK_FLAG_CODES,
+          ]
+        : PUBLIC_PROFILE_VISIBILITY_BLOCK_FLAG_CODES;
+    const rows = await this.profileFlagModel
+      .find({
+        userType,
+        status: "Open",
+        flagCode: { $in: blockCodes },
+      })
+      .select("userId")
+      .lean();
+    return [
+      ...new Set(
+        (rows || []).map((row: any) => String(row.userId)).filter(Boolean),
+      ),
+    ];
+  }
+
+  private async campaignProfileBlockedIds(
+    userType: "Influencer" | "Brand" | "Photographer",
+  ) {
+    // Block ALL photo-flagged users from campaign invites — quality flags
+    // (blurry, screenshot, face not visible) and safety/policy flags alike.
+    const rows = await this.profileFlagModel
+      .find({
+        userType,
+        status: "Open",
+        flagCode: { $in: PROFILE_PHOTO_VISIBILITY_BLOCK_FLAG_CODES },
+      })
+      .select("userId")
+      .lean();
+    return [
+      ...new Set(
+        (rows || []).map((row: any) => String(row.userId)).filter(Boolean),
+      ),
+    ];
+  }
+
+  private async hasOpenPublicProfileBlock(
+    userId: any,
+    userType: "Influencer" | "Brand" | "Photographer",
+  ): Promise<boolean> {
+    const row = await this.profileFlagModel
+      .findOne({
+        userId: String(userId),
+        userType,
+        status: "Open",
+        flagCode: { $in: PUBLIC_PROFILE_VISIBILITY_BLOCK_FLAG_CODES },
+      })
+      .select("_id")
+      .lean();
+    return !!row;
+  }
+
+  private async hasOpenGalleryBlock(
+    userId: any,
+    userType: "Influencer" | "Brand" | "Photographer",
+  ): Promise<boolean> {
+    const row = await this.profileFlagModel
+      .findOne({
+        userId: String(userId),
+        userType,
+        status: "Open",
+        flagCode: { $in: GALLERY_VISIBILITY_BLOCK_FLAG_CODES },
+      })
+      .select("_id")
+      .lean();
+    return !!row;
+  }
+
+  /** Influencer Search eligibility — see applySearchEligibilityFilter for the shared rule. */
+  private applyPublicDiscoveryEligibilityFilter(
+    filter: any,
+    viewerIsAuthenticated = false,
+  ): void {
+    applySearchEligibilityFilter(filter, {
+      photoField: "profileImages",
+      requireSocialTier: true,
+      viewerIsAuthenticated,
+    });
+  }
+
+  /** Brand Search eligibility — same bar as Influencer/Photographer, minus the social-tier requirement. */
+  private applyBrandDiscoveryEligibilityFilter(
+    filter: any,
+    viewerIsAuthenticated = false,
+  ): void {
+    applySearchEligibilityFilter(filter, {
+      photoField: "brandLogo",
+      requireSocialTier: false,
+      viewerIsAuthenticated,
+    });
+  }
+
+  private selectStringToProjection(fields: string): Record<string, 1> {
+    const projection: Record<string, 1> = { _id: 1 };
+    for (const field of String(fields || "").split(/\s+/).filter(Boolean)) {
+      projection[field] = 1;
+    }
+    return projection;
+  }
+
+  private async resolveViewerLocationContext(
+    viewerId?: string | null,
+    hints?: Partial<ViewerLocationContext>,
+  ): Promise<ViewerLocationContext> {
+    const fallbackCountry =
+      normalizeLocationValue(process.env.DISCOVERY_DEFAULT_COUNTRY || "india") ||
+      "india";
+
+    if (!viewerId) {
+      return {
+        district: String(hints?.district || "").trim(),
+        state: String(hints?.state || "").trim(),
+        country: String(hints?.country || fallbackCountry).trim(),
+        source: hints?.source || (hints?.country ? "country_fallback" : "none"),
+      };
+    }
+
+    const [admin, influencer, brand, photographer] = (await Promise.all([
+      this.userModel.findById(viewerId).select("location").lean().catch(() => null),
+      this.influencerModel.findById(viewerId).select("location").lean().catch(() => null),
+      this.brandModel.findById(viewerId).select("location").lean().catch(() => null),
+      this.photographerModel.findById(viewerId).select("location").lean().catch(() => null),
+    ])) as any[];
+    const location =
+      admin?.location ||
+      influencer?.location ||
+      brand?.location ||
+      photographer?.location ||
+      {};
+
+    return {
+      district: String(location?.district || hints?.district || "").trim(),
+      state: String(location?.state || hints?.state || "").trim(),
+      country: String(location?.country || hints?.country || fallbackCountry).trim(),
+      source: "registered_profile",
+    };
+  }
+
+  async resolveDiscoveryViewerLocation(
+    viewerId?: string | null,
+    hints?: Partial<ViewerLocationContext>,
+  ): Promise<ViewerLocationContext> {
+    return this.resolveViewerLocationContext(viewerId, hints);
+  }
+
+  private activityTimestamp(user: any): number {
+    return (
+      new Date(
+        user?.lastLoginAt || user?.lastOpenedAt || user?.updatedAt || user?.createdAt || 0,
+      ).getTime() || 0
+    );
+  }
+
+  private getLocationPriorityScore(
+    user: any,
+    viewer: ViewerLocationContext,
+  ): number {
+    const viewerDistrict = normalizeLocationValue(viewer?.district);
+    const viewerState = normalizeLocationValue(viewer?.state);
+    const viewerCountry =
+      normalizeLocationValue(viewer?.country) ||
+      normalizeLocationValue(process.env.DISCOVERY_DEFAULT_COUNTRY || "india");
+
+    const userDistrict = normalizeLocationValue(user?.location?.district);
+    const userState = normalizeLocationValue(user?.location?.state);
+    const userCountry =
+      normalizeLocationValue(user?.location?.country) ||
+      normalizeLocationValue(process.env.DISCOVERY_DEFAULT_COUNTRY || "india");
+
+    if (
+      viewerDistrict &&
+      viewerState &&
+      userDistrict &&
+      userState &&
+      viewerDistrict === userDistrict &&
+      viewerState === userState
+    ) {
+      return 4;
+    }
+    if (viewerState && userState && viewerState === userState) return 3;
+    if (viewerCountry && userCountry && viewerCountry === userCountry) return 2;
+    return 1;
+  }
+
+  private compareSearchRank(
+    a: any,
+    b: any,
+    viewer: ViewerLocationContext,
+  ): number {
+    const locationDiff =
+      this.getLocationPriorityScore(b, viewer) -
+      this.getLocationPriorityScore(a, viewer);
+    if (locationDiff !== 0) return locationDiff;
+
+    const premiumDiff =
+      Number(this.isCurrentlyPremium(b)) - Number(this.isCurrentlyPremium(a));
+    if (premiumDiff !== 0) return premiumDiff;
+
+    const completionDiff =
+      Number(b?.profileCompletion || 0) - Number(a?.profileCompletion || 0);
+    if (completionDiff !== 0) return completionDiff;
+
+    const activityDiff = this.activityTimestamp(b) - this.activityTimestamp(a);
+    if (activityDiff !== 0) return activityDiff;
+
+    const followersDiff =
+      this.extractTopFollowersCount(b) - this.extractTopFollowersCount(a);
+    if (followersDiff !== 0) return followersDiff;
+
+    const updatedDiff =
+      new Date(b?.updatedAt || 0).getTime() -
+      new Date(a?.updatedAt || 0).getTime();
+    if (updatedDiff !== 0) return updatedDiff;
+
+    return Math.random() - 0.5;
+  }
+
+  private visibleInfluencerProfileImages(
+    profileImages: any,
+    hideGallery: boolean,
+  ): any[] {
+    const images = Array.isArray(profileImages) ? profileImages : [];
+    return hideGallery ? images.slice(0, 1) : images;
+  }
+
+  private applyExcludedIds(filter: any, ids: string[]) {
+    if (!ids.length) return;
+    const excluded = ids.flatMap((id) => {
+      const value = String(id || "").trim();
+      if (!value) return [];
+      return Types.ObjectId.isValid(value)
+        ? [value, new Types.ObjectId(value)]
+        : [value];
+    });
+    if (!excluded.length) return;
+    filter._id = { ...(filter._id || {}), $nin: excluded };
+  }
+
+  private getPrimaryImageKey(images: any): string {
+    const first = Array.isArray(images) ? images[0] : images;
+    return String(first?.public_id || first?.url || first || "").trim();
+  }
+
+  private hasPrimaryProfileImageChanged(before: any, after: any): boolean {
+    const beforeKey = this.getPrimaryImageKey(before);
+    const afterKey = this.getPrimaryImageKey(after);
+    return !!afterKey && beforeKey !== afterKey;
+  }
+
+  private async clearProfilePhotoFlags(
+    userId: string,
+    userType: "Influencer" | "Photographer",
+  ) {
+    const now = new Date();
+    const flagCodes = [
+      ...PROFILE_PHOTO_QUALITY_FLAG_CODES,
+      ...PROFILE_PHOTO_SAFETY_FLAG_CODES,
+    ];
+
+    // Were there open flags before this upload?
+    const hadOpenFlags = await this.profileFlagModel.countDocuments({
+      userId: String(userId),
+      userType,
+      status: "Open",
+      flagCode: { $in: flagCodes },
+    });
+
+    if (hadOpenFlags > 0) {
+      await this.profileFlagModel.updateMany(
+        {
+          userId: String(userId),
+          userType,
+          status: "Open",
+          flagCode: { $in: flagCodes },
+        },
+        {
+          $set: {
+            status: "Resolved",
+            reviewedBy: "AUTO",
+            reviewedAt: now,
+            reviewNotes: "Auto-resolved: user re-uploaded profile photo.",
+          },
+          $push: {
+            auditLog: {
+              action: "auto_resolved",
+              actorId: String(userId),
+              actorRole: "user",
+              note: "User re-uploaded profile photo after flag.",
+              actedAt: now,
+            },
+          },
+        },
+      );
+      // Re-upload after a flag auto-verifies the photo — no pending queue.
+      // Admin must explicitly click "Unverify" to block again.
+      const model =
+        userType === "Photographer"
+          ? this.photographerModel
+          : this.influencerModel;
+      await model.findByIdAndUpdate(userId, {
+        $set: { profilePhotoVerified: true, adminReviewPending: false },
+      });
+    }
+    // If no flags were open this is a clean first-time upload or an update
+    // by an already-clean profile — leave profilePhotoVerified unchanged.
+  }
+
+  private async clearGalleryFlags(
+    userId: string,
+    userType: "Influencer" | "Brand" | "Photographer",
+  ) {
+    const now = new Date();
+    await this.profileFlagModel.updateMany(
+      {
+        userId: String(userId),
+        userType,
+        status: "Open",
+        flagCode: {
+          $in: [
+            "PORTFOLIO_MISSING",
+            "PORTFOLIO_SCREENSHOT",
+            "PORTFOLIO_LOW_QUALITY",
+            "PORTFOLIO_DUPLICATE",
+            "PORTFOLIO_WATERMARK",
+          ],
+        },
+      },
+      {
+        $set: {
+          status: "Resolved",
+          reviewedBy: "AUTO",
+          reviewedAt: now,
+          reviewNotes:
+            "Automatically cleared after user uploaded/replaced gallery images.",
+        },
+        $push: {
+          auditLog: {
+            action: "auto_resolved",
+            actorId: String(userId),
+            actorRole: "user",
+            note: "User uploaded/replaced gallery images.",
+            actedAt: now,
+          },
+        },
+      },
+    );
+  }
+
+  /**
+   * Auto-verify social tier when user provides a valid handle + tier/followers.
+   * Only triggers if admin previously unverified the tier (open tier flag exists).
+   * Once resolved, creatorTierVerified stays true until admin unverifies again.
+   */
+  private async autoVerifyTierIfFixed(
+    userId: string,
+    userType: "Influencer" | "Photographer",
+    socialMedia: any[],
+  ) {
+    if (!Array.isArray(socialMedia) || socialMedia.length === 0) return;
+    const hasValidEntry = socialMedia.some(
+      (s: any) =>
+        String(s?.handle || "").trim() &&
+        (String(s?.tier || "").trim() || Number(s?.followersCount || 0) > 0),
+    );
+    if (!hasValidEntry) return;
+
+    const tierFlagCodes = [
+      "SOCIAL_LINK_MISSING",
+      "SOCIAL_LINK_BROKEN",
+      "SOCIAL_LINK_PRIVATE",
+      "TIER_MISMATCH",
+      "FOLLOWER_COUNT_MISMATCH",
+    ];
+    const openCount = await this.profileFlagModel.countDocuments({
+      userId: String(userId),
+      userType,
+      status: "Open",
+      flagCode: { $in: tierFlagCodes },
+    });
+    if (openCount === 0) return;
+
+    const now = new Date();
+    await this.profileFlagModel.updateMany(
+      {
+        userId: String(userId),
+        userType,
+        status: "Open",
+        flagCode: { $in: tierFlagCodes },
+      },
+      {
+        $set: {
+          status: "Resolved",
+          reviewedBy: "AUTO",
+          reviewedAt: now,
+          reviewNotes: "Auto-resolved: user updated social tier/handle.",
+        },
+        $push: {
+          auditLog: {
+            action: "auto_resolved",
+            actorId: String(userId),
+            actorRole: "user",
+            note: "User selected a valid social tier after admin unverify.",
+            actedAt: now,
+          },
+        },
+      },
+    );
+    const model =
+      userType === "Photographer"
+        ? this.photographerModel
+        : this.influencerModel;
+    await model.findByIdAndUpdate(userId, {
+      $set: { creatorTierVerified: true },
+    });
+  }
 
   /** True if the user has an active premium subscription right now. */
   private isCurrentlyPremium(user: any): boolean {
@@ -529,8 +1398,7 @@ export class UsersService {
 
   /**
    * Decide whether `viewerId` is allowed to see the brand's social media handles.
-   * SINGLE RULE: contact is visible only when an accepted CampaignInvite between
-   * brand & influencer has been UNLOCKED by the brand (premium / paid_collab payment / 1 free unlock).
+   * Rule: opening social links is controlled by viewer plan capabilities.
    */
   async canViewBrandSocialMedia(
     brand: any,
@@ -539,36 +1407,179 @@ export class UsersService {
     if (!brand) return false;
     if (!viewerId) return false;
     if (String(brand._id) === String(viewerId)) return true;
-
-    const influencerViewer = await this.influencerModel
-      .findById(viewerId)
-      .select("_id")
-      .lean();
-    if (!influencerViewer) return false;
-
-    const invite = await this.campaignInviteModel
-      .findOne({
-        $or: [
-          { brandId: brand._id },
-          { brandId: String(brand._id) },
-          { brandId: brand.brandUsername },
-        ],
-        influencerId: viewerId,
-        unlocked: true,
-      })
-      .select("_id")
-      .lean();
-    return !!invite;
+    return this.plansService.canViewSocialLinks(viewerId);
   }
 
   /** Throw if the user has already reached their maxImages plan limit */
   async checkImageUploadLimit(userId: string, currentCount: number) {
     const limit = await this.plansService.getLimit(userId, "maxProductImages");
-    if (currentCount >= limit) {
+    if (currentCount > limit) {
       throw new BadRequestException(
         `Image upload limit reached. Your plan allows ${limit} image(s). Upgrade to upload more.`,
       );
     }
+  }
+
+  /** Current opt-in state for setMarketingConsent — used by the settings page. */
+  async getMarketingConsent(id: string): Promise<{ featuredInMarketing: boolean }> {
+    const influencer = await this.influencerModel
+      .findById(id)
+      .select("featuredInMarketing");
+    if (influencer) return { featuredInMarketing: !!influencer.featuredInMarketing };
+    const brand = await this.brandModel.findById(id).select("featuredInMarketing");
+    if (brand) return { featuredInMarketing: !!brand.featuredInMarketing };
+    const photographer = await this.photographerModel
+      .findById(id)
+      .select("featuredInMarketing");
+    if (photographer) return { featuredInMarketing: !!photographer.featuredInMarketing };
+    throw new NotFoundException("User not found");
+  }
+
+  /**
+   * Self-service opt-in/out for showing this user's photo/logo on public
+   * marketing surfaces (homepage hero banner + slider) — see
+   * getHeroShowcaseInfluencerAndBrandImages. Being premium/verified is not
+   * sufficient consent; the user must explicitly enable this themselves.
+   * Note: the hero-showcase-images endpoint caches its result for up to 10
+   * minutes, so a change here may take up to that long to be reflected there.
+   */
+  async setMarketingConsent(id: string, featuredInMarketing: boolean) {
+    if (featuredInMarketing) {
+      // Homepage Hero Feature is a Premium benefit — enforce server-side too,
+      // not just by hiding the toggle in the UI.
+      const isPremium = await this.isCurrentlyPremiumById(id);
+      if (!isPremium) {
+        throw new BadRequestException(
+          "Homepage Hero Feature is available to Premium users only.",
+        );
+      }
+    }
+    const update = { $set: { featuredInMarketing } };
+    const influencer = await this.influencerModel
+      .findByIdAndUpdate(id, update, { new: true })
+      .select("_id");
+    if (influencer) return { featuredInMarketing };
+    const brand = await this.brandModel
+      .findByIdAndUpdate(id, update, { new: true })
+      .select("_id");
+    if (brand) return { featuredInMarketing };
+    const photographer = await this.photographerModel
+      .findByIdAndUpdate(id, update, { new: true })
+      .select("_id");
+    if (photographer) return { featuredInMarketing };
+    throw new NotFoundException("User not found");
+  }
+
+  /** Looks up isPremium/premiumEnd across all three roles for a given id. */
+  private async isCurrentlyPremiumById(id: string): Promise<boolean> {
+    const influencer = await this.influencerModel
+      .findById(id)
+      .select("isPremium premiumEnd")
+      .lean();
+    if (influencer) return this.isCurrentlyPremium(influencer);
+    const brand = await this.brandModel
+      .findById(id)
+      .select("isPremium premiumEnd")
+      .lean();
+    if (brand) return this.isCurrentlyPremium(brand);
+    const photographer = await this.photographerModel
+      .findById(id)
+      .select("isPremium premiumEnd")
+      .lean();
+    if (photographer) return this.isCurrentlyPremium(photographer);
+    return false;
+  }
+
+  /** Current profileVisibility — used by Settings/registration/edit-profile "Privacy & Visibility" controls. */
+  async getProfileVisibility(id: string): Promise<{
+    profileVisibility: "PUBLIC" | "MEMBERS_ONLY" | "PRIVATE";
+    /** False for pre-existing accounts that never explicitly chose — the
+     * PUBLIC value above is a display default, not a recorded preference.
+     * Frontend uses this to decide whether to show the "who can view your
+     * profile?" prompt at login. */
+    isSet: boolean;
+  }> {
+    // .lean() is essential here — a hydrated Mongoose document would apply
+    // the schema's default: "PUBLIC" on read, making isSet always true.
+    const influencer = await this.influencerModel
+      .findById(id)
+      .select("profileVisibility")
+      .lean();
+    if (influencer)
+      return {
+        profileVisibility: (influencer as any).profileVisibility || "PUBLIC",
+        isSet: !!(influencer as any).profileVisibility,
+      };
+    const brand = await this.brandModel
+      .findById(id)
+      .select("profileVisibility")
+      .lean();
+    if (brand)
+      return {
+        profileVisibility: (brand as any).profileVisibility || "PUBLIC",
+        isSet: !!(brand as any).profileVisibility,
+      };
+    const photographer = await this.photographerModel
+      .findById(id)
+      .select("profileVisibility")
+      .lean();
+    if (photographer)
+      return {
+        profileVisibility: (photographer as any).profileVisibility || "PUBLIC",
+        isSet: !!(photographer as any).profileVisibility,
+      };
+    throw new NotFoundException("User not found");
+  }
+
+  /**
+   * Who can view this profile at all — see applySearchEligibilityFilter /
+   * applyApprovedEligibilityFilter. Setting anything other than PUBLIC also
+   * turns off Homepage Feature consent (MEMBERS_ONLY/PRIVATE profiles are
+   * never homepage-eligible regardless of featuredInMarketing).
+   */
+  async setProfileVisibility(
+    id: string,
+    profileVisibility: "PUBLIC" | "MEMBERS_ONLY" | "PRIVATE",
+  ) {
+    const update: any = { profileVisibility };
+    if (profileVisibility !== "PUBLIC") {
+      update.featuredInMarketing = false;
+    }
+    const influencer = await this.influencerModel
+      .findByIdAndUpdate(id, { $set: update }, { new: true })
+      .select("_id");
+    if (influencer) return update;
+    const brand = await this.brandModel
+      .findByIdAndUpdate(id, { $set: update }, { new: true })
+      .select("_id");
+    if (brand) return update;
+    const photographer = await this.photographerModel
+      .findByIdAndUpdate(id, { $set: update }, { new: true })
+      .select("_id");
+    if (photographer) return update;
+    throw new NotFoundException("User not found");
+  }
+
+  /**
+   * Self-service "please call me to verify my mobile" ask, for accounts in
+   * manual (non-OTP) verification. Just timestamps the request — an admin
+   * reads it off the Admin Users table and calls; no automated dialing.
+   */
+  async requestMobileCallback(id: string) {
+    const update = { mobileCallbackRequestedAt: new Date() };
+    const influencer = await this.influencerModel
+      .findByIdAndUpdate(id, { $set: update }, { new: true })
+      .select("_id");
+    if (influencer) return update;
+    const brand = await this.brandModel
+      .findByIdAndUpdate(id, { $set: update }, { new: true })
+      .select("_id");
+    if (brand) return update;
+    const photographer = await this.photographerModel
+      .findByIdAndUpdate(id, { $set: update }, { new: true })
+      .select("_id");
+    if (photographer) return update;
+    throw new NotFoundException("User not found");
   }
 
   /**
@@ -594,13 +1605,16 @@ export class UsersService {
   async getBrandByName(brandName: string, viewerId?: string | null) {
     const user: any = await this.findBrandByNameOrSlug(brandName);
     if (!user) return null;
+    if (await this.hasOpenPublicProfileBlock(user._id, "Brand")) return null;
     const allowAccess = await this.canViewBrandSocialMedia(user, viewerId);
     const isPremium = this.isCurrentlyPremium(user);
+    const hideGallery = await this.hasOpenGalleryBlock(user._id, "Brand");
     const {
       _id,
       brandName: name,
       foundedYear,
       companySize,
+      contactPersonName,
       email,
       phoneNumber,
       categories,
@@ -614,27 +1628,35 @@ export class UsersService {
       languages,
       contact,
       profileTraffic,
+      verificationStatus,
+      verifiedByTrendStarz,
     } = user;
     return {
       _id,
       name,
-      email: allowAccess ? email : undefined,
-      phoneNumber: allowAccess ? phoneNumber : undefined,
+      email: allowAccess && user?.isEmailVerified ? email : undefined,
+      phoneNumber:
+        allowAccess && user?.isMobileVerified ? phoneNumber : undefined,
       categories,
       location: location || { state: "" },
       socialMedia: allowAccess ? socialMedia : [],
       socialMediaRestricted: !allowAccess,
       isPremium,
       brandLogo,
-      products,
+      products: hideGallery ? [] : products,
       foundedYear,
       companySize,
+      contactPersonName: allowAccess
+        ? contactPersonName || undefined
+        : undefined,
       website: allowAccess ? website : undefined,
       googleMapAddress,
       promotionalPrice,
       languages,
       contact: allowAccess ? contact : undefined,
       contactRestricted: !allowAccess,
+      verificationStatus: verificationStatus || "not_submitted",
+      verifiedByTrendStarz: !!verifiedByTrendStarz,
       profileTraffic: profileTraffic || {
         impressions: 0,
         clicks: 0,
@@ -666,6 +1688,7 @@ export class UsersService {
       .findOne({
         influencerId: influencer._id,
         unlocked: true,
+        unlockType: "paid_collab_payment",
         $or: [
           { brandId: brand._id },
           { brandId: String(brand._id) },
@@ -715,8 +1738,21 @@ export class UsersService {
     if (user) {
       if (images.profileImages) {
         // ...existing code for influencer...
+        const shouldReviewPhoto = this.hasPrimaryProfileImageChanged(
+          user.profileImages,
+          images.profileImages,
+        );
         user.profileImages = images.profileImages;
         await user.save();
+        if (shouldReviewPhoto) {
+          await this.clearProfilePhotoFlags(id, "Influencer");
+        }
+        if (
+          Array.isArray(images.profileImages) &&
+          images.profileImages.length > 1
+        ) {
+          await this.clearGalleryFlags(id, "Influencer");
+        }
         return { message: "Influencer images updated", user };
       }
     }
@@ -770,6 +1806,9 @@ export class UsersService {
         user.products = images.products;
       }
       await user.save();
+      if (Array.isArray(images.products) && images.products.length > 0) {
+        await this.clearGalleryFlags(id, "Brand");
+      }
       return { message: "Brand images updated", user };
     }
     return { message: "User not found", id };
@@ -815,6 +1854,7 @@ export class UsersService {
             public_id: filename,
           });
         }
+
         dto.profileImages = uploadedImages;
       }
       // Hash password before saving
@@ -826,6 +1866,16 @@ export class UsersService {
         (dto as any).promotionalPrice = (dto as any).price;
         delete (dto as any).price;
       }
+      const mobileOtpVerified = consumeOtpVerificationToken(
+        "phone",
+        (dto as any).phoneNumber,
+        (dto as any).mobileOtpVerificationToken,
+      );
+      (dto as any).isMobileVerified = mobileOtpVerified;
+      (dto as any).mobileVerified = mobileOtpVerified;
+      (dto as any).mobileVerifiedAt = mobileOtpVerified ? new Date() : null;
+      (dto as any).mobileVerificationMethod = mobileOtpVerified ? "OTP" : "";
+      delete (dto as any).mobileOtpVerificationToken;
       (dto as any).firstRegisteredAt =
         (dto as any).firstRegisteredAt || new Date();
       const influencer = new this.influencerModel(dto);
@@ -843,6 +1893,9 @@ export class UsersService {
   }
 
   async registerBrand(dto: BrandProfileDto) {
+    if (Array.isArray(dto.categories) && dto.categories.length > 5) {
+      dto.categories = dto.categories.slice(0, 5);
+    }
     try {
       if (dto.brandLogo && dto.brandLogo.length) {
         const uploadedImages = [];
@@ -912,29 +1965,78 @@ export class UsersService {
     options?: {
       state?: string;
       district?: string;
+      creatorType?: string;
       viewerState?: string;
       viewerDistrict?: string;
+      viewerCountry?: string;
       smartLocationPriority?: boolean;
+      campaignEligible?: boolean;
+      category?: string;
+      q?: string;
     },
   ) {
     const skip = (page - 1) * limit;
     const stateFilter = String(options?.state || "").trim();
     const districtFilter = String(options?.district || "").trim();
+    const creatorTypeFilter = String(options?.creatorType || "").trim();
     const viewerState = String(options?.viewerState || "").trim();
     const viewerDistrict = String(options?.viewerDistrict || "").trim();
+    const viewerCountry = String(options?.viewerCountry || "").trim();
+    const categoryFilter = String(options?.category || "").trim();
+    const searchQuery = String(options?.q || "").trim();
+    const campaignEligibleOnly = !!options?.campaignEligible;
     const hasManualLocationFilter = !!stateFilter || !!districtFilter;
-    const useSmartLocationPriority =
-      !!options?.smartLocationPriority && !hasManualLocationFilter;
+    const viewerContext = await this.resolveViewerLocationContext(viewerId, {
+      state: viewerState,
+      district: viewerDistrict,
+      country: viewerCountry,
+      source: viewerId ? "registered_profile" : undefined,
+    });
+    const useSmartLocationPriority = !hasManualLocationFilter;
     const smartLocationMeta = {
       smartLocationPriorityApplied: useSmartLocationPriority,
       manualLocationFilterApplied: hasManualLocationFilter,
       smartLocationContext: {
-        viewerState: viewerState || null,
-        viewerDistrict: viewerDistrict || null,
+        viewerState: viewerContext.state || null,
+        viewerDistrict: viewerContext.district || null,
+        viewerCountry: viewerContext.country || null,
+        source: viewerContext.source || "none",
       },
     };
 
-    const baseFilter: any = { status: "accepted" };
+    const baseFilter: any = { status: "accepted", isDeleted: { $ne: true } };
+    const allowSocialLinks =
+      await this.plansService.canViewSocialLinks(viewerId);
+    if (campaignEligibleOnly) {
+      // Campaign invite list: must be email-verified AND admin-approved (or manually
+      // verified by admin). Profile completeness (photo, location, social tier) is
+      // NOT required — manually-verified users may still be building their profile.
+      // Use $and so the search-query $or (set below) cannot overwrite this condition.
+      baseFilter.isEmailVerified = true;
+      baseFilter.$and = [
+        ...(Array.isArray(baseFilter.$and) ? baseFilter.$and : []),
+        {
+          $or: [
+            { verifiedByTrendStarz: true },
+            { verificationStatus: "approved" },
+          ],
+        },
+      ];
+      this.applyExcludedIds(
+        baseFilter,
+        await this.campaignProfileBlockedIds("Influencer"),
+      );
+    } else {
+      applyDiscoverableProfileFilter(baseFilter, {
+        photoField: "profileImages",
+        requireSocialTier: true,
+        viewerIsAuthenticated: !!viewerId,
+      });
+      this.applyExcludedIds(
+        baseFilter,
+        await this.publicProfileBlockedIds("Influencer"),
+      );
+    }
     if (stateFilter) {
       baseFilter["location.state"] = new RegExp(
         `^${this.escapeRegex(stateFilter)}$`,
@@ -947,53 +2049,101 @@ export class UsersService {
         "i",
       );
     }
+    if (creatorTypeFilter) {
+      baseFilter.creatorTypes = new RegExp(
+        `^${this.escapeRegex(creatorTypeFilter)}$`,
+        "i",
+      );
+    }
+    if (categoryFilter) {
+      const cats = categoryFilter
+        .split(",")
+        .map((c) => c.trim())
+        .filter(Boolean);
+      baseFilter.categories =
+        cats.length === 1
+          ? new RegExp(`^${this.escapeRegex(cats[0])}$`, "i")
+          : {
+              $in: cats.map((c) => new RegExp(`^${this.escapeRegex(c)}$`, "i")),
+            };
+    }
+    if (searchQuery) {
+      const re = new RegExp(this.escapeRegex(searchQuery), "i");
+      baseFilter.$and = [
+        ...(Array.isArray(baseFilter.$and) ? baseFilter.$and : []),
+        {
+          $or: [
+            { name: re },
+            { username: re },
+            { email: re },
+            { phoneNumber: re },
+            { "location.state": re },
+            { categories: re },
+          ],
+        },
+      ];
+    }
 
     if (lite) {
       const selection =
-        "name username profileImage profileImages categories influencerCategory verificationStatus verifiedByTrendStarz location socialMedia adminTags isPremium premiumEnd promotionalPrice dateOfBirth";
-      const [rows, total] = useSmartLocationPriority
-        ? await Promise.all([
-            this.influencerModel.find(baseFilter).select(selection).lean(),
-            this.influencerModel.countDocuments(baseFilter),
+        "name username profileImage profileImages categories influencerCategory creatorTypes verificationStatus verifiedByTrendStarz location socialMedia collaborationAvailability adminTags isPremium premiumEnd promotionalPrice dateOfBirth firstRegisteredAt createdAt lastLoginAt";
+      const projection = this.selectStringToProjection(selection);
+      const [pagedRows, total] = await Promise.all([
+        this.influencerModel
+          .aggregate([
+            { $match: baseFilter },
+            ...buildSearchRankingStages(viewerContext, {
+              invitesCollection: "campaigninvites",
+              inviteMatchField: "influencerId",
+              reviewsCollection: "reviews",
+              reviewTargetType: "influencer",
+            }),
+            { $skip: skip },
+            { $limit: limit },
+            { $project: projection },
           ])
-        : await Promise.all([
-            this.influencerModel
-              .find(baseFilter)
-              .select(selection)
-              .sort({ updatedAt: -1 })
-              .skip(skip)
-              .limit(limit)
-              .lean(),
-            this.influencerModel.countDocuments(baseFilter),
-          ]);
+          .exec(),
+        this.influencerModel.countDocuments(baseFilter),
+      ]);
 
-      const rankedRows = useSmartLocationPriority
-        ? [...(rows || [])].sort((a: any, b: any) => {
-            const scoreA = this.getLocationPriorityScore(a, viewerState, viewerDistrict);
-            const scoreB = this.getLocationPriorityScore(b, viewerState, viewerDistrict);
-            if (scoreA !== scoreB) return scoreB - scoreA;
-            const followersA = this.extractTopFollowersCount(a);
-            const followersB = this.extractTopFollowersCount(b);
-            if (followersA !== followersB) return followersB - followersA;
-            return new Date(b?.updatedAt || 0).getTime() - new Date(a?.updatedAt || 0).getTime();
-          })
-        : rows || [];
+      const auditByUserId = await this.collaborationAuditSummaryMap(
+        (pagedRows || []).map((inf: any) => inf?._id),
+      );
 
-      const pagedRows = useSmartLocationPriority
-        ? rankedRows.slice(skip, skip + limit)
-        : rankedRows;
-
-      const data = (pagedRows || []).map((inf: any) => ({
-        ...inf,
-        isPremium: this.isCurrentlyPremium(inf),
-        ageRange: this.computeAgeRangeFromDob(inf?.dateOfBirth),
-        dateOfBirth: undefined,
-        gender: undefined,
-        email: undefined,
-        phoneNumber: undefined,
-        website: undefined,
-        contactRestricted: true,
-      }));
+      const data = await Promise.all(
+        (pagedRows || []).map(async (inf: any) => {
+          const hideGallery = await this.hasOpenGalleryBlock(
+            inf._id,
+            "Influencer",
+          );
+          const visibleProfileImages = this.visibleInfluencerProfileImages(
+            inf?.profileImages,
+            hideGallery,
+          );
+          const audit = auditByUserId.get(String(inf._id));
+          return {
+            ...inf,
+            profileImages: visibleProfileImages,
+            // Recompute from the live array — the stored singular field is legacy
+            // and goes stale the moment profileImages[0] changes (re-upload/recrop).
+            profileImage: visibleProfileImages[0]?.url || null,
+            isPremium: this.isCurrentlyPremium(inf),
+            ageRange: this.computeAgeRangeFromDob(inf?.dateOfBirth),
+            socialMedia: allowSocialLinks ? inf?.socialMedia || [] : [],
+            socialMediaRestricted: !allowSocialLinks,
+            dateOfBirth: undefined,
+            gender: undefined,
+            email: undefined,
+            phoneNumber: undefined,
+            website: undefined,
+            contactRestricted: true,
+            collaborationScore: audit?.collaborationScore ?? null,
+            campaignReadiness: audit?.campaignReadiness ?? null,
+            trendstarzRecommended: audit?.trendstarzRecommended ?? false,
+            suggestedPriceRange: audit?.pricingSuggestion ?? null,
+          };
+        }),
+      );
 
       return { data, total, page, limit, ...smartLocationMeta };
     }
@@ -1041,39 +2191,41 @@ export class UsersService {
       return inviteCounts[idx] < cap;
     });
 
-    if (useSmartLocationPriority) {
-      eligible.sort((a: any, b: any) => {
-        const scoreA = this.getLocationPriorityScore(a, viewerState, viewerDistrict);
-        const scoreB = this.getLocationPriorityScore(b, viewerState, viewerDistrict);
-        if (scoreA !== scoreB) return scoreB - scoreA;
-        const followersA = this.extractTopFollowersCount(a);
-        const followersB = this.extractTopFollowersCount(b);
-        if (followersA !== followersB) return followersB - followersA;
-        return new Date(b?.updatedAt || 0).getTime() - new Date(a?.updatedAt || 0).getTime();
-      });
-    }
+    eligible.sort((a: any, b: any) => this.compareSearchRank(a, b, viewerContext));
 
     const total = eligible.length;
     const pageItems = eligible.slice(skip, skip + limit);
     const data = await Promise.all(
       pageItems.map(async (inf: any) => {
         const isPremium = this.isCurrentlyPremium(inf);
-        const allowContact = await this.canViewInfluencerContact(
-          inf,
-          viewerId,
+        const allowContact = await this.canViewInfluencerContact(inf, viewerId);
+        const hideGallery = await this.hasOpenGalleryBlock(
+          inf._id,
+          "Influencer",
         );
         const ageRange = this.computeAgeRangeFromDob(inf?.dateOfBirth);
+        const visibleProfileImages = this.visibleInfluencerProfileImages(
+          inf?.profileImages,
+          hideGallery,
+        );
         return {
           ...inf,
+          profileImages: visibleProfileImages,
+          // Recompute from the live array — the stored singular field is legacy
+          // and goes stale the moment profileImages[0] changes (re-upload/recrop).
+          profileImage: visibleProfileImages[0]?.url || null,
           isPremium,
+          socialMedia: allowSocialLinks ? inf?.socialMedia || [] : [],
+          socialMediaRestricted: !allowSocialLinks,
           ageRange,
           gender: undefined,
           verificationDocuments: undefined,
           verificationAdminNotes: undefined,
           verificationAuditLog: undefined,
           verificationDisclaimerAccepted: undefined,
-          email: allowContact ? inf.email : undefined,
-          phoneNumber: allowContact ? inf.phoneNumber : undefined,
+          email: allowContact && inf?.isEmailVerified ? inf.email : undefined,
+          phoneNumber:
+            allowContact && inf?.isMobileVerified ? inf.phoneNumber : undefined,
           website: allowContact ? inf.website : undefined,
           dateOfBirth: undefined,
           contactRestricted: !allowContact,
@@ -1091,10 +2243,7 @@ export class UsersService {
     const now = new Date();
     let age = now.getFullYear() - birth.getFullYear();
     const monthDiff = now.getMonth() - birth.getMonth();
-    if (
-      monthDiff < 0 ||
-      (monthDiff === 0 && now.getDate() < birth.getDate())
-    ) {
+    if (monthDiff < 0 || (monthDiff === 0 && now.getDate() < birth.getDate())) {
       age--;
     }
 
@@ -1103,27 +2252,6 @@ export class UsersService {
     if (age <= 34) return "25-34";
     if (age <= 44) return "35-44";
     return "45+";
-  }
-
-  private normalizeLocationValue(value: unknown): string {
-    return String(value || "").trim().toLowerCase();
-  }
-
-  private getLocationPriorityScore(
-    user: any,
-    viewerStateRaw?: string,
-    viewerDistrictRaw?: string,
-  ): number {
-    const viewerState = this.normalizeLocationValue(viewerStateRaw);
-    const viewerDistrict = this.normalizeLocationValue(viewerDistrictRaw);
-    if (!viewerState) return 0;
-
-    const userState = this.normalizeLocationValue(user?.location?.state);
-    const userDistrict = this.normalizeLocationValue(user?.location?.district);
-
-    if (viewerDistrict && userDistrict && viewerDistrict === userDistrict) return 100;
-    if (userState && viewerState === userState) return 70;
-    return 30;
   }
 
   private extractTopFollowersCount(user: any): number {
@@ -1161,11 +2289,18 @@ export class UsersService {
   async searchInfluencers(query: {
     q?: string;
     category?: string;
+    creatorType?: string;
     state?: string;
     page?: number;
     limit?: number;
   }) {
     const filter: any = { status: "accepted" };
+    // This endpoint is JwtAuthGuard-protected — caller is always logged in.
+    this.applyPublicDiscoveryEligibilityFilter(filter, true);
+    this.applyExcludedIds(
+      filter,
+      await this.publicProfileBlockedIds("Influencer"),
+    );
     if (query.q) {
       const escaped = this.escapeRegex(query.q);
       filter.$or = [
@@ -1175,6 +2310,12 @@ export class UsersService {
     }
     if (query.category) {
       filter.categories = query.category;
+    }
+    if (query.creatorType) {
+      filter.creatorTypes = new RegExp(
+        `^${this.escapeRegex(query.creatorType)}$`,
+        "i",
+      );
     }
     if (query.state) {
       filter["location.state"] = new RegExp(
@@ -1189,12 +2330,24 @@ export class UsersService {
       this.influencerModel.find(filter).lean().skip(skip).limit(limit),
       this.influencerModel.countDocuments(filter),
     ]);
-    const normalized = (data || []).map((inf: any) => ({
-      ...inf,
-      isPremium: this.isCurrentlyPremium(inf),
-      gender: undefined,
-      dateOfBirth: undefined,
-    }));
+    const normalized = await Promise.all(
+      (data || []).map(async (inf: any) => {
+        const hideGallery = await this.hasOpenGalleryBlock(
+          inf._id,
+          "Influencer",
+        );
+        return {
+          ...inf,
+          profileImages: this.visibleInfluencerProfileImages(
+            inf?.profileImages,
+            hideGallery,
+          ),
+          isPremium: this.isCurrentlyPremium(inf),
+          gender: undefined,
+          dateOfBirth: undefined,
+        };
+      }),
+    );
     return { data: normalized, total, page, limit };
   }
 
@@ -1202,8 +2355,14 @@ export class UsersService {
   async getInfluencerByUsername(username: string, viewerId?: string | null) {
     const user: any = await this.influencerModel.findOne({ username }).lean();
     if (!user) return null;
-    const allowContact = await this.canViewInfluencerContact(user, viewerId);
-    const allowGender = await this.canViewInfluencerGender(user, viewerId);
+    if (await this.hasOpenPublicProfileBlock(user._id, "Influencer"))
+      return null;
+    const [allowContact, allowGender, allowSocial] = await Promise.all([
+      this.canViewInfluencerContact(user, viewerId),
+      this.canViewInfluencerGender(user, viewerId),
+      this.plansService.canViewSocialLinks(viewerId),
+    ]);
+    const hideGallery = await this.hasOpenGalleryBlock(user._id, "Influencer");
     const isPremium = this.isCurrentlyPremium(user);
     const {
       _id,
@@ -1216,33 +2375,45 @@ export class UsersService {
       website,
       categories,
       influencerCategory,
+      creatorTypes,
       professionalStatus,
       expertiseArea,
       verificationStatus,
       verifiedByTrendStarz,
       location,
       socialMedia,
+      collaborationAvailability,
       promotionalPrice,
       profileTraffic,
     } = user;
+    const visibleProfileImages =
+      hideGallery && Array.isArray(profileImages)
+        ? profileImages.slice(0, 1)
+        : profileImages || [];
     return {
       _id,
       name,
       username: userUsername,
-      profileImage,
-      profileImages: profileImages || [],
-      email: allowContact ? email : undefined,
-      phoneNumber: allowContact ? phoneNumber : undefined,
+      // Recompute from the live array — the stored singular field is legacy
+      // and goes stale the moment profileImages[0] changes (re-upload/recrop).
+      profileImage: visibleProfileImages[0]?.url || profileImage || null,
+      profileImages: visibleProfileImages,
+      email: allowContact && user?.isEmailVerified ? email : undefined,
+      phoneNumber:
+        allowContact && user?.isMobileVerified ? phoneNumber : undefined,
       website: allowContact ? website : undefined,
       contactRestricted: !allowContact,
       categories,
       influencerCategory: influencerCategory || "",
+      creatorTypes: Array.isArray(creatorTypes) ? creatorTypes : [],
       professionalStatus: !!professionalStatus,
       expertiseArea: expertiseArea || "",
       verificationStatus: verificationStatus || "not_submitted",
       verifiedByTrendStarz: !!verifiedByTrendStarz,
       location: location || { state: "" },
-      socialMedia,
+      socialMedia: allowSocial ? socialMedia : [],
+      socialMediaRestricted: !allowSocial,
+      collaborationAvailability: collaborationAvailability || null,
       isPremium,
       gender: allowGender ? user.gender || undefined : undefined,
       promotionalPrice,
@@ -1257,8 +2428,14 @@ export class UsersService {
   async getInfluencerById(id: string, viewerId?: string | null) {
     const user: any = await this.influencerModel.findById(id).lean();
     if (!user) return null;
-    const allowContact = await this.canViewInfluencerContact(user, viewerId);
-    const allowGender = await this.canViewInfluencerGender(user, viewerId);
+    if (await this.hasOpenPublicProfileBlock(user._id, "Influencer"))
+      return null;
+    const [allowContact, allowGender, allowSocial] = await Promise.all([
+      this.canViewInfluencerContact(user, viewerId),
+      this.canViewInfluencerGender(user, viewerId),
+      this.plansService.canViewSocialLinks(viewerId),
+    ]);
+    const hideGallery = await this.hasOpenGalleryBlock(user._id, "Influencer");
     const isPremium = this.isCurrentlyPremium(user);
     const {
       _id,
@@ -1272,32 +2449,44 @@ export class UsersService {
       promotionalPrice,
       categories,
       influencerCategory,
+      creatorTypes,
       professionalStatus,
       expertiseArea,
       verificationStatus,
       verifiedByTrendStarz,
       location,
       socialMedia,
+      collaborationAvailability,
       profileTraffic,
     } = user;
+    const visibleProfileImagesById =
+      hideGallery && Array.isArray(profileImages)
+        ? profileImages.slice(0, 1)
+        : profileImages || [];
     return {
       _id,
       name,
       username,
-      profileImage,
-      profileImages: profileImages || [],
-      email: allowContact ? email : undefined,
-      phoneNumber: allowContact ? phoneNumber : undefined,
+      // Recompute from the live array — the stored singular field is legacy
+      // and goes stale the moment profileImages[0] changes (re-upload/recrop).
+      profileImage: visibleProfileImagesById[0]?.url || profileImage || null,
+      profileImages: visibleProfileImagesById,
+      email: allowContact && user?.isEmailVerified ? email : undefined,
+      phoneNumber:
+        allowContact && user?.isMobileVerified ? phoneNumber : undefined,
       website: allowContact ? website : undefined,
       contactRestricted: !allowContact,
       categories,
       influencerCategory: influencerCategory || "",
+      creatorTypes: Array.isArray(creatorTypes) ? creatorTypes : [],
       professionalStatus: !!professionalStatus,
       expertiseArea: expertiseArea || "",
       verificationStatus: verificationStatus || "not_submitted",
       verifiedByTrendStarz: !!verifiedByTrendStarz,
       location: location || { state: "" },
-      socialMedia,
+      socialMedia: allowSocial ? socialMedia : [],
+      socialMediaRestricted: !allowSocial,
+      collaborationAvailability: collaborationAvailability || null,
       isPremium,
       gender: allowGender ? user.gender || undefined : undefined,
       promotionalPrice,
@@ -1310,6 +2499,259 @@ export class UsersService {
     };
   }
 
+  async getPlatformStats() {
+    const influencerFilter: any = { status: "accepted" };
+    this.applyPublicDiscoveryEligibilityFilter(influencerFilter);
+    this.applyExcludedIds(
+      influencerFilter,
+      await this.publicProfileBlockedIds("Influencer"),
+    );
+
+    const verifiedInfluencerFilter = {
+      ...influencerFilter,
+      $or: [{ verifiedByTrendStarz: true }, { verificationStatus: "approved" }],
+    };
+
+    const photographerFilter: any = {
+      status: "accepted",
+      isDeleted: { $ne: true },
+    };
+    this.applyPublicDiscoveryEligibilityFilter(photographerFilter);
+    this.applyExcludedIds(
+      photographerFilter,
+      await this.publicProfileBlockedIds("Photographer"),
+    );
+
+    const verifiedPhotographerFilter = {
+      ...photographerFilter,
+      $or: [{ verifiedByTrendStarz: true }, { verificationStatus: "approved" }],
+    };
+
+    const brandFilter: any = { status: "accepted" };
+    this.applyBrandDiscoveryEligibilityFilter(brandFilter);
+    this.applyExcludedIds(
+      brandFilter,
+      await this.publicProfileBlockedIds("Brand"),
+    );
+
+    const verifiedBrandFilter = {
+      ...brandFilter,
+      $or: [{ verifiedByTrendStarz: true }, { verificationStatus: "approved" }],
+    };
+
+    const [
+      totalInfluencers,
+      verifiedInfluencers,
+      totalPhotographers,
+      verifiedPhotographers,
+      totalBrands,
+      verifiedBrands,
+      totalCampaigns,
+    ] = await Promise.all([
+      this.influencerModel.countDocuments(influencerFilter),
+      this.influencerModel.countDocuments(verifiedInfluencerFilter),
+      this.photographerModel.countDocuments(photographerFilter),
+      this.photographerModel.countDocuments(verifiedPhotographerFilter),
+      this.brandModel.countDocuments(brandFilter),
+      this.brandModel.countDocuments(verifiedBrandFilter),
+      this.campaignModel.countDocuments({}),
+    ]);
+
+    return {
+      totalInfluencers,
+      verifiedInfluencers,
+      totalPhotographers,
+      verifiedPhotographers,
+      totalBrands,
+      verifiedBrands,
+      totalCampaigns,
+    };
+  }
+
+  private static readonly FEATURED_INFLUENCER_FIELDS =
+    "name username profileImage profileImages categories influencerCategory creatorTypes professionalStatus isPremium promotionalPrice verificationStatus verifiedByTrendStarz location socialMedia";
+
+  private static readonly FEATURED_BRAND_FIELDS =
+    "brandName brandUsername brandLogo categories isPremium promotionalPrice verificationStatus verifiedByTrendStarz location adminTags";
+
+  /** Eligible-only, weighted-score selection for the Welcome Page "Featured Influencers" section. */
+  async getFeaturedInfluencers(
+    limit = 8,
+    viewerIsAuthenticated = false,
+    viewerLocation?: ViewerLocationContext,
+  ) {
+    const filter: any = {};
+    applyApprovedEligibilityFilter(filter, {
+      photoField: "profileImages",
+      requireSocialTier: true,
+      viewerIsAuthenticated,
+      // Featured creators are available when the profile is Public, approved,
+      // complete, and Premium is active.
+      requirePremium: true,
+    });
+    this.applyExcludedIds(
+      filter,
+      await this.publicProfileBlockedIds("Influencer"),
+    );
+    return fetchFeaturedProfilesByScore(
+      this.influencerModel,
+      filter,
+      UsersService.FEATURED_INFLUENCER_FIELDS,
+      limit,
+      {
+        from: "campaigninvites",
+        matchField: "influencerId",
+        statusIn: [
+          "accepted",
+          "payment_confirmed",
+          "working",
+          "submitted",
+          "completed",
+        ],
+        dateField: "updatedAt",
+        windowDays: 30,
+      },
+      viewerLocation,
+    );
+  }
+
+  /** Eligible-only, weighted-score selection for the Welcome Page "Featured Brands" section. */
+  async getFeaturedBrands(
+    limit = 6,
+    viewerIsAuthenticated = false,
+    viewerLocation?: ViewerLocationContext,
+  ) {
+    const filter: any = {};
+    applyApprovedEligibilityFilter(filter, {
+      photoField: "brandLogo",
+      requireSocialTier: false,
+      viewerIsAuthenticated,
+      requirePremium: true,
+    });
+    this.applyExcludedIds(filter, await this.publicProfileBlockedIds("Brand"));
+    return fetchFeaturedProfilesByScore(
+      this.brandModel,
+      filter,
+      UsersService.FEATURED_BRAND_FIELDS,
+      limit,
+      {
+        from: "campaigns",
+        matchField: "brandId",
+        statusIn: ["active", "completed"],
+        dateField: "createdAt",
+        windowDays: 60,
+      },
+      viewerLocation,
+    );
+  }
+
+  /**
+   * Homepage hero banner + hero slider images — one eligible, EXPLICITLY
+   * opted-in (featuredInMarketing: true) influencer + brand image. Same
+   * "Welcome" eligibility bar as the Featured sections, plus consent — being
+   * premium/verified is not sufficient to show someone's photo publicly.
+   * See setMarketingConsent for the opt-in toggle.
+   */
+  async getHeroShowcaseInfluencerAndBrandImages(
+    viewerLocation?: ViewerLocationContext,
+  ): Promise<{
+    influencer: { url: string; alt: string } | null;
+    brand: { url: string; alt: string } | null;
+  }> {
+    const cacheKey = [
+      normalizeLocationValue(viewerLocation?.district),
+      normalizeLocationValue(viewerLocation?.state),
+      normalizeLocationValue(viewerLocation?.country),
+    ].join("|");
+    const cached = this.heroShowcaseCache.get(cacheKey);
+    if (cached && cached.expiresAt > Date.now()) {
+      return cached.value;
+    }
+
+    const influencerFilter: any = { featuredInMarketing: true };
+    applyApprovedEligibilityFilter(influencerFilter, {
+      photoField: "profileImages",
+      requireSocialTier: true,
+      requirePremium: true,
+    });
+    this.applyExcludedIds(
+      influencerFilter,
+      await this.publicProfileBlockedIds("Influencer"),
+    );
+
+    const brandFilter: any = { featuredInMarketing: true };
+    applyApprovedEligibilityFilter(brandFilter, {
+      photoField: "brandLogo",
+      requireSocialTier: false,
+      requirePremium: true,
+    });
+    this.applyExcludedIds(
+      brandFilter,
+      await this.publicProfileBlockedIds("Brand"),
+    );
+
+    const [influencers, brands] = await Promise.all([
+      fetchFeaturedProfilesByScore(
+        this.influencerModel,
+        influencerFilter,
+        "name profileImages",
+        1,
+        {
+          from: "campaigninvites",
+          matchField: "influencerId",
+          statusIn: [
+            "accepted",
+            "payment_confirmed",
+            "working",
+            "submitted",
+            "completed",
+          ],
+          dateField: "updatedAt",
+          windowDays: 30,
+        },
+        viewerLocation,
+      ),
+      fetchFeaturedProfilesByScore(
+        this.brandModel,
+        brandFilter,
+        "brandName brandLogo",
+        1,
+        {
+          from: "campaigns",
+          matchField: "brandId",
+          statusIn: ["active", "completed"],
+          dateField: "createdAt",
+          windowDays: 60,
+        },
+        viewerLocation,
+      ),
+    ]);
+
+    const influencer = influencers[0] as any;
+    const brand = brands[0] as any;
+
+    const value = {
+      influencer: influencer?.profileImages?.[0]?.url
+        ? {
+            url: withCloudinaryHeroTransform(influencer.profileImages[0].url),
+            alt: `${influencer.name || "Influencer"} on TrendStarz`,
+          }
+        : null,
+      brand: brand?.brandLogo?.[0]?.url
+        ? {
+            url: withCloudinaryHeroTransform(brand.brandLogo[0].url),
+            alt: `${brand.brandName || "Brand"} on TrendStarz`,
+          }
+        : null,
+    };
+
+    this.heroShowcaseCache.set(cacheKey, {
+      value,
+      expiresAt: Date.now() + UsersService.HERO_SHOWCASE_CACHE_TTL_MS,
+    });
+    return value;
+  }
+
   async getBrands(
     page = 1,
     limit = 20,
@@ -1317,14 +2759,16 @@ export class UsersService {
     lite = false,
   ) {
     const skip = (page - 1) * limit;
+    const filter: any = { status: "accepted" };
+    this.applyBrandDiscoveryEligibilityFilter(filter, !!viewerId);
+    this.applyExcludedIds(filter, await this.publicProfileBlockedIds("Brand"));
 
     if (lite) {
-      const filter = { status: "accepted" };
       const [rows, total] = await Promise.all([
         this.brandModel
           .find(filter)
           .select(
-            "brandName brandLogo categories location isPremium premiumEnd promotionalPrice adminTags socialMedia",
+            "brandName brandLogo categories location isPremium premiumEnd promotionalPrice adminTags socialMedia verifiedByTrendStarz verificationStatus",
           )
           .sort({ updatedAt: -1 })
           .skip(skip)
@@ -1337,7 +2781,9 @@ export class UsersService {
         ...brand,
         isPremium: this.isCurrentlyPremium(brand),
         socialMedia: Array.isArray(brand?.socialMedia)
-          ? brand.socialMedia.map((sm: any) => ({ platform: sm?.platform || "" }))
+          ? brand.socialMedia.map((sm: any) => ({
+              platform: sm?.platform || "",
+            }))
           : [],
         socialMediaRestricted: true,
         email: undefined,
@@ -1349,24 +2795,22 @@ export class UsersService {
       return { data, total, page, limit };
     }
     const [data, total] = await Promise.all([
-      this.brandModel
-        .find({ status: "accepted" })
-        .lean()
-        .skip(skip)
-        .limit(limit),
-      this.brandModel.countDocuments({ status: "accepted" }),
+      this.brandModel.find(filter).lean().skip(skip).limit(limit),
+      this.brandModel.countDocuments(filter),
     ]);
     const filtered = await Promise.all(
       (data || []).map(async (brand: any) => {
         const { foundedYear, companySize, ...brandForList } = brand;
         const isPremium = this.isCurrentlyPremium(brand);
-        const allow = await this.canViewBrandSocialMedia(
-          brand,
-          viewerId,
-        );
+        const hideGallery = await this.hasOpenGalleryBlock(brand._id, "Brand");
+        const visibleBrand = {
+          ...brandForList,
+          products: hideGallery ? [] : brandForList.products,
+        };
+        const allow = await this.canViewBrandSocialMedia(brand, viewerId);
         if (!allow) {
           return {
-            ...brandForList,
+            ...visibleBrand,
             isPremium,
             socialMedia: [],
             socialMediaRestricted: true,
@@ -1377,8 +2821,10 @@ export class UsersService {
           };
         }
         return {
-          ...brandForList,
+          ...visibleBrand,
           isPremium,
+          email: brand?.isEmailVerified ? brand?.email : undefined,
+          phoneNumber: brand?.isMobileVerified ? brand?.phoneNumber : undefined,
           socialMediaRestricted: false,
           contactRestricted: false,
         };
@@ -1388,84 +2834,89 @@ export class UsersService {
   }
 
   async acceptUser(id: string) {
-    const influencer = await this.influencerModel.findByIdAndUpdate(
-      id,
-      { status: "accepted" },
-      { new: true },
-    );
+    const update = { status: "accepted", declineReason: "" };
+    const influencer = await this.influencerModel.findByIdAndUpdate(id, update, {
+      new: true,
+    });
     if (influencer) return { message: "User accepted", user: influencer };
-    const brand = await this.brandModel.findByIdAndUpdate(
-      id,
-      { status: "accepted" },
-      { new: true },
-    );
+    const brand = await this.brandModel.findByIdAndUpdate(id, update, {
+      new: true,
+    });
     if (brand) return { message: "User accepted", user: brand };
     const photographer = await this.photographerModel.findByIdAndUpdate(
       id,
-      { status: "accepted" },
+      update,
       { new: true },
     );
-    if (photographer)
-      return { message: "User accepted", user: photographer };
+    if (photographer) return { message: "User accepted", user: photographer };
     return { message: "User not found", id };
   }
 
-  async declineUser(id: string) {
-    const influencer = await this.influencerModel.findByIdAndUpdate(
-      id,
-      { status: "declined" },
-      { new: true },
-    );
+  async declineUser(id: string, reason?: string) {
+    const update = { status: "declined", declineReason: String(reason || "").trim() };
+    const influencer = await this.influencerModel.findByIdAndUpdate(id, update, {
+      new: true,
+    });
     if (influencer) return { message: "User declined", user: influencer };
-    const brand = await this.brandModel.findByIdAndUpdate(
-      id,
-      { status: "declined" },
-      { new: true },
-    );
+    const brand = await this.brandModel.findByIdAndUpdate(id, update, {
+      new: true,
+    });
     if (brand) return { message: "User declined", user: brand };
     const photographer = await this.photographerModel.findByIdAndUpdate(
       id,
-      { status: "declined" },
+      update,
       { new: true },
     );
-    if (photographer)
-      return { message: "User declined", user: photographer };
+    if (photographer) return { message: "User declined", user: photographer };
     return { message: "User not found", id };
   }
 
   async restoreUser(id: string) {
     const influencer = await this.influencerModel.findByIdAndUpdate(
       id,
-      { status: "pending", isDeleted: false, deletedAt: null },
+      { status: "pending", isDeleted: false, deletedAt: null, declineReason: "" },
       { new: true },
     );
-    if (influencer) return { message: "User restored", user: influencer };
+    if (influencer) {
+      invalidateAccountStatusCache(id);
+      return { message: "User restored", user: influencer };
+    }
     const brand = await this.brandModel.findByIdAndUpdate(
       id,
-      { status: "pending", isDeleted: false, deletedAt: null },
+      { status: "pending", isDeleted: false, deletedAt: null, declineReason: "" },
       { new: true },
     );
-    if (brand) return { message: "User restored", user: brand };
+    if (brand) {
+      invalidateAccountStatusCache(id);
+      return { message: "User restored", user: brand };
+    }
     const photographer = await this.photographerModel.findByIdAndUpdate(
       id,
-      { status: "pending", isDeleted: false, deletedAt: null },
+      { status: "pending", isDeleted: false, deletedAt: null, declineReason: "" },
       { new: true },
     );
-    if (photographer)
+    if (photographer) {
+      invalidateAccountStatusCache(id);
       return { message: "User restored", user: photographer };
+    }
     return { message: "User not found", id };
   }
 
-  async deleteUser(id: string) {
+  async deleteUser(id: string, status: "deleted" | "deletion_pending" = "deleted") {
     // Try influencer first
     let user: any = await this.influencerModel.findById(id);
+    let userType: "Influencer" | "Brand" | "Photographer" | null = user
+      ? "Influencer"
+      : null;
     if (!user) {
       user = await this.brandModel.findById(id);
+      userType = user ? "Brand" : null;
     }
     if (!user) {
       user = await this.photographerModel.findById(id);
+      userType = user ? "Photographer" : null;
     }
-    if (!user) return { message: "User not found", id };
+    if (!user || !userType) return { message: "User not found", id };
 
     // --- SNAPSHOT LOGIC: Only if user has at least one payment, and only if deleting (soft delete) ---
     const paymentModel =
@@ -1492,22 +2943,137 @@ export class UsersService {
       }
     }
 
-    const publicIds = this.extractMediaPublicIds(user);
+    const publicIds = this.prepareSoftDeletedMediaSnapshot(user, userType);
     await this.removeStoredMedia(publicIds);
 
     // Soft delete
     user.isDeleted = true;
     user.deletedAt = new Date();
-    user.status = "deleted";
-    // Remove heavy fields
-    this.clearUserMediaFields(user);
+    user.status = status;
+    user.featuredInMarketing = false;
     await user.save();
+    invalidateAccountStatusCache(id);
 
     return {
-      message: "User soft deleted and media cleaned",
+      message:
+        "User soft deleted; profile image retained and gallery/product media cleaned",
       removedImages: publicIds.length,
     };
   }
+
+  /**
+   * Self-service "Delete Account" (Settings → Delete Account). Verifies the
+   * caller's password, then soft-deletes with status "deletion_pending" —
+   * distinct from admin's "deleted" so the account can still log back in
+   * during the grace period specifically to cancel (see JwtAuthGuard +
+   * @AllowPendingDeletion, and cancelSelfDeletion below). Hard-delete runs
+   * automatically once the grace period passes — see
+   * cleanupExpiredSelfDeletionRequests.
+   */
+  async requestSelfDeletion(id: string, password: string) {
+    let user: any = await this.influencerModel.findById(id);
+    if (!user) user = await this.brandModel.findById(id);
+    if (!user) user = await this.photographerModel.findById(id);
+    if (!user) throw new NotFoundException("User not found");
+
+    const isMatch = await bcrypt.compare(password || "", user.password);
+    if (!isMatch) throw new BadRequestException("Incorrect password");
+
+    await this.deleteUser(id, "deletion_pending");
+    return {
+      message: "Account scheduled for deletion",
+      gracePeriodDays: SELF_DELETION_GRACE_PERIOD_DAYS,
+    };
+  }
+
+  /** Cancels a pending self-deletion request — same reset as admin restoreUser. */
+  async cancelSelfDeletion(id: string) {
+    return this.restoreUser(id);
+  }
+
+  async getSelfDeletionStatus(id: string): Promise<{
+    deletionPending: boolean;
+    deletedAt: Date | null;
+    gracePeriodEndsAt: Date | null;
+  }> {
+    let user: any = await this.influencerModel
+      .findById(id)
+      .select("isDeleted status deletedAt");
+    if (!user)
+      user = await this.brandModel
+        .findById(id)
+        .select("isDeleted status deletedAt");
+    if (!user)
+      user = await this.photographerModel
+        .findById(id)
+        .select("isDeleted status deletedAt");
+    if (!user) throw new NotFoundException("User not found");
+
+    const pending = user.status === "deletion_pending";
+    const deletedAt = user.deletedAt ? new Date(user.deletedAt) : null;
+    const gracePeriodEndsAt =
+      pending && deletedAt
+        ? new Date(
+            deletedAt.getTime() +
+              SELF_DELETION_GRACE_PERIOD_DAYS * 24 * 60 * 60 * 1000,
+          )
+        : null;
+
+    return { deletionPending: pending, deletedAt, gracePeriodEndsAt };
+  }
+
+  /**
+   * Automatically anonymizes (see anonymizeUser) accounts whose self-requested
+   * deletion grace period has passed — PII and media are stripped, but the
+   * row is kept so Payment/Campaign/CampaignInvite records that reference it
+   * still resolve for reporting/audit. Admin-initiated deletions (status
+   * "deleted") are intentionally NOT touched here — those remain a manual
+   * admin action via the existing Deleted Users → Delete Permanently flow,
+   * which is a genuine hard delete for explicit GDPR/DPDP erasure requests.
+   */
+  @Cron(CronExpression.EVERY_DAY_AT_1AM)
+  async cleanupExpiredSelfDeletionRequestsCron() {
+    try {
+      const result = await this.cleanupExpiredSelfDeletionRequests();
+      if (result.deleted > 0) {
+        console.log(
+          `[cleanupExpiredSelfDeletionRequestsCron] Anonymized ${result.deleted} account(s) past their self-deletion grace period.`,
+        );
+      }
+    } catch (e) {
+      console.error("cleanupExpiredSelfDeletionRequestsCron failed:", e);
+    }
+  }
+
+  async cleanupExpiredSelfDeletionRequests(): Promise<{ deleted: number }> {
+    const cutoff = new Date(
+      Date.now() - SELF_DELETION_GRACE_PERIOD_DAYS * 24 * 60 * 60 * 1000,
+    );
+    const query = { status: "deletion_pending", deletedAt: { $lte: cutoff } };
+    const [influencers, brands, photographers] = await Promise.all([
+      this.influencerModel.find(query).select("_id").lean(),
+      this.brandModel.find(query).select("_id").lean(),
+      this.photographerModel.find(query).select("_id").lean(),
+    ]);
+    const ids = [...influencers, ...brands, ...photographers].map((d: any) =>
+      String(d._id),
+    );
+
+    let deleted = 0;
+    for (const id of ids) {
+      try {
+        await this.anonymizeUser(id);
+        deleted++;
+      } catch (e) {
+        console.error(
+          `Failed to anonymize expired self-deletion request ${id}:`,
+          e,
+        );
+      }
+    }
+    return { deleted };
+  }
+
   async setPremium(
     id: string,
     isPremium: boolean,
@@ -1531,10 +3097,12 @@ export class UsersService {
       else if (premiumDuration === "3m") end.setMonth(end.getMonth() + 3);
       else if (premiumDuration === "1y") end.setFullYear(end.getFullYear() + 1);
       update.premiumEnd = end;
+      update.premiumSource = "admin";
     } else {
       update.premiumDuration = null;
       update.premiumStart = null;
       update.premiumEnd = null;
+      update.premiumSource = null;
       try {
         await this.plansService.cancelActiveSubscriptionsForUser(id);
       } catch (e) {
@@ -1565,13 +3133,25 @@ export class UsersService {
       try {
         const proPlan =
           await this.plansService.findProPlanForUserType(userType);
-        await this.plansService.activateSubscription(
+        const subscription = await this.plansService.activateSubscription(
           String(user._id),
           userType,
           String(proPlan._id),
           premiumDuration as "1m" | "3m" | "1y",
           "admin",
         );
+        // Sync legacy premiumEnd to the subscription's exact endDate so
+        // isCurrentlyPremium() stays accurate for admin-granted access.
+        if (subscription?.endDate) {
+          const syncUpdate = { premiumEnd: subscription.endDate };
+          if (userType === "Brand") {
+            await this.brandModel.findByIdAndUpdate(id, syncUpdate);
+          } else if (userType === "Photographer") {
+            await this.photographerModel.findByIdAndUpdate(id, syncUpdate);
+          } else {
+            await this.influencerModel.findByIdAndUpdate(id, syncUpdate);
+          }
+        }
       } catch (e) {
         // Roll back legacy flags to keep user status and capabilities consistent.
         const rollback = {
@@ -1579,6 +3159,7 @@ export class UsersService {
           premiumDuration: null,
           premiumStart: null,
           premiumEnd: null,
+          premiumSource: null,
         };
         if (userType === "Brand") {
           await this.brandModel.findByIdAndUpdate(id, rollback);
@@ -1614,6 +3195,7 @@ export class UsersService {
     else if (premiumDuration === "3m") end.setMonth(end.getMonth() + 3);
     else if (premiumDuration === "1y") end.setFullYear(end.getFullYear() + 1);
     update.premiumEnd = end;
+    update.premiumSource = "payment";
     // Try influencer first, then brand
     const influencer = await this.influencerModel.findByIdAndUpdate(
       userId,
@@ -1661,6 +3243,7 @@ export class UsersService {
       location: user.location || { state: "" },
       languages: user.languages || [],
       categories: user.categories || [],
+      creatorTypes: user.creatorTypes || [],
       influencerCategory: user.influencerCategory || "",
       professionalStatus: !!user.professionalStatus,
       expertiseArea: user.expertiseArea || "",
@@ -1677,6 +3260,10 @@ export class UsersService {
       googleMapAddress: user.googleMapAddress || "",
       profileImages: user.profileImages || [],
       socialMedia: user.socialMedia || [],
+      adminSocialNotifications: (user.adminSocialNotifications || []).filter(
+        (n: any) => !n.seen,
+      ),
+      collaborationAvailability: user.collaborationAvailability || null,
       contact: user.contact || { whatsapp: false, email: false, call: false },
       isPremium,
       premiumDuration: user.premiumDuration || null,
@@ -1684,6 +3271,7 @@ export class UsersService {
       premiumEnd: user.premiumEnd || null,
       firstRegisteredAt: user.firstRegisteredAt || user.createdAt || null,
       lastLoginAt: user.lastLoginAt || null,
+      lastOpenedAt: user.lastOpenedAt || null,
       promotionalPrice: user.promotionalPrice,
       payout: user.payout || {
         upiId: "",
@@ -1693,6 +3281,18 @@ export class UsersService {
       isEmailVerified: user.isEmailVerified || false,
       isMobileVerified: user.isMobileVerified || false,
     };
+  }
+
+  async dismissAdminSocialNotifications(
+    userId: string,
+    action?: "confirmed" | "cancelled",
+  ): Promise<void> {
+    const set: any = { "adminSocialNotifications.$[].seen": true };
+    if (action === "confirmed" || action === "cancelled") {
+      set["adminSocialNotifications.$[].userAction"] = action;
+      set["adminSocialNotifications.$[].respondedAt"] = new Date();
+    }
+    await this.influencerModel.updateOne({ _id: userId }, { $set: set });
   }
 
   async getBrandProfileById(userId: string) {
@@ -1723,6 +3323,7 @@ export class UsersService {
     return {
       _id: user._id?.toString() || user.id?.toString() || "",
       brandName: user.brandName,
+      description: user.description || "",
       contactPersonName: user.contactPersonName || "",
       foundedYear: user.foundedYear || null,
       companySize: user.companySize || "",
@@ -1749,13 +3350,18 @@ export class UsersService {
       premiumEnd: user.premiumEnd || null,
       firstRegisteredAt: user.firstRegisteredAt || user.createdAt || null,
       lastLoginAt: user.lastLoginAt || null,
+      lastOpenedAt: user.lastOpenedAt || null,
       isEmailVerified: user.isEmailVerified || false,
       isMobileVerified: user.isMobileVerified || false,
       planCapabilities,
     };
   }
 
-  async updateInfluencerProfile(userId: string, update: any) {
+  async updateInfluencerProfile(
+    userId: string,
+    update: any,
+    localAuthBypass = false,
+  ) {
     if (update.password) delete update.password;
 
     // Cleanup old images if profileImages is being replaced
@@ -1799,27 +3405,114 @@ export class UsersService {
       "languages",
       "categories",
       "influencerCategory",
+      "creatorTypes",
       "professionalStatus",
       "expertiseArea",
       "verificationDocuments",
       "verificationDisclaimerAccepted",
       "profileImages",
       "socialMedia",
+      "collaborationAvailability",
       "contact",
       "promotionalPrice",
     ];
     const updateData: any = {};
     for (const key of allowedFields) {
+      if (key === "collaborationAvailability") {
+        if (update[key] !== undefined) {
+          updateData.collaborationAvailability =
+            normalizeCollaborationAvailability(update[key], "influencer");
+        }
+        continue;
+      }
+      if (key === "categories") {
+        if (update[key] !== undefined) {
+          updateData.categories = normalizeSelectionList(
+            update[key],
+            PROFILE_SELECTION_LIMITS.influencer.categories,
+          );
+        }
+        continue;
+      }
+      if (key === "creatorTypes") {
+        if (update[key] !== undefined) {
+          updateData.creatorTypes = normalizeSelectionList(
+            update[key],
+            PROFILE_SELECTION_LIMITS.influencer.creatorTypes,
+          );
+        }
+        continue;
+      }
+      if (key === "socialMedia") {
+        if (update[key] !== undefined) {
+          updateData.socialMedia = normalizeSocialMediaList(update[key]);
+        }
+        continue;
+      }
       if (update[key] !== undefined) updateData[key] = update[key];
     }
     if (update.payout !== undefined) {
       updateData["payout.upiId"] = String(update?.payout?.upiId || "").trim();
       updateData["payout.mobile"] = String(update?.payout?.mobile || "").trim();
-      updateData["payout.accountHolderName"] = String(update?.payout?.accountHolderName || "").trim();
+      updateData["payout.accountHolderName"] = String(
+        update?.payout?.accountHolderName || "",
+      ).trim();
     }
     // NOTE: isPremium is intentionally excluded — it is only set via upgradeSelfPremium or admin setPremium
     const userDoc: any = await this.influencerModel.findById(userId);
     if (!userDoc) return { message: "Influencer not found", userId };
+    const shouldReviewPhoto = Object.prototype.hasOwnProperty.call(
+      updateData,
+      "profileImages",
+    )
+      ? this.hasPrimaryProfileImageChanged(
+          userDoc.profileImages,
+          updateData.profileImages,
+        )
+      : false;
+    const shouldClearGallery = Object.prototype.hasOwnProperty.call(
+      updateData,
+      "profileImages",
+    )
+      ? Array.isArray(updateData.profileImages) &&
+        updateData.profileImages.length > 1
+      : false;
+
+    if (Object.prototype.hasOwnProperty.call(updateData, "phoneNumber")) {
+      const existingPhone = this.normalizePhone(userDoc.phoneNumber);
+      const incomingPhone = this.normalizePhone(updateData.phoneNumber);
+      // Verified numbers can be changed, but verification doesn't carry over —
+      // the new number must be re-verified (manual call, or OTP if enabled).
+      if (userDoc.isMobileVerified && existingPhone !== incomingPhone) {
+        userDoc.set("previousVerifiedMobile", existingPhone);
+        userDoc.set("isMobileVerified", false);
+        userDoc.set("mobileVerified", false);
+        userDoc.set("mobileVerifiedAt", null);
+        userDoc.set("mobileVerificationDate", null);
+        userDoc.set("mobileVerificationMethod", "");
+        userDoc.set("mobileVerifiedBy", "");
+      } else if (existingPhone !== incomingPhone) {
+        userDoc.set("isMobileVerified", false);
+      }
+    }
+
+    if (Object.prototype.hasOwnProperty.call(updateData, "email")) {
+      const existingEmail = this.normalizeEmail(userDoc.email);
+      const incomingEmail = this.normalizeEmail(updateData.email);
+      if (existingEmail !== incomingEmail) {
+        if (userDoc.isEmailVerified) {
+          userDoc.set("previousVerifiedEmail", existingEmail);
+        }
+        if (localAuthBypass) {
+          // Local dev convenience: mirrors the registration/login bypass —
+          // no real email provider locally, so trust the change immediately.
+          userDoc.set("isEmailVerified", true);
+          userDoc.set("emailVerifiedAt", new Date());
+        } else {
+          userDoc.set("isEmailVerified", false);
+        }
+      }
+    }
 
     for (const [key, value] of Object.entries(updateData)) {
       userDoc.set(key, value);
@@ -1834,7 +3527,9 @@ export class UsersService {
               public_id: String(doc.public_id),
               originalName: String(doc.originalName || ""),
               mimeType: String(doc.mimeType || ""),
-              uploadedAt: doc.uploadedAt ? new Date(doc.uploadedAt) : new Date(),
+              uploadedAt: doc.uploadedAt
+                ? new Date(doc.uploadedAt)
+                : new Date(),
             }))
         : [];
 
@@ -1869,9 +3564,26 @@ export class UsersService {
     }
 
     const updated = await userDoc.save();
+    if (shouldReviewPhoto) {
+      await this.clearProfilePhotoFlags(userId, "Influencer");
+    }
+    if (shouldClearGallery) {
+      await this.clearGalleryFlags(userId, "Influencer");
+    }
+    if (updateData.socialMedia) {
+      await this.autoVerifyTierIfFixed(
+        userId,
+        "Influencer",
+        updateData.socialMedia,
+      );
+    }
     return { message: "Profile updated", user: updated };
   }
-  async updateBrandProfile(userId: string, update: any) {
+  async updateBrandProfile(
+    userId: string,
+    update: any,
+    localAuthBypass = false,
+  ) {
     if (update.password) delete update.password;
 
     // Cleanup old brandLogo images if replaced
@@ -1932,8 +3644,13 @@ export class UsersService {
       }
     }
 
+    if (Array.isArray(update.categories) && update.categories.length > 5) {
+      update.categories = update.categories.slice(0, 5);
+    }
+
     const allowedFields = [
       "brandName",
+      "description",
       "contactPersonName",
       "foundedYear",
       "companySize",
@@ -1956,17 +3673,71 @@ export class UsersService {
     ];
     const updateData: any = {};
     for (const key of allowedFields) {
+      if (key === "socialMedia") {
+        if (update[key] !== undefined) {
+          updateData.socialMedia = normalizeSocialMediaList(update[key]);
+        }
+        continue;
+      }
       if (update[key] !== undefined) updateData[key] = update[key];
     }
+
+    const existingBrand: any = await this.brandModel
+      .findById(userId)
+      .select("phoneNumber email isMobileVerified isEmailVerified")
+      .lean();
+    if (!existingBrand) return { message: "Brand not found", userId };
+
+    if (Object.prototype.hasOwnProperty.call(updateData, "phoneNumber")) {
+      const existingPhone = this.normalizePhone(existingBrand.phoneNumber);
+      const incomingPhone = this.normalizePhone(updateData.phoneNumber);
+      // Verified numbers can be changed, but verification doesn't carry over —
+      // the new number must be re-verified (manual call, or OTP if enabled).
+      if (existingBrand.isMobileVerified && existingPhone !== incomingPhone) {
+        updateData.previousVerifiedMobile = existingPhone;
+        updateData.isMobileVerified = false;
+        updateData.mobileVerified = false;
+        updateData.mobileVerifiedAt = null;
+        updateData.mobileVerificationDate = null;
+        updateData.mobileVerificationMethod = "";
+        updateData.mobileVerifiedBy = "";
+      } else if (existingPhone !== incomingPhone) {
+        updateData.isMobileVerified = false;
+      }
+    }
+
+    if (Object.prototype.hasOwnProperty.call(updateData, "email")) {
+      const existingEmail = this.normalizeEmail(existingBrand.email);
+      const incomingEmail = this.normalizeEmail(updateData.email);
+      if (existingEmail !== incomingEmail) {
+        if (existingBrand.isEmailVerified) {
+          updateData.previousVerifiedEmail = existingEmail;
+        }
+        if (localAuthBypass) {
+          // Local dev convenience: mirrors the registration/login bypass —
+          // no real email provider locally, so trust the change immediately.
+          updateData.isEmailVerified = true;
+          updateData.emailVerifiedAt = new Date();
+        } else {
+          updateData.isEmailVerified = false;
+        }
+      }
+    }
+
     // Remove price if present
     if ("price" in updateData) delete updateData.price;
     // NOTE: isPremium is intentionally excluded — it is only set via upgradeSelfPremium or admin setPremium
+    const shouldClearBrandGallery =
+      Array.isArray(updateData.products) && updateData.products.length > 0;
     const updated = await this.brandModel.findByIdAndUpdate(
       userId,
       updateData,
       { new: true },
     );
     if (!updated) return { message: "Brand not found", userId };
+    if (shouldClearBrandGallery) {
+      await this.clearGalleryFlags(userId, "Brand");
+    }
     return { message: "Profile updated", user: updated };
   }
 }

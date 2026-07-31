@@ -196,8 +196,38 @@ export class PaymentController {
   }
 
   /**
+   * Mark an approved premium payment as refunded (Admin only)
+   * PATCH /payment/:id/refund
+   */
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Patch(":id/refund")
+  async refundPayment(
+    @Param("id") paymentId: string,
+    @Body() body: { reason?: string },
+    @Req() req: any,
+  ) {
+    const adminId = req.user?.userId;
+    if (!adminId) throw new BadRequestException("Not authenticated");
+    return this.paymentService.refundPayment(
+      paymentId,
+      adminId,
+      body.reason || "Refund marked by admin",
+    );
+  }
+
+  /**
+   * Premium payment summary for admin cards
+   * GET /payment/summary
+   */
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Get("summary")
+  async getAdminSummary() {
+    return this.paymentService.getAdminSummary();
+  }
+
+  /**
    * Get payments by status (Admin only)
-   * GET /payment/by-status?status=approved|rejected
+   * GET /payment/by-status?status=approved|rejected|pending|refunded
    */
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Get("by-status")
@@ -206,11 +236,11 @@ export class PaymentController {
     @Query("page") page: string = "1",
     @Query("limit") limit: string = "50",
   ) {
-    if (!status || !["approved", "rejected", "pending"].includes(status)) {
+    if (!status || !["approved", "rejected", "pending", "refunded"].includes(status)) {
       throw new BadRequestException("Invalid status");
     }
     return this.paymentService.getPaymentsByStatus(
-      status as "approved" | "rejected" | "pending",
+      status as "approved" | "rejected" | "pending" | "refunded",
       parseInt(page),
       parseInt(limit),
     );

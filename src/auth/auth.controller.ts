@@ -22,8 +22,10 @@ import * as path from "path";
 import { randomUUID } from "crypto";
 import { AuthService } from "./auth.service";
 import { CloudinaryService } from "../cloudinary.service";
+import { CloudinaryFolders } from "../cloudinary-folders";
 import { JwtAuthGuard } from "./jwt-auth.guard";
 import { Throttle } from "@nestjs/throttler";
+import { isLocalAuthBypassRequest } from "../utils/local-auth-bypass.util";
 import {
   LoginDto,
   ForgotPasswordDto,
@@ -32,6 +34,11 @@ import {
   ChangePasswordDto,
 } from "./dto/auth.dto";
 
+// Allows slash-delimited entity-scoped paths (e.g. "influencers/_pending/profile",
+// "brands/64f.../logo") while structurally blocking path traversal — "." isn't
+// in the allowed character class, so ".." segments can't be constructed.
+const CLOUDINARY_FOLDER_PATTERN = /^[a-zA-Z0-9_-]+(\/[a-zA-Z0-9_-]+)*$/;
+
 @Controller("auth")
 export class AuthController {
   constructor(
@@ -39,8 +46,15 @@ export class AuthController {
     private readonly cloudinaryService: CloudinaryService,
   ) {}
 
-  private resolveFrontendBase(_host?: string, _req?: any) {
-    return (process.env.FRONTEND_URL || "https://www.trendstarz.in").replace(/\/$/, "");
+  private resolveFrontendBase() {
+    return (process.env.FRONTEND_URL || "https://www.trendstarz.in").replace(
+      /\/$/,
+      "",
+    );
+  }
+
+  private isLocalAuthBypassRequest(req: any): boolean {
+    return isLocalAuthBypassRequest(req);
   }
 
   private formatRegistrationError(err: any, fallbackMessage: string) {
@@ -73,9 +87,14 @@ export class AuthController {
   @Throttle({ default: { ttl: 60000, limit: 5 } })
   @HttpCode(200)
   @UsePipes(new ValidationPipe({ whitelist: true, transform: true }))
-  async login(@Body() body: LoginDto, @Res() res: Response) {
+  async login(@Body() body: LoginDto, @Req() req: any, @Res() res: Response) {
     try {
-      const result = await this.authService.login(body.email, body.password);
+      const result = await this.authService.login(
+        body.email,
+        body.password,
+        body.firebaseIdToken,
+        { localAuthBypass: this.isLocalAuthBypassRequest(req) },
+      );
       return res.status(200).json(result);
     } catch (err: any) {
       console.error("Auth login error:", err);
@@ -154,6 +173,17 @@ export class AuthController {
           cb(null, `${randomUUID()}${ext}`);
         },
       }),
+      fileFilter: (req, file, cb) => {
+        const allowed = ["image/jpeg", "image/jpg", "image/png", "image/webp"];
+        if (!allowed.includes(file.mimetype)) {
+          return cb(
+            new BadRequestException("Only JPG, PNG, or WebP images are allowed"),
+            false,
+          );
+        }
+        cb(null, true);
+      },
+      limits: { fileSize: 10 * 1024 * 1024 },
     }),
   )
   async uploadImage(
@@ -161,13 +191,87 @@ export class AuthController {
     @Body("folder") folder?: string,
   ) {
     const targetFolder =
-      typeof folder === "string" && /^[a-zA-Z0-9_-]+$/.test(folder)
+      typeof folder === "string" && CLOUDINARY_FOLDER_PATTERN.test(folder)
         ? folder
         : "registration_images";
 
     const uploaded = await this.cloudinaryService.uploadImage(
       file.path,
       targetFolder,
+    );
+
+    if (file?.path && fs.existsSync(file.path)) {
+      fs.unlinkSync(file.path);
+    }
+
+    return {
+      url: uploaded.secure_url || uploaded.url,
+      public_id: uploaded.public_id,
+    };
+  }
+
+  // Authenticated + email-verified-only variant, used for gallery/product
+  // uploads from the post-login profile-edit pages (registration no longer
+  // offers these — only the profile-image upload above, which stays public).
+  // Unlike upload-image, the folder is derived server-side from the caller's
+  // own identity rather than trusted from the request body.
+  @UseGuards(JwtAuthGuard)
+  @Post("upload-authenticated-image")
+  @UseInterceptors(
+    FileInterceptor("file", {
+      storage: diskStorage({
+        destination: (req: any, file: any, cb: any) => {
+          const dest = path.resolve(process.cwd(), "assets/local-images");
+          if (!fs.existsSync(dest)) {
+            fs.mkdirSync(dest, { recursive: true });
+          }
+          cb(null, dest);
+        },
+        filename: (req: any, file: any, cb: any) => {
+          const ext = path.extname(file.originalname || "") || ".jpg";
+          cb(null, `${randomUUID()}${ext}`);
+        },
+      }),
+      fileFilter: (req, file, cb) => {
+        const allowed = ["image/jpeg", "image/jpg", "image/png", "image/webp"];
+        if (!allowed.includes(file.mimetype)) {
+          return cb(
+            new BadRequestException("Only JPG, PNG, or WebP images are allowed"),
+            false,
+          );
+        }
+        cb(null, true);
+      },
+      limits: { fileSize: 10 * 1024 * 1024 },
+    }),
+  )
+  async uploadAuthenticatedImage(
+    @UploadedFile() file: Express.Multer.File,
+    @Body("type") type: string,
+    @Req() req: any,
+  ) {
+    const userId = String(req.user?.userId || "");
+    const role = String(req.user?.role || "");
+    await this.authService.assertEmailVerified(userId, role);
+
+    const folder =
+      role === "influencer" && type === "gallery"
+        ? CloudinaryFolders.influencer.gallery(userId)
+        : role === "brand" && type === "products"
+          ? CloudinaryFolders.brand.products(userId)
+          : role === "photographer" && type === "gallery"
+            ? CloudinaryFolders.photographer.gallery(userId)
+            : null;
+    if (!folder) {
+      if (file?.path && fs.existsSync(file.path)) {
+        fs.unlinkSync(file.path);
+      }
+      throw new BadRequestException("Unsupported upload type for this role.");
+    }
+
+    const uploaded = await this.cloudinaryService.uploadImage(
+      file.path,
+      folder,
     );
 
     if (file?.path && fs.existsSync(file.path)) {
@@ -209,10 +313,17 @@ export class AuthController {
       limits: { fileSize: 10 * 1024 * 1024 },
     }),
   )
-  async uploadVerification(@UploadedFile() file: Express.Multer.File) {
+  async uploadVerification(
+    @UploadedFile() file: Express.Multer.File,
+    @Body("folder") folder?: string,
+  ) {
+    const targetFolder =
+      typeof folder === "string" && CLOUDINARY_FOLDER_PATTERN.test(folder)
+        ? folder
+        : "influencer-verifications";
     const uploaded = await this.cloudinaryService.uploadFile(
       file.path,
-      "influencer-verifications",
+      targetFolder,
       "auto",
     );
 
@@ -234,13 +345,44 @@ export class AuthController {
     return this.authService.sendEmailVerificationLink(body.email);
   }
 
+  @Post("firebase/verify-contact")
+  @Throttle({ default: { ttl: 60000, limit: 10 } })
+  @HttpCode(200)
+  async verifyFirebaseContact(@Body() body: any) {
+    return this.authService.verifyFirebaseContact(body?.idToken, body?.type);
+  }
+
+  @Post("firebase/sync-email-verification")
+  @Throttle({ default: { ttl: 60000, limit: 10 } })
+  @HttpCode(200)
+  async syncFirebaseEmailVerification(@Body() body: any) {
+    return this.authService.syncFirebaseEmailVerification(body?.email);
+  }
+
+  @Post("firebase/ensure-password-reset-user")
+  @Throttle({ default: { ttl: 60000, limit: 5 } })
+  @HttpCode(200)
+  async ensureFirebasePasswordResetUser(@Body() body: any) {
+    return this.authService.ensureFirebasePasswordResetUser(body?.email);
+  }
+
+  @Post("firebase/complete-password-reset")
+  @Throttle({ default: { ttl: 60000, limit: 5 } })
+  @HttpCode(200)
+  async completeFirebasePasswordReset(@Body() body: any) {
+    return this.authService.completeFirebasePasswordReset(
+      body?.idToken,
+      body?.newPassword,
+    );
+  }
+
   @Get("verify-email")
   async verifyEmail(
     @Query("token") token: string,
     @Req() req: any,
     @Res() res: Response,
   ) {
-    const frontendBase = this.resolveFrontendBase(req?.get?.("host"), req);
+    const frontendBase = this.resolveFrontendBase();
 
     try {
       const result = await this.authService.verifyEmailByToken(token);
@@ -260,15 +402,22 @@ export class AuthController {
   async forgotPassword(@Body() body: ForgotPasswordDto, @Res() res: Response) {
     try {
       await this.authService.forgotPassword(body.email);
-      // Always return the same response — never reveal whether the email exists.
-      return res.status(200).json({
-        message: "If that email is registered, a reset link has been sent.",
-      });
     } catch (err: any) {
-      return res
-        .status(400)
-        .json({ message: err.message || "Failed to send reset email." });
+      // Log server-side but never expose the reason to the client (OWASP)
+      console.error("[forgotPassword] Unhandled error:", err?.message || err);
     }
+    // Always return the same 200 — never reveal whether the email exists or send succeeded
+    return res.status(200).json({
+      message: "If that email is registered, a reset link has been sent.",
+    });
+  }
+
+  @Get("reset-password/validate")
+  @Throttle({ default: { ttl: 60000, limit: 20 } })
+  @HttpCode(200)
+  async validateResetToken(@Query("token") token: string) {
+    const valid = await this.authService.validateResetToken(token);
+    return { valid };
   }
 
   @Post("reset-password")
@@ -312,5 +461,51 @@ export class AuthController {
         .status(400)
         .json({ message: err.message || "Failed to change password." });
     }
+  }
+
+  @Get("me/registration")
+  @UseGuards(JwtAuthGuard)
+  async getMyRegistration(@Req() req: any) {
+    const userId = req?.user?.userId || req?.user?.sub || req?.user?.id;
+    const role = req?.user?.role;
+    return this.authService.getMyRegistration(
+      String(userId || ""),
+      String(role || ""),
+    );
+  }
+
+  @Post("session/opened")
+  @UseGuards(JwtAuthGuard)
+  async markSessionOpened(@Req() req: any) {
+    const userId = req?.user?.userId || req?.user?.sub || req?.user?.id;
+    const role = req?.user?.role;
+    return this.authService.markSessionOpened(
+      String(userId || ""),
+      String(role || ""),
+    );
+  }
+
+  @Post("founder-offer/seen")
+  @UseGuards(JwtAuthGuard)
+  async markFounderOfferSeen(@Req() req: any) {
+    const userId = req?.user?.userId || req?.user?.sub || req?.user?.id;
+    const role = req?.user?.role;
+    return this.authService.markFounderOfferSeen(
+      String(userId || ""),
+      String(role || ""),
+    );
+  }
+
+  @Post("community/joined")
+  @UseGuards(JwtAuthGuard)
+  async markCommunityJoined(@Req() req: any, @Body() body: any) {
+    const userId = req?.user?.userId || req?.user?.sub || req?.user?.id;
+    const role = req?.user?.role;
+    return this.authService.markCommunityJoined(
+      String(userId || ""),
+      String(role || ""),
+      String(body?.communityName || ""),
+      String(body?.communityState || ""),
+    );
   }
 }

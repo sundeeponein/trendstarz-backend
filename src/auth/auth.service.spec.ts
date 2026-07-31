@@ -3,6 +3,9 @@ import { getModelToken } from "@nestjs/mongoose";
 import { UnauthorizedException, BadRequestException } from "@nestjs/common";
 import { AuthService } from "./auth.service";
 import * as bcrypt from "bcryptjs";
+import { FirebaseAdminService } from "../utils/firebase-admin.service";
+import { CloudinaryService } from "../cloudinary.service";
+import { WhatsAppService } from "../whatsapp/whatsapp.service";
 
 // Mock external dependencies
 jest.mock("bcryptjs");
@@ -44,7 +47,7 @@ describe("AuthService", () => {
     password: hashedPw,
     status: "accepted",
     isDeleted: false,
-    isEmailVerified: false,
+    isEmailVerified: true,
     profileImages: [{ url: "inf.jpg" }],
     isPremium: false,
     premiumEnd: null,
@@ -57,7 +60,7 @@ describe("AuthService", () => {
     password: hashedPw,
     status: "accepted",
     isDeleted: false,
-    isEmailVerified: false,
+    isEmailVerified: true,
     brandLogo: [{ url: "logo.jpg" }],
     isPremium: false,
     premiumEnd: null,
@@ -77,6 +80,7 @@ describe("AuthService", () => {
       findById: jest
         .fn()
         .mockReturnValue({ lean: jest.fn().mockResolvedValue(null) }),
+      updateOne: jest.fn().mockResolvedValue({ modifiedCount: 1 }),
       exists: jest.fn().mockResolvedValue(null),
     });
 
@@ -102,11 +106,47 @@ describe("AuthService", () => {
         { provide: getModelToken("Language"), useValue: createMockModel() },
         { provide: getModelToken("SocialMedia"), useValue: createMockModel() },
         {
+          provide: getModelToken("Counter"),
+          useValue: {
+            findOneAndUpdate: jest.fn().mockResolvedValue({ seq: 1 }),
+          },
+        },
+        { provide: getModelToken("TrackingLink"), useValue: createMockModel() },
+        {
+          provide: getModelToken("LinkConversion"),
+          useValue: createMockModel(),
+        },
+        {
           provide: getModelToken("AppSettings"),
           useValue: {
             findOne: jest
               .fn()
               .mockReturnValue({ lean: jest.fn().mockResolvedValue({}) }),
+          },
+        },
+        {
+          provide: FirebaseAdminService,
+          useValue: {
+            isConfigured: jest.fn().mockReturnValue(false),
+            generateEmailVerificationLink: jest.fn(),
+            isFirebaseEmailVerified: jest.fn(),
+            ensureEmailUser: jest.fn(),
+            setUserRoleClaim: jest.fn(),
+            verifyIdToken: jest.fn(),
+            setEmailVerified: jest.fn(),
+          },
+        },
+        {
+          provide: CloudinaryService,
+          useValue: {
+            relocateAsset: jest.fn().mockImplementation((asset) => Promise.resolve(asset)),
+          },
+        },
+        {
+          provide: WhatsAppService,
+          useValue: {
+            sendOtp: jest.fn(),
+            sendCustomTemplateMessage: jest.fn(),
           },
         },
       ],
@@ -179,6 +219,16 @@ describe("AuthService", () => {
       ).rejects.toThrow("pending approval");
     });
 
+    it("should block unverified influencer login", async () => {
+      influencerModel.findOne.mockResolvedValue({
+        ...mockInfluencer,
+        isEmailVerified: false,
+      });
+      await expect(
+        service.login("inf@test.com", "password123"),
+      ).rejects.toThrow("Firebase verification is required");
+    });
+
     it("should throw for deleted brand", async () => {
       brandModel.findOne.mockResolvedValue({ ...mockBrand, isDeleted: true });
       await expect(
@@ -218,6 +268,7 @@ describe("AuthService", () => {
     it("should reset password when valid token found", async () => {
       const mockUser = {
         password: "old",
+        isEmailVerified: false,
         resetToken: "hash",
         resetTokenExpires: Date.now() + 100000,
         save: jest.fn().mockResolvedValue(undefined),
@@ -229,15 +280,16 @@ describe("AuthService", () => {
       );
       expect(result.success).toBe(true);
       expect(mockUser.save).toHaveBeenCalled();
+      expect(mockUser.isEmailVerified).toBe(true);
       expect(mockUser.resetToken).toBeNull();
     });
   });
 
   describe("forgotPassword", () => {
-    it("should throw if email not found", async () => {
-      await expect(service.forgotPassword("unknown@test.com")).rejects.toThrow(
-        "Email not found",
-      );
+    it("should silently return if email not found", async () => {
+      await expect(
+        service.forgotPassword("unknown@test.com"),
+      ).resolves.toBeUndefined();
     });
 
     it("should set reset token and send email", async () => {
@@ -250,11 +302,14 @@ describe("AuthService", () => {
       userModel.findOne.mockResolvedValue(mockUser);
       await service.forgotPassword("user@test.com");
       expect(mockUser.save).toHaveBeenCalled();
+      expect(mockUser.save.mock.invocationCallOrder[0]).toBeLessThan(
+        (sendAppEmail as jest.Mock).mock.invocationCallOrder[0],
+      );
       expect(mockUser.resetToken).toBeTruthy();
       expect(sendAppEmail).toHaveBeenCalledWith(
         expect.objectContaining({
           to: "user@test.com",
-          subject: "Reset your password",
+          subject: "Reset your Trendstarz password",
         }),
       );
     });
@@ -283,6 +338,7 @@ describe("AuthService", () => {
       });
       const saveable = {
         ...mockInfluencer,
+        isEmailVerified: false,
         save: jest.fn().mockResolvedValue(undefined),
       };
       influencerModel.findOne.mockResolvedValue(saveable);
@@ -305,6 +361,7 @@ describe("AuthService", () => {
       const saveable = {
         ...mockInfluencer,
         status: "pending",
+        isEmailVerified: false,
         isMobileVerified: true,
         save: jest.fn().mockResolvedValue(undefined),
       };
@@ -359,6 +416,7 @@ describe("AuthService", () => {
       userModel.findOne.mockResolvedValue({
         ...mockAdmin,
         isEmailVerified: false,
+        save: jest.fn().mockResolvedValue(undefined),
       });
       const result = await service.sendEmailVerificationLink("admin@test.com");
       expect(result.message).toBe("Verification email sent.");
