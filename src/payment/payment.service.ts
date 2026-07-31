@@ -46,7 +46,7 @@ export class PaymentService {
   }
 
   async confirmUpgrade(userId: string, premiumDuration: "1m" | "3m" | "1y") {
-    const update: any = { isPremium: true, premiumDuration };
+    const update: any = { isPremium: true, premiumDuration, premiumSource: "payment" };
     const now = new Date();
     update.premiumStart = now;
     const end = new Date(now);
@@ -313,6 +313,7 @@ export class PaymentService {
         premiumDuration: null,
         premiumStart: null,
         premiumEnd: null,
+        premiumSource: null,
       },
     });
 

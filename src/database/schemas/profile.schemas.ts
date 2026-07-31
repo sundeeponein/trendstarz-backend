@@ -224,6 +224,16 @@ export const InfluencerSchema = new Schema(
     }, // 1 month, 3 months, 1 year
     premiumStart: { type: Date, default: null },
     premiumEnd: { type: Date, default: null },
+    // Who granted the current isPremium period — distinguishes an admin's
+    // manual grant (PATCH /users/:id/premium) from a real payment
+    // (upgradeSelfPremium / payment.service.ts), so both the admin's View
+    // User panel and the user's own dashboard can show "Granted by Admin"
+    // instead of implying a paid subscription. null once isPremium is false.
+    premiumSource: {
+      type: String,
+      enum: ["admin", "payment", null],
+      default: null,
+    },
     categories: [{ type: String }],
     influencerCategory: { type: String, default: "" },
     creatorTypes: [{ type: String }],
@@ -561,6 +571,16 @@ export const BrandSchema = new Schema(
     },
     premiumStart: { type: Date, default: null },
     premiumEnd: { type: Date, default: null },
+    // Who granted the current isPremium period — distinguishes an admin's
+    // manual grant (PATCH /users/:id/premium) from a real payment
+    // (upgradeSelfPremium / payment.service.ts), so both the admin's View
+    // User panel and the user's own dashboard can show "Granted by Admin"
+    // instead of implying a paid subscription. null once isPremium is false.
+    premiumSource: {
+      type: String,
+      enum: ["admin", "payment", null],
+      default: null,
+    },
     categories: [{ type: String }],
     languages: [{ type: String }],
     adminTags: [{ type: String }],
@@ -853,6 +873,16 @@ export const PhotographerSchema = new Schema(
     },
     premiumStart: { type: Date, default: null },
     premiumEnd: { type: Date, default: null },
+    // Who granted the current isPremium period — distinguishes an admin's
+    // manual grant (PATCH /users/:id/premium) from a real payment
+    // (upgradeSelfPremium / payment.service.ts), so both the admin's View
+    // User panel and the user's own dashboard can show "Granted by Admin"
+    // instead of implying a paid subscription. null once isPremium is false.
+    premiumSource: {
+      type: String,
+      enum: ["admin", "payment", null],
+      default: null,
+    },
     adminTags: [{ type: String }],
     commissionOverride: {
       enabled: { type: Boolean, default: false },

@@ -3097,10 +3097,12 @@ export class UsersService {
       else if (premiumDuration === "3m") end.setMonth(end.getMonth() + 3);
       else if (premiumDuration === "1y") end.setFullYear(end.getFullYear() + 1);
       update.premiumEnd = end;
+      update.premiumSource = "admin";
     } else {
       update.premiumDuration = null;
       update.premiumStart = null;
       update.premiumEnd = null;
+      update.premiumSource = null;
       try {
         await this.plansService.cancelActiveSubscriptionsForUser(id);
       } catch (e) {
@@ -3157,6 +3159,7 @@ export class UsersService {
           premiumDuration: null,
           premiumStart: null,
           premiumEnd: null,
+          premiumSource: null,
         };
         if (userType === "Brand") {
           await this.brandModel.findByIdAndUpdate(id, rollback);
@@ -3192,6 +3195,7 @@ export class UsersService {
     else if (premiumDuration === "3m") end.setMonth(end.getMonth() + 3);
     else if (premiumDuration === "1y") end.setFullYear(end.getFullYear() + 1);
     update.premiumEnd = end;
+    update.premiumSource = "payment";
     // Try influencer first, then brand
     const influencer = await this.influencerModel.findByIdAndUpdate(
       userId,
