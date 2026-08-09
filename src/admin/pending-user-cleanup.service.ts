@@ -16,8 +16,27 @@ export class PendingUserCleanupService {
     @InjectModel("Brand") private readonly brandModel: Model<any>,
     @InjectModel("Photographer") private readonly photographerModel: Model<any>,
     @InjectModel("AppSettings") private readonly appSettingsModel: Model<any>,
+    @InjectModel("Payment") private readonly paymentModel: Model<any>,
     private readonly firebaseAdminService: FirebaseAdminService,
   ) {}
+
+  /**
+   * A user who has ever submitted a payment (pending admin approval, or
+   * already approved) has real money on the line — auto-deleting them for
+   * being email/mobile-unverified would silently strand a paying customer
+   * and mislead them ("why was my account removed after I paid?"). Same
+   * carve-out philosophy as the fully-verified/admin-pending exclusion in
+   * buildPendingAgeFilter: once there's something only an admin can settle,
+   * the cron backs off and leaves it to the "Premium Payments" approve/decline
+   * queue (and the payment badge in User Management) instead.
+   */
+  private async getUserIdsWithPayments(userIds: string[]): Promise<Set<string>> {
+    if (!userIds.length) return new Set<string>();
+    const rows = await this.paymentModel.distinct("userId", {
+      userId: { $in: userIds },
+    });
+    return new Set((rows || []).map((id: any) => String(id)));
+  }
 
   private normalizeDays(rawValue: unknown, fallback = 45): number {
     const parsed = Number(rawValue);
@@ -365,15 +384,32 @@ export class PendingUserCleanupService {
 
     const cutoff = new Date();
     cutoff.setDate(cutoff.getDate() - retentionDays);
-    const filter = this.buildPendingAgeFilter(cutoff);
+    const baseFilter = this.buildPendingAgeFilter(cutoff);
     const projection =
       "name brandName email phoneNumber status isEmailVerified isMobileVerified firstRegisteredAt createdAt";
 
-    const [influencers, brands, photographers] = await Promise.all([
-      this.influencerModel.find(filter).select(projection).lean(),
-      this.brandModel.find(filter).select(projection).lean(),
-      this.photographerModel.find(filter).select(projection).lean(),
+    const [rawInfluencers, rawBrands, rawPhotographers] = await Promise.all([
+      this.influencerModel.find(baseFilter).select(projection).lean(),
+      this.brandModel.find(baseFilter).select(projection).lean(),
+      this.photographerModel.find(baseFilter).select(projection).lean(),
     ]);
+
+    // Carve out anyone who has ever submitted a payment (pending admin
+    // approval or already approved) before finalizing who's eligible — see
+    // getUserIdsWithPayments() for why. Excluded from both the filter used
+    // to delete and the reported/logged candidate list, so the two never
+    // disagree about who was actually spared.
+    const rawCandidateIds = [...rawInfluencers, ...rawBrands, ...rawPhotographers].map(
+      (u: any) => String(u._id),
+    );
+    const paidUserIds = await this.getUserIdsWithPayments(rawCandidateIds);
+    const notPaid = (u: any) => !paidUserIds.has(String(u._id));
+    const influencers = rawInfluencers.filter(notPaid);
+    const brands = rawBrands.filter(notPaid);
+    const photographers = rawPhotographers.filter(notPaid);
+    const filter = paidUserIds.size
+      ? { ...baseFilter, _id: { $nin: Array.from(paidUserIds) } }
+      : baseFilter;
 
     const candidates = [
       ...influencers.map((u: any) => ({ ...u, userType: "influencer" })),
@@ -419,7 +455,7 @@ export class PendingUserCleanupService {
       );
 
       this.logger.log(
-        `[PendingUserCleanup] Soft-deleted ${totalDeleted} user(s) older than ${retentionDays} day(s): influencers=${influencerCount}, brands=${brandCount}, photographers=${photographerCount}, reasons=${JSON.stringify(byReason)}`,
+        `[PendingUserCleanup] Soft-deleted ${totalDeleted} user(s) older than ${retentionDays} day(s): influencers=${influencerCount}, brands=${brandCount}, photographers=${photographerCount}, reasons=${JSON.stringify(byReason)}, excludedForPayment=${paidUserIds.size}`,
       );
     }
 
@@ -435,6 +471,10 @@ export class PendingUserCleanupService {
       brandCount,
       photographerCount,
       byReason,
+      // Spared this run because they have a payment on file — surfaced so
+      // the admin preview can explain why an otherwise-eligible account
+      // didn't get deleted; review them in the Premium Payments queue instead.
+      excludedForPayment: paidUserIds.size,
       users: candidates
         .slice(0, 50)
         .map((u) => this.normalizeReportUser(u, u.userType)),

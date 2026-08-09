@@ -86,6 +86,42 @@ export class AdminUserTableController {
     return byUserId;
   }
 
+  /**
+   * A payment sitting in "pending" is money already handed over, awaiting
+   * an admin's approve/decline call in the Premium Payments queue — surfaced
+   * here so User Management shows it even when the account itself is still
+   * email/mobile-pending. Without this, a row looks like an ordinary
+   * unverified signup and an admin could decline/delete it not realizing the
+   * user already paid, which mismatches reality and misleads the user.
+   */
+  private async loadPendingPaymentsByUserIds(userIds: string[]) {
+    if (!userIds.length) return new Map<string, any>();
+    const payments = await this.paymentModel
+      .aggregate([
+        {
+          $match: {
+            userId: { $in: userIds },
+            status: "pending",
+          },
+        },
+        { $sort: { createdAt: -1 } },
+        {
+          $group: {
+            _id: "$userId",
+            latest: { $first: "$$ROOT" },
+          },
+        },
+      ])
+      .exec();
+
+    const byUserId = new Map<string, any>();
+    for (const row of payments || []) {
+      const key = String(row?._id || "");
+      if (key) byUserId.set(key, row?.latest || null);
+    }
+    return byUserId;
+  }
+
   // Mirrors the "Social Profile & Creator Tier" checklist item in
   // profile-verification.service.ts — kept in sync so the table's quick
   // badge and the detailed verification panel never disagree for the same user.
@@ -723,6 +759,7 @@ export class AdminUserTableController {
       .exec();
     const influencerIds = influencers.map((u: any) => String(u?._id || "")).filter(Boolean);
     const latestPayments = await this.loadLatestPaymentsByUserIds(influencerIds);
+    const pendingPayments = await this.loadPendingPaymentsByUserIds(influencerIds);
     const socialTierFlagged = await this.loadUserIdsWithOpenFlags(
       influencerIds,
       AdminUserTableController.SOCIAL_TIER_FLAG_CODES,
@@ -748,6 +785,8 @@ export class AdminUserTableController {
       const id = String(u?._id || "");
       u.isPremium = !!u?.isPremium && (!u?.premiumEnd || new Date(u.premiumEnd) >= now);
       u.latestPayment = latestPayments.get(id) || null;
+      u.pendingPremiumPayment = pendingPayments.get(id) || null;
+      u.hasPendingPremiumPayment = !!u.pendingPremiumPayment;
       u.socialTierActionRequired = socialTierFlagged.has(id);
       u.profilePhotoActionRequired = photoFlagged.has(id);
       u.locationActionRequired = locationFlagged.has(id);
@@ -796,6 +835,7 @@ export class AdminUserTableController {
       .exec();
     const brandIds = brands.map((b: any) => String(b?._id || "")).filter(Boolean);
     const latestPayments = await this.loadLatestPaymentsByUserIds(brandIds);
+    const pendingPayments = await this.loadPendingPaymentsByUserIds(brandIds);
     const socialTierFlagged = await this.loadUserIdsWithOpenFlags(
       brandIds,
       AdminUserTableController.SOCIAL_TIER_FLAG_CODES,
@@ -826,6 +866,8 @@ export class AdminUserTableController {
       b.isPremium = !!b?.isPremium && (!b?.premiumEnd || new Date(b.premiumEnd) >= brandsNow);
       const id = String(b?._id || "");
       b.latestPayment = latestPayments.get(id) || null;
+      b.pendingPremiumPayment = pendingPayments.get(id) || null;
+      b.hasPendingPremiumPayment = !!b.pendingPremiumPayment;
       b.socialTierActionRequired = socialTierFlagged.has(id);
       b.profilePhotoActionRequired = photoFlagged.has(id);
       b.locationActionRequired = locationFlagged.has(id);
@@ -873,6 +915,7 @@ export class AdminUserTableController {
       .exec();
     const photographerIds = photographers.map((p: any) => String(p?._id || "")).filter(Boolean);
     const latestPayments = await this.loadLatestPaymentsByUserIds(photographerIds);
+    const pendingPayments = await this.loadPendingPaymentsByUserIds(photographerIds);
     const socialTierFlagged = await this.loadUserIdsWithOpenFlags(
       photographerIds,
       AdminUserTableController.SOCIAL_TIER_FLAG_CODES,
@@ -898,6 +941,8 @@ export class AdminUserTableController {
       const id = String(p?._id || "");
       p.isPremium = !!p?.isPremium && (!p?.premiumEnd || new Date(p.premiumEnd) >= photographersNow);
       p.latestPayment = latestPayments.get(id) || null;
+      p.pendingPremiumPayment = pendingPayments.get(id) || null;
+      p.hasPendingPremiumPayment = !!p.pendingPremiumPayment;
       p.socialTierActionRequired = socialTierFlagged.has(id);
       p.profilePhotoActionRequired = photoFlagged.has(id);
       p.locationActionRequired = locationFlagged.has(id);
