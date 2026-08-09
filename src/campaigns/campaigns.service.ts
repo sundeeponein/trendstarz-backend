@@ -460,6 +460,18 @@ export class CampaignsService {
         ? String(data.targetDistrict)
         : undefined;
     }
+    // The "Promotion link type" dropdown's unselected state is an empty
+    // string, not undefined — CampaignSchema.promotionUrlType is an enum
+    // with no "" member, so passing it straight through fails Mongoose
+    // validation at .save() time with an unhandled ValidationError (surfaces
+    // to the user as a bare "Internal server error", for both draft and
+    // publish, since both hit the same save()). Treat "" as "not set", same
+    // as targetState/targetDistrict above.
+    if (data.promotionUrlType !== undefined) {
+      normalized.promotionUrlType = data.promotionUrlType
+        ? String(data.promotionUrlType)
+        : undefined;
+    }
     if (Array.isArray(data.targetCities)) {
       normalized.targetCities = data.targetCities
         .map((c: any) => String(c))
