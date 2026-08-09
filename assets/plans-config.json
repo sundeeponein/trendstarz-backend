@@ -175,12 +175,12 @@
         {
           "key": "maxActiveCampaigns",
           "label": "Active campaigns",
-          "value": 5
+          "value": 3
         },
         {
           "key": "maxInvitesPerCampaign",
           "label": "Invites received / month",
-          "value": 5
+          "value": 3
         },
         {
           "key": "maxInviteOptions",
@@ -418,7 +418,7 @@
         {
           "key": "maxInvitesPerCampaign",
           "label": "Invites / campaign",
-          "value": 10
+          "value": 9
         },
         {
           "key": "maxTeamSeats",
