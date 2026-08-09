@@ -160,37 +160,37 @@
         {
           "key": "dailyProfileViewLimit",
           "label": "Daily profile views",
-          "value": 300
+          "value": 50
         },
         {
           "key": "dailySearchLimit",
           "label": "Daily searches",
-          "value": 150
+          "value": 50
         },
         {
           "key": "maxProductImages",
           "label": "Images",
-          "value": 10
+          "value": 7
         },
         {
           "key": "maxActiveCampaigns",
           "label": "Active campaigns",
-          "value": 10
+          "value": 5
         },
         {
           "key": "maxInvitesPerCampaign",
           "label": "Invites received / month",
-          "value": 10
+          "value": 5
         },
         {
           "key": "maxInviteOptions",
           "label": "Invite options",
-          "value": 10
+          "value": 5
         },
         {
           "key": "maxCampaignPosts",
           "label": "Max campaign posts",
-          "value": 20
+          "value": 5
         }
       ],
       "offers": [
@@ -403,17 +403,17 @@
         {
           "key": "dailyProfileViewLimit",
           "label": "Daily profile views",
-          "value": 500
+          "value": 50
         },
         {
           "key": "dailySearchLimit",
           "label": "Daily searches",
-          "value": 250
+          "value": 50
         },
         {
           "key": "maxActiveCampaigns",
           "label": "Active campaigns",
-          "value": 10
+          "value": 3
         },
         {
           "key": "maxInvitesPerCampaign",
@@ -433,7 +433,7 @@
         {
           "key": "maxCampaignPosts",
           "label": "Max campaign posts",
-          "value": 30
+          "value": 5
         }
       ],
       "offers": [
@@ -526,7 +526,7 @@
         {
           "key": "dailyProfileViewLimit",
           "label": "Daily profile views",
-          "value": 25
+          "value": 10
         },
         {
           "key": "dailySearchLimit",
@@ -536,7 +536,7 @@
         {
           "key": "maxPortfolioImages",
           "label": "Portfolio images",
-          "value": 3
+          "value": 2
         },
         {
           "key": "maxActiveCampaigns",
@@ -546,7 +546,7 @@
         {
           "key": "maxInvitesPerCampaign",
           "label": "Invites / campaign",
-          "value": 2
+          "value": 1
         },
         {
           "key": "analytics",
@@ -556,7 +556,7 @@
         {
           "key": "maxCampaignPosts",
           "label": "Max campaign posts",
-          "value": 2
+          "value": 1
         }
       ],
       "policies": {
@@ -626,22 +626,22 @@
         {
           "key": "dailyProfileViewLimit",
           "label": "Daily profile views",
-          "value": 300
+          "value": 50
         },
         {
           "key": "dailySearchLimit",
           "label": "Daily searches",
-          "value": 150
+          "value": 50
         },
         {
           "key": "maxPortfolioImages",
           "label": "Portfolio images",
-          "value": 10
+          "value": 7
         },
         {
           "key": "maxActiveCampaigns",
           "label": "Active campaigns",
-          "value": 10
+          "value": 3
         },
         {
           "key": "maxInvitesPerCampaign",
@@ -656,7 +656,7 @@
         {
           "key": "maxCampaignPosts",
           "label": "Max campaign posts",
-          "value": 20
+          "value": 5
         }
       ],
       "offers": [

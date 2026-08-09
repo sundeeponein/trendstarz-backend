@@ -436,6 +436,30 @@ export class PlansService {
         endDate: null,
       };
     }
+    // Admin-granted access ("Set Premium" in User Management) is meant to
+    // always track the live Plan config — the admin who just tuned a limit
+    // expects it to apply immediately, unlike a paid purchase which
+    // deliberately freezes the terms the customer bought until renewal.
+    // Without this, activateSubscription()'s one-time limitsSnapshot goes
+    // stale the moment the admin edits the plan afterwards, and the account
+    // silently keeps enforcing numbers that no longer match what Admin →
+    // Plans shows (see the "hasLegacyPremium" branch above, which already
+    // does this for admin grants that predate a subscription row).
+    if (sub.source === "admin" && sub.planId) {
+      const livePlan = await this.planModel.findById(sub.planId).lean();
+      if (livePlan) {
+        return {
+          hasPremium: true,
+          planName: (livePlan as any).name || sub.planName,
+          features: (livePlan as any).features ?? [],
+          limits: (livePlan as any).limits ?? [],
+          policies:
+            (livePlan as any).policies ?? { imageRetentionDaysAfterExpiry: 45 },
+          endDate: sub.endDate,
+        };
+      }
+    }
+
     return {
       hasPremium: true,
       planName: sub.planName,
