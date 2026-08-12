@@ -1067,8 +1067,10 @@ export class PaymentsPayoutsService {
     return { success: true, data: enriched };
   }
 
-  async getAdminSummary() {
-    const rows = await this.transactionModel.find({}).lean();
+  async getAdminSummary(since?: Date) {
+    const rows = await this.transactionModel
+      .find(since ? { createdAt: { $gte: since } } : {})
+      .lean();
     const verified = rows.filter((r: any) => r.collectionStatus === "verified");
     const paid = rows.filter((r: any) => r.payoutStatus === "paid");
     const refundedRows = rows.filter(

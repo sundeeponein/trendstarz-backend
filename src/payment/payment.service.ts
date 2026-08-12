@@ -372,9 +372,12 @@ export class PaymentService {
     return { success: true, payments };
   }
 
-  async getAdminSummary() {
+  async getAdminSummary(since?: Date) {
     const rows = await this.paymentModel
-      .find({ ...this.subscriptionPurposeFilter() })
+      .find({
+        ...this.subscriptionPurposeFilter(),
+        ...(since ? { createdAt: { $gte: since } } : {}),
+      })
       .select("amount status refundStatus paymentStatus gatewayProvider paymentMethod")
       .lean();
 

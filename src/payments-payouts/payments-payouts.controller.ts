@@ -91,10 +91,19 @@ export class PaymentsPayoutsController {
     return this.paymentsPayoutsService.listForAdmin(status);
   }
 
+  /**
+   * GET /campaign-transactions/summary
+   * GET /campaign-transactions/summary?days=7 — restrict to the last N days (e.g. dashboard widgets)
+   */
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Get("summary")
-  async summary() {
-    return this.paymentsPayoutsService.getAdminSummary();
+  async summary(@Query("days") days?: string) {
+    const parsedDays = Number(days);
+    const since =
+      Number.isFinite(parsedDays) && parsedDays > 0
+        ? new Date(Date.now() - parsedDays * 24 * 60 * 60 * 1000)
+        : undefined;
+    return this.paymentsPayoutsService.getAdminSummary(since);
   }
 
   @UseGuards(JwtAuthGuard, RolesGuard)

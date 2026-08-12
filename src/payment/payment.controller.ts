@@ -218,11 +218,17 @@ export class PaymentController {
   /**
    * Premium payment summary for admin cards
    * GET /payment/summary
+   * GET /payment/summary?days=7  — restrict to the last N days (e.g. dashboard widgets)
    */
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Get("summary")
-  async getAdminSummary() {
-    return this.paymentService.getAdminSummary();
+  async getAdminSummary(@Query("days") days?: string) {
+    const parsedDays = Number(days);
+    const since =
+      Number.isFinite(parsedDays) && parsedDays > 0
+        ? new Date(Date.now() - parsedDays * 24 * 60 * 60 * 1000)
+        : undefined;
+    return this.paymentService.getAdminSummary(since);
   }
 
   /**
