@@ -429,7 +429,10 @@ export class CampaignInvitesService {
   }
 
   private assertVerifiedForCampaignAccess(profile: any, label: string) {
-    if (profile?.isEmailVerified === true && profile?.isMobileVerified === true) {
+    if (
+      profile?.isEmailVerified === true &&
+      profile?.isMobileVerified === true
+    ) {
       return;
     }
     throw new BadRequestException(
@@ -944,14 +947,18 @@ export class CampaignInvitesService {
         // New campaign invite emails are disabled by product request.
         // Push notification to recipient
         this.pushService
-          .sendToUser(String(recipientId), {
-            title: "New Campaign Invite 🎉",
-            body: `${sender.name || "A creator"} invited you to "${campaign.title}"`,
-            url:
-              recipientRole === "photographer"
-                ? "/photographer-dashboard"
-                : "/influencer-dashboard",
-          }, 'campaign')
+          .sendToUser(
+            String(recipientId),
+            {
+              title: "New Campaign Invite 🎉",
+              body: `${sender.name || "A creator"} invited you to "${campaign.title}"`,
+              url:
+                recipientRole === "photographer"
+                  ? "/photographer-dashboard"
+                  : "/influencer-dashboard",
+            },
+            "campaign",
+          )
           .catch(() => {
             /* non-critical */
           });
@@ -1066,7 +1073,9 @@ export class CampaignInvitesService {
    * live for read/contact-unlock purposes; this one is only for actions that create new work.
    */
   private assertCampaignNotEnded(campaign: any, action: string) {
-    const status = String(campaign?.status || "").trim().toLowerCase();
+    const status = String(campaign?.status || "")
+      .trim()
+      .toLowerCase();
     if (status === "completed") {
       throw new BadRequestException(
         `This campaign has ended. You can no longer ${action}.`,
@@ -1263,7 +1272,9 @@ export class CampaignInvitesService {
 
     const transactions: any[] = await this.campaignTransactionModel
       .find(txQuery)
-      .select("inviteId payerTotal recipientPayout gateway gatewayOrderId gatewayPaymentId utrNumber payoutStatus payoutGatewayProvider payoutInitiatedAt payoutSettledAt payoutTransferId payoutUtr")
+      .select(
+        "inviteId payerTotal recipientPayout gateway gatewayOrderId gatewayPaymentId utrNumber payoutStatus payoutGatewayProvider payoutInitiatedAt payoutSettledAt payoutTransferId payoutUtr",
+      )
       .lean();
 
     const byInviteId = new Map<string, any>();
@@ -1446,7 +1457,8 @@ export class CampaignInvitesService {
     const inviteForResponse = {
       ...invite,
       payoutStatus: tx?.payoutStatus || null,
-      paidOutAt: invite?.paidOutAt || tx?.paidOutAt || tx?.payoutSettledAt || null,
+      paidOutAt:
+        invite?.paidOutAt || tx?.paidOutAt || tx?.payoutSettledAt || null,
       payoutUtr: tx?.payoutUtr || null,
       status:
         String(tx?.payoutStatus || "").toLowerCase() === "paid"
@@ -1784,7 +1796,10 @@ export class CampaignInvitesService {
       const dueInvites = await this.inviteModel
         .find({
           status: { $in: AWAITING_POST_STATUSES },
-          selectedPostDate: { $gte: milestone.windowStart, $lt: milestone.windowEnd },
+          selectedPostDate: {
+            $gte: milestone.windowStart,
+            $lt: milestone.windowEnd,
+          },
           [milestone.field]: { $exists: false },
         })
         .lean();
@@ -1922,11 +1937,15 @@ export class CampaignInvitesService {
     this.invalidateAttentionCache();
 
     this.pushService
-      .sendToUser(String(invite.influencerId), {
-        title: "Host Reported an Issue",
-        body: "A brand flagged an issue on your campaign collaboration.",
-        url: "/influencer-dashboard",
-      }, 'campaign')
+      .sendToUser(
+        String(invite.influencerId),
+        {
+          title: "Host Reported an Issue",
+          body: "A brand flagged an issue on your campaign collaboration.",
+          url: "/influencer-dashboard",
+        },
+        "campaign",
+      )
       .catch(() => {
         /* non-critical */
       });
@@ -2038,6 +2057,40 @@ export class CampaignInvitesService {
     }
 
     if (status === "accepted" || status === "counter_sent") {
+      // Persist any payout details submitted with this response BEFORE the
+      // eligibility/payout checks below, so payout details typed for the
+      // first time in the accept modal are saved and immediately count —
+      // otherwise assertHasPayout re-reads the still-stale profile and
+      // rejects details the influencer just entered, since the old persist
+      // step ran only after these checks (and was never reached on failure).
+      if (
+        recipientRole !== "photographer" &&
+        payout &&
+        (payout.upiId || payout.mobile || payout.accountHolderName)
+      ) {
+        const set: any = { "payout.lastConfirmedAt": new Date() };
+        const upiId = String(payout.upiId || "").trim();
+        const mobile = String(payout.mobile || "").trim();
+        const accountHolderName = String(payout.accountHolderName || "").trim();
+        if (upiId) set["payout.upiId"] = upiId;
+        if (mobile) set["payout.mobile"] = mobile;
+        if (accountHolderName)
+          set["payout.accountHolderName"] = accountHolderName;
+        try {
+          if (Object.keys(set).length > 1) {
+            await this.influencerModel.findByIdAndUpdate(influencerId, {
+              $set: set,
+            });
+            recipient = await this.loadRecipientProfile(
+              recipientRole,
+              influencerId,
+            );
+          }
+        } catch (err) {
+          console.error("Failed to persist recipient payout details:", err);
+        }
+      }
+
       await this.profileVerificationService.assertCampaignEligible(
         influencerId,
         recipientRole,
@@ -2356,33 +2409,6 @@ export class CampaignInvitesService {
         };
       }
 
-      // Persist confirmed payout details on the influencer profile so admin
-      // can prefill the payout popup later. Only update fields the influencer
-      // actually provided/edited.
-      if (
-        recipientRole !== "photographer" &&
-        payout &&
-        (payout.upiId || payout.mobile || payout.accountHolderName)
-      ) {
-        const set: any = { "payout.lastConfirmedAt": new Date() };
-        const upiId = String(payout.upiId || "").trim();
-        const mobile = String(payout.mobile || "").trim();
-        const accountHolderName = String(payout.accountHolderName || "").trim();
-        if (upiId) set["payout.upiId"] = upiId;
-        if (mobile) set["payout.mobile"] = mobile;
-        if (accountHolderName)
-          set["payout.accountHolderName"] = accountHolderName;
-        try {
-          if (Object.keys(set).length > 1) {
-            await this.influencerModel.findByIdAndUpdate(influencerId, {
-              $set: set,
-            });
-          }
-        } catch (err) {
-          console.error("Failed to persist recipient payout details:", err);
-        }
-      }
-
       // Location/map visibility is payment-confirmation gated. Keep unlock state
       // unchanged on plain acceptance; unlock continues through explicit brand flow.
     }
@@ -2426,7 +2452,11 @@ export class CampaignInvitesService {
     // the campaign is completed, no dashboard is being visited).
     if (status === "accepted") {
       this.trackingLinksService
-        .getOrCreateForInvite(String(invite._id), String(invite.influencerId), true)
+        .getOrCreateForInvite(
+          String(invite._id),
+          String(invite.influencerId),
+          true,
+        )
         .catch(() => {
           /* non-critical — e.g. campaign has no promotionUrl configured */
         });
@@ -2467,11 +2497,15 @@ export class CampaignInvitesService {
         // Invite accepted emails are disabled by product request.
         // Push notification to brand
         this.pushService
-          .sendToUser(String(invite.brandId), {
-            title: "Invite Accepted ✅",
-            body: `${recipient?.name || `A ${recipientRole}`} accepted your invite for "${campaign?.title || "your campaign"}"`,
-            url: "/campaigns",
-          }, 'campaign')
+          .sendToUser(
+            String(invite.brandId),
+            {
+              title: "Invite Accepted ✅",
+              body: `${recipient?.name || `A ${recipientRole}`} accepted your invite for "${campaign?.title || "your campaign"}"`,
+              url: "/campaigns",
+            },
+            "campaign",
+          )
           .catch(() => {
             /* non-critical */
           });
@@ -2522,11 +2556,15 @@ export class CampaignInvitesService {
           ? `${invite.counterOffer.selectedPlatform || ""} ${invite.counterOffer.selectedContentType}`.trim()
           : "this collaboration";
         this.pushService
-          .sendToUser(String(invite.brandId), {
-            title: "Counter offer received",
-            body: `Recipient requested ₹${requested.toLocaleString("en-IN")} for ${selectedLabel}.`,
-            url: "/campaign-management",
-          }, 'campaign')
+          .sendToUser(
+            String(invite.brandId),
+            {
+              title: "Counter offer received",
+              body: `Recipient requested ₹${requested.toLocaleString("en-IN")} for ${selectedLabel}.`,
+              url: "/campaign-management",
+            },
+            "campaign",
+          )
           .catch(() => {
             /* non-critical */
           });
@@ -2601,14 +2639,18 @@ export class CampaignInvitesService {
       );
       const msg = `Creator sent a revised offer of ₹${revisedRupees.toLocaleString("en-IN")}. You can accept or decline.`;
       this.pushService
-        .sendToUser(recipientId, {
-          title: "Revised offer received",
-          body: msg,
-          url:
-            recipientRole === "photographer"
-              ? "/campaign-management"
-              : "/influencer-dashboard",
-        }, 'campaign')
+        .sendToUser(
+          recipientId,
+          {
+            title: "Revised offer received",
+            body: msg,
+            url:
+              recipientRole === "photographer"
+                ? "/campaign-management"
+                : "/influencer-dashboard",
+          },
+          "campaign",
+        )
         .catch(() => {
           /* non-critical */
         });
@@ -2683,7 +2725,11 @@ export class CampaignInvitesService {
 
     if (action === "accept") {
       this.trackingLinksService
-        .getOrCreateForInvite(String(invite._id), String(invite.influencerId), true)
+        .getOrCreateForInvite(
+          String(invite._id),
+          String(invite.influencerId),
+          true,
+        )
         .catch(() => {
           /* non-critical — e.g. campaign has no promotionUrl configured */
         });
@@ -2698,14 +2744,18 @@ export class CampaignInvitesService {
         ? "Your counter offer was accepted. Collaboration is now confirmed for payment flow."
         : "Your counter offer was declined. You can accept the original offer from your invite.";
     this.pushService
-      .sendToUser(recipientId, {
-        title: action === "accept" ? "Counter accepted" : "Counter declined",
-        body,
-        url:
-          recipientRole === "photographer"
-            ? "/campaign-management"
-            : "/influencer-dashboard",
-      }, 'campaign')
+      .sendToUser(
+        recipientId,
+        {
+          title: action === "accept" ? "Counter accepted" : "Counter declined",
+          body,
+          url:
+            recipientRole === "photographer"
+              ? "/campaign-management"
+              : "/influencer-dashboard",
+        },
+        "campaign",
+      )
       .catch(() => {
         /* non-critical */
       });
@@ -2857,8 +2907,12 @@ export class CampaignInvitesService {
 
     // Check state/district targeting eligibility (case-insensitive)
     if (campaign.targetState) {
-      const infState = ((influencer as any).location?.state ?? "").trim().toLowerCase();
-      const targetState = String(campaign.targetState || "").trim().toLowerCase();
+      const infState = ((influencer as any).location?.state ?? "")
+        .trim()
+        .toLowerCase();
+      const targetState = String(campaign.targetState || "")
+        .trim()
+        .toLowerCase();
       if (infState && infState !== targetState) {
         throw new BadRequestException(
           `This campaign is limited to influencers from ${campaign.targetState}.`,
@@ -2866,8 +2920,12 @@ export class CampaignInvitesService {
       }
     }
     if (campaign.targetDistrict) {
-      const infDistrict = ((influencer as any).location?.district ?? "").trim().toLowerCase();
-      const targetDistrict = String(campaign.targetDistrict || "").trim().toLowerCase();
+      const infDistrict = ((influencer as any).location?.district ?? "")
+        .trim()
+        .toLowerCase();
+      const targetDistrict = String(campaign.targetDistrict || "")
+        .trim()
+        .toLowerCase();
       if (infDistrict && infDistrict !== targetDistrict) {
         throw new BadRequestException(
           `This campaign is limited to influencers from ${campaign.targetDistrict}, ${campaign.targetState}.`,
@@ -2912,11 +2970,15 @@ export class CampaignInvitesService {
     });
 
     // Notify brand
-    await this.pushService.sendToUser(String(campaign.brandId), {
-      title: "New Campaign Application 📩",
-      body: `${(influencer as any).fullName || "An influencer"} applied to your campaign "${campaign.title}".`,
-      url: "/brand/campaigns",
-    }, 'campaign');
+    await this.pushService.sendToUser(
+      String(campaign.brandId),
+      {
+        title: "New Campaign Application 📩",
+        body: `${(influencer as any).fullName || "An influencer"} applied to your campaign "${campaign.title}".`,
+        url: "/brand/campaigns",
+      },
+      "campaign",
+    );
     this.notificationsService
       .createForUser({
         userId: String(campaign.brandId),
@@ -2997,7 +3059,11 @@ export class CampaignInvitesService {
     if (String(invite.influencerId) !== influencerId) {
       throw new BadRequestException("Not your invite");
     }
-    if (!["accepted", "payment_confirmed", "working", "disputed"].includes(invite.status)) {
+    if (
+      !["accepted", "payment_confirmed", "working", "disputed"].includes(
+        invite.status,
+      )
+    ) {
       throw new BadRequestException(
         `Can only submit for active invites. Status was: ${invite.status}`,
       );
@@ -3175,11 +3241,15 @@ export class CampaignInvitesService {
       String(invite.brandId),
     );
     this.pushService
-      .sendToUser(String(invite.brandId), {
-        title: "Post Submitted",
-        body: "An influencer submitted content for your review.",
-        url: "/campaign-management",
-      }, 'campaign')
+      .sendToUser(
+        String(invite.brandId),
+        {
+          title: "Post Submitted",
+          body: "An influencer submitted content for your review.",
+          url: "/campaign-management",
+        },
+        "campaign",
+      )
       .catch(() => {
         /* non-critical */
       });
@@ -3302,7 +3372,10 @@ export class CampaignInvitesService {
     await submission.save();
 
     const autoCompleteAt = submission.hostAutoCompleteEnabled
-      ? this.getHostAutoCompleteAt(submission, await this.getSubmissionApprovalWaitHours())
+      ? this.getHostAutoCompleteAt(
+          submission,
+          await this.getSubmissionApprovalWaitHours(),
+        )
       : null;
 
     return {
@@ -3419,11 +3492,15 @@ export class CampaignInvitesService {
         // Post approved emails are disabled by product request.
         // Push notification — payout now processing
         this.pushService
-          .sendToUser(String(invite.influencerId), {
-            title: "Post Approved! 🎉",
-            body: `Your post for "${campaign.title || "the campaign"}" was approved. Payout is being processed.`,
-            url: "/influencer-dashboard",
-          }, 'campaign')
+          .sendToUser(
+            String(invite.influencerId),
+            {
+              title: "Post Approved! 🎉",
+              body: `Your post for "${campaign.title || "the campaign"}" was approved. Payout is being processed.`,
+              url: "/influencer-dashboard",
+            },
+            "campaign",
+          )
           .catch(() => {
             /* non-critical */
           });
@@ -3452,7 +3529,9 @@ export class CampaignInvitesService {
       let evidenceUrl = "";
       if (isFinalRejection) {
         issueReason = String(disputeIssueReason || "").trim();
-        issueDescription = String(feedback || disputeReason || "Resubmission rejected").trim();
+        issueDescription = String(
+          feedback || disputeReason || "Resubmission rejected",
+        ).trim();
         evidenceUrl = String(disputeEvidenceUrl || "").trim();
       } else {
         const allowedIssueReasons = new Set([
@@ -3490,7 +3569,9 @@ export class CampaignInvitesService {
       // Mirror the dispute onto `reportedIssue` too, so this flow lines up with the plain
       // "report an issue" flow for admin listing/resolving (both key off reportedIssue).
       invite.reportedIssue = {
-        reason: issueReason ? `${issueReason} — ${issueDescription}` : issueDescription,
+        reason: issueReason
+          ? `${issueReason} — ${issueDescription}`
+          : issueDescription,
         reportedAt: now,
         // Final rejections skip the influencer's response window entirely — straight to admin.
         adminReviewRequestedAt: isFinalRejection ? now : undefined,
@@ -3516,11 +3597,15 @@ export class CampaignInvitesService {
       );
 
       this.pushService
-        .sendToUser(String(invite.influencerId), {
-          title: "Submission Disputed",
-          body: `Your submission for "${campaign.title || "the campaign"}" was marked disputed by brand.`,
-          url: "/influencer-dashboard",
-        }, 'campaign')
+        .sendToUser(
+          String(invite.influencerId),
+          {
+            title: "Submission Disputed",
+            body: `Your submission for "${campaign.title || "the campaign"}" was marked disputed by brand.`,
+            url: "/influencer-dashboard",
+          },
+          "campaign",
+        )
         .catch(() => {
           /* non-critical */
         });
@@ -3628,7 +3713,10 @@ export class CampaignInvitesService {
 
     const cMap = new Map(campaigns.map((c: any) => [String(c._id), c]));
     const bMap = new Map(
-      brands.map((b: any) => [String(b._id), { _id: b._id, name: b.brandName, email: b.email }]),
+      brands.map((b: any) => [
+        String(b._id),
+        { _id: b._id, name: b.brandName, email: b.email },
+      ]),
     );
     const pMap = new Map(photographers.map((p: any) => [String(p._id), p]));
     const iMap = new Map(influencers.map((i: any) => [String(i._id), i]));
@@ -3679,7 +3767,10 @@ export class CampaignInvitesService {
       invite.withdrawnAt = now;
     }
     if (!invite.reportedIssue) {
-      invite.reportedIssue = { reason: "", reportedAt: invite.updatedAt || now };
+      invite.reportedIssue = {
+        reason: "",
+        reportedAt: invite.updatedAt || now,
+      };
     }
     invite.reportedIssue.resolvedAt = now;
     if (opts.note) {
@@ -3692,7 +3783,8 @@ export class CampaignInvitesService {
 
     const submission = await this.submissionModel.findOne({ inviteId });
     if (submission) {
-      submission.status = outcome === "pay_influencer" ? "approved" : "rejected";
+      submission.status =
+        outcome === "pay_influencer" ? "approved" : "rejected";
       submission.reviewedAt = now;
       await submission.save();
     }
@@ -3710,7 +3802,9 @@ export class CampaignInvitesService {
           workStatus: outcome === "pay_influencer" ? "approved" : "disputed",
           disputeStatus: "resolved",
           resolveOutcome:
-            outcome === "pay_influencer" ? "release_to_influencer" : "refund_to_brand",
+            outcome === "pay_influencer"
+              ? "release_to_influencer"
+              : "refund_to_brand",
           resolvedAt: now,
         },
       },
@@ -3718,18 +3812,31 @@ export class CampaignInvitesService {
 
     this.invalidateAttentionCache();
 
-    const title = outcome === "pay_influencer" ? "Dispute Resolved — Payout Released" : "Dispute Resolved — Participation Cancelled";
+    const title =
+      outcome === "pay_influencer"
+        ? "Dispute Resolved — Payout Released"
+        : "Dispute Resolved — Participation Cancelled";
     const body =
       outcome === "pay_influencer"
         ? "Your dispute was resolved in your favor. Payout is being processed."
         : "This collaboration has been cancelled. No payout will be made for this submission.";
     this.pushService
-      .sendToUser(String(invite.influencerId), { title, body, url: "/influencer-dashboard" }, "campaign")
+      .sendToUser(
+        String(invite.influencerId),
+        { title, body, url: "/influencer-dashboard" },
+        "campaign",
+      )
       .catch(() => {
         /* non-critical */
       });
     this.notificationsService
-      .createForUser({ userId: String(invite.influencerId), userRole: "influencer", title, body, url: "/influencer-dashboard" })
+      .createForUser({
+        userId: String(invite.influencerId),
+        userRole: "influencer",
+        title,
+        body,
+        url: "/influencer-dashboard",
+      })
       .catch(() => {
         /* non-critical */
       });
@@ -3768,7 +3875,10 @@ export class CampaignInvitesService {
       throw new BadRequestException("Invite has no reported issue.");
     }
     if (!invite.reportedIssue) {
-      invite.reportedIssue = { reason: "", reportedAt: invite.updatedAt || new Date() };
+      invite.reportedIssue = {
+        reason: "",
+        reportedAt: invite.updatedAt || new Date(),
+      };
     }
     // Matches the pre-refactor behavior: "Close (keep disputed)" removes it from the open
     // queue (resolvedAt set) without deciding a payout outcome — status stays 'disputed'.
@@ -3818,7 +3928,9 @@ export class CampaignInvitesService {
     if (invite.status !== "disputed") {
       throw new BadRequestException("This invite is not currently disputed.");
     }
-    return this.finalizeDisputeOutcome(inviteId, "refund_host", { resolvedBy: "influencer" });
+    return this.finalizeDisputeOutcome(inviteId, "refund_host", {
+      resolvedBy: "influencer",
+    });
   }
 
   /** Influencer: contest the dispute itself — escalates to admin and pauses the auto-cancel timer. */
@@ -3842,7 +3954,10 @@ export class CampaignInvitesService {
   }
 
   /** Auto-cancel disputes the influencer never responded to within the configured window. */
-  async autoCancelExpiredDisputes(): Promise<{ success: boolean; autoCancelledCount: number }> {
+  async autoCancelExpiredDisputes(): Promise<{
+    success: boolean;
+    autoCancelledCount: number;
+  }> {
     const waitHours = await this.getDisputeResponseWaitHours();
     const cutoff = new Date(Date.now() - waitHours * 60 * 60 * 1000);
 
@@ -3866,7 +3981,8 @@ export class CampaignInvitesService {
       if (invite.reportedIssue?.resolvedAt) continue;
       if (invite.reportedIssue?.adminReviewRequestedAt) continue;
       const reportedAt = invite.reportedIssue?.reportedAt;
-      if (!reportedAt || new Date(reportedAt).getTime() > cutoff.getTime()) continue;
+      if (!reportedAt || new Date(reportedAt).getTime() > cutoff.getTime())
+        continue;
 
       await this.finalizeDisputeOutcome(String(invite._id), "refund_host", {
         resolvedBy: "system",
@@ -3934,12 +4050,22 @@ export class CampaignInvitesService {
     const title = "Participation Closed";
     const body = `${reason} No payout will be made for this collaboration.`;
     this.pushService
-      .sendToUser(String(invite.influencerId), { title, body, url: "/influencer-dashboard" }, "campaign")
+      .sendToUser(
+        String(invite.influencerId),
+        { title, body, url: "/influencer-dashboard" },
+        "campaign",
+      )
       .catch(() => {
         /* non-critical */
       });
     this.notificationsService
-      .createForUser({ userId: String(invite.influencerId), userRole: "influencer", title, body, url: "/influencer-dashboard" })
+      .createForUser({
+        userId: String(invite.influencerId),
+        userRole: "influencer",
+        title,
+        body,
+        url: "/influencer-dashboard",
+      })
       .catch(() => {
         /* non-critical */
       });
@@ -3972,12 +4098,22 @@ export class CampaignInvitesService {
     const title = "Invite Closed";
     const body = reason;
     this.pushService
-      .sendToUser(String(invite.influencerId), { title, body, url: "/influencer-dashboard" }, "campaign")
+      .sendToUser(
+        String(invite.influencerId),
+        { title, body, url: "/influencer-dashboard" },
+        "campaign",
+      )
       .catch(() => {
         /* non-critical */
       });
     this.notificationsService
-      .createForUser({ userId: String(invite.influencerId), userRole: "influencer", title, body, url: "/influencer-dashboard" })
+      .createForUser({
+        userId: String(invite.influencerId),
+        userRole: "influencer",
+        title,
+        body,
+        url: "/influencer-dashboard",
+      })
       .catch(() => {
         /* non-critical */
       });
@@ -3986,7 +4122,10 @@ export class CampaignInvitesService {
   }
 
   /** Closes out every not-yet-submitted invite for a campaign — called when a host ends it. */
-  async expireUnsubmittedInvitesForCampaign(campaignId: string, reason: string) {
+  async expireUnsubmittedInvitesForCampaign(
+    campaignId: string,
+    reason: string,
+  ) {
     const candidates = await this.inviteModel
       .find({
         campaignId: { $in: [campaignId, String(campaignId)] },
@@ -4020,7 +4159,10 @@ export class CampaignInvitesService {
   }
 
   /** Auto-expire invites whose posting deadline (+ any grace period) passed with no submission. */
-  async autoExpireUnsubmittedInvites(): Promise<{ success: boolean; autoExpiredCount: number }> {
+  async autoExpireUnsubmittedInvites(): Promise<{
+    success: boolean;
+    autoExpiredCount: number;
+  }> {
     const candidates = await this.inviteModel
       .find({
         status: { $in: ["accepted", "payment_confirmed", "working"] },
@@ -4036,9 +4178,11 @@ export class CampaignInvitesService {
       // landing between the bulk find above and this loop iteration.
       const invite = await this.inviteModel.findById(candidate._id);
       if (!invite) continue;
-      if (!["accepted", "payment_confirmed", "working"].includes(invite.status)) continue;
+      if (!["accepted", "payment_confirmed", "working"].includes(invite.status))
+        continue;
       if (!invite.selectedPostDate) continue;
-      if (invite.reportedIssue?.reportedAt && !invite.reportedIssue?.resolvedAt) continue;
+      if (invite.reportedIssue?.reportedAt && !invite.reportedIssue?.resolvedAt)
+        continue;
       const campaign: any = await this.campaignModel
         .findById(invite.campaignId)
         .select("postingDeadlineMode")
@@ -4071,7 +4215,9 @@ export class CampaignInvitesService {
     const cacheKey = "admin:disputes:count";
     const cached = this.getCachedAttention<{ count: number }>(cacheKey);
     if (cached) return cached;
-    const count = await this.inviteModel.countDocuments(this.openReportFilter());
+    const count = await this.inviteModel.countDocuments(
+      this.openReportFilter(),
+    );
     const result = { count };
     this.setCachedAttention(cacheKey, result);
     return result;

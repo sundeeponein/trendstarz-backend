@@ -872,6 +872,42 @@ export class ProfileVerificationService {
 
     if (!this.isEmailVerified(profile)) await add("EMAIL_NOT_VERIFIED");
     if (!this.isMobileVerified(profile)) await add("MOBILE_NOT_VERIFIED");
+
+    // PAYMENT_MISSING is opened manually by admin (never auto-opened here —
+    // payout is only required at invite-accept time, not for every profile).
+    // But once the creator has since added valid payout details, the flag's
+    // condition is objectively false, so auto-close it here regardless of who
+    // opened it — otherwise an admin-set flag stays "Open" forever even after
+    // the creator fixes the exact thing it was complaining about.
+    if (this.hasPayout(profile)) {
+      await this.flagModel.updateMany(
+        {
+          userId: String(userId),
+          userType,
+          status: "Open",
+          flagCode: "PAYMENT_MISSING",
+        },
+        {
+          $set: {
+            status: "Resolved",
+            reviewedBy: "AUTO",
+            reviewedAt: new Date(),
+            reviewNotes:
+              "Automatically resolved: payout details are now on file.",
+          },
+          $push: {
+            auditLog: {
+              action: "auto_resolved",
+              actorId: "AUTO",
+              actorRole: "system",
+              note: "Profile now has payout details (UPI or bank + name) on file.",
+              actedAt: new Date(),
+            },
+          },
+        },
+      );
+    }
+
     await this.flagModel.updateMany(
       {
         userId: String(userId),
