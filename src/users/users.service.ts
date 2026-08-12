@@ -2177,6 +2177,13 @@ export class UsersService {
         const count = await this.campaignInviteModel.countDocuments({
           influencerId: inf._id,
           createdAt: { $gte: cycleStart },
+          // Withdrawn/declined invites don't hold a slot — same convention as
+          // CampaignInvitesService.getNonConsumingInviteStatuses(). Without this,
+          // a withdrawn/declined invite still burns the recipient's monthly quota,
+          // making them permanently invisible to new invite searches (including on
+          // a brand-new campaign) for the rest of that cycle even though nothing
+          // is actually pending or accepted anymore.
+          status: { $nin: ["withdrawn", "declined"] },
         });
         return count;
       }),
