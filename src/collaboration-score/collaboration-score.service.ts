@@ -24,7 +24,10 @@ import {
   CollectedPlatformData,
   ProfileCollector,
 } from "./collectors/collector.interface";
-import { buildSyncSnapshot, hashSnapshot } from "./collaboration-score-sync.util";
+import {
+  buildSyncSnapshot,
+  hashSnapshot,
+} from "./collaboration-score-sync.util";
 import { COLLABORATION_AUDIT_PLATFORMS } from "../database/schemas/collaboration-audit.schema";
 
 type CollaborationScoreUserType = "Influencer" | "Brand" | "Photographer";
@@ -63,7 +66,10 @@ function toObjectId(value: string) {
 
 @Injectable()
 export class CollaborationScoreService {
-  private readonly collectors: Record<CollaborationScorePlatform, ProfileCollector>;
+  private readonly collectors: Record<
+    CollaborationScorePlatform,
+    ProfileCollector
+  >;
 
   constructor(
     @InjectModel("CollaborationAudit") private readonly auditModel: Model<any>,
@@ -72,8 +78,10 @@ export class CollaborationScoreService {
     @InjectModel("Photographer") private readonly photographerModel: Model<any>,
     @InjectModel("Payment") private readonly paymentModel: Model<any>,
     @InjectModel("Transaction") private readonly transactionModel: Model<any>,
-    @InjectModel("SocialOAuthConnection") private readonly connectionModel: Model<any>,
-    @InjectModel("CollaborationSyncStatus") private readonly syncStatusModel: Model<any>,
+    @InjectModel("SocialOAuthConnection")
+    private readonly connectionModel: Model<any>,
+    @InjectModel("CollaborationSyncStatus")
+    private readonly syncStatusModel: Model<any>,
     private readonly profileVerificationService: ProfileVerificationService,
     private readonly rulesService: CollaborationScoreRulesService,
     private readonly aiService: CollaborationScoreAiService,
@@ -105,8 +113,12 @@ export class CollaborationScoreService {
     return this.influencerModel;
   }
 
-  private matchPlatform(platformName: string): CollaborationScorePlatform | null {
-    const normalized = String(platformName || "").trim().toLowerCase();
+  private matchPlatform(
+    platformName: string,
+  ): CollaborationScorePlatform | null {
+    const normalized = String(platformName || "")
+      .trim()
+      .toLowerCase();
     if (normalized === "youtube") return "YouTube";
     if (normalized === "instagram") return "Instagram";
     if (normalized === "facebook") return "Facebook";
@@ -119,7 +131,9 @@ export class CollaborationScoreService {
     platformsEnabled: Record<string, boolean>,
     userId: string,
   ): Promise<CollectedPlatformData[]> {
-    const entries: any[] = Array.isArray(profile?.socialMedia) ? profile.socialMedia : [];
+    const entries: any[] = Array.isArray(profile?.socialMedia)
+      ? profile.socialMedia
+      : [];
     const results: CollectedPlatformData[] = [];
     for (const entry of entries) {
       const platform = this.matchPlatform(entry?.platform);
@@ -133,14 +147,24 @@ export class CollaborationScoreService {
 
   private bioTextFor(profile: any): string {
     return String(
-      profile?.description || profile?.expertiseArea || profile?.professionalStatus || "",
+      profile?.description ||
+        profile?.expertiseArea ||
+        profile?.professionalStatus ||
+        "",
     ).trim();
   }
 
-  private categoriesFor(profile: any, userType: CollaborationScoreUserType): string[] {
+  private categoriesFor(
+    profile: any,
+    userType: CollaborationScoreUserType,
+  ): string[] {
     if (userType === "Photographer") return profile?.skills || [];
-    const categories: string[] = Array.isArray(profile?.categories) ? profile.categories : [];
-    const primary = profile?.influencerCategory ? [profile.influencerCategory] : [];
+    const categories: string[] = Array.isArray(profile?.categories)
+      ? profile.categories
+      : [];
+    const primary = profile?.influencerCategory
+      ? [profile.influencerCategory]
+      : [];
     return Array.from(new Set([...primary, ...categories]));
   }
 
@@ -158,11 +182,14 @@ export class CollaborationScoreService {
     confidenceReason: string;
   }> {
     const handle = String(youtubeUrl || "").trim();
-    if (!handle) throw new BadRequestException("A YouTube channel URL is required");
+    if (!handle)
+      throw new BadRequestException("A YouTube channel URL is required");
 
     const settings = await this.settingsService.getSettings();
     if (!settings.anonymousPreviewEnabled) {
-      throw new BadRequestException("The free score preview is currently unavailable. Please register to check your score.");
+      throw new BadRequestException(
+        "The free score preview is currently unavailable. Please register to check your score.",
+      );
     }
 
     const collected = await this.collectors.YouTube.collect({ handle });
@@ -172,7 +199,10 @@ export class CollaborationScoreService {
       );
     }
 
-    const { previewScore } = this.rulesService.computePreviewScores([collected], settings);
+    const { previewScore } = this.rulesService.computePreviewScores(
+      [collected],
+      settings,
+    );
 
     return {
       platform: "YouTube",
@@ -188,7 +218,10 @@ export class CollaborationScoreService {
    * once this has elapsed; paying never bypasses it early. Admin/nightly
    * triggers bypass this entirely.
    */
-  private async assertCooldownElapsed(userId: string, cooldownDays: number): Promise<void> {
+  private async assertCooldownElapsed(
+    userId: string,
+    cooldownDays: number,
+  ): Promise<void> {
     if (cooldownDays <= 0) return;
     const previous: any = await this.auditModel
       .findOne({ userId: String(userId), isCurrent: true })
@@ -196,7 +229,8 @@ export class CollaborationScoreService {
       .lean();
     if (!previous?.createdAt) return;
     const availableAt = new Date(
-      new Date(previous.createdAt).getTime() + cooldownDays * 24 * 60 * 60 * 1000,
+      new Date(previous.createdAt).getTime() +
+        cooldownDays * 24 * 60 * 60 * 1000,
     );
     if (Date.now() < availableAt.getTime()) {
       throw new BadRequestException(
@@ -211,9 +245,14 @@ export class CollaborationScoreService {
    * verifyReanalysisPayment) — applies uniformly to existing and new
    * accounts alike, no grandfathering.
    */
-  private async assertFreeAuditAvailable(userId: string, freeAuditCount: number): Promise<void> {
+  private async assertFreeAuditAvailable(
+    userId: string,
+    freeAuditCount: number,
+  ): Promise<void> {
     if (freeAuditCount <= 0) return;
-    const priorAuditCount = await this.auditModel.countDocuments({ userId: String(userId) });
+    const priorAuditCount = await this.auditModel.countDocuments({
+      userId: String(userId),
+    });
     if (priorAuditCount >= freeAuditCount) {
       throw new HttpException(
         {
@@ -248,16 +287,18 @@ export class CollaborationScoreService {
       }
     }
 
-    const snapshot = await this.profileVerificationService.getCompletionSnapshot(
-      userId,
-      role,
-    );
+    const snapshot =
+      await this.profileVerificationService.getCompletionSnapshot(userId, role);
     if (snapshot.userType === "User") {
-      throw new NotFoundException("Collaboration Score is not available for this account type");
+      throw new NotFoundException(
+        "Collaboration Score is not available for this account type",
+      );
     }
     const userType = snapshot.userType as CollaborationScoreUserType;
     const { completion, flags } = snapshot;
-    const profile = await this.modelForUserType(userType).findById(userId).lean();
+    const profile = await this.modelForUserType(userType)
+      .findById(userId)
+      .lean();
     if (!profile) throw new NotFoundException("Profile not found");
 
     const eligibility = this.profileVerificationService.buildEligibility(
@@ -399,7 +440,11 @@ export class CollaborationScoreService {
       set[`platforms.${collected.platform}.lastAuditHash`] = hash;
       set[`platforms.${collected.platform}.hasChanges`] = false;
     }
-    await this.syncStatusModel.updateOne({ userId }, { $set: set }, { upsert: true });
+    await this.syncStatusModel.updateOne(
+      { userId },
+      { $set: set },
+      { upsert: true },
+    );
   }
 
   /**
@@ -407,17 +452,23 @@ export class CollaborationScoreService {
    * used both by the Score Center's "Platform Status" section and to fold
    * `hasChanges` into `canReanalyze` in getAuditForUser below.
    */
-  async getSyncStatus(userId: string): Promise<{ platforms: SyncPlatformStatus[]; hasChanges: boolean }> {
-    const doc: any = await this.syncStatusModel.findOne({ userId: String(userId) }).lean();
+  async getSyncStatus(
+    userId: string,
+  ): Promise<{ platforms: SyncPlatformStatus[]; hasChanges: boolean }> {
+    const doc: any = await this.syncStatusModel
+      .findOne({ userId: String(userId) })
+      .lean();
     const platformsMap: Record<string, any> = doc?.platforms || {};
-    const platforms: SyncPlatformStatus[] = COLLABORATION_AUDIT_PLATFORMS.map((platform) => {
-      const entry = platformsMap[platform];
-      return {
-        platform,
-        lastSyncedAt: entry?.lastSyncedAt || null,
-        hasChanges: !!entry?.hasChanges,
-      };
-    });
+    const platforms: SyncPlatformStatus[] = COLLABORATION_AUDIT_PLATFORMS.map(
+      (platform) => {
+        const entry = platformsMap[platform];
+        return {
+          platform,
+          lastSyncedAt: entry?.lastSyncedAt || null,
+          hasChanges: !!entry?.hasChanges,
+        };
+      },
+    );
     return { platforms, hasChanges: platforms.some((p) => p.hasChanges) };
   }
 
@@ -429,20 +480,34 @@ export class CollaborationScoreService {
    * updates CollaborationSyncStatus so the Re-analyze button knows whether
    * paying for a re-analysis is actually worth it.
    */
-  async syncLatestProfile(userId: string, role: any): Promise<{ platforms: SyncPlatformStatus[]; hasChanges: boolean }> {
+  async syncLatestProfile(
+    userId: string,
+    role: any,
+  ): Promise<{ platforms: SyncPlatformStatus[]; hasChanges: boolean }> {
     const settings = await this.settingsService.getSettings();
     if (!settings.syncEnabled || !settings.allowManualSync) {
       throw new BadRequestException("Manual sync is currently unavailable.");
     }
 
     if (settings.syncCooldownMinutes > 0) {
-      const existing: any = await this.syncStatusModel.findOne({ userId: String(userId) }).lean();
+      const existing: any = await this.syncStatusModel
+        .findOne({ userId: String(userId) })
+        .lean();
       const lastSyncedTimes: number[] = Object.values(existing?.platforms || {})
-        .map((p: any) => (p?.lastSyncedAt ? new Date(p.lastSyncedAt).getTime() : 0))
+        .map((p: any) =>
+          p?.lastSyncedAt ? new Date(p.lastSyncedAt).getTime() : 0,
+        )
         .filter((t: number) => t > 0);
-      const mostRecent = lastSyncedTimes.length ? Math.max(...lastSyncedTimes) : 0;
-      if (mostRecent && Date.now() - mostRecent < settings.syncCooldownMinutes * 60 * 1000) {
-        throw new BadRequestException("Please wait a bit before syncing again.");
+      const mostRecent = lastSyncedTimes.length
+        ? Math.max(...lastSyncedTimes)
+        : 0;
+      if (
+        mostRecent &&
+        Date.now() - mostRecent < settings.syncCooldownMinutes * 60 * 1000
+      ) {
+        throw new BadRequestException(
+          "Please wait a bit before syncing again.",
+        );
       }
     }
 
@@ -451,15 +516,22 @@ export class CollaborationScoreService {
       .select("_id")
       .lean();
     if (!currentAudit) {
-      throw new BadRequestException("Generate your free Collaboration Score first.");
+      throw new BadRequestException(
+        "Generate your free Collaboration Score first.",
+      );
     }
 
-    const snapshot = await this.profileVerificationService.getCompletionSnapshot(userId, role);
+    const snapshot =
+      await this.profileVerificationService.getCompletionSnapshot(userId, role);
     if (snapshot.userType === "User") {
-      throw new NotFoundException("Collaboration Score is not available for this account type");
+      throw new NotFoundException(
+        "Collaboration Score is not available for this account type",
+      );
     }
     const userType = snapshot.userType as CollaborationScoreUserType;
-    const profile = await this.modelForUserType(userType).findById(userId).lean();
+    const profile = await this.modelForUserType(userType)
+      .findById(userId)
+      .lean();
     if (!profile) throw new NotFoundException("Profile not found");
 
     const collectedPlatforms = await this.collectPlatforms(
@@ -468,18 +540,24 @@ export class CollaborationScoreService {
       String(userId),
     );
 
-    const existing: any = await this.syncStatusModel.findOne({ userId: String(userId) }).lean();
+    const existing: any = await this.syncStatusModel
+      .findOne({ userId: String(userId) })
+      .lean();
     const existingPlatforms: Record<string, any> = existing?.platforms || {};
 
     const set: Record<string, unknown> = { userId: String(userId) };
     const now = new Date();
     // Keyed by platform so the final response reflects what was just
     // computed, not a re-read of the mocked/eventually-consistent doc.
-    const freshByPlatform: Record<string, { lastSyncedAt: Date; hasChanges: boolean }> = {};
+    const freshByPlatform: Record<
+      string,
+      { lastSyncedAt: Date; hasChanges: boolean }
+    > = {};
     for (const collected of collectedPlatforms) {
       const snap = buildSyncSnapshot(collected);
       const hash = hashSnapshot(snap);
-      const lastAuditHash = existingPlatforms[collected.platform]?.lastAuditHash ?? null;
+      const lastAuditHash =
+        existingPlatforms[collected.platform]?.lastAuditHash ?? null;
       // No baseline yet (e.g. an audit that predates this feature) — treat
       // as "nothing to compare," not as a false-positive change.
       const hasChanges = lastAuditHash != null && hash !== lastAuditHash;
@@ -490,15 +568,30 @@ export class CollaborationScoreService {
       set[`platforms.${collected.platform}.latestSnapshot`] = snap;
     }
     if (collectedPlatforms.length) {
-      await this.syncStatusModel.updateOne({ userId: String(userId) }, { $set: set }, { upsert: true });
+      await this.syncStatusModel.updateOne(
+        { userId: String(userId) },
+        { $set: set },
+        { upsert: true },
+      );
     }
 
-    const platforms: SyncPlatformStatus[] = COLLABORATION_AUDIT_PLATFORMS.map((platform) => {
-      const fresh = freshByPlatform[platform];
-      if (fresh) return { platform, lastSyncedAt: fresh.lastSyncedAt, hasChanges: fresh.hasChanges };
-      const entry = existingPlatforms[platform];
-      return { platform, lastSyncedAt: entry?.lastSyncedAt || null, hasChanges: !!entry?.hasChanges };
-    });
+    const platforms: SyncPlatformStatus[] = COLLABORATION_AUDIT_PLATFORMS.map(
+      (platform) => {
+        const fresh = freshByPlatform[platform];
+        if (fresh)
+          return {
+            platform,
+            lastSyncedAt: fresh.lastSyncedAt,
+            hasChanges: fresh.hasChanges,
+          };
+        const entry = existingPlatforms[platform];
+        return {
+          platform,
+          lastSyncedAt: entry?.lastSyncedAt || null,
+          hasChanges: !!entry?.hasChanges,
+        };
+      },
+    );
     return { platforms, hasChanges: platforms.some((p) => p.hasChanges) };
   }
 
@@ -506,7 +599,10 @@ export class CollaborationScoreService {
     const audit: any = await this.auditModel
       .findOne({ userId: String(targetUserId), isCurrent: true })
       .lean();
-    if (!audit) throw new NotFoundException("No Collaboration Score audit found for this user");
+    if (!audit)
+      throw new NotFoundException(
+        "No Collaboration Score audit found for this user",
+      );
 
     const requesterId = String(
       requester?.userId || requester?.sub || requester?.id || "",
@@ -521,12 +617,15 @@ export class CollaborationScoreService {
         new Date(audit.createdAt).getTime() +
           settings.reanalysisCooldownDays * 24 * 60 * 60 * 1000,
       );
-      const cooldownElapsed = settings.reanalysisCooldownDays <= 0 || Date.now() >= availableAt.getTime();
+      const cooldownElapsed =
+        settings.reanalysisCooldownDays <= 0 ||
+        Date.now() >= availableAt.getTime();
       const syncStatus = await this.getSyncStatus(targetUserId);
       // Both gates must pass: the cooldown window, and (when required) an
       // actual detected change since the last audit — see syncLatestProfile.
       const canReanalyze =
-        cooldownElapsed && (!settings.requireSyncBeforeReanalysis || syncStatus.hasChanges);
+        cooldownElapsed &&
+        (!settings.requireSyncBeforeReanalysis || syncStatus.hasChanges);
       return {
         ...audit,
         canReanalyze,
@@ -537,13 +636,15 @@ export class CollaborationScoreService {
     }
     if (isBrand) {
       const filtered: any = {};
-      for (const field of BRAND_SAFE_FIELDS) filtered[field] = (audit as any)[field];
+      for (const field of BRAND_SAFE_FIELDS)
+        filtered[field] = (audit as any)[field];
       return filtered;
     }
     // Any other role gets the same brand-safe projection by default —
     // conservative default, never leak AI prompts/internal calculations.
     const filtered: any = {};
-    for (const field of BRAND_SAFE_FIELDS) filtered[field] = (audit as any)[field];
+    for (const field of BRAND_SAFE_FIELDS)
+      filtered[field] = (audit as any)[field];
     return filtered;
   }
 
@@ -657,7 +758,10 @@ export class CollaborationScoreService {
       },
     );
 
-    await this.runAudit(userId, role, "USER", { skipFreeGate: true, isPaid: true });
+    await this.runAudit(userId, role, "USER", {
+      skipFreeGate: true,
+      isPaid: true,
+    });
     return this.getAuditForUser(userId, { userId, role });
   }
 
@@ -680,7 +784,9 @@ export class CollaborationScoreService {
       .find({ userId: String(targetUserId) })
       .sort({ version: -1 })
       .limit(Math.min(50, Math.max(1, limit)))
-      .select("version collaborationScore campaignReadiness trendstarzRecommended isPaid createdAt")
+      .select(
+        "version collaborationScore campaignReadiness trendstarzRecommended isPaid createdAt",
+      )
       .lean();
 
     const withDeltas = versions.map((entry: any, i: number) => ({
@@ -724,17 +830,29 @@ export class CollaborationScoreService {
     return audit;
   }
 
-  /** Public — see CollaborationScoreController.getPlatformFlags for why only this one field is exposed unauthenticated. */
+  /**
+   * Public — see CollaborationScoreController.getPlatformFlags for why only
+   * these fields are exposed unauthenticated. `metaConfigured` lets every
+   * Connect button (Edit Profile, Score Center) show a "Coming Soon" state
+   * instead of attempting an OAuth redirect that MetaOAuthService.getCredentials()
+   * would only reject deep inside the connect/callback round-trip.
+   */
   async getPlatformFlags() {
     const settings = await this.settingsService.getSettings();
-    return { platformsEnabled: settings.platformsEnabled };
+    return {
+      platformsEnabled: settings.platformsEnabled,
+      metaConfigured: this.metaOAuthService.isConfigured(),
+    };
   }
 
   /** Admin-only — every re-analysis payment for one creator, for the admin detail page. */
   async getReanalysisPayments(targetUserId: string, actor: any) {
     this.assertAdmin(actor);
     const payments = await this.paymentModel
-      .find({ userId: toObjectId(targetUserId), purpose: "collab_score_reanalysis" })
+      .find({
+        userId: toObjectId(targetUserId),
+        purpose: "collab_score_reanalysis",
+      })
       .sort({ createdAt: -1 })
       .select("amount paymentStatus status createdAt archivedAt")
       .lean();
@@ -758,7 +876,8 @@ export class CollaborationScoreService {
     if (query?.trendstarzRecommended !== undefined) {
       filter.trendstarzRecommended = query.trendstarzRecommended === "true";
     }
-    if (query?.campaignReadiness) filter.campaignReadiness = query.campaignReadiness;
+    if (query?.campaignReadiness)
+      filter.campaignReadiness = query.campaignReadiness;
     if (query?.dateFrom || query?.dateTo) {
       filter.createdAt = {};
       if (query.dateFrom) filter.createdAt.$gte = new Date(query.dateFrom);
@@ -790,7 +909,9 @@ export class CollaborationScoreService {
             totalAiOutputTokens: { $sum: "$aiOutputTokens" },
             aiAuditCount: { $sum: { $cond: ["$aiUsed", 1, 0] } },
             avgScore: { $avg: "$collaborationScore" },
-            recommendedCount: { $sum: { $cond: ["$trendstarzRecommended", 1, 0] } },
+            recommendedCount: {
+              $sum: { $cond: ["$trendstarzRecommended", 1, 0] },
+            },
           },
         },
       ]);
@@ -820,8 +941,12 @@ export class CollaborationScoreService {
             audits: { $sum: 1 },
             aiCalls: { $sum: { $cond: ["$aiUsed", 1, 0] } },
             estimatedCostUsd: { $sum: "$aiCostUsd" },
-            successCount: { $sum: { $cond: [{ $eq: ["$status", "completed"] }, 1, 0] } },
-            failureCount: { $sum: { $cond: [{ $eq: ["$status", "failed"] }, 1, 0] } },
+            successCount: {
+              $sum: { $cond: [{ $eq: ["$status", "completed"] }, 1, 0] },
+            },
+            failureCount: {
+              $sum: { $cond: [{ $eq: ["$status", "failed"] }, 1, 0] },
+            },
           },
         },
       ]);
@@ -855,7 +980,8 @@ export class CollaborationScoreService {
 
       result.todaySummary = {
         ...today,
-        averageCostUsd: today.aiCalls > 0 ? today.estimatedCostUsd / today.aiCalls : 0,
+        averageCostUsd:
+          today.aiCalls > 0 ? today.estimatedCostUsd / today.aiCalls : 0,
         platformBreakdown: platformAgg.map((p: any) => ({
           platform: p._id,
           count: p.count,
@@ -874,9 +1000,18 @@ export class CollaborationScoreService {
 
   private oauthScopesFor(platform: "instagram" | "facebook"): string[] {
     if (platform === "instagram") {
-      return ["pages_show_list", "instagram_basic", "instagram_manage_insights", "pages_read_engagement"];
+      return [
+        "pages_show_list",
+        "instagram_basic",
+        "instagram_manage_insights",
+        "pages_read_engagement",
+      ];
     }
-    return ["pages_show_list", "pages_read_engagement", "pages_read_user_content"];
+    return [
+      "pages_show_list",
+      "pages_read_engagement",
+      "pages_read_user_content",
+    ];
   }
 
   private dashboardPathForRole(role: any): string {
@@ -892,12 +1027,23 @@ export class CollaborationScoreService {
    * platform this connection is for — reuses the app's existing JWT secret
    * rather than standing up a session store.
    */
-  getConnectAuthorizationUrl(userId: string, role: any, platform: "instagram" | "facebook") {
+  getConnectAuthorizationUrl(
+    userId: string,
+    role: any,
+    platform: "instagram" | "facebook",
+  ) {
     if (platform !== "instagram" && platform !== "facebook") {
       throw new BadRequestException("Unsupported platform");
     }
-    const state = jwt.sign({ userId: String(userId), role, platform }, getJwtSecret(), { expiresIn: "10m" });
-    const authorizationUrl = this.metaOAuthService.getAuthorizationUrl(state, this.oauthScopesFor(platform));
+    const state = jwt.sign(
+      { userId: String(userId), role, platform },
+      getJwtSecret(),
+      { expiresIn: "10m" },
+    );
+    const authorizationUrl = this.metaOAuthService.getAuthorizationUrl(
+      state,
+      this.oauthScopesFor(platform),
+    );
     return { authorizationUrl };
   }
 
@@ -911,11 +1057,17 @@ export class CollaborationScoreService {
    * already-connected platform does not re-trigger this.
    */
   async handleOAuthCallback(code: string, state: string): Promise<string> {
-    let decoded: { userId: string; role: any; platform: "instagram" | "facebook" };
+    let decoded: {
+      userId: string;
+      role: any;
+      platform: "instagram" | "facebook";
+    };
     try {
       decoded = jwt.verify(state, getJwtSecret()) as any;
     } catch {
-      throw new BadRequestException("Invalid or expired connect request. Please try again.");
+      throw new BadRequestException(
+        "Invalid or expired connect request. Please try again.",
+      );
     }
 
     const existingConnection = await this.connectionModel
@@ -923,8 +1075,12 @@ export class CollaborationScoreService {
       .lean();
 
     const shortLived = await this.metaOAuthService.exchangeCodeForToken(code);
-    const longLived = await this.metaOAuthService.exchangeForLongLivedToken(shortLived.accessToken);
-    const pages = await this.metaOAuthService.resolveFacebookPages(longLived.accessToken);
+    const longLived = await this.metaOAuthService.exchangeForLongLivedToken(
+      shortLived.accessToken,
+    );
+    const pages = await this.metaOAuthService.resolveFacebookPages(
+      longLived.accessToken,
+    );
     const page = pages[0]; // first Page — matches the common single-Page creator setup
 
     const expiresAt = longLived.expiresInSeconds
@@ -936,10 +1092,11 @@ export class CollaborationScoreService {
     let displayHandle: string | null = page?.name || null;
     let displayFollowers: number | null = page?.followersCount ?? null;
     if (decoded.platform === "instagram" && page?.instagramBusinessAccountId) {
-      const igStats = await this.metaOAuthService.getInstagramBusinessAccountStats(
-        page.instagramBusinessAccountId,
-        longLived.accessToken,
-      );
+      const igStats =
+        await this.metaOAuthService.getInstagramBusinessAccountStats(
+          page.instagramBusinessAccountId,
+          longLived.accessToken,
+        );
       if (igStats) {
         displayHandle = igStats.username;
         displayFollowers = igStats.followersCount;
@@ -957,7 +1114,9 @@ export class CollaborationScoreService {
           longLivedTokenExpiresAt: expiresAt,
           facebookPageId: page?.id || null,
           instagramBusinessAccountId:
-            decoded.platform === "instagram" ? page?.instagramBusinessAccountId || null : null,
+            decoded.platform === "instagram"
+              ? page?.instagramBusinessAccountId || null
+              : null,
           handle: displayHandle,
           followersCount: displayFollowers,
           scopes: this.oauthScopesFor(decoded.platform),
@@ -972,21 +1131,32 @@ export class CollaborationScoreService {
       // Best-effort — a failed free rescore must never break the OAuth
       // redirect the creator is mid-flow on. They'll still pick this up via
       // Sync/Re-analyze on their next visit either way.
-      await this.runAudit(decoded.userId, decoded.role, "SYSTEM_CONNECT", { isPaid: false }).catch(() => {});
+      await this.runAudit(decoded.userId, decoded.role, "SYSTEM_CONNECT", {
+        isPaid: false,
+      }).catch(() => {});
     }
 
     const dashboardPath = this.dashboardPathForRole(decoded.role);
     return `${process.env.FRONTEND_URL || "https://trendstarz.in"}${dashboardPath}?connected=${decoded.platform}`;
   }
 
-  async disconnectPlatform(userId: string, platform: "instagram" | "facebook"): Promise<{ success: boolean }> {
+  async disconnectPlatform(
+    userId: string,
+    platform: "instagram" | "facebook",
+  ): Promise<{ success: boolean }> {
     const connection: any = await this.connectionModel
       .findOne({ userId: String(userId), platform })
       .select("+accessToken");
     if (connection) {
-      const targetId = platform === "instagram" ? connection.instagramBusinessAccountId : connection.facebookPageId;
+      const targetId =
+        platform === "instagram"
+          ? connection.instagramBusinessAccountId
+          : connection.facebookPageId;
       if (targetId && connection.accessToken) {
-        await this.metaOAuthService.revokePermissions(targetId, connection.accessToken);
+        await this.metaOAuthService.revokePermissions(
+          targetId,
+          connection.accessToken,
+        );
       }
       await this.connectionModel.deleteOne({ _id: connection._id });
     }
@@ -1005,7 +1175,11 @@ export class CollaborationScoreService {
     const toDetail = (platform: string): SocialConnectionDetail | null => {
       const c: any = byPlatform.get(platform);
       if (!c) return null;
-      return { handle: c.handle || null, followersCount: c.followersCount ?? null, connectedAt: c.connectedAt };
+      return {
+        handle: c.handle || null,
+        followersCount: c.followersCount ?? null,
+        connectedAt: c.connectedAt,
+      };
     };
     return { instagram: toDetail("instagram"), facebook: toDetail("facebook") };
   }
