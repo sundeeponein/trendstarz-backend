@@ -934,6 +934,9 @@ export class UsersService {
     @InjectModel("SocialOAuthConnection") private readonly socialOAuthConnectionModel: Model<any>,
     private readonly plansService: PlansService,
     private readonly metaOAuthService: MetaOAuthService,
+    @InjectModel("Review") private readonly reviewModel: Model<any>,
+    @InjectModel("CampaignTransaction")
+    private readonly campaignTransactionModel: Model<any>,
   ) {}
 
   /**
@@ -2554,6 +2557,11 @@ export class UsersService {
       totalBrands,
       verifiedBrands,
       totalCampaigns,
+      ratingAgg,
+      escrowAgg,
+      influencerDistricts,
+      photographerDistricts,
+      brandDistricts,
     ] = await Promise.all([
       this.influencerModel.countDocuments(influencerFilter),
       this.influencerModel.countDocuments(verifiedInfluencerFilter),
@@ -2562,7 +2570,26 @@ export class UsersService {
       this.brandModel.countDocuments(brandFilter),
       this.brandModel.countDocuments(verifiedBrandFilter),
       this.campaignModel.countDocuments({}),
+      this.reviewModel.aggregate([
+        { $match: { status: "approved" } },
+        { $group: { _id: null, avg: { $avg: "$rating" }, count: { $sum: 1 } } },
+      ]),
+      // Brand money actually collected and held for creators.
+      this.campaignTransactionModel.aggregate([
+        { $match: { collectionStatus: "verified" } },
+        { $group: { _id: null, total: { $sum: "$agreedAmount" } } },
+      ]),
+      this.influencerModel.distinct("location.district", influencerFilter),
+      this.photographerModel.distinct("location.district", photographerFilter),
+      this.brandModel.distinct("location.district", brandFilter),
     ]);
+
+    // Cities = distinct districts across all publicly visible profiles.
+    const totalCities = new Set(
+      [...influencerDistricts, ...photographerDistricts, ...brandDistricts]
+        .map((d: any) => String(d || "").trim().toLowerCase())
+        .filter(Boolean),
+    ).size;
 
     return {
       totalInfluencers,
@@ -2572,6 +2599,12 @@ export class UsersService {
       totalBrands,
       verifiedBrands,
       totalCampaigns,
+      averageRating: ratingAgg[0]?.avg
+        ? Math.round(ratingAgg[0].avg * 10) / 10
+        : 0,
+      ratingCount: ratingAgg[0]?.count || 0,
+      creatorEscrowTotal: escrowAgg[0]?.total || 0,
+      totalCities,
     };
   }
 

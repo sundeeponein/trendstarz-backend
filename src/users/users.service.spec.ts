@@ -15,6 +15,8 @@ describe("UsersService profile update guards", () => {
     cloudinaryService?: any;
     firebaseAdminService?: any;
     metaOAuthService?: any;
+    reviewModel?: any;
+    campaignTransactionModel?: any;
   }) => {
     const cloudinaryService = overrides?.cloudinaryService || ({} as any);
     const firebaseAdminService = overrides?.firebaseAdminService || ({} as any);
@@ -52,6 +54,8 @@ describe("UsersService profile update guards", () => {
       socialOAuthConnectionModel,
       plansService,
       metaOAuthService,
+      overrides?.reviewModel || ({} as any),
+      overrides?.campaignTransactionModel || ({} as any),
     );
   };
 
@@ -213,12 +217,15 @@ describe("UsersService profile update guards", () => {
   it("counts only public-visible profiles in platform stats", async () => {
     const influencerModel = {
       countDocuments: jest.fn().mockResolvedValue(2),
+      distinct: jest.fn().mockResolvedValue(["Hyderabad", "Pune"]),
     };
     const brandModel = {
       countDocuments: jest.fn().mockResolvedValue(3),
+      distinct: jest.fn().mockResolvedValue([" hyderabad "]),
     };
     const photographerModel = {
       countDocuments: jest.fn().mockResolvedValue(4),
+      distinct: jest.fn().mockResolvedValue([null, ""]),
     };
     const campaignModel = {
       countDocuments: jest.fn().mockResolvedValue(5),
@@ -237,9 +244,24 @@ describe("UsersService profile update guards", () => {
       photographerModel,
       campaignModel,
       profileFlagModel,
+      reviewModel: {
+        aggregate: jest.fn().mockResolvedValue([{ avg: 4.86, count: 12 }]),
+      },
+      campaignTransactionModel: {
+        aggregate: jest.fn().mockResolvedValue([{ total: 250000 }]),
+      },
     });
 
-    await service.getPlatformStats();
+    const stats = await service.getPlatformStats();
+
+    expect(stats).toEqual(
+      expect.objectContaining({
+        averageRating: 4.9,
+        ratingCount: 12,
+        creatorEscrowTotal: 250000,
+        totalCities: 2,
+      }),
+    );
 
     expect(influencerModel.countDocuments).toHaveBeenCalledWith(
       expect.objectContaining({

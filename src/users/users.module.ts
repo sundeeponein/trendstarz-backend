@@ -19,6 +19,8 @@ import { PaymentSchema } from "../database/schemas/payment.schema";
 import { TransactionSchema } from "../database/schemas/transaction.schema";
 import { SocialOAuthConnectionSchema } from "../database/schemas/social-oauth-connection.schema";
 import { UsageCounterSchema } from "../database/schemas/usage-counter.schema";
+import { ReviewSchema } from "../database/schemas/review.schema";
+import { CampaignTransactionSchema } from "../database/schemas/campaign-transaction.schema";
 import { PlansModule } from "../plans/plans.module";
 import { MonetizationModule } from "../monetization/monetization.module";
 import { FirebaseAdminService } from "../utils/firebase-admin.service";
@@ -67,6 +69,12 @@ import { PhotographersModule } from "../photographers/photographers.module";
       },
       { name: "Payment", schema: PaymentSchema, collection: "payments" },
       { name: "Transaction", schema: TransactionSchema, collection: "transactions" },
+      { name: "Review", schema: ReviewSchema, collection: "reviews" },
+      {
+        name: "CampaignTransaction",
+        schema: CampaignTransactionSchema,
+        collection: "campaigntransactions",
+      },
       {
         name: "SocialOAuthConnection",
         schema: SocialOAuthConnectionSchema,
