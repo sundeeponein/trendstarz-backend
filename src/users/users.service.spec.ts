@@ -218,6 +218,10 @@ describe("UsersService profile update guards", () => {
     const influencerModel = {
       countDocuments: jest.fn().mockResolvedValue(2),
       distinct: jest.fn().mockResolvedValue(["Hyderabad", "Pune"]),
+      aggregate: jest.fn().mockResolvedValue([
+        { _id: "Fashion", count: 2 },
+        { _id: " ", count: 1 },
+      ]),
     };
     const brandModel = {
       countDocuments: jest.fn().mockResolvedValue(3),
@@ -260,6 +264,7 @@ describe("UsersService profile update guards", () => {
         ratingCount: 12,
         creatorEscrowTotal: 250000,
         totalCities: 2,
+        influencerCategoryCounts: { Fashion: 2 },
       }),
     );
 

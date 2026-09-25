@@ -2562,6 +2562,7 @@ export class UsersService {
       influencerDistricts,
       photographerDistricts,
       brandDistricts,
+      influencerCategoryAgg,
     ] = await Promise.all([
       this.influencerModel.countDocuments(influencerFilter),
       this.influencerModel.countDocuments(verifiedInfluencerFilter),
@@ -2582,7 +2583,19 @@ export class UsersService {
       this.influencerModel.distinct("location.district", influencerFilter),
       this.photographerModel.distinct("location.district", photographerFilter),
       this.brandModel.distinct("location.district", brandFilter),
+      // Same public filter as totalInfluencers, so each niche count matches what Search shows.
+      this.influencerModel.aggregate([
+        { $match: influencerFilter },
+        { $unwind: "$categories" },
+        { $group: { _id: "$categories", count: { $sum: 1 } } },
+      ]),
     ]);
+
+    const influencerCategoryCounts: Record<string, number> = {};
+    for (const row of influencerCategoryAgg) {
+      const name = String(row?._id || "").trim();
+      if (name) influencerCategoryCounts[name] = (influencerCategoryCounts[name] || 0) + row.count;
+    }
 
     // Cities = distinct districts across all publicly visible profiles.
     const totalCities = new Set(
@@ -2605,6 +2618,7 @@ export class UsersService {
       ratingCount: ratingAgg[0]?.count || 0,
       creatorEscrowTotal: escrowAgg[0]?.total || 0,
       totalCities,
+      influencerCategoryCounts,
     };
   }
 
