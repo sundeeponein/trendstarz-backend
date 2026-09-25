@@ -124,6 +124,17 @@ export const CollaborationAuditSchema = new Schema(
     // Threshold snapshot at compute time — lets the dashboard show a
     // "Need +N points" gap without exposing admin-only settings to creators.
     trendstarzRecommendedMinScore: { type: Number, default: 80 },
+    // Weight snapshot at compute time — the breakdown table multiplies each
+    // sub-score by these, so its contributions always add up to this audit's
+    // collaborationScore even after an admin changes the weights later.
+    // Absent on audits created before this field existed.
+    scoreWeights: {
+      profileCompletion: { type: Number },
+      contentQuality: { type: Number },
+      postingConsistency: { type: Number },
+      professionalBranding: { type: Number },
+      campaignReadiness: { type: Number },
+    },
     pricingSuggestion: {
       reelPrice: { type: Number, default: null },
       storyPrice: { type: Number, default: null },

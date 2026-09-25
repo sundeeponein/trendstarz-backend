@@ -129,6 +129,7 @@ describe("CollaborationScoreService", () => {
       verifySignature: jest.fn().mockReturnValue(true),
     };
     metaOAuthService = {
+      isConfigured: jest.fn().mockReturnValue(true),
       getAuthorizationUrl: jest.fn().mockReturnValue("https://facebook.com/dialog/oauth?..."),
       exchangeCodeForToken: jest.fn().mockResolvedValue({ accessToken: "short", expiresInSeconds: 3600 }),
       exchangeForLongLivedToken: jest.fn().mockResolvedValue({ accessToken: "long", expiresInSeconds: 5184000 }),
@@ -493,9 +494,17 @@ describe("CollaborationScoreService", () => {
   });
 
   describe("getPlatformFlags — public, no auth required", () => {
-    it("returns only platformsEnabled, nothing else from settings", async () => {
+    it("returns only platformsEnabled, metaConfigured, scoreWeights and badge thresholds, nothing else from settings", async () => {
+      const scoreWeights = { profileCompletion: 15, contentQuality: 25, postingConsistency: 20, professionalBranding: 20, campaignReadiness: 20 };
       settingsService.getSettings.mockResolvedValue({
         platformsEnabled: { instagram: false, youtube: true, facebook: true, linkedin: false },
+        scoreWeights,
+        thresholds: {
+          trendstarzRecommendedMinScore: 80,
+          campaignReadyMinScore: 70,
+          partiallyReadyMinScore: 40,
+          aiMinConfidence: 0.5, // any other threshold must not leak
+        },
         aiModel: "claude-sonnet-5", // must never leak through this endpoint
         reanalysisFeeRupees: 49,
       });
@@ -504,6 +513,9 @@ describe("CollaborationScoreService", () => {
 
       expect(result).toEqual({
         platformsEnabled: { instagram: false, youtube: true, facebook: true, linkedin: false },
+        metaConfigured: expect.any(Boolean),
+        scoreWeights,
+        scoreThresholds: { trendstarzRecommendedMinScore: 80, campaignReadyMinScore: 70, partiallyReadyMinScore: 40 },
       });
       expect(result).not.toHaveProperty("aiModel");
       expect(result).not.toHaveProperty("reanalysisFeeRupees");

@@ -387,6 +387,7 @@ export class CollaborationScoreService {
         campaignReadiness: scores.campaignReadiness,
         trendstarzRecommended: scores.trendstarzRecommended,
         trendstarzRecommendedMinScore: scores.trendstarzRecommendedMinScore,
+        scoreWeights: { ...settings.scoreWeights },
         pricingSuggestion: scores.pricingSuggestion,
         categoryMatch: scores.categoryMatch,
         aiAnalysis: aiResult,
@@ -842,6 +843,15 @@ export class CollaborationScoreService {
     return {
       platformsEnabled: settings.platformsEnabled,
       metaConfigured: this.metaOAuthService.isConfigured(),
+      // How the five components add up to the overall score — shown on the
+      // public TrendScore page so its "% weight" labels match what's computed.
+      scoreWeights: settings.scoreWeights,
+      // Badge cut-offs, so every public "score level" matches what's awarded.
+      scoreThresholds: {
+        trendstarzRecommendedMinScore: settings.thresholds?.trendstarzRecommendedMinScore,
+        campaignReadyMinScore: settings.thresholds?.campaignReadyMinScore,
+        partiallyReadyMinScore: settings.thresholds?.partiallyReadyMinScore,
+      },
     };
   }
 
