@@ -1049,7 +1049,6 @@ export class ProfileVerificationService {
       // self-service field. Admin/support should ask this during a manual
       // verification call when false.
       profileVisibilityIsSet: !!profile?.profileVisibility,
-      featuredInMarketing: !!profile?.featuredInMarketing,
       phoneNumber: profile?.phoneNumber || "",
       publicProfileUrl: this.buildPublicProfileUrl(profile, userType),
       referralLink: this.buildReferralLink(profile, userType),
@@ -1091,13 +1090,12 @@ export class ProfileVerificationService {
   }
 
   /**
-   * Homepage Feature eligibility checklist for the admin profile-moderation
-   * view. Mirrors (but is not literally shared code with) the real gating
-   * conditions in applyApprovedEligibilityFilter (profile-eligibility.util.ts,
-   * requirePremium option) plus the featuredInMarketing/profileVisibility
-   * checks in getHeroShowcaseInfluencerAndBrandImages /
-   * getHeroShowcasePhotographerImage — if those change, update this too.
-   * Premium is now a hard requirement (Homepage Hero Feature is Premium-only).
+   * Homepage "Featured" sections eligibility checklist (Featured Influencers /
+   * Brands / Photo-Videographers) for the admin profile-moderation view.
+   * Mirrors (but is not literally shared code with) applyApprovedEligibilityFilter
+   * (profile-eligibility.util.ts, requirePremium option) — if that changes,
+   * update this too. The homepage hero uses TrendStarz's own marketing
+   * content only, so no per-user homepage consent exists any more.
    */
   buildHomepageEligibility(profile: any, flags: any[], userType: ProfileUserType) {
     const hasOpen = (code: string) =>
@@ -1118,7 +1116,6 @@ export class ProfileVerificationService {
     const isPremium =
       !!profile?.isPremium &&
       (!profile?.premiumEnd || new Date(profile.premiumEnd) >= new Date());
-    const homepageConsent = !!profile?.featuredInMarketing;
     const profileVisibility = profile?.profileVisibility || "PUBLIC";
     const visibilityIsPublic = profileVisibility === "PUBLIC";
 
@@ -1128,7 +1125,6 @@ export class ProfileVerificationService {
     if (!profilePhotoApproved) reasons.push("Profile photo not approved");
     if (!profileApproved) reasons.push("Profile not approved by admin");
     if (!isPremium) reasons.push("Premium subscription required");
-    if (!homepageConsent) reasons.push("Homepage consent disabled");
     if (!visibilityIsPublic) reasons.push("Profile visibility is not Public");
 
     return {
@@ -1137,7 +1133,6 @@ export class ProfileVerificationService {
       profilePhotoApproved,
       profileApproved,
       isPremium,
-      homepageConsent,
       profileVisibility,
       eligibleForHomepage: reasons.length === 0,
       reasons,
@@ -1886,7 +1881,7 @@ export class ProfileVerificationService {
     actor: any,
     userType: ProfileUserType,
     userId: string,
-    body: { profileVisibility?: string; featuredInMarketing?: boolean },
+    body: { profileVisibility?: string },
   ) {
     this.assertAdmin(actor);
     const update: any = {};
@@ -1899,13 +1894,6 @@ export class ProfileVerificationService {
         );
       }
       update.profileVisibility = value;
-      if (value !== "PUBLIC") update.featuredInMarketing = false;
-    }
-    if (
-      typeof body?.featuredInMarketing === "boolean" &&
-      update.featuredInMarketing === undefined
-    ) {
-      update.featuredInMarketing = body.featuredInMarketing;
     }
     if (Object.keys(update).length > 0) {
       await this.modelForUserType(userType).findByIdAndUpdate(userId, {

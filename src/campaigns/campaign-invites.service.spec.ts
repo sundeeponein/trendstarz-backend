@@ -9,7 +9,72 @@ import { CampaignInvitesService } from "./campaign-invites.service";
 import { PlansService } from "../plans/plans.service";
 import { PushService } from "../push/push.service";
 import { NotificationsService } from "../notifications/notifications.service";
+import { WhatsAppService } from "../whatsapp/whatsapp.service";
+import { ProfileVerificationService } from "../profile-verification/profile-verification.service";
+import { TrackingLinksService } from "./tracking-links.service";
 import { sendAppEmail } from "../utils/app-email.service";
+
+/** Mongoose query stand-in: chainable, awaitable, resolves to `value`. */
+function queryOf(value: any = null) {
+  const q: any = {};
+  ["select", "lean", "sort", "limit", "skip", "populate", "exec"].forEach((m) => (q[m] = jest.fn(() => q)));
+  q.then = (res: any, rej: any) => Promise.resolve(value).then(res, rej);
+  return q;
+}
+
+/**
+ * Wraps a test's model fake so methods it doesn't define still behave like an
+ * empty collection (find → [], findOne/findById → null, counts → 0). Methods
+ * the test does define — and any return values it sets later — are untouched.
+ */
+function lenientModel(fake: any): any {
+  const defaults: Record<string, () => any> = {
+    find: () => queryOf([]),
+    findOne: () => queryOf(null),
+    findById: () => queryOf(null),
+    findOneAndUpdate: () => queryOf(null),
+    findByIdAndUpdate: () => queryOf(null),
+    countDocuments: () => queryOf(0),
+    distinct: () => queryOf([]),
+    aggregate: () => queryOf([]),
+    updateOne: () => queryOf({ acknowledged: true, modifiedCount: 0 }),
+    updateMany: () => queryOf({ acknowledged: true, modifiedCount: 0 }),
+    exists: () => queryOf(null),
+  };
+  return new Proxy(fake, {
+    get: (target, prop, receiver) => {
+      if (prop in target) return Reflect.get(target, prop, receiver);
+      if (typeof prop === "string" && defaults[prop]) {
+        const fn = jest.fn(defaults[prop]);
+        (target as any)[prop] = fn;
+        return fn;
+      }
+      return undefined;
+    },
+  });
+}
+
+/** Any method resolves to undefined. Skips `then` (and symbols) so Nest doesn't treat it as a promise. */
+function inertService(): any {
+  return new Proxy({}, {
+    get: (_t, prop) => (prop === "then" || typeof prop === "symbol" ? undefined : jest.fn().mockResolvedValue(undefined)),
+  });
+}
+
+/** Collaborators added to CampaignInvitesService after these tests were written; defaults are inert. */
+const laterInviteProviders = [
+  {
+    provide: getModelToken("AppSettings"),
+    useValue: {
+      findOne: jest.fn(() => queryOf(null)),
+      find: jest.fn(() => queryOf([])),
+      findById: jest.fn(() => queryOf(null)),
+    },
+  },
+  { provide: WhatsAppService, useValue: inertService() },
+  { provide: ProfileVerificationService, useValue: inertService() },
+  { provide: TrackingLinksService, useValue: inertService() },
+];
 
 describe("CampaignInvitesService (admin disputes + remind)", () => {
   let service: CampaignInvitesService;
@@ -47,22 +112,23 @@ describe("CampaignInvitesService (admin disputes + remind)", () => {
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         CampaignInvitesService,
-        { provide: getModelToken("CampaignInvite"), useValue: inviteModel },
+        { provide: getModelToken("CampaignInvite"), useValue: lenientModel(inviteModel) },
         {
           provide: getModelToken("CampaignSubmission"),
-          useValue: submissionModel,
+          useValue: lenientModel(submissionModel),
         },
-        { provide: getModelToken("Campaign"), useValue: campaignModel },
-        { provide: getModelToken("Brand"), useValue: brandModel },
-        { provide: getModelToken("Photographer"), useValue: photographerModel },
-        { provide: getModelToken("Influencer"), useValue: influencerModel },
+        { provide: getModelToken("Campaign"), useValue: lenientModel(campaignModel) },
+        { provide: getModelToken("Brand"), useValue: lenientModel(brandModel) },
+        { provide: getModelToken("Photographer"), useValue: lenientModel(photographerModel) },
+        { provide: getModelToken("Influencer"), useValue: lenientModel(influencerModel) },
         {
           provide: getModelToken("CampaignTransaction"),
-          useValue: txnModel,
+          useValue: lenientModel(txnModel),
         },
         { provide: PlansService, useValue: {} },
         { provide: PushService, useValue: { sendToUser: jest.fn().mockResolvedValue(undefined) } },
         { provide: NotificationsService, useValue: { createForUser: jest.fn().mockResolvedValue(undefined) } },
+        ...laterInviteProviders,
       ],
     }).compile();
 
@@ -74,8 +140,9 @@ describe("CampaignInvitesService (admin disputes + remind)", () => {
     it("counts disputed invites with unresolved reportedIssue", async () => {
       inviteModel.countDocuments.mockResolvedValue(7);
       const result = await service.adminCountOpenDisputes();
+      // Open = an issue was reported and not yet resolved (any invite status).
       expect(inviteModel.countDocuments).toHaveBeenCalledWith({
-        status: "disputed",
+        "reportedIssue.reportedAt": { $ne: null },
         "reportedIssue.resolvedAt": { $in: [null, undefined] },
       });
       expect(result).toEqual({ count: 7 });
@@ -228,7 +295,7 @@ describe("CampaignInvitesService (admin disputes + remind)", () => {
     beforeEach(() => {
       // brand ownership lookup fallback used inside assertBrandOwnsInvite
       brandModel.findById.mockReturnValue(
-        mockChainSelectLean({ brandUsername: "brand1" }),
+        mockChainSelectLean({ brandUsername: "brand1", isEmailVerified: true, isMobileVerified: true }),
       );
       influencerModel.findById.mockReturnValue({
         select: jest.fn().mockReturnValue({
@@ -250,7 +317,7 @@ describe("CampaignInvitesService (admin disputes + remind)", () => {
       inviteModel.findById.mockResolvedValue(invite);
       // brand lookup for email enrichment
       brandModel.findById
-        .mockReturnValueOnce(mockChainSelectLean({ brandUsername: "brand1" })) // assertBrandOwnsInvite no-op (skipped because brandId matches)
+        .mockReturnValueOnce(mockChainSelectLean({ brandUsername: "brand1", isEmailVerified: true, isMobileVerified: true })) // assertBrandOwnsInvite no-op (skipped because brandId matches)
         .mockReturnValueOnce(mockChainSelectLean({ name: "Brand X" })); // email enrichment
       const res = await service.remindInvite("inv1", "brand1");
       expect(invite.remindersSent).toBe(1);
@@ -322,14 +389,14 @@ describe("CampaignInvitesService – create() gating", () => {
     brandModel = jest.fn();
     brandModel.findById = jest.fn().mockReturnValue({
       select: jest.fn().mockReturnValue({
-        lean: jest.fn().mockResolvedValue({ brandUsername: "brand1" }),
+        lean: jest.fn().mockResolvedValue({ brandUsername: "brand1", isEmailVerified: true, isMobileVerified: true }),
       }),
     });
 
     influencerModel = jest.fn();
     influencerModel.findById = jest.fn().mockReturnValue({
       select: jest.fn().mockReturnValue({
-        lean: jest.fn().mockResolvedValue({ email: "inf@test.com", name: "Inf" }),
+        lean: jest.fn().mockResolvedValue({ email: "inf@test.com", name: "Inf", isEmailVerified: true, isMobileVerified: true }),
       }),
     });
 
@@ -347,16 +414,17 @@ describe("CampaignInvitesService – create() gating", () => {
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         CampaignInvitesService,
-        { provide: getModelToken("CampaignInvite"), useValue: inviteModel },
-        { provide: getModelToken("CampaignSubmission"), useValue: {} },
-        { provide: getModelToken("Campaign"), useValue: campaignModel },
-        { provide: getModelToken("Brand"), useValue: brandModel },
-        { provide: getModelToken("Photographer"), useValue: jest.fn() },
-        { provide: getModelToken("Influencer"), useValue: influencerModel },
-        { provide: getModelToken("CampaignTransaction"), useValue: {} },
+        { provide: getModelToken("CampaignInvite"), useValue: lenientModel(inviteModel) },
+        { provide: getModelToken("CampaignSubmission"), useValue: lenientModel({}) },
+        { provide: getModelToken("Campaign"), useValue: lenientModel(campaignModel) },
+        { provide: getModelToken("Brand"), useValue: lenientModel(brandModel) },
+        { provide: getModelToken("Photographer"), useValue: lenientModel(jest.fn()) },
+        { provide: getModelToken("Influencer"), useValue: lenientModel(influencerModel) },
+        { provide: getModelToken("CampaignTransaction"), useValue: lenientModel({}) },
         { provide: PlansService, useValue: plansService },
         { provide: PushService, useValue: { sendToUser: jest.fn().mockResolvedValue(undefined) } },
         { provide: NotificationsService, useValue: { createForUser: jest.fn().mockResolvedValue(undefined) } },
+        ...laterInviteProviders,
       ],
     }).compile();
 
@@ -490,6 +558,8 @@ describe("CampaignInvitesService – respond()", () => {
 
   function mockCampaignSelect(overrides: any = {}) {
     const data = {
+      // Recipients may only act on live (admin-approved) campaigns.
+      status: "active",
       startDate: CAMPAIGN_START,
       endDate: CAMPAIGN_END,
       timelineStart: CAMPAIGN_START,
@@ -535,16 +605,17 @@ describe("CampaignInvitesService – respond()", () => {
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         CampaignInvitesService,
-        { provide: getModelToken("CampaignInvite"), useValue: inviteModel },
-        { provide: getModelToken("CampaignSubmission"), useValue: {} },
-        { provide: getModelToken("Campaign"), useValue: campaignModel },
-        { provide: getModelToken("Brand"), useValue: brandModel },
-        { provide: getModelToken("Photographer"), useValue: jest.fn() },
-        { provide: getModelToken("Influencer"), useValue: influencerModel },
-        { provide: getModelToken("CampaignTransaction"), useValue: {} },
+        { provide: getModelToken("CampaignInvite"), useValue: lenientModel(inviteModel) },
+        { provide: getModelToken("CampaignSubmission"), useValue: lenientModel({}) },
+        { provide: getModelToken("Campaign"), useValue: lenientModel(campaignModel) },
+        { provide: getModelToken("Brand"), useValue: lenientModel(brandModel) },
+        { provide: getModelToken("Photographer"), useValue: lenientModel(jest.fn()) },
+        { provide: getModelToken("Influencer"), useValue: lenientModel(influencerModel) },
+        { provide: getModelToken("CampaignTransaction"), useValue: lenientModel({}) },
         { provide: PlansService, useValue: plansService },
         { provide: PushService, useValue: { sendToUser: jest.fn().mockResolvedValue(undefined) } },
         { provide: NotificationsService, useValue: { createForUser: jest.fn().mockResolvedValue(undefined) } },
+        ...laterInviteProviders,
       ],
     }).compile();
 
@@ -780,7 +851,8 @@ describe("CampaignInvitesService – submitPost() insights lock", () => {
 
     campaignModel = jest.fn();
     campaignModel.findById = jest.fn().mockReturnValue({
-      select: jest.fn().mockReturnValue({ lean: jest.fn().mockResolvedValue(null) }),
+      // Work can only be submitted on live (admin-approved) campaigns.
+      select: jest.fn().mockReturnValue({ lean: jest.fn().mockResolvedValue({ _id: "camp1", status: "active" }) }),
     });
 
     campaignTransactionModel = { updateMany: jest.fn().mockResolvedValue(undefined) };
@@ -788,16 +860,17 @@ describe("CampaignInvitesService – submitPost() insights lock", () => {
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         CampaignInvitesService,
-        { provide: getModelToken("CampaignInvite"), useValue: inviteModel },
-        { provide: getModelToken("CampaignSubmission"), useValue: submissionModel },
-        { provide: getModelToken("Campaign"), useValue: campaignModel },
-        { provide: getModelToken("Brand"), useValue: brandModel },
-        { provide: getModelToken("Photographer"), useValue: jest.fn() },
-        { provide: getModelToken("Influencer"), useValue: influencerModel },
-        { provide: getModelToken("CampaignTransaction"), useValue: campaignTransactionModel },
+        { provide: getModelToken("CampaignInvite"), useValue: lenientModel(inviteModel) },
+        { provide: getModelToken("CampaignSubmission"), useValue: lenientModel(submissionModel) },
+        { provide: getModelToken("Campaign"), useValue: lenientModel(campaignModel) },
+        { provide: getModelToken("Brand"), useValue: lenientModel(brandModel) },
+        { provide: getModelToken("Photographer"), useValue: lenientModel(jest.fn()) },
+        { provide: getModelToken("Influencer"), useValue: lenientModel(influencerModel) },
+        { provide: getModelToken("CampaignTransaction"), useValue: lenientModel(campaignTransactionModel) },
         { provide: PlansService, useValue: {} },
         { provide: PushService, useValue: { sendToUser: jest.fn().mockResolvedValue(undefined) } },
         { provide: NotificationsService, useValue: { createForUser: jest.fn().mockResolvedValue(undefined) } },
+        ...laterInviteProviders,
       ],
     }).compile();
 
@@ -900,6 +973,7 @@ describe("CampaignInvitesService – applyToCampaign()", () => {
     campaignModel.findById = jest.fn().mockReturnValue({
       lean: jest.fn().mockResolvedValue({
         _id: "camp1",
+        status: "active",
         campaignMode: "invite_only",
       }),
     });
@@ -907,16 +981,17 @@ describe("CampaignInvitesService – applyToCampaign()", () => {
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         CampaignInvitesService,
-        { provide: getModelToken("CampaignInvite"), useValue: inviteModel },
-        { provide: getModelToken("CampaignSubmission"), useValue: {} },
-        { provide: getModelToken("Campaign"), useValue: campaignModel },
-        { provide: getModelToken("Brand"), useValue: jest.fn() },
-        { provide: getModelToken("Photographer"), useValue: jest.fn() },
-        { provide: getModelToken("Influencer"), useValue: jest.fn() },
-        { provide: getModelToken("CampaignTransaction"), useValue: {} },
+        { provide: getModelToken("CampaignInvite"), useValue: lenientModel(inviteModel) },
+        { provide: getModelToken("CampaignSubmission"), useValue: lenientModel({}) },
+        { provide: getModelToken("Campaign"), useValue: lenientModel(campaignModel) },
+        { provide: getModelToken("Brand"), useValue: lenientModel(jest.fn()) },
+        { provide: getModelToken("Photographer"), useValue: lenientModel(jest.fn()) },
+        { provide: getModelToken("Influencer"), useValue: lenientModel(jest.fn()) },
+        { provide: getModelToken("CampaignTransaction"), useValue: lenientModel({}) },
         { provide: PlansService, useValue: {} },
         { provide: PushService, useValue: { sendToUser: jest.fn().mockResolvedValue(undefined) } },
         { provide: NotificationsService, useValue: { createForUser: jest.fn().mockResolvedValue(undefined) } },
+        ...laterInviteProviders,
       ],
     }).compile();
 
@@ -949,16 +1024,17 @@ describe("CampaignInvitesService contact visibility in invite lists", () => {
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         CampaignInvitesService,
-        { provide: getModelToken("CampaignInvite"), useValue: inviteModel },
-        { provide: getModelToken("CampaignSubmission"), useValue: {} },
-        { provide: getModelToken("Campaign"), useValue: {} },
-        { provide: getModelToken("Brand"), useValue: jest.fn() },
-        { provide: getModelToken("Photographer"), useValue: photographerModel },
-        { provide: getModelToken("Influencer"), useValue: jest.fn() },
-        { provide: getModelToken("CampaignTransaction"), useValue: {} },
+        { provide: getModelToken("CampaignInvite"), useValue: lenientModel(inviteModel) },
+        { provide: getModelToken("CampaignSubmission"), useValue: lenientModel({}) },
+        { provide: getModelToken("Campaign"), useValue: lenientModel({}) },
+        { provide: getModelToken("Brand"), useValue: lenientModel(jest.fn()) },
+        { provide: getModelToken("Photographer"), useValue: lenientModel(photographerModel) },
+        { provide: getModelToken("Influencer"), useValue: lenientModel(jest.fn()) },
+        { provide: getModelToken("CampaignTransaction"), useValue: lenientModel({}) },
         { provide: PlansService, useValue: {} },
         { provide: PushService, useValue: { sendToUser: jest.fn().mockResolvedValue(undefined) } },
         { provide: NotificationsService, useValue: { createForUser: jest.fn().mockResolvedValue(undefined) } },
+        ...laterInviteProviders,
       ],
     }).compile();
 
@@ -976,7 +1052,7 @@ describe("CampaignInvitesService contact visibility in invite lists", () => {
               unlocked: true,
               status: "payment_confirmed",
               unlockType: "paid_collab_payment",
-              campaignId: { _id: "camp-1", brandId: "brand-1" },
+              campaignId: { _id: "camp-1", status: "active", brandId: "brand-1" },
               brandId: {
                 brandName: "Brand One",
                 email: "brand@example.com",
@@ -1007,7 +1083,7 @@ describe("CampaignInvitesService contact visibility in invite lists", () => {
               unlocked: true,
               status: "accepted",
               unlockType: "paid_collab_payment",
-              campaignId: { _id: "camp-1", brandId: "brand-1" },
+              campaignId: { _id: "camp-1", status: "active", brandId: "brand-1" },
               brandId: {
                 brandName: "Brand One",
                 email: "brand@example.com",
@@ -1393,7 +1469,7 @@ describe("CampaignInvitesService unlockContact policy", () => {
     campaignModel = {
       findById: jest.fn().mockReturnValue({
         select: jest.fn().mockReturnValue({
-          lean: jest.fn().mockResolvedValue({ campaignType: "paid_collab" }),
+          lean: jest.fn().mockResolvedValue({ campaignType: "paid_collab", status: "active" }),
         }),
       }),
     };
@@ -1405,16 +1481,17 @@ describe("CampaignInvitesService unlockContact policy", () => {
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         CampaignInvitesService,
-        { provide: getModelToken("CampaignInvite"), useValue: inviteModel },
-        { provide: getModelToken("CampaignSubmission"), useValue: {} },
-        { provide: getModelToken("Campaign"), useValue: campaignModel },
+        { provide: getModelToken("CampaignInvite"), useValue: lenientModel(inviteModel) },
+        { provide: getModelToken("CampaignSubmission"), useValue: lenientModel({}) },
+        { provide: getModelToken("Campaign"), useValue: lenientModel(campaignModel) },
         { provide: getModelToken("Brand"), useValue: { findById: jest.fn() } },
-        { provide: getModelToken("Photographer"), useValue: {} },
-        { provide: getModelToken("Influencer"), useValue: {} },
-        { provide: getModelToken("CampaignTransaction"), useValue: {} },
+        { provide: getModelToken("Photographer"), useValue: lenientModel({}) },
+        { provide: getModelToken("Influencer"), useValue: lenientModel({}) },
+        { provide: getModelToken("CampaignTransaction"), useValue: lenientModel({}) },
         { provide: PlansService, useValue: plansService },
         { provide: PushService, useValue: { sendToUser: jest.fn().mockResolvedValue(undefined) } },
         { provide: NotificationsService, useValue: { createForUser: jest.fn().mockResolvedValue(undefined) } },
+        ...laterInviteProviders,
       ],
     }).compile();
 

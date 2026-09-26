@@ -17,7 +17,6 @@ import {
   normalizeSelectionList,
 } from "../utils/profile-selection-limits.util";
 import { normalizeSocialMediaList } from "../utils/social-handle.util";
-import { withCloudinaryHeroTransform } from "../utils/cloudinary-transform.util";
 import { invalidateAccountStatusCache } from "../auth/jwt-auth.guard";
 import { consumeOtpVerificationToken } from "../otp/otp.controller";
 import {
@@ -103,21 +102,6 @@ const PUBLIC_PROFILE_VISIBILITY_BLOCK_FLAG_CODES = [
 
 @Injectable()
 export class UsersService implements OnModuleInit {
-  // TTL cache for the public homepage hero-showcase-images endpoint. Cache is
-  // keyed by viewer location bucket so location-aware ranking does not leak
-  // one region's recommendation into another region's response.
-  private heroShowcaseCache = new Map<
-    string,
-    {
-      value: {
-        influencer: { url: string; alt: string } | null;
-        brand: { url: string; alt: string } | null;
-      };
-      expiresAt: number;
-    }
-  >();
-  private static readonly HERO_SHOWCASE_CACHE_TTL_MS = 10 * 60 * 1000;
-
   private normalizePhone(value: any): string {
     return String(value ?? "").replace(/\D/g, "");
   }
@@ -1423,56 +1407,6 @@ export class UsersService implements OnModuleInit {
     }
   }
 
-  /** Current opt-in state for setMarketingConsent — used by the settings page. */
-  async getMarketingConsent(id: string): Promise<{ featuredInMarketing: boolean }> {
-    const influencer = await this.influencerModel
-      .findById(id)
-      .select("featuredInMarketing");
-    if (influencer) return { featuredInMarketing: !!influencer.featuredInMarketing };
-    const brand = await this.brandModel.findById(id).select("featuredInMarketing");
-    if (brand) return { featuredInMarketing: !!brand.featuredInMarketing };
-    const photographer = await this.photographerModel
-      .findById(id)
-      .select("featuredInMarketing");
-    if (photographer) return { featuredInMarketing: !!photographer.featuredInMarketing };
-    throw new NotFoundException("User not found");
-  }
-
-  /**
-   * Self-service opt-in/out for showing this user's photo/logo on public
-   * marketing surfaces (homepage hero banner + slider) — see
-   * getHeroShowcaseInfluencerAndBrandImages. Being premium/verified is not
-   * sufficient consent; the user must explicitly enable this themselves.
-   * Note: the hero-showcase-images endpoint caches its result for up to 10
-   * minutes, so a change here may take up to that long to be reflected there.
-   */
-  async setMarketingConsent(id: string, featuredInMarketing: boolean) {
-    if (featuredInMarketing) {
-      // Homepage Hero Feature is a Premium benefit — enforce server-side too,
-      // not just by hiding the toggle in the UI.
-      const isPremium = await this.isCurrentlyPremiumById(id);
-      if (!isPremium) {
-        throw new BadRequestException(
-          "Homepage Hero Feature is available to Premium users only.",
-        );
-      }
-    }
-    const update = { $set: { featuredInMarketing } };
-    const influencer = await this.influencerModel
-      .findByIdAndUpdate(id, update, { new: true })
-      .select("_id");
-    if (influencer) return { featuredInMarketing };
-    const brand = await this.brandModel
-      .findByIdAndUpdate(id, update, { new: true })
-      .select("_id");
-    if (brand) return { featuredInMarketing };
-    const photographer = await this.photographerModel
-      .findByIdAndUpdate(id, update, { new: true })
-      .select("_id");
-    if (photographer) return { featuredInMarketing };
-    throw new NotFoundException("User not found");
-  }
-
   /** Looks up isPremium/premiumEnd across all three roles for a given id. */
   private async isCurrentlyPremiumById(id: string): Promise<boolean> {
     const influencer = await this.influencerModel
@@ -2740,113 +2674,6 @@ export class UsersService implements OnModuleInit {
       },
       viewerLocation,
     );
-  }
-
-  /**
-   * Homepage hero banner + hero slider images — one eligible, EXPLICITLY
-   * opted-in (featuredInMarketing: true) influencer + brand image. Same
-   * "Welcome" eligibility bar as the Featured sections, plus consent — being
-   * premium/verified is not sufficient to show someone's photo publicly.
-   * See setMarketingConsent for the opt-in toggle.
-   */
-  async getHeroShowcaseInfluencerAndBrandImages(
-    viewerLocation?: ViewerLocationContext,
-  ): Promise<{
-    influencer: { url: string; alt: string } | null;
-    brand: { url: string; alt: string } | null;
-  }> {
-    const cacheKey = [
-      normalizeLocationValue(viewerLocation?.district),
-      normalizeLocationValue(viewerLocation?.state),
-      normalizeLocationValue(viewerLocation?.country),
-    ].join("|");
-    const cached = this.heroShowcaseCache.get(cacheKey);
-    if (cached && cached.expiresAt > Date.now()) {
-      return cached.value;
-    }
-
-    const influencerFilter: any = { featuredInMarketing: true };
-    applyApprovedEligibilityFilter(influencerFilter, {
-      photoField: "profileImages",
-      requireSocialTier: true,
-      requirePremium: true,
-    });
-    this.applyExcludedIds(
-      influencerFilter,
-      await this.publicProfileBlockedIds("Influencer"),
-    );
-
-    const brandFilter: any = { featuredInMarketing: true };
-    applyApprovedEligibilityFilter(brandFilter, {
-      photoField: "brandLogo",
-      requireSocialTier: false,
-      requirePremium: true,
-    });
-    this.applyExcludedIds(
-      brandFilter,
-      await this.publicProfileBlockedIds("Brand"),
-    );
-
-    const [influencers, brands] = await Promise.all([
-      fetchFeaturedProfilesByScore(
-        this.influencerModel,
-        influencerFilter,
-        "name profileImages",
-        1,
-        {
-          from: "campaigninvites",
-          matchField: "influencerId",
-          statusIn: [
-            "accepted",
-            "payment_confirmed",
-            "working",
-            "submitted",
-            "completed",
-          ],
-          dateField: "updatedAt",
-          windowDays: 30,
-        },
-        viewerLocation,
-      ),
-      fetchFeaturedProfilesByScore(
-        this.brandModel,
-        brandFilter,
-        "brandName brandLogo",
-        1,
-        {
-          from: "campaigns",
-          matchField: "brandId",
-          statusIn: ["active", "completed"],
-          dateField: "createdAt",
-          windowDays: 60,
-        },
-        viewerLocation,
-      ),
-    ]);
-
-    const influencer = influencers[0] as any;
-    const brand = brands[0] as any;
-
-    const value = {
-      influencer: influencer?.profileImages?.[0]?.url
-        ? {
-            url: withCloudinaryHeroTransform(influencer.profileImages[0].url),
-            alt: `${influencer.name || "Influencer"} on TrendStarz`,
-          }
-        : null,
-      brand: brand?.brandLogo?.[0]?.url
-        ? {
-            url: withCloudinaryHeroTransform(brand.brandLogo[0].url),
-            alt: `${brand.brandName || "Brand"} on TrendStarz`,
-          }
-        : null,
-    };
-
-    this.heroShowcaseCache.set(cacheKey, {
-      value,
-      expiresAt: Date.now() + UsersService.HERO_SHOWCASE_CACHE_TTL_MS,
-    });
-    return value;
   }
 
   async getBrands(

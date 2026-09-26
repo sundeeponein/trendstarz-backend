@@ -86,7 +86,7 @@ export class ProfileVerificationController {
     return this.service.updateFlag(req?.user, flagId, body);
   }
 
-  /** Admin override for Profile Visibility / Homepage Feature. */
+  /** Admin override for Profile Visibility. */
   @UseGuards(JwtAuthGuard)
   @Patch("admin/profile-moderation/:userType/:userId/visibility")
   updateVisibility(

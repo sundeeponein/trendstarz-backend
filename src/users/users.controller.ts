@@ -248,38 +248,6 @@ export class UsersController {
   }
 
   @UseGuards(JwtAuthGuard)
-  @Get(":id/marketing-consent")
-  async getMarketingConsent(@Param("id") id: string, @Req() req: Request) {
-    const userId = (req as any).user?.userId;
-    if (userId !== id) {
-      throw new ForbiddenException("You can only view your own settings");
-    }
-    return this.usersService.getMarketingConsent(id);
-  }
-
-  /**
-   * Self-service opt-in/out for showing this user's photo/logo on public
-   * marketing surfaces (homepage hero banner + slider). Being premium or
-   * verified is not sufficient consent — see users.service.ts setMarketingConsent.
-   */
-  @UseGuards(JwtAuthGuard)
-  @Patch(":id/marketing-consent")
-  async updateMarketingConsent(
-    @Param("id") id: string,
-    @Body() body: { featuredInMarketing?: boolean },
-    @Req() req: Request,
-  ) {
-    const userId = (req as any).user?.userId;
-    if (userId !== id) {
-      throw new ForbiddenException("You can only update your own settings");
-    }
-    return this.usersService.setMarketingConsent(
-      id,
-      body?.featuredInMarketing === true,
-    );
-  }
-
-  @UseGuards(JwtAuthGuard)
   @Get(":id/profile-visibility")
   async getProfileVisibility(@Param("id") id: string, @Req() req: Request) {
     const userId = (req as any).user?.userId;
@@ -463,35 +431,6 @@ export class UsersController {
       ),
     ]);
     return { influencers, brands, photographers };
-  }
-
-  /**
-   * Homepage hero banner + hero slider images — one eligible, explicitly
-   * opted-in (featuredInMarketing: true) image per role. Public endpoint,
-   * used by guests too.
-   */
-  @Get("hero-showcase-images")
-  async getHeroShowcaseImages(
-    @Req() req: any,
-    @Query("viewerState") viewerState?: string,
-    @Query("viewerDistrict") viewerDistrict?: string,
-    @Query("viewerCountry") viewerCountry?: string,
-  ) {
-    const viewerId = extractOptionalViewerId(req);
-    const viewerLocation = await this.usersService.resolveDiscoveryViewerLocation(
-      viewerId,
-      {
-        state: viewerState,
-        district: viewerDistrict,
-        country: viewerCountry,
-        source: viewerId ? "registered_profile" : "country_fallback",
-      },
-    );
-    const [{ influencer, brand }, photographer] = await Promise.all([
-      this.usersService.getHeroShowcaseInfluencerAndBrandImages(viewerLocation),
-      this.photographersService.getHeroShowcasePhotographerImage(viewerLocation),
-    ]);
-    return { influencer, brand, photographer };
   }
 
   @Get("influencers")

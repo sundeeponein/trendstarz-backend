@@ -22,7 +22,6 @@ import {
   normalizeLocationValue,
   ViewerLocationContext,
 } from "../utils/profile-eligibility.util";
-import { withCloudinaryHeroTransform } from "../utils/cloudinary-transform.util";
 
 const PROFILE_PHOTO_VISIBILITY_BLOCK_FLAG_CODES = [
   "PROFILE_PHOTO_PENDING_REVIEW",
@@ -74,13 +73,6 @@ const FEATURED_PHOTOGRAPHER_FIELDS =
 
 @Injectable()
 export class PhotographersService {
-  // TTL cache keyed by viewer location bucket to avoid cross-region reuse.
-  private heroShowcaseCache = new Map<
-    string,
-    { value: { url: string; alt: string } | null; expiresAt: number }
-  >();
-  private static readonly HERO_SHOWCASE_CACHE_TTL_MS = 10 * 60 * 1000;
-
   constructor(
     @InjectModel("Photographer") private readonly photographerModel: Model<any>,
     @InjectModel("CampaignInvite")
@@ -254,71 +246,6 @@ export class PhotographersService {
       },
       viewerLocation,
     );
-  }
-
-  /**
-   * Homepage hero banner + hero slider image — one eligible, EXPLICITLY
-   * opted-in (featuredInMarketing: true) photographer image. Same "Welcome"
-   * eligibility bar as getFeaturedPhotographers, plus consent — being
-   * premium/verified is not sufficient to show someone's photo publicly.
-   */
-  async getHeroShowcasePhotographerImage(
-    viewerLocation?: ViewerLocationContext,
-  ): Promise<{ url: string; alt: string } | null> {
-    const cacheKey = [
-      normalizeLocationValue(viewerLocation?.district),
-      normalizeLocationValue(viewerLocation?.state),
-      normalizeLocationValue(viewerLocation?.country),
-    ].join("|");
-    const cached = this.heroShowcaseCache.get(cacheKey);
-    if (cached && cached.expiresAt > Date.now()) {
-      return cached.value;
-    }
-
-    const filter: any = { featuredInMarketing: true };
-    applyApprovedEligibilityFilter(filter, {
-      photoField: "profileImages",
-      requireSocialTier: true,
-      requirePremium: true,
-    });
-    const blocked = await this.blockedPhotographerIds();
-    if (blocked.length) {
-      filter._id = {
-        $nin: blocked.flatMap((id) => {
-          const value = String(id || "").trim();
-          if (!value) return [];
-          return Types.ObjectId.isValid(value)
-            ? [value, new Types.ObjectId(value)]
-            : [value];
-        }),
-      };
-    }
-    const [photographer] = (await fetchFeaturedProfilesByScore(
-      this.photographerModel,
-      filter,
-      "name profileImages",
-      1,
-      {
-        from: "campaigninvites",
-        matchField: "photographerId",
-        statusIn: ["accepted", "payment_confirmed", "working", "submitted", "completed"],
-        dateField: "updatedAt",
-        windowDays: 30,
-      },
-      viewerLocation,
-    )) as any[];
-    const value = photographer?.profileImages?.[0]?.url
-      ? {
-          url: withCloudinaryHeroTransform(photographer.profileImages[0].url),
-          alt: `${photographer.name || "Photographer"} on TrendStarz`,
-        }
-      : null;
-
-    this.heroShowcaseCache.set(cacheKey, {
-      value,
-      expiresAt: Date.now() + PhotographersService.HERO_SHOWCASE_CACHE_TTL_MS,
-    });
-    return value;
   }
 
   private async hasOpenGalleryBlock(userId: any): Promise<boolean> {

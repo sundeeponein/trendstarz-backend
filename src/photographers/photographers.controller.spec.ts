@@ -1,4 +1,6 @@
 import { BadRequestException } from "@nestjs/common";
+import { getModelToken } from "@nestjs/mongoose";
+import { PlansService } from "../plans/plans.service";
 import { Test, TestingModule } from "@nestjs/testing";
 import { PhotographersController } from "./photographers.controller";
 import { PhotographersService } from "./photographers.service";
@@ -18,6 +20,13 @@ describe("PhotographersController profile update route", () => {
       controllers: [PhotographersController],
       providers: [
         { provide: PhotographersService, useValue: photographersService },
+        // Also required by the controller's constructor and its DailyUsageGuard.
+        { provide: PlansService, useValue: { getUserPlanCapabilities: jest.fn().mockResolvedValue({ limits: [], features: [] }) } },
+        {
+          provide: getModelToken("UsageCounter"),
+          useValue: { findOne: jest.fn().mockReturnValue({ lean: jest.fn().mockResolvedValue(null) }), findOneAndUpdate: jest.fn().mockResolvedValue(null) },
+        },
+
       ],
     }).compile();
 
@@ -32,7 +41,7 @@ describe("PhotographersController profile update route", () => {
 
     const result = await controller.updateMyProfile(req, body);
 
-    expect(photographersService.updateProfile).toHaveBeenCalledWith("photo-1", body);
+    expect(photographersService.updateProfile).toHaveBeenCalledWith("photo-1", body, false) // localAuthBypass off for normal requests;
     expect(result).toEqual({ message: "ok" });
   });
 

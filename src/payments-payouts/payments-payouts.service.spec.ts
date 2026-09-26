@@ -83,6 +83,17 @@ describe("PaymentsPayoutsService", () => {
           provide: getModelToken("Photographer"),
           useValue: mockPhotographerModel,
         },
+        {
+          // Added to the service after these tests; affiliate conversions are irrelevant here.
+          provide: getModelToken("LinkConversion"),
+          useValue: {
+            find: jest.fn().mockReturnValue({ lean: jest.fn().mockResolvedValue([]) }),
+            findOne: jest.fn().mockReturnValue({ lean: jest.fn().mockResolvedValue(null) }),
+            updateOne: jest.fn().mockResolvedValue({ modifiedCount: 0 }),
+            updateMany: jest.fn().mockResolvedValue({ modifiedCount: 0 }),
+            create: jest.fn().mockResolvedValue({}),
+          },
+        },
         { provide: RazorpayService, useValue: mockRazorpayService },
         { provide: PushService, useValue: mockPushService },
         { provide: NotificationsService, useValue: mockNotificationsService },
@@ -164,6 +175,8 @@ describe("PaymentsPayoutsService", () => {
         lean: jest.fn().mockResolvedValue({
           platformFeeEnabled: true,
           platformFeePercent: 10,
+          // pay_to_join is paid by the creator; creator fees default to 0% unless set explicitly.
+          influencerFeePercent: 10,
         }),
       });
 
