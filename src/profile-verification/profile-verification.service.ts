@@ -1804,7 +1804,7 @@ export class ProfileVerificationService {
    *
    *   However, your profile photo does not meet our profile guidelines.
    *   Please update your profile photo to make your profile visible to
-   *   brands on TrendStarZ.
+   *   brands on TrendStarz.
    *
    *   Login and update your profile photo to complete your profile:
    *   www.trendstarz.in
@@ -1948,14 +1948,14 @@ export class ProfileVerificationService {
    *
    *   Hi {{1}},
    *
-   *   Your TrendStarZ mobile number {{2}} is still pending verification.
+   *   Your TrendStarz mobile number {{2}} is still pending verification.
    *
-   *   Please log in to your TrendStarZ account and complete the mobile
+   *   Please log in to your TrendStarz account and complete the mobile
    *   verification using the OTP sent to your registered mobile number.
    *
    *   If you need a new OTP, you can request one from the verification screen.
    *
-   *   Thank you for joining TrendStarZ! 💜
+   *   Thank you for joining TrendStarz! 💜
    */
   async sendMobileOtpVerificationReminder(
     actor: any,
@@ -1982,12 +1982,12 @@ export class ProfileVerificationService {
    *
    *   Hi {{1}},
    *
-   *   Your TrendStarZ mobile number {{2}} is still pending verification.
+   *   Your TrendStarz mobile number {{2}} is still pending verification.
    *
    *   Please reply YES when you're available. Our team will call your
    *   registered mobile number to complete the verification process.
    *
-   *   Thank you for joining TrendStarZ! 💜
+   *   Thank you for joining TrendStarz! 💜
    */
   async sendMobileVerificationReminder(
     actor: any,

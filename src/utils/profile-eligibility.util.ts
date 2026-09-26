@@ -182,7 +182,7 @@ export interface ApprovedEligibilityOptions extends DiscoverabilityOptions {
 }
 
 /**
- * "Is this profile recommended by TrendStarZ?" — Welcome/Featured eligibility.
+ * "Is this profile recommended by TrendStarz?" — Welcome/Featured eligibility.
  * Everything Search requires, plus admin approval.
  */
 export function applyApprovedEligibilityFilter(

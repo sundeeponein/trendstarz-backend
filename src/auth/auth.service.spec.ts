@@ -309,7 +309,7 @@ describe("AuthService", () => {
       expect(sendAppEmail).toHaveBeenCalledWith(
         expect.objectContaining({
           to: "user@test.com",
-          subject: "Reset your Trendstarz password",
+          subject: "Reset your TrendStarz password",
         }),
       );
     });

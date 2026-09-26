@@ -14,13 +14,13 @@ import {
 // ─────────────────────────────────────────────────────────────────────────────
 
 export function verifyEmailTemplate(verifyUrl: string): EmailTemplate {
-  const subject = "Verify your Trendstarz email";
+  const subject = "Verify your TrendStarz email";
 
   const html = wrapEmail(
     h2("Verify your email") +
       p("Hi,") +
       p(
-        "Please verify your Trendstarz email address by clicking the button below:",
+        "Please verify your TrendStarz email address by clicking the button below:",
       ) +
       btn("Verify Email", verifyUrl) +
       fallbackLink(verifyUrl) +
@@ -30,7 +30,7 @@ export function verifyEmailTemplate(verifyUrl: string): EmailTemplate {
       ),
   );
 
-  const text = `Please verify your Trendstarz email address:\n${verifyUrl}\n\nIf you did not request this, you can safely ignore this email.`;
+  const text = `Please verify your TrendStarz email address:\n${verifyUrl}\n\nIf you did not request this, you can safely ignore this email.`;
 
   return { subject, html, text };
 }
@@ -47,19 +47,19 @@ export function registrationReminderTemplate(
 ): EmailTemplate {
   const copy = {
     email: {
-      subject: "Complete your email verification — TrendStarZ",
+      subject: "Complete your email verification — TrendStarz",
       heading: "Complete your email verification",
-      body: "Your TrendStarZ registration is almost complete. Verify your email address to keep moving toward brand campaign invites.",
+      body: "Your TrendStarz registration is almost complete. Verify your email address to keep moving toward brand campaign invites.",
       cta: "Verify Email",
     },
     mobile: {
-      subject: "Complete your mobile verification — TrendStarZ",
+      subject: "Complete your mobile verification — TrendStarz",
       heading: "Complete your mobile verification",
       body: "You've verified your email — nice. Complete your mobile verification next to activate your profile and become eligible for brand campaign invites.",
       cta: "Verify Mobile",
     },
     incomplete: {
-      subject: "Your TrendStarZ registration is still incomplete",
+      subject: "Your TrendStarz registration is still incomplete",
       heading: "Your registration is still incomplete",
       body: "Please finish email and mobile verification to activate your profile and start receiving brand campaign invites.",
       cta: "Finish Verification",
@@ -79,13 +79,13 @@ export function registrationReminderTemplate(
 // ─────────────────────────────────────────────────────────────────────────────
 
 export function resetPasswordTemplate(resetUrl: string): EmailTemplate {
-  const subject = "Reset your Trendstarz password";
+  const subject = "Reset your TrendStarz password";
 
   const html = wrapEmail(
     h2("Reset your password") +
       p("Hi,") +
       p(
-        "We received a request to reset your Trendstarz password. Click the button below to choose a new one:",
+        "We received a request to reset your TrendStarz password. Click the button below to choose a new one:",
       ) +
       btn("Reset Password", resetUrl, BRAND_PURPLE) +
       fallbackLink(resetUrl) +
@@ -95,7 +95,7 @@ export function resetPasswordTemplate(resetUrl: string): EmailTemplate {
       ),
   );
 
-  const text = `Reset your Trendstarz password:\n${resetUrl}\n\nThis link expires in 1 hour. If you requested more than one reset email, use only the most recent link.\nIf you did not request this, you can safely ignore this email.`;
+  const text = `Reset your TrendStarz password:\n${resetUrl}\n\nThis link expires in 1 hour. If you requested more than one reset email, use only the most recent link.\nIf you did not request this, you can safely ignore this email.`;
 
   return { subject, html, text };
 }

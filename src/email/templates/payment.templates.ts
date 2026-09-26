@@ -13,7 +13,7 @@ export interface PaymentProofAdminData {
 
 export function paymentProofAdminTemplate(data: PaymentProofAdminData): EmailTemplate {
   const { campaignTitle, utrNumber, recipientCount, adminUrl } = data;
-  const subject = `[TrendStarZ] New payment proof — ${campaignTitle}`;
+  const subject = `[TrendStarz] New payment proof — ${campaignTitle}`;
 
   const html = wrapEmail(
     h2('New payment proof submitted') +
@@ -41,7 +41,7 @@ export interface PaymentVerifiedInfluencerData {
 
 export function paymentVerifiedInfluencerTemplate(data: PaymentVerifiedInfluencerData): EmailTemplate {
   const { recipientName, campaignTitle, dashboardUrl } = data;
-  const subject = '[TrendStarZ] Verified — you can start posting';
+  const subject = '[TrendStarz] Verified — you can start posting';
 
   const html = wrapEmail(
     h2('Payment verified — you can start posting! ✅') +
@@ -69,7 +69,7 @@ export interface PaymentVerifiedBrandData {
 
 export function paymentVerifiedBrandTemplate(data: PaymentVerifiedBrandData): EmailTemplate {
   const { brandName, dashboardUrl } = data;
-  const subject = '[TrendStarZ] Payment verified — influencers can now begin work';
+  const subject = '[TrendStarz] Payment verified — influencers can now begin work';
 
   const html = wrapEmail(
     h2('Payment verified! 🎉') +
@@ -96,7 +96,7 @@ export interface PaymentRejectedData {
 
 export function paymentRejectedTemplate(data: PaymentRejectedData): EmailTemplate {
   const { brandName, reason, resubmitUrl } = data;
-  const subject = '[TrendStarZ] Action required — payment proof could not be verified';
+  const subject = '[TrendStarz] Action required — payment proof could not be verified';
 
   const html = wrapEmail(
     h2('Payment proof could not be verified') +
@@ -128,7 +128,7 @@ export interface PayoutSentData {
 
 export function payoutSentTemplate(data: PayoutSentData): EmailTemplate {
   const { recipientName, amount, upiId, payoutUtr } = data;
-  const subject = '[TrendStarZ] Your payout has been sent! 🎉';
+  const subject = '[TrendStarz] Your payout has been sent! 🎉';
 
   const html = wrapEmail(
     h2('Your payout has been sent!') +
@@ -140,7 +140,7 @@ export function payoutSentTemplate(data: PayoutSentData): EmailTemplate {
     p('Thank you for collaborating with TrendStarz!', `color:${TEXT_MUTED};font-size:13px;`),
   );
 
-  const text = `Hi ${recipientName},\n\nGreat news! ${amount} has been sent to your UPI account (${upiId || 'on file'}).\n\nUTR Reference: ${payoutUtr}\n\nThank you for collaborating with TrendStarZ!`;
+  const text = `Hi ${recipientName},\n\nGreat news! ${amount} has been sent to your UPI account (${upiId || 'on file'}).\n\nUTR Reference: ${payoutUtr}\n\nThank you for collaborating with TrendStarz!`;
 
   return { subject, html, text };
 }
