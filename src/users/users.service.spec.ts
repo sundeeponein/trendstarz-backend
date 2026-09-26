@@ -214,6 +214,30 @@ describe("UsersService profile update guards", () => {
     );
   });
 
+  it("serves platform stats from cache on repeat calls", async () => {
+    const influencerModel = {
+      countDocuments: jest.fn().mockResolvedValue(2),
+      distinct: jest.fn().mockResolvedValue([]),
+      aggregate: jest.fn().mockResolvedValue([]),
+    };
+    const flatModel = { countDocuments: jest.fn().mockResolvedValue(1), distinct: jest.fn().mockResolvedValue([]) };
+    const service = makeService({
+      influencerModel,
+      brandModel: flatModel,
+      photographerModel: { ...flatModel },
+      campaignModel: { countDocuments: jest.fn().mockResolvedValue(0) },
+      profileFlagModel: { find: jest.fn().mockReturnValue({ select: jest.fn().mockReturnValue({ lean: jest.fn().mockResolvedValue([]) }) }) },
+      reviewModel: { aggregate: jest.fn().mockResolvedValue([]) },
+      campaignTransactionModel: { aggregate: jest.fn().mockResolvedValue([]) },
+    });
+
+    const first = await service.getPlatformStats();
+    const second = await service.getPlatformStats();
+
+    expect(second).toBe(first);
+    expect(influencerModel.aggregate).toHaveBeenCalledTimes(1);
+  });
+
   it("counts only public-visible profiles in platform stats", async () => {
     const influencerModel = {
       countDocuments: jest.fn().mockResolvedValue(2),

@@ -68,7 +68,7 @@ export const CollaborationScoreSettingsSchema = new Schema(
     // Collaboration Score plan). Gates AI-enhanced scoring, pricing
     // suggestions, and nightly re-audits.
     version2Enabled: { type: Boolean, default: false },
-    version1Name: { type: String, default: "Collaboration Score" },
+    version1Name: { type: String, default: "TrendScore" },
     version2Name: { type: String, default: "Marketplace Insights" },
 
     // Per-platform collector kill-switch — lets admin disable a platform

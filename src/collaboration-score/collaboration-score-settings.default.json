@@ -22,7 +22,7 @@
     "campaignReadiness": 20
   },
   "version2Enabled": false,
-  "version1Name": "Collaboration Score",
+  "version1Name": "TrendScore",
   "version2Name": "Marketplace Insights",
   "platformsEnabled": {
     "instagram": true,

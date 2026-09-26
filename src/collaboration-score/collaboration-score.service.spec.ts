@@ -986,7 +986,7 @@ describe("CollaborationScoreService", () => {
       });
 
       await expect(service.syncLatestProfile("user-1", "influencer")).rejects.toThrow(
-        "Generate your free Collaboration Score first.",
+        "Generate your free TrendScore first.",
       );
     });
 

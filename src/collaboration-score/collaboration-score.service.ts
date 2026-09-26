@@ -291,7 +291,7 @@ export class CollaborationScoreService {
       await this.profileVerificationService.getCompletionSnapshot(userId, role);
     if (snapshot.userType === "User") {
       throw new NotFoundException(
-        "Collaboration Score is not available for this account type",
+        "TrendScore is not available for this account type",
       );
     }
     const userType = snapshot.userType as CollaborationScoreUserType;
@@ -518,7 +518,7 @@ export class CollaborationScoreService {
       .lean();
     if (!currentAudit) {
       throw new BadRequestException(
-        "Generate your free Collaboration Score first.",
+        "Generate your free TrendScore first.",
       );
     }
 
@@ -526,7 +526,7 @@ export class CollaborationScoreService {
       await this.profileVerificationService.getCompletionSnapshot(userId, role);
     if (snapshot.userType === "User") {
       throw new NotFoundException(
-        "Collaboration Score is not available for this account type",
+        "TrendScore is not available for this account type",
       );
     }
     const userType = snapshot.userType as CollaborationScoreUserType;
@@ -602,7 +602,7 @@ export class CollaborationScoreService {
       .lean();
     if (!audit)
       throw new NotFoundException(
-        "No Collaboration Score audit found for this user",
+        "No TrendScore audit found for this user",
       );
 
     const requesterId = String(

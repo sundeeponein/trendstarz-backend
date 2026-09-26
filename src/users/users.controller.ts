@@ -1,5 +1,6 @@
 import {
   Controller,
+  Header,
   Post,
   Body,
   UseGuards,
@@ -409,6 +410,8 @@ export class UsersController {
   }
 
   @Get("platform-stats")
+  // Same for every visitor — let browsers/CDNs reuse it briefly.
+  @Header("Cache-Control", "public, max-age=300")
   async getPlatformStats() {
     return this.usersService.getPlatformStats();
   }

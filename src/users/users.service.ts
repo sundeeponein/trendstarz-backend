@@ -1,4 +1,4 @@
-import { Injectable, BadRequestException, NotFoundException } from "@nestjs/common";
+import { Injectable, BadRequestException, NotFoundException, OnModuleInit } from "@nestjs/common";
 import { Cron, CronExpression } from "@nestjs/schedule";
 import * as fs from "fs";
 import * as path from "path";
@@ -102,7 +102,7 @@ const PUBLIC_PROFILE_VISIBILITY_BLOCK_FLAG_CODES = [
 ];
 
 @Injectable()
-export class UsersService {
+export class UsersService implements OnModuleInit {
   // TTL cache for the public homepage hero-showcase-images endpoint. Cache is
   // keyed by viewer location bucket so location-aware ranking does not leak
   // one region's recommendation into another region's response.
@@ -2509,7 +2509,50 @@ export class UsersService {
     };
   }
 
+  // Public homepage stats are identical for every visitor and take ~1s of
+  // counting to compute, so serve a cached copy and refresh it in the
+  // background once it's older than the TTL (stale-while-revalidate).
+  private static readonly PLATFORM_STATS_TTL_MS = 10 * 60 * 1000;
+  private platformStatsCache: { value: any; at: number } | null = null;
+  private platformStatsInflight: Promise<any> | null = null;
+
   async getPlatformStats() {
+    const cached = this.platformStatsCache;
+    if (cached && Date.now() - cached.at < UsersService.PLATFORM_STATS_TTL_MS) {
+      return cached.value;
+    }
+    const refresh = this.refreshPlatformStats();
+    if (cached) {
+      refresh.catch(() => {}); // keep serving the last good copy if a refresh fails
+      return cached.value;
+    }
+    return refresh;
+  }
+
+  onModuleInit(): void {
+    this.warmPlatformStats();
+  }
+
+  /** Warms the cache so the first homepage visit after a restart is fast too. */
+  warmPlatformStats(): void {
+    this.refreshPlatformStats().catch(() => {});
+  }
+
+  private refreshPlatformStats(): Promise<any> {
+    if (!this.platformStatsInflight) {
+      this.platformStatsInflight = this.computePlatformStats()
+        .then((value) => {
+          this.platformStatsCache = { value, at: Date.now() };
+          return value;
+        })
+        .finally(() => {
+          this.platformStatsInflight = null;
+        });
+    }
+    return this.platformStatsInflight;
+  }
+
+  private async computePlatformStats() {
     const influencerFilter: any = { status: "accepted" };
     this.applyPublicDiscoveryEligibilityFilter(influencerFilter);
     this.applyExcludedIds(
