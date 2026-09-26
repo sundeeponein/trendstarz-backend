@@ -9,7 +9,11 @@ type UserType = "influencer" | "brand";
 export class EarlyAccessAssignmentService {
   private readonly earlyAccessTag = "Early Access";
   private readonly earlyAccessDurationDays = 30;
-  private readonly commissionTags = ["Early Access", "Partner", "Internal/Test"];
+  private readonly commissionTags = [
+    "Early Access",
+    "Partner",
+    "Internal/Test",
+  ];
 
   constructor(
     @InjectModel("Influencer") private readonly influencerModel: Model<any>,
@@ -99,8 +103,8 @@ export class EarlyAccessAssignmentService {
       const badgeDerivedTag = this.getCommissionTagFromBadge(
         String(user?.commissionBadge || ""),
       );
-      const fallbackTag = this.keepSingleCommissionTag(currentTags).find((tag) =>
-        this.commissionTags.includes(tag),
+      const fallbackTag = this.keepSingleCommissionTag(currentTags).find(
+        (tag) => this.commissionTags.includes(tag),
       );
       const finalCommissionTag = badgeDerivedTag || fallbackTag || "";
       const nextTags = this.normalizeAdminTags([
@@ -174,7 +178,10 @@ export class EarlyAccessAssignmentService {
     };
   }
 
-  private buildEarlyAccessOverride(config: { note: string }, assignedBy: string) {
+  private buildEarlyAccessOverride(
+    config: { note: string },
+    assignedBy: string,
+  ) {
     const now = new Date();
     const validUntil = new Date(now);
     validUntil.setDate(validUntil.getDate() + this.earlyAccessDurationDays);
@@ -231,7 +238,8 @@ export class EarlyAccessAssignmentService {
     userType: UserType,
     badge: string,
   ): Promise<number> {
-    const model = userType === "influencer" ? this.influencerModel : this.brandModel;
+    const model =
+      userType === "influencer" ? this.influencerModel : this.brandModel;
     const now = new Date();
 
     return model.countDocuments({
@@ -259,7 +267,8 @@ export class EarlyAccessAssignmentService {
     userType: UserType,
     badge: string,
   ): Promise<number> {
-    const model = userType === "influencer" ? this.influencerModel : this.brandModel;
+    const model =
+      userType === "influencer" ? this.influencerModel : this.brandModel;
     const now = new Date();
 
     const expiredUsers = await model
@@ -345,7 +354,10 @@ export class EarlyAccessAssignmentService {
 
   private async getEarlyAccessPreviewForType(userType: UserType) {
     const config = this.getEarlyAccessConfig(userType);
-    const activeCount = await this.getActiveEarlyAccessCount(userType, config.badge);
+    const activeCount = await this.getActiveEarlyAccessCount(
+      userType,
+      config.badge,
+    );
     const slotsOpen = Math.max(0, config.cap - activeCount);
     const model =
       userType === "influencer" ? this.influencerModel : this.brandModel;
@@ -396,9 +408,15 @@ export class EarlyAccessAssignmentService {
       config.badge,
     );
 
-    const activeCount = await this.getActiveEarlyAccessCount(userType, config.badge);
+    const activeCount = await this.getActiveEarlyAccessCount(
+      userType,
+      config.badge,
+    );
     const slotsOpen = Math.max(0, config.cap - activeCount);
-    const eligibleUsers = await this.pickEligibleUsersForEarlyAccess(userType, slotsOpen);
+    const eligibleUsers = await this.pickEligibleUsersForEarlyAccess(
+      userType,
+      slotsOpen,
+    );
 
     if (!eligibleUsers.length) {
       return {
@@ -410,7 +428,8 @@ export class EarlyAccessAssignmentService {
       };
     }
 
-    const model = userType === "influencer" ? this.influencerModel : this.brandModel;
+    const model =
+      userType === "influencer" ? this.influencerModel : this.brandModel;
     const bulkOps = eligibleUsers.map((user: any) => {
       const currentTags = Array.isArray(user?.adminTags) ? user.adminTags : [];
       const nextTags = this.keepSingleCommissionTag([
@@ -425,7 +444,10 @@ export class EarlyAccessAssignmentService {
             $set: {
               adminTags: nextTags,
               commissionBadge: config.badge,
-              commissionOverride: this.buildEarlyAccessOverride(config, assignedBy),
+              commissionOverride: this.buildEarlyAccessOverride(
+                config,
+                assignedBy,
+              ),
             },
           },
         },
@@ -434,7 +456,10 @@ export class EarlyAccessAssignmentService {
 
     await model.bulkWrite(bulkOps);
 
-    const updatedActiveCount = await this.getActiveEarlyAccessCount(userType, config.badge);
+    const updatedActiveCount = await this.getActiveEarlyAccessCount(
+      userType,
+      config.badge,
+    );
     return {
       cap: config.cap,
       activeCount: updatedActiveCount,
@@ -489,7 +514,10 @@ export class EarlyAccessAssignmentService {
       await this.autoAssignEarlyAccess("system_auto_refill");
     } catch (err: any) {
       // Keep scheduler resilient; log and continue next cycle.
-      console.error("Early Access auto-assign cron failed:", err?.message || err);
+      console.error(
+        "Early Access auto-assign cron failed:",
+        err?.message || err,
+      );
       await this.persistLastRun(
         "failed",
         err?.message || "Unknown scheduler failure",

@@ -3,6 +3,7 @@ import { getModelToken } from "@nestjs/mongoose";
 import { PaymentService } from "./payment.service";
 import { PlansService } from "../plans/plans.service";
 import { NotificationsService } from "../notifications/notifications.service";
+import { PushService } from "../push/push.service";
 
 describe("PaymentService", () => {
   let service: PaymentService;
@@ -73,6 +74,10 @@ describe("PaymentService", () => {
       createForUser: jest.fn().mockResolvedValue({}),
     };
 
+    const mockPushService = {
+      sendToUser: jest.fn().mockResolvedValue({ sent: 0, failed: 0 }),
+    };
+
     const mockPlansService = {
       findProPlanForUserType: jest
         .fn()
@@ -87,8 +92,20 @@ describe("PaymentService", () => {
         { provide: getModelToken("Influencer"), useValue: mockInfluencerModel },
         { provide: getModelToken("Brand"), useValue: mockBrandModel },
         { provide: getModelToken("Photographer"), useValue: mockPhotographerModel },
+        {
+          // Added to the service after these tests; affiliate conversions are irrelevant here.
+          provide: getModelToken("LinkConversion"),
+          useValue: {
+            find: jest.fn().mockReturnValue({ lean: jest.fn().mockResolvedValue([]) }),
+            findOne: jest.fn().mockReturnValue({ lean: jest.fn().mockResolvedValue(null) }),
+            updateOne: jest.fn().mockResolvedValue({ modifiedCount: 0 }),
+            updateMany: jest.fn().mockResolvedValue({ modifiedCount: 0 }),
+            create: jest.fn().mockResolvedValue({}),
+          },
+        },
         { provide: PlansService, useValue: mockPlansService },
         { provide: NotificationsService, useValue: mockNotificationsService },
+        { provide: PushService, useValue: mockPushService },
       ],
     }).compile();
 

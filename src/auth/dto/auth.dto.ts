@@ -1,6 +1,7 @@
 import {
   IsEmail,
   IsNotEmpty,
+  IsOptional,
   IsString,
   MinLength,
   MaxLength,
@@ -17,6 +18,10 @@ export class LoginDto {
   @IsString()
   @IsNotEmpty({ message: "Password is required." })
   password: string;
+
+  @IsOptional()
+  @IsString()
+  firebaseIdToken?: string;
 }
 
 export class ForgotPasswordDto {

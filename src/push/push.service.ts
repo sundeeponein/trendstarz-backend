@@ -10,6 +10,8 @@ export class PushService implements OnModuleInit {
   constructor(
     @InjectModel("PushSubscription")
     private readonly subModel: Model<any>,
+    @InjectModel("NotificationPreference")
+    private readonly preferenceModel: Model<any>,
   ) {}
 
   onModuleInit() {
@@ -32,10 +34,11 @@ export class PushService implements OnModuleInit {
     userId: string,
     userRole: string,
     subscription: { endpoint: string; keys: { p256dh: string; auth: string } },
+    deviceType: "web" | "mobile" = "web",
   ) {
     await this.subModel.findOneAndUpdate(
       { endpoint: subscription.endpoint },
-      { userId, userRole, ...subscription },
+      { userId, userRole, deviceType, ...subscription },
       { upsert: true, new: true },
     );
     return { success: true };
@@ -46,21 +49,85 @@ export class PushService implements OnModuleInit {
     return { success: true };
   }
 
+  /** Account-level preference for whether push is sent, split by device and event category. */
+  async getPreferences(userId: string) {
+    const pref: any = await this.preferenceModel.findOne({ userId }).lean();
+    return {
+      webEnabled: pref?.webEnabled ?? true,
+      mobileEnabled: pref?.mobileEnabled ?? true,
+      campaignEnabled: pref?.campaignEnabled ?? true,
+      paymentEnabled: pref?.paymentEnabled ?? true,
+      whatsappEnabled: pref?.whatsappEnabled ?? true,
+    };
+  }
+
+  async setPreferences(
+    userId: string,
+    updates: {
+      webEnabled?: boolean;
+      mobileEnabled?: boolean;
+      campaignEnabled?: boolean;
+      paymentEnabled?: boolean;
+      whatsappEnabled?: boolean;
+    },
+  ) {
+    const $set: Record<string, boolean> = {};
+    for (const key of ["webEnabled", "mobileEnabled", "campaignEnabled", "paymentEnabled", "whatsappEnabled"] as const) {
+      if (typeof updates[key] === "boolean") $set[key] = updates[key] as boolean;
+    }
+    const pref = await this.preferenceModel.findOneAndUpdate(
+      { userId },
+      { $set },
+      { upsert: true, new: true },
+    );
+    return {
+      webEnabled: pref.webEnabled ?? true,
+      mobileEnabled: pref.mobileEnabled ?? true,
+      campaignEnabled: pref.campaignEnabled ?? true,
+      paymentEnabled: pref.paymentEnabled ?? true,
+      whatsappEnabled: pref.whatsappEnabled ?? true,
+    };
+  }
+
   /** Send a push notification to all subscriptions for a given userId. */
   async sendToUser(
     userId: string,
     payload: { title: string; body: string; icon?: string; url?: string },
+    category: "campaign" | "payment",
   ) {
     if (!process.env.VAPID_PUBLIC_KEY || !process.env.VAPID_PRIVATE_KEY) {
       return { sent: 0, failed: 0 };
     }
+    const prefs = await this.getPreferences(userId);
+    const categoryAllowed =
+      category === "payment" ? prefs.paymentEnabled : prefs.campaignEnabled;
+    if (!categoryAllowed) {
+      return { sent: 0, failed: 0 };
+    }
+    // Angular's service worker only calls showNotification() when the push
+    // payload has a top-level "notification" key (see ngsw-worker.js
+    // handlePush). The click target URL must live under
+    // notification.data.onActionClick.default.url.
+    const swPayload = JSON.stringify({
+      notification: {
+        title: payload.title,
+        body: payload.body,
+        icon: payload.icon,
+        data: payload.url
+          ? { onActionClick: { default: { url: payload.url } } }
+          : undefined,
+      },
+    });
     const subs = await this.subModel.find({ userId }).lean();
+    const allowedSubs = subs.filter((sub: any) =>
+      sub.deviceType === "mobile" ? prefs.mobileEnabled : prefs.webEnabled,
+    );
     const results = await Promise.allSettled(
-      subs.map((sub: any) =>
+      allowedSubs.map((sub: any) =>
         webpush
           .sendNotification(
             { endpoint: sub.endpoint, keys: sub.keys },
-            JSON.stringify(payload),
+            swPayload,
           )
           .catch(async (err: any) => {
             // Subscription gone (410) — clean it up

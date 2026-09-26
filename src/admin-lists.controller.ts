@@ -19,6 +19,39 @@ import { InjectModel } from "@nestjs/mongoose";
 import { Model } from "mongoose";
 import * as fs from "fs";
 import * as path from "path";
+import {
+  getCampaignAccessModeConfigDefaults,
+  CampaignTypeConfigItem,
+  getCampaignTypeConfigDefaults,
+  resolveCampaignAccessModeConfigs,
+  resolveCampaignTypeConfigs,
+} from "./campaign-type-configs";
+import { seedMissingLocationsFromConfig } from "./utils/location-seed.util";
+import {
+  normalizeCollaborationOptionConfig,
+  normalizeCreatorTypeConfig,
+} from "./utils/collaboration-options.util";
+import {
+  normalizeCommunityStateKey,
+  seedMissingWhatsAppCommunitiesFromConfig,
+} from "./utils/whatsapp-community-config.util";
+import { PendingUserCleanupService } from "./admin/pending-user-cleanup.service";
+import { PendingUploadCleanupService } from "./admin/pending-upload-cleanup.service";
+import { AssetFolderBackfillService } from "./admin/asset-folder-backfill.service";
+import { CampaignsService } from "./campaigns/campaigns.service";
+import {
+  ACCEPTED_OR_LATER_STATUSES,
+  SUBMITTED_OR_LATER_STATUSES,
+  WORK_STARTED_OR_LATER_STATUSES,
+  computeCampaignAlertFields,
+  renderOpenCampaignMessage,
+  renderInviteOnlyMessage,
+  renderPostingReminderMessage,
+  renderInviteAcceptedOwnerMessage,
+  renderPostSubmittedOwnerMessage,
+  renderOwnerApprovedMessage,
+  renderStartWorkMessage,
+} from "./campaigns/campaign-alert-messages";
 
 interface VisibilityItem {
   _id: string;
@@ -32,12 +65,16 @@ interface BatchVisibilityBody {
   languages?: VisibilityItem[];
   states?: VisibilityItem[];
   districts?: VisibilityItem[];
+  equipmentOptions?: Array<{ name?: string; visible?: boolean }>;
+  pricingOptions?: Array<{ key?: string; label?: string; visible?: boolean }>;
+  creatorTypeOptions?: Array<{ name?: string; visible?: boolean }>;
   userTags?: {
     influencer?: Array<{ name: string; visible: boolean }>;
     brand?: Array<{ name: string; visible: boolean }>;
     photographer?: Array<{ name: string; visible: boolean }>;
     commission?: Array<{ name: string; visible: boolean }>;
   };
+  collaborationAvailability?: any;
 }
 
 @Controller("admin")
@@ -64,10 +101,36 @@ export class AdminListsController {
 
   private writeAdminConfig(nextConfig: any): void {
     const configPath = this.getAdminConfigPath();
-    fs.writeFileSync(configPath, JSON.stringify(nextConfig || {}, null, 2), "utf-8");
+    fs.writeFileSync(
+      configPath,
+      JSON.stringify(nextConfig || {}, null, 2),
+      "utf-8",
+    );
   }
 
-  private normalizeUserTagList(list: unknown): Array<{ name: string; visible: boolean }> {
+  private normalizeUserTagList(
+    list: unknown,
+  ): Array<{ name: string; visible: boolean }> {
+    if (!Array.isArray(list)) return [];
+    return list
+      .map((item: any) => {
+        if (typeof item === "string") {
+          const name = item.trim();
+          return name ? { name, visible: true } : null;
+        }
+        if (item && typeof item === "object") {
+          const name = String(item.name || "").trim();
+          if (!name) return null;
+          return { name, visible: item.visible !== false };
+        }
+        return null;
+      })
+      .filter((item): item is { name: string; visible: boolean } => !!item);
+  }
+
+  private normalizeEquipmentOptionList(
+    list: unknown,
+  ): Array<{ name: string; visible: boolean }> {
     if (!Array.isArray(list)) return [];
     return list
       .map((item: any) => {
@@ -83,8 +146,45 @@ export class AdminListsController {
         return null;
       })
       .filter(
-        (item): item is { name: string; visible: boolean } => !!item,
+        (
+          item: { name: string; visible: boolean } | null,
+        ): item is { name: string; visible: boolean } => !!item,
       );
+  }
+
+  private normalizePricingOptionList(
+    list: unknown,
+  ): Array<{ key: string; label: string; visible: boolean }> {
+    if (!Array.isArray(list)) return [];
+    return list
+      .map((item: any) => {
+        if (typeof item === "string") {
+          const key = item.trim();
+          return key ? { key, label: key, visible: true } : null;
+        }
+        if (item && typeof item === "object") {
+          const key = String(item.key || item.label || "").trim();
+          if (!key) return null;
+          const label = String(item.label || key).trim() || key;
+          return { key, label, visible: item.visible !== false };
+        }
+        return null;
+      })
+      .filter(
+        (
+          item: { key: string; label: string; visible: boolean } | null,
+        ): item is { key: string; label: string; visible: boolean } => !!item,
+      );
+  }
+
+  private normalizeCampaignTypeConfigs(
+    list: unknown,
+  ): CampaignTypeConfigItem[] {
+    return resolveCampaignTypeConfigs(list);
+  }
+
+  private normalizeCampaignAccessModeConfigs(list: unknown) {
+    return resolveCampaignAccessModeConfigs(list);
   }
 
   constructor(
@@ -94,13 +194,24 @@ export class AdminListsController {
     @InjectModel("Category") private readonly categoryModel: Model<any>,
     @InjectModel("SocialMedia") private readonly socialMediaModel: Model<any>,
     @InjectModel("Language") private readonly languageModel: Model<any>,
+    @InjectModel("User") private readonly userModel: Model<any>,
     @InjectModel("Influencer") private readonly influencerModel: Model<any>,
     @InjectModel("Brand") private readonly brandModel: Model<any>,
     @InjectModel("Photographer") private readonly photographerModel: Model<any>,
     @InjectModel("Campaign") private readonly campaignModel: Model<any>,
     @InjectModel("CampaignInvite")
     private readonly campaignInviteModel: Model<any>,
+    @InjectModel("CampaignSubmission")
+    private readonly campaignSubmissionModel: Model<any>,
+    @InjectModel("CampaignTransaction")
+    private readonly campaignTransactionModel: Model<any>,
     @InjectModel("AppSettings") private readonly appSettingsModel: Model<any>,
+    @InjectModel("WhatsAppCommunity")
+    private readonly whatsappCommunityModel: Model<any>,
+    private readonly pendingUserCleanupService: PendingUserCleanupService,
+    private readonly pendingUploadCleanupService: PendingUploadCleanupService,
+    private readonly assetFolderBackfillService: AssetFolderBackfillService,
+    private readonly campaignsService: CampaignsService,
   ) {
     // Load plans-config.json on initialization
     this.loadPlansConfig();
@@ -139,10 +250,38 @@ export class AdminListsController {
     };
   }
 
+  private getCampaignWorkflowTimingDefaults() {
+    const config = this.readAdminConfig();
+    const timing = config?.campaignWorkflowTiming || {};
+    return {
+      submissionApprovalWaitHours:
+        typeof timing.submissionApprovalWaitHours === "number"
+          ? timing.submissionApprovalWaitHours
+          : 24,
+      submissionAutoCompleteGraceHours:
+        typeof timing.submissionAutoCompleteGraceHours === "number"
+          ? timing.submissionAutoCompleteGraceHours
+          : 48,
+      payoutReleaseWaitHours:
+        typeof timing.payoutReleaseWaitHours === "number"
+          ? timing.payoutReleaseWaitHours
+          : 24,
+      disputeResponseWaitHours:
+        typeof timing.disputeResponseWaitHours === "number"
+          ? timing.disputeResponseWaitHours
+          : 12,
+      campaignAutoCloseGraceHours:
+        typeof timing.campaignAutoCloseGraceHours === "number"
+          ? timing.campaignAutoCloseGraceHours
+          : 24,
+    };
+  }
+
   @Get("settings")
   async getSettings() {
     // Get commission defaults from plans-config
     const commissionDefaults = this.getCommissionDefaults();
+    const workflowTimingDefaults = this.getCampaignWorkflowTimingDefaults();
 
     // These are the base defaults from the schema
     const defaults = {
@@ -152,11 +291,51 @@ export class AdminListsController {
       preApproveBrands: false,
       brandRequireEmailVerified: true,
       brandRequireMobileVerified: false,
+      preApprovePhotographers: false,
+      photographerRequireEmailVerified: true,
+      photographerRequireMobileVerified: false,
+      pendingUserAutoDeleteEnabled: false,
+      pendingUserAutoDeleteDays: 45,
+      pendingUserAutoDeleteLastRunAt: null,
+      pendingUserAutoDeleteLastRunCount: 0,
+      pendingUserAutoDeleteLastRunBy: "",
+      pendingUnverifiedReportLastRunAt: null,
+      pendingUnverifiedReportLastRunCount: 0,
+      pendingUnverifiedReportLastRunCounts: {
+        influencers: 0,
+        brands: 0,
+        photographers: 0,
+      },
+      firebaseEmailSyncLastRunAt: null,
+      firebaseEmailSyncLastRunCount: 0,
+      firebaseEmailSyncLastRunBy: "",
+      firebaseEmailSyncLastRunCounts: {
+        admin: 0,
+        influencer: 0,
+        brand: 0,
+        photographer: 0,
+      },
       campaignApprovalMode: "manual",
       collaborationApprovalMode: "manual",
+      minCampaignStartDays: 3,
+      maxCampaignDurationDays: 15,
+      paymentGatewayMode: "razorpay_fallback",
       platformFeeEnabled: false,
       platformFeePercent: commissionDefaults.platformFeePercent,
+      brandFeePercent: null,
+      influencerFeePercent: 0,
+      photographerFeePercent: 0,
+      influencerRecipientFeePercent: 0,
+      photographerRecipientFeePercent: 0,
+      brandRecipientFeePercent: 0,
       gstPercent: commissionDefaults.gstPercent,
+      submissionApprovalWaitHours:
+        workflowTimingDefaults.submissionApprovalWaitHours,
+      submissionAutoCompleteGraceHours:
+        workflowTimingDefaults.submissionAutoCompleteGraceHours,
+      payoutReleaseWaitHours: workflowTimingDefaults.payoutReleaseWaitHours,
+      disputeResponseWaitHours: workflowTimingDefaults.disputeResponseWaitHours,
+      campaignAutoCloseGraceHours: workflowTimingDefaults.campaignAutoCloseGraceHours,
       earlyAccessAssignmentMode: "manual",
       earlyAccessLastRunAt: null,
       earlyAccessLastRunStatus: "",
@@ -172,12 +351,59 @@ export class AdminListsController {
       supportContactPhone: "",
       supportContactWhatsapp: "",
       verificationCallNumber: "",
+      otpVerificationEnabled: false,
       supportContactMessage:
         "For now, please contact our team to complete campaign payments. Our admin will update the payment status once received.",
+      showSearchLink: true,
+      showRegisterInfluencerLink: true,
+      showRegisterBrandLink: true,
+      showRegisterPhotographerLink: true,
+      campaignAccessModeConfigs: getCampaignAccessModeConfigDefaults(),
+      campaignTypeConfigs: getCampaignTypeConfigDefaults(),
     };
     const settings = await this.appSettingsModel.findOne({}).lean();
-    const merged = { ...defaults, ...(settings || {}) };
+    const merged: any = { ...defaults, ...(settings || {}) };
+    merged.campaignTypeConfigs = this.normalizeCampaignTypeConfigs(
+      merged.campaignTypeConfigs,
+    );
+    merged.campaignAccessModeConfigs = this.normalizeCampaignAccessModeConfigs(
+      merged.campaignAccessModeConfigs,
+    );
+    merged.campaignTypeConfigDefaults = getCampaignTypeConfigDefaults();
+    merged.campaignAccessModeConfigDefaults =
+      getCampaignAccessModeConfigDefaults();
     return merged;
+  }
+
+  private async getCommunityJoinedCounts(): Promise<Map<string, number>> {
+    const models = [
+      this.userModel,
+      this.influencerModel,
+      this.brandModel,
+      this.photographerModel,
+    ];
+    const results = await Promise.all(
+      models.map((model) =>
+        model
+          .aggregate([
+            {
+              $match: {
+                communityJoined: true,
+                communityName: { $exists: true, $nin: ["", null] },
+              },
+            },
+            { $group: { _id: "$communityName", count: { $sum: 1 } } },
+          ])
+          .exec(),
+      ),
+    );
+    const counts = new Map<string, number>();
+    for (const group of results.flat()) {
+      const key = String(group?._id || "").trim();
+      if (!key) continue;
+      counts.set(key, (counts.get(key) || 0) + Number(group?.count || 0));
+    }
+    return counts;
   }
 
   @Patch("settings")
@@ -191,6 +417,15 @@ export class AdminListsController {
         );
       }
       next.campaignApprovalMode = mode;
+    }
+    if (next.paymentGatewayMode !== undefined) {
+      const mode = String(next.paymentGatewayMode || "").trim();
+      if (!["manual", "razorpay_fallback", "razorpay_only"].includes(mode)) {
+        throw new BadRequestException(
+          "paymentGatewayMode must be manual, razorpay_fallback, or razorpay_only",
+        );
+      }
+      next.paymentGatewayMode = mode;
     }
     if (next.collaborationApprovalMode !== undefined) {
       const mode = String(next.collaborationApprovalMode || "").trim();
@@ -210,6 +445,87 @@ export class AdminListsController {
       }
       next.earlyAccessAssignmentMode = mode;
     }
+    if (next.pendingUserAutoDeleteEnabled !== undefined) {
+      next.pendingUserAutoDeleteEnabled = !!next.pendingUserAutoDeleteEnabled;
+    }
+    if (next.pendingUserAutoDeleteDays !== undefined) {
+      const days = Number(next.pendingUserAutoDeleteDays);
+      if (!Number.isFinite(days) || days < 1 || days > 3650) {
+        throw new BadRequestException(
+          "pendingUserAutoDeleteDays must be a number between 1 and 3650",
+        );
+      }
+      next.pendingUserAutoDeleteDays = Math.floor(days);
+    }
+    for (const key of [
+      "submissionApprovalWaitHours",
+      "submissionAutoCompleteGraceHours",
+      "payoutReleaseWaitHours",
+      "disputeResponseWaitHours",
+      "campaignAutoCloseGraceHours",
+    ]) {
+      if (next[key] === undefined) continue;
+      const hours = Number(next[key]);
+      if (!Number.isFinite(hours) || hours < 0 || hours > 720) {
+        throw new BadRequestException(
+          `${key} must be a number between 0 and 720`,
+        );
+      }
+      next[key] = Math.round(hours * 100) / 100;
+    }
+    if (next.minCampaignStartDays !== undefined) {
+      const days = Number(next.minCampaignStartDays);
+      if (!Number.isFinite(days) || days < 0 || days > 30) {
+        throw new BadRequestException(
+          "minCampaignStartDays must be a number between 0 and 30",
+        );
+      }
+      next.minCampaignStartDays = Math.floor(days);
+    }
+    if (next.maxCampaignDurationDays !== undefined) {
+      const days = Number(next.maxCampaignDurationDays);
+      if (!Number.isFinite(days) || days < 1 || days > 365) {
+        throw new BadRequestException(
+          "maxCampaignDurationDays must be a number between 1 and 365",
+        );
+      }
+      next.maxCampaignDurationDays = Math.floor(days);
+    }
+    const roleSpecificFeeKeys = ["brandFeePercent", "influencerFeePercent", "photographerFeePercent"];
+    for (const key of [
+      "platformFeePercent",
+      "brandFeePercent",
+      "influencerFeePercent",
+      "photographerFeePercent",
+      "influencerRecipientFeePercent",
+      "photographerRecipientFeePercent",
+      "brandRecipientFeePercent",
+      "gstPercent",
+      "earlyAccessCommissionPercent",
+      "partnerCommissionPercent",
+      "internalTestCommissionPercent",
+    ]) {
+      if (next[key] === undefined) continue;
+      // Role-specific fee can be null (meaning "use global platformFeePercent")
+      if (roleSpecificFeeKeys.includes(key) && next[key] === null) continue;
+      const percent = Number(next[key]);
+      if (!Number.isFinite(percent) || percent < 0 || percent > 100) {
+        throw new BadRequestException(
+          `${key} must be a number between 0 and 100`,
+        );
+      }
+      next[key] = Math.round(percent * 100) / 100;
+    }
+    if (next.campaignTypeConfigs !== undefined) {
+      next.campaignTypeConfigs = this.normalizeCampaignTypeConfigs(
+        next.campaignTypeConfigs,
+      );
+    }
+    if (next.campaignAccessModeConfigs !== undefined) {
+      next.campaignAccessModeConfigs = this.normalizeCampaignAccessModeConfigs(
+        next.campaignAccessModeConfigs,
+      );
+    }
     // Only update fields present in the request body
     const settings = await this.appSettingsModel
       .findOneAndUpdate({}, { $set: next }, { upsert: true, new: true })
@@ -217,54 +533,263 @@ export class AdminListsController {
     return { success: true, settings };
   }
 
+  @Get("pending-unverified-report")
+  async getPendingUnverifiedReport(
+    @Query("days") days?: string,
+    @Query("limit") limit?: string,
+  ) {
+    return this.pendingUserCleanupService.getPendingUnverifiedReport(
+      days || 7,
+      limit || 25,
+    );
+  }
+
+  @Post("firebase-email-sync/run")
+  async runFirebaseEmailSync(@Req() req: any) {
+    const actor =
+      req?.user?.email || req?.user?.userId || req?.user?.sub || "admin";
+    return this.pendingUserCleanupService.syncFirebaseVerifiedEmails(
+      String(actor),
+    );
+  }
+
+  // User-facing 7/15/30-day nudge emails (never mentions retention/deletion —
+  // see registrationReminderTemplate). Idempotent per threshold per account.
+  @Post("registration-reminders/run")
+  async runRegistrationReminders(@Req() req: any) {
+    const actor =
+      req?.user?.email || req?.user?.userId || req?.user?.sub || "admin";
+    return this.pendingUserCleanupService.sendVerificationReminders(
+      String(actor),
+    );
+  }
+
+  // Lists what the pending-user auto-delete would soft-delete, without
+  // touching anything — covers every "never went active" case (email
+  // pending, mobile pending, admin review pending, or admin declined; see
+  // buildPendingAgeFilter/eligibilityReason in PendingUserCleanupService).
+  @Get("pending-user-cleanup/preview")
+  async previewPendingUserCleanup() {
+    return this.pendingUserCleanupService.runCleanupNow("admin_preview", true);
+  }
+
+  @Post("pending-user-cleanup/run")
+  async runPendingUserCleanup(@Req() req: any) {
+    const actor =
+      req?.user?.email || req?.user?.userId || req?.user?.sub || "admin";
+    return this.pendingUserCleanupService.runCleanupNow(String(actor), false);
+  }
+
+  // Lists what the pending-upload cleanup would delete, without deleting
+  // anything — use this to sanity-check the retention window before turning
+  // on `pendingUploadAutoDeleteEnabled`.
+  @Get("pending-upload-cleanup/preview")
+  async previewPendingUploadCleanup() {
+    return this.pendingUploadCleanupService.runCleanupNow("admin_preview", true);
+  }
+
+  @Post("pending-upload-cleanup/run")
+  async runPendingUploadCleanup(@Req() req: any) {
+    const actor =
+      req?.user?.email || req?.user?.userId || req?.user?.sub || "admin";
+    return this.pendingUploadCleanupService.runCleanupNow(String(actor), false);
+  }
+
+  // One-time (re-runnable) repair for historically-relocated Cloudinary
+  // assets whose `asset_folder` attribute never got synced to match their
+  // real public_id path — see AssetFolderBackfillService for the full story.
+  @Get("asset-folder-backfill/preview")
+  async previewAssetFolderBackfill() {
+    return this.assetFolderBackfillService.runBackfillNow(true);
+  }
+
+  @Post("asset-folder-backfill/run")
+  async runAssetFolderBackfill() {
+    return this.assetFolderBackfillService.runBackfillNow(false);
+  }
+
+  /**
+   * Maps each status TAB (what the admin UI shows) to the raw DB `status`
+   * values that belong to it — mirrors `normalizeReviewStatus()` in
+   * campaign-review.component.ts so legacy aliases (e.g. "pending") still
+   * land in the right tab when filtering server-side.
+   */
+  private static readonly CAMPAIGN_STATUS_TAB_ALIASES: Record<
+    string,
+    string[]
+  > = {
+    pending_review: ["pending_review", "pending"],
+    needs_changes: ["needs_changes", "needschange", "changes_requested"],
+    rejected: ["rejected", "reject"],
+    active: ["active", "approved", "live"],
+    completed: ["completed"],
+    cancelled: ["cancelled"],
+    draft: ["draft"],
+  };
+
   @Get("campaigns")
   async getCampaignsForApproval(
     @Query("status") status?: string,
     @Query("ownerType") ownerType?: string,
+    @Query("page") page?: string,
+    @Query("limit") limit?: string,
+    @Query("q") q?: string,
+    @Query("dateFrom") dateFrom?: string,
+    @Query("dateTo") dateTo?: string,
+    @Query("id") id?: string,
   ) {
     const normalized = String(status || "pending_review")
       .trim()
       .toLowerCase();
-    const allowed = new Set([
-      "pending_review",
-      "needs_changes",
-      "rejected",
-      "active",
-      "completed",
-      "draft",
-      "pending",
-      "all",
-    ]);
+    const statusAliases = AdminListsController.CAMPAIGN_STATUS_TAB_ALIASES;
 
-    const filter: any = {};
-    if (allowed.has(normalized) && normalized !== "all") {
-      filter.status = normalized;
-    }
-
+    // ownerType-only conditions — used both for the status-tab counters (which
+    // must stay scoped to the whole queue, not the active status/search/date
+    // filters) and as the base for the actual paginated query below.
+    const ownerAndConditions: any[] = [];
     const normalizedOwnerType = String(ownerType || "")
       .trim()
       .toLowerCase();
     if (normalizedOwnerType === "photographer") {
       // Photographer queue should include explicit ownerType plus legacy rows keyed by createdByRole.
-      filter.$or = [
-        { ownerType: "photographer" },
-        { createdByRole: "photographer" },
-      ];
+      ownerAndConditions.push({
+        $or: [{ ownerType: "photographer" }, { createdByRole: "photographer" }],
+      });
     } else if (normalizedOwnerType === "brand") {
       // Brand queue should include legacy rows where ownerType was not persisted.
-      filter.$or = [
-        { ownerType: "brand" },
-        { ownerType: { $exists: false } },
-        { ownerType: null },
-        { ownerType: "" },
-      ];
+      ownerAndConditions.push({
+        $or: [
+          { ownerType: "brand" },
+          { ownerType: { $exists: false } },
+          { ownerType: null },
+          { ownerType: "" },
+        ],
+      });
+    }
+    const ownerScopeFilter = ownerAndConditions.length
+      ? { $and: ownerAndConditions }
+      : {};
+
+    const [statusCountRows, newPendingCount] = await Promise.all([
+      this.campaignModel.aggregate([
+        { $match: ownerScopeFilter },
+        { $group: { _id: "$status", count: { $sum: 1 } } },
+      ]),
+      this.campaignModel.countDocuments({
+        $and: [
+          ...ownerAndConditions,
+          { status: { $in: statusAliases.pending_review } },
+          { createdAt: { $gt: new Date(Date.now() - 86400000) } },
+        ],
+      }),
+    ]);
+    const rawStatusCounts = new Map<string, number>(
+      statusCountRows.map((row: any) => [String(row?._id || ""), row.count]),
+    );
+    const countForTab = (tab: string) =>
+      (statusAliases[tab] || [tab]).reduce(
+        (sum, alias) => sum + (rawStatusCounts.get(alias) || 0),
+        0,
+      );
+    const statusCounts = {
+      pending_review: countForTab("pending_review"),
+      needs_changes: countForTab("needs_changes"),
+      rejected: countForTab("rejected"),
+      active: countForTab("active"),
+      draft: countForTab("draft"),
+      completed: countForTab("completed"),
+      all: statusCountRows.reduce(
+        (sum: number, row: any) => sum + row.count,
+        0,
+      ),
+    };
+
+    // Full filter for the actual paginated fetch: ownerType + active status tab + search + date range.
+    const andConditions: any[] = [...ownerAndConditions];
+    const directId = String(id || "").trim();
+    if (directId) {
+      // Direct lookup (e.g. deep-linking in from the Disputes page) bypasses the status/search/date filters.
+      andConditions.push({ _id: directId });
+    }
+    if (!directId && normalized !== "all" && statusAliases[normalized]) {
+      andConditions.push({ status: { $in: statusAliases[normalized] } });
     }
 
-    const campaigns = await this.campaignModel
-      .find(filter)
-      .sort({ updatedAt: -1, createdAt: -1 })
-      .limit(300)
-      .lean();
+    const searchQuery = !directId ? String(q || "").trim() : "";
+    if (searchQuery) {
+      const escaped = searchQuery.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      const regex = new RegExp(escaped, "i");
+      const [matchingBrands, matchingPhotographers] = await Promise.all([
+        normalizedOwnerType === "photographer"
+          ? Promise.resolve([])
+          : this.brandModel.find({ brandName: regex }).select("_id").lean(),
+        normalizedOwnerType === "brand"
+          ? Promise.resolve([])
+          : this.photographerModel.find({ name: regex }).select("_id").lean(),
+      ]);
+      const ownerIds = [
+        ...matchingBrands.map((b: any) => b._id),
+        ...matchingPhotographers.map((p: any) => p._id),
+      ];
+
+      // Displayed campaign IDs are "CMP-<campaignNumber>" or, for legacy rows
+      // without a campaignNumber, "CMP-<last 6 chars of _id>" (see
+      // campaignIdLabel in referral-link.util.ts). Neither is a stored,
+      // directly-searchable field, so a "CMP-..." query needs to be decoded
+      // back into the field it actually maps to.
+      const idMatch = searchQuery.match(/^cmp-([a-z0-9]+)$/i);
+      const idOrConditions: any[] = [];
+      if (idMatch) {
+        const idSuffix = idMatch[1];
+        if (/^\d+$/.test(idSuffix)) {
+          idOrConditions.push({ campaignNumber: Number(idSuffix) });
+        }
+        if (/^[a-f0-9]{1,6}$/i.test(idSuffix)) {
+          idOrConditions.push({
+            $expr: {
+              $eq: [
+                { $toUpper: { $substrCP: [{ $toString: "$_id" }, 18, 6] } },
+                idSuffix.toUpperCase(),
+              ],
+            },
+          });
+        }
+      }
+
+      andConditions.push({
+        $or: [
+          { title: regex },
+          { campaignTitle: regex },
+          ...(ownerIds.length ? [{ brandId: { $in: ownerIds } }] : []),
+          ...idOrConditions,
+        ],
+      });
+    }
+
+    const fromDate = !directId ? String(dateFrom || "").trim() : "";
+    const toDate = !directId ? String(dateTo || "").trim() : "";
+    if (fromDate || toDate) {
+      const range: any = {};
+      if (fromDate) range.$gte = new Date(`${fromDate}T00:00:00`);
+      if (toDate) range.$lte = new Date(`${toDate}T23:59:59.999`);
+      andConditions.push({ createdAt: range });
+    }
+
+    const filter: any = andConditions.length ? { $and: andConditions } : {};
+
+    const pageNum = Math.max(1, Number(page) || 1);
+    const pageSize = Math.min(200, Math.max(1, Number(limit) || 10));
+    const skip = (pageNum - 1) * pageSize;
+
+    const [campaigns, total] = await Promise.all([
+      this.campaignModel
+        .find(filter)
+        .sort({ updatedAt: -1, createdAt: -1 })
+        .skip(skip)
+        .limit(pageSize)
+        .lean(),
+      this.campaignModel.countDocuments(filter),
+    ]);
 
     const campaignIds = campaigns.map((c: any) => c?._id).filter(Boolean);
     const campaignIdKeys = campaignIds.map((id: any) => String(id));
@@ -275,9 +800,38 @@ export class AdminListsController {
               $in: [...campaignIds, ...campaignIdKeys],
             },
           })
-          .select("campaignId status")
+          .select(
+            "_id campaignId influencerId photographerId recipientRole status selectedPlatform selectedContentType selectedPostDate updatedAt acceptedAt paymentConfirmedAt agreedAmount agreedAmountPaise counterOffer",
+          )
           .lean()
       : [];
+
+    const [submissionRows, transactionRows] = campaignIds.length
+      ? await Promise.all([
+          this.campaignSubmissionModel
+            .find({ campaignId: { $in: [...campaignIds, ...campaignIdKeys] } })
+            .select("inviteId status reviewedAt autoCompletedAt submittedAt")
+            .sort({ submittedAt: -1 })
+            .lean(),
+          this.campaignTransactionModel
+            .find({ campaignId: { $in: [...campaignIds, ...campaignIdKeys] } })
+            .select(
+              "inviteId gateway gatewayOrderId gatewayPaymentId utrNumber payoutStatus payoutGatewayProvider payoutInitiatedAt payoutSettledAt payoutUtr payoutTransferId recipientPayout",
+            )
+            .lean(),
+        ])
+      : [[], []];
+    // Sorted by submittedAt desc above, so the first one set per inviteId is the latest.
+    const submissionByInvite = new Map<string, any>();
+    for (const sub of submissionRows) {
+      const key = String((sub as any)?.inviteId || "");
+      if (key && !submissionByInvite.has(key)) submissionByInvite.set(key, sub);
+    }
+    const transactionByInvite = new Map<string, any>();
+    for (const tx of transactionRows) {
+      const key = String((tx as any)?.inviteId || "");
+      if (key) transactionByInvite.set(key, tx);
+    }
 
     const progressStatuses = new Set([
       "accepted",
@@ -291,6 +845,9 @@ export class AdminListsController {
       string,
       { inviteCount: number; hasInfluencerProgress: boolean }
     >();
+    const inviteProgressByCampaign = new Map<string, any[]>();
+    const influencerRecipientIds = new Set<string>();
+    const photographerRecipientIds = new Set<string>();
     for (const invite of inviteRows) {
       const key = String(invite?.campaignId || "");
       if (!key) continue;
@@ -303,7 +860,84 @@ export class AdminListsController {
         prev.hasInfluencerProgress = true;
       }
       inviteStatsByCampaign.set(key, prev);
+
+      const recipientId = String(
+        (invite as any)?.influencerId || (invite as any)?.photographerId || "",
+      ).trim();
+      if (!recipientId) continue;
+      const recipientRole = String(invite?.recipientRole || "influencer")
+        .trim()
+        .toLowerCase();
+      if (recipientRole === "photographer") {
+        photographerRecipientIds.add(recipientId);
+      } else {
+        influencerRecipientIds.add(recipientId);
+      }
+
+      const progressRows = inviteProgressByCampaign.get(key) || [];
+      const counter = (invite as any)?.counterOffer || {};
+      const inviteIdKey = String(invite?._id || "");
+      const submission = submissionByInvite.get(inviteIdKey) || null;
+      const transaction = transactionByInvite.get(inviteIdKey) || null;
+      progressRows.push({
+        inviteId: inviteIdKey,
+        participantId: recipientId,
+        participantRole:
+          recipientRole === "photographer" ? "photographer" : "influencer",
+        status: String(invite?.status || "pending").toLowerCase(),
+        selectedPlatform: String((invite as any)?.selectedPlatform || ""),
+        selectedContentType: String((invite as any)?.selectedContentType || ""),
+        selectedPostDate: invite?.selectedPostDate || null,
+        acceptedAt: invite?.acceptedAt || null,
+        paymentConfirmedAt: (invite as any)?.paymentConfirmedAt || null,
+        agreedAmount: Number((invite as any)?.agreedAmount || 0),
+        agreedAmountPaise: Number((invite as any)?.agreedAmountPaise || 0),
+        counterOfferStatus: String(counter?.status || "").toLowerCase(),
+        counterOfferedAmount: Number(counter?.offeredAmount || 0),
+        counterOfferedAmountPaise: Number(counter?.offeredAmountPaise || 0),
+        counterRequestedAmount: Number(counter?.requestedAmount || 0),
+        counterRequestedAmountPaise: Number(counter?.requestedAmountPaise || 0),
+        updatedAt: invite?.updatedAt || null,
+        // Host (campaign owner) approval of the participant's submitted post.
+        postSubmissionStatus: submission?.status || null,
+        postApproved: submission?.status === "approved",
+        postApprovedAt:
+          submission?.reviewedAt || submission?.autoCompletedAt || null,
+        submittedAt: submission?.submittedAt || null,
+        // Payout to the participant for this invite.
+        paymentGateway: transaction?.gateway || null,
+        hostPaymentUtr: transaction?.utrNumber || null,
+        hostPaymentGatewayOrderId: transaction?.gatewayOrderId || null,
+        hostPaymentGatewayPaymentId: transaction?.gatewayPaymentId || null,
+        payoutStatus: transaction?.payoutStatus || null,
+        payoutGatewayProvider: transaction?.payoutGatewayProvider || null,
+        payoutDate: transaction?.payoutSettledAt || null,
+        payoutInitiatedAt: transaction?.payoutInitiatedAt || null,
+        payoutUtr: transaction?.payoutUtr || null,
+        payoutTransferId: transaction?.payoutTransferId || null,
+        payoutAmountPaise: Number(transaction?.recipientPayout || 0),
+      });
+      inviteProgressByCampaign.set(key, progressRows);
     }
+
+    const inviteInfluencers = influencerRecipientIds.size
+      ? await this.influencerModel
+          .find({ _id: { $in: Array.from(influencerRecipientIds) } })
+          .select("name username email profileImage profileImages")
+          .lean()
+      : [];
+    const invitePhotographers = photographerRecipientIds.size
+      ? await this.photographerModel
+          .find({ _id: { $in: Array.from(photographerRecipientIds) } })
+          .select("name username email profileImage profileImages")
+          .lean()
+      : [];
+    const inviteInfluencerMap = new Map(
+      inviteInfluencers.map((row: any) => [String(row?._id || ""), row]),
+    );
+    const invitePhotographerMap = new Map(
+      invitePhotographers.map((row: any) => [String(row?._id || ""), row]),
+    );
 
     const brandIds = Array.from(
       new Set(
@@ -317,7 +951,8 @@ export class AdminListsController {
       new Set(
         campaigns
           .filter(
-            (c: any) => String(c?.ownerType || "").toLowerCase() === "photographer",
+            (c: any) =>
+              String(c?.ownerType || "").toLowerCase() === "photographer",
           )
           .map((c: any) => String(c.brandId || ""))
           .filter(Boolean),
@@ -325,7 +960,9 @@ export class AdminListsController {
     );
     const brands = await this.brandModel
       .find({ _id: { $in: brandIds } })
-      .select("brandName brandUsername email verifiedByTrendStarz")
+      .select(
+        "brandName brandUsername email verifiedByTrendStarz verificationStatus",
+      )
       .lean();
     const brandMap = new Map(brands.map((b: any) => [String(b._id), b]));
     const photographers = await this.photographerModel
@@ -349,11 +986,36 @@ export class AdminListsController {
         inviteCount: 0,
         hasInfluencerProgress: false,
       };
+      const rawInviteProgress =
+        inviteProgressByCampaign.get(String(campaign._id)) || [];
+      const inviteProgress = rawInviteProgress
+        .map((row: any) => {
+          const isPhotographer = row?.participantRole === "photographer";
+          const profile = isPhotographer
+            ? invitePhotographerMap.get(String(row?.participantId || ""))
+            : inviteInfluencerMap.get(String(row?.participantId || ""));
+          return {
+            ...row,
+            campaignAmountPaise: Number(
+              campaign?.pricePerInfluencer || campaign?.amount || 0,
+            ),
+            participantName:
+              String(profile?.name || profile?.username || "").trim() ||
+              (isPhotographer ? "Photographer" : "Influencer"),
+            participantEmail: String(profile?.email || "").trim() || null,
+          };
+        })
+        .sort((a: any, b: any) => {
+          const ta = new Date(a?.updatedAt || 0).getTime();
+          const tb = new Date(b?.updatedAt || 0).getTime();
+          return tb - ta;
+        });
       return {
         ...campaign,
         ownerType: isPhotographerOwner ? "photographer" : "brand",
         inviteCount: stats.inviteCount,
         hasInfluencerProgress: stats.hasInfluencerProgress,
+        inviteProgress,
         brand: isPhotographerOwner
           ? photographer
             ? {
@@ -362,9 +1024,11 @@ export class AdminListsController {
                 brandUsername: null,
                 email: photographer.email,
                 verifiedByTrendStarz: !!photographer.verifiedByTrendStarz,
+                // profileImages[0] is the live source of truth; profileImage is a
+                // legacy field that can go stale after a re-upload/recrop.
                 profileImage:
-                  photographer.profileImage ||
                   photographer.profileImages?.[0]?.url ||
+                  photographer.profileImage ||
                   null,
               }
             : null
@@ -375,12 +1039,21 @@ export class AdminListsController {
                 brandUsername: brand.brandUsername,
                 email: brand.email,
                 verifiedByTrendStarz: !!brand.verifiedByTrendStarz,
+                verificationStatus: brand.verificationStatus || "not_submitted",
               }
             : null,
       };
     });
 
-    return { success: true, data: rows };
+    return {
+      success: true,
+      data: rows,
+      total,
+      page: pageNum,
+      limit: pageSize,
+      statusCounts,
+      newPendingCount,
+    };
   }
 
   @Patch("campaigns/:id/moderation")
@@ -401,6 +1074,9 @@ export class AdminListsController {
     const action = String(body?.action || "")
       .trim()
       .toLowerCase();
+    // Marking a campaign complete is a host action (or the auto-complete cron
+    // once the timeline ends with no work in flight) — admin moderation only
+    // covers the approve/reject/needs_changes review workflow.
     const map: Record<string, string> = {
       approve: "active",
       reject: "rejected",
@@ -436,6 +1112,7 @@ export class AdminListsController {
       }
     }
 
+    const previousStatus = campaign.status;
     campaign.status = nextStatus;
     campaign.moderationNote = String(body?.moderationNote || "").trim();
     campaign.moderatedBy = String(
@@ -444,7 +1121,325 @@ export class AdminListsController {
     campaign.moderatedAt = new Date();
 
     const saved = await campaign.save();
+    this.campaignsService
+      .handleStatusTransitionSideEffects(previousStatus, saved)
+      .catch(() => {});
     return { success: true, campaign: saved };
+  }
+
+  /**
+   * Canonical "campaign is live" copy for the review page's Ready-to-Share
+   * panel — computed the same way as the automated WhatsApp send (see
+   * campaign-alert-messages.ts) so the two can never drift.
+   */
+  @Get("campaigns/:id/share-messages")
+  async getCampaignShareMessages(@Param("id") id: string) {
+    const campaign = await this.campaignModel
+      .findById(id)
+      .select(
+        "title targetState targetDistrict venueState venueDistrict inviteRecipientRole maxInfluencers inviteSlots acceptanceDeadline endDate timelineEnd minInfluencerTier timelineStart startDate brandId ownerType status",
+      )
+      .lean();
+    if (!campaign) {
+      throw new BadRequestException("Campaign not found");
+    }
+    const acceptedCount = await this.campaignInviteModel.countDocuments({
+      campaignId: { $in: [id, (campaign as any)._id] },
+      status: { $in: ACCEPTED_OR_LATER_STATUSES },
+    });
+    const fields = computeCampaignAlertFields(campaign, acceptedCount);
+
+    const isPhotographerOwner =
+      String((campaign as any).ownerType || "").toLowerCase() === "photographer";
+    const ownerModel = isPhotographerOwner
+      ? this.photographerModel
+      : this.brandModel;
+    const owner = await ownerModel
+      .findById((campaign as any).brandId)
+      .select("brandName name phoneNumber")
+      .lean();
+    const ownerName =
+      (owner as any)?.brandName || (owner as any)?.name || "there";
+    const ownerPhone = (owner as any)?.phoneNumber || "";
+    const frontendBase = (
+      process.env.FRONTEND_URL || "https://trendstarz.in"
+    ).replace(/\/$/, "");
+
+    const isApproved = ["active", "completed"].includes(
+      String((campaign as any).status || "").toLowerCase(),
+    );
+
+    return {
+      openCampaignMessage: renderOpenCampaignMessage(fields),
+      inviteOnlyMessage: renderInviteOnlyMessage(fields),
+      postingReminderMessage: renderPostingReminderMessage(fields),
+      ownerApprovedMessage: isApproved
+        ? renderOwnerApprovedMessage({
+            ownerName,
+            campaignTitle: fields.campaignTitle,
+            campaignUrl: `${frontendBase}/campaign-management`,
+          })
+        : null,
+      ownerPhone,
+    };
+  }
+
+  /**
+   * Per-invite "ready to share" copy for the host-facing events (invite
+   * accepted / post submitted) — shown in the campaign preview modal next to
+   * that participant's row. Computed the same way as the automated WhatsApp
+   * send (see campaign-alert-messages.ts) so the two can never drift.
+   */
+  @Get("campaigns/invites/:inviteId/share-messages")
+  async getInviteHostShareMessages(@Param("inviteId") inviteId: string) {
+    const invite = await this.campaignInviteModel.findById(inviteId).lean();
+    if (!invite) {
+      throw new BadRequestException("Invite not found");
+    }
+    const isPhotographerRecipient =
+      String((invite as any).recipientRole || "influencer") === "photographer";
+    const recipientModel = isPhotographerRecipient
+      ? this.photographerModel
+      : this.influencerModel;
+
+    const [campaign, recipient, brandOwner, photographerOwner] =
+      await Promise.all([
+        this.campaignModel
+          .findById((invite as any).campaignId)
+          .select("title")
+          .lean(),
+        recipientModel
+          .findById((invite as any).influencerId)
+          .select("name phoneNumber")
+          .lean(),
+        this.brandModel
+          .findById((invite as any).brandId)
+          .select("brandName name phoneNumber")
+          .lean(),
+        this.photographerModel
+          .findById((invite as any).brandId)
+          .select("name phoneNumber")
+          .lean(),
+      ]);
+
+    const ownerName =
+      (brandOwner as any)?.brandName ||
+      (brandOwner as any)?.name ||
+      (photographerOwner as any)?.name ||
+      "there";
+    const ownerPhone =
+      (brandOwner as any)?.phoneNumber || (photographerOwner as any)?.phoneNumber || "";
+    const recipientPhone = (recipient as any)?.phoneNumber || "";
+    const frontendBase = (
+      process.env.FRONTEND_URL || "https://trendstarz.in"
+    ).replace(/\/$/, "");
+    const fields = {
+      ownerName,
+      recipientName:
+        (recipient as any)?.name ||
+        `A ${isPhotographerRecipient ? "photographer" : "influencer"}`,
+      campaignTitle: (campaign as any)?.title || "your campaign",
+      campaignUrl: `${frontendBase}/campaign-management`,
+    };
+
+    const status = String((invite as any).status || "");
+    return {
+      inviteAcceptedMessage: ACCEPTED_OR_LATER_STATUSES.includes(status)
+        ? renderInviteAcceptedOwnerMessage(fields)
+        : null,
+      postSubmittedMessage: SUBMITTED_OR_LATER_STATUSES.includes(status)
+        ? renderPostSubmittedOwnerMessage(fields)
+        : null,
+      startWorkMessage: WORK_STARTED_OR_LATER_STATUSES.includes(status)
+        ? renderStartWorkMessage(fields)
+        : null,
+      ownerPhone,
+      recipientPhone,
+    };
+  }
+
+  private assertAdminOverrideReason(reason: unknown): string {
+    const trimmed = String(reason || "").trim();
+    if (trimmed.length < 10) {
+      throw new BadRequestException(
+        "Please provide a reason for this override (at least 10 characters).",
+      );
+    }
+    return trimmed;
+  }
+
+  /**
+   * Emergency admin override: force a stuck/problem active campaign straight
+   * to completed, bypassing the normal host "End campaign" action and the
+   * auto-complete cron's in-flight-work check. Use sparingly.
+   */
+  @Patch("campaigns/:id/force-complete")
+  async forceCompleteCampaign(
+    @Param("id") id: string,
+    @Body() body: { reason?: string },
+    @Req() req: any,
+  ) {
+    const campaign = await this.campaignModel.findById(id);
+    if (!campaign) {
+      throw new BadRequestException("Campaign not found");
+    }
+    if (campaign.status !== "active") {
+      throw new BadRequestException(
+        `Only active campaigns can be force-completed (current status: '${campaign.status}').`,
+      );
+    }
+    const reason = this.assertAdminOverrideReason(body?.reason);
+    const adminId = String(req?.user?.userId || req?.user?.id || "admin");
+    const now = new Date();
+
+    campaign.status = "completed";
+    campaign.completedBy = "admin";
+    campaign.completedAt = now;
+    campaign.adminOverrideAction = "force_complete";
+    campaign.adminOverrideReason = reason;
+    campaign.adminOverrideBy = adminId;
+    campaign.adminOverrideAt = now;
+
+    const saved = await campaign.save();
+    return { success: true, campaign: saved };
+  }
+
+  /**
+   * Emergency admin override: cancel a campaign's still-pending/unconfirmed
+   * invites (pending/invited/counter_sent/accepted). Invites already paid or
+   * in progress (payment_confirmed/working/submitted/etc.) are left untouched
+   * — this stops new acceptances, it doesn't pull the rug out from under
+   * creators who are already being paid.
+   */
+  @Patch("campaigns/:id/cancel-participation")
+  async cancelCampaignParticipation(
+    @Param("id") id: string,
+    @Body() body: { reason?: string },
+    @Req() req: any,
+  ) {
+    const campaign = await this.campaignModel.findById(id);
+    if (!campaign) {
+      throw new BadRequestException("Campaign not found");
+    }
+    if (campaign.status !== "active") {
+      throw new BadRequestException(
+        `Only active campaigns can have participation cancelled (current status: '${campaign.status}').`,
+      );
+    }
+    const reason = this.assertAdminOverrideReason(body?.reason);
+    const adminId = String(req?.user?.userId || req?.user?.id || "admin");
+    const now = new Date();
+
+    const cancellableStatuses = [
+      "pending",
+      "invited",
+      "counter_sent",
+      "accepted",
+    ];
+    const { modifiedCount } = await this.campaignInviteModel.updateMany(
+      {
+        campaignId: { $in: [campaign._id, String(campaign._id)] },
+        status: { $in: cancellableStatuses },
+      },
+      { $set: { status: "withdrawn" } },
+    );
+
+    campaign.status = "cancelled";
+    campaign.adminOverrideAction = "cancel_participation";
+    campaign.adminOverrideReason = reason;
+    campaign.adminOverrideBy = adminId;
+    campaign.adminOverrideAt = now;
+
+    const saved = await campaign.save();
+    return { success: true, campaign: saved, cancelledInvites: modifiedCount };
+  }
+
+  @Get("whatsapp-communities")
+  async getWhatsAppCommunities() {
+    await seedMissingWhatsAppCommunitiesFromConfig(this.whatsappCommunityModel);
+    const [items, joinedCounts] = await Promise.all([
+      this.whatsappCommunityModel
+        .find({})
+        .sort({ state: 1, communityName: 1 })
+        .lean()
+        .limit(500),
+      this.getCommunityJoinedCounts(),
+    ]);
+    const data = items.map((item: any) => ({
+      ...item,
+      joinedUserCount:
+        joinedCounts.get(String(item?.communityName || "").trim()) || 0,
+    }));
+    return { success: true, data };
+  }
+
+  @Post("whatsapp-communities")
+  async createWhatsAppCommunity(@Body() body: any) {
+    const state = String(body?.state || "").trim();
+    const communityName = String(
+      body?.communityName || body?.groupName || "",
+    ).trim();
+    const communityLink = String(
+      body?.communityLink || body?.whatsappLink || "",
+    ).trim();
+    const stateKey = normalizeCommunityStateKey(state);
+    if (!stateKey || !communityName || !communityLink) {
+      throw new BadRequestException(
+        "State, community name, and WhatsApp link are required.",
+      );
+    }
+    const saved = await this.whatsappCommunityModel.findOneAndUpdate(
+      { stateKey },
+      {
+        $set: {
+          state,
+          stateKey,
+          communityName,
+          communityLink,
+          isActive: body?.isActive !== false,
+        },
+      },
+      { new: true, upsert: true, setDefaultsOnInsert: true },
+    );
+    return { success: true, data: saved };
+  }
+
+  @Patch("whatsapp-communities/:id")
+  async updateWhatsAppCommunity(@Param("id") id: string, @Body() body: any) {
+    const state = String(body?.state || "").trim();
+    const communityName = String(
+      body?.communityName || body?.groupName || "",
+    ).trim();
+    const communityLink = String(
+      body?.communityLink || body?.whatsappLink || "",
+    ).trim();
+    const stateKey = normalizeCommunityStateKey(state);
+    if (!stateKey || !communityName || !communityLink) {
+      throw new BadRequestException(
+        "State, community name, and WhatsApp link are required.",
+      );
+    }
+    const updated = await this.whatsappCommunityModel.findByIdAndUpdate(
+      id,
+      {
+        $set: {
+          state,
+          stateKey,
+          communityName,
+          communityLink,
+          isActive: body?.isActive !== false,
+        },
+      },
+      { new: true },
+    );
+    if (!updated) throw new BadRequestException("Community not found");
+    return { success: true, data: updated };
+  }
+
+  @Delete("whatsapp-communities/:id")
+  async deleteWhatsAppCommunity(@Param("id") id: string) {
+    await this.whatsappCommunityModel.findByIdAndDelete(id);
+    return { success: true };
   }
   // Debug endpoint to log influencer and brand data
   @Get("debug-users")
@@ -495,73 +1490,6 @@ export class AdminListsController {
     return { message: "User not found", id };
   }
 
-  // Admin dashboard endpoints for influencers and brands
-  @Get("influencers")
-  async getAllInfluencers(@Query("status") status?: string) {
-    const filter: any = {};
-    if (status === "deleted") {
-      filter.isDeleted = true;
-    } else if (status) {
-      filter.status = status;
-      filter.isDeleted = { $ne: true };
-    } else {
-      filter.isDeleted = { $ne: true };
-    }
-    const docs = await this.influencerModel.find(filter).lean().limit(200);
-    const now = new Date();
-    const normalized = (docs || []).map((doc: any) => {
-      const hasActivePremium =
-        !!doc?.isPremium &&
-        (!doc?.premiumEnd || new Date(doc.premiumEnd) >= now);
-      return { ...doc, isPremium: hasActivePremium };
-    });
-    return { success: true, data: normalized };
-  }
-
-  @Get("brands")
-  async getAllBrands(@Query("status") status?: string) {
-    const filter: any = {};
-    if (status === "deleted") {
-      filter.isDeleted = true;
-    } else if (status) {
-      filter.status = status;
-      filter.isDeleted = { $ne: true };
-    } else {
-      filter.isDeleted = { $ne: true };
-    }
-    const docs = await this.brandModel.find(filter).lean().limit(200);
-    const now = new Date();
-    const normalized = (docs || []).map((doc: any) => {
-      const hasActivePremium =
-        !!doc?.isPremium &&
-        (!doc?.premiumEnd || new Date(doc.premiumEnd) >= now);
-      return { ...doc, isPremium: hasActivePremium };
-    });
-    return { success: true, data: normalized };
-  }
-
-  @Get("photographers")
-  async getAllPhotographers(@Query("status") status?: string) {
-    const filter: any = {};
-    if (status === "deleted") {
-      filter.isDeleted = true;
-    } else if (status) {
-      filter.status = status;
-      filter.isDeleted = { $ne: true };
-    } else {
-      filter.isDeleted = { $ne: true };
-    }
-    const docs = await this.photographerModel.find(filter).lean().limit(200);
-    const now = new Date();
-    const normalized = (docs || []).map((doc: any) => {
-      const hasActivePremium =
-        !!doc?.isPremium &&
-        (!doc?.premiumEnd || new Date(doc.premiumEnd) >= now);
-      return { ...doc, isPremium: hasActivePremium };
-    });
-    return { success: true, data: normalized };
-  }
-
   @Patch("states/:id")
   async patchState(
     @Param("id") id: string,
@@ -609,9 +1537,12 @@ export class AdminListsController {
   // Categories
   @Get("categories")
   async getCategories(@Query("role") role?: string) {
-    const normalizedRole = ["influencer", "brand", "photographer", "both"].includes(
-      String(role || "").toLowerCase(),
-    )
+    const normalizedRole = [
+      "influencer",
+      "brand",
+      "photographer",
+      "both",
+    ].includes(String(role || "").toLowerCase())
       ? String(role).toLowerCase()
       : "";
 
@@ -632,7 +1563,11 @@ export class AdminListsController {
   }
   @Post("categories")
   async addCategory(
-    @Body() body: { name: string; role?: "influencer" | "brand" | "photographer" | "both" },
+    @Body()
+    body: {
+      name: string;
+      role?: "influencer" | "brand" | "photographer" | "both";
+    },
   ) {
     return this.categoryModel.create(body);
   }
@@ -651,6 +1586,10 @@ export class AdminListsController {
   // States
   @Get("states")
   async getStates() {
+    const totalStates = await this.stateModel.countDocuments();
+    if (totalStates === 0) {
+      await seedMissingLocationsFromConfig(this.stateModel, this.districtModel);
+    }
     return this.stateModel.find().lean().limit(100);
   }
   @Post("states")
@@ -675,6 +1614,14 @@ export class AdminListsController {
     @Query("state") state?: string,
     @Query("stateId") stateId?: string,
   ) {
+    const [totalStates, totalDistricts] = await Promise.all([
+      this.stateModel.countDocuments(),
+      this.districtModel.countDocuments(),
+    ]);
+    if (totalStates === 0 || totalDistricts === 0) {
+      await seedMissingLocationsFromConfig(this.stateModel, this.districtModel);
+    }
+
     let resolvedState = (state || "").trim();
 
     if (!resolvedState && stateId) {
@@ -742,6 +1689,7 @@ export class AdminListsController {
       .find(
         {},
         {
+          name: 1,
           socialMedia: 1,
           handleName: 1,
           tier: 1,
@@ -775,6 +1723,18 @@ export class AdminListsController {
   @Delete("social-media/:id")
   async deleteSocialMedia(@Param("id") id: string) {
     return this.socialMediaModel.findByIdAndDelete(id);
+  }
+
+  @Get("equipment-options")
+  async getEquipmentOptionsAdmin() {
+    const config = this.readAdminConfig();
+    return this.normalizeEquipmentOptionList(config?.equipmentOptions);
+  }
+
+  @Get("pricing-options")
+  async getPricingOptionsAdmin() {
+    const config = this.readAdminConfig();
+    return this.normalizePricingOptionList(config?.pricingOptions);
   }
 
   @Post("batch-update-visibility")
@@ -821,14 +1781,24 @@ export class AdminListsController {
           }
         }
       }
+      const hiddenStateNames = new Set<string>();
       if (body.states) {
         for (const s of body.states) {
-          const result = await this.stateModel.findByIdAndUpdate(s._id, {
-            showInFrontend: s.showInFrontend,
-          });
+          const result: any = await this.stateModel.findByIdAndUpdate(
+            s._id,
+            { showInFrontend: s.showInFrontend },
+            { new: true },
+          );
           if (!result) {
             console.error(`[BatchUpdate][ERROR] State not found:`, s);
             throw new BadRequestException(`State not found: ${s._id}`);
+          }
+          if (s.showInFrontend === false) {
+            hiddenStateNames.add(
+              String(result.name || "")
+                .trim()
+                .toLowerCase(),
+            );
           }
         }
       }
@@ -843,26 +1813,76 @@ export class AdminListsController {
           }
         }
       }
-      if (body.userTags) {
+      if (hiddenStateNames.size) {
+        const hiddenStateRegexes = Array.from(hiddenStateNames)
+          .filter(Boolean)
+          .map(
+            (state) =>
+              new RegExp(
+                `^${state.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`,
+                "i",
+              ),
+          );
+        if (hiddenStateRegexes.length) {
+          await this.districtModel.updateMany(
+            { state: { $in: hiddenStateRegexes } },
+            { $set: { showInFrontend: false } },
+          );
+        }
+      }
+      const needsConfigUpdate =
+        !!body.userTags ||
+        !!body.equipmentOptions ||
+        !!body.pricingOptions ||
+        !!body.creatorTypeOptions ||
+        !!body.collaborationAvailability;
+
+      if (needsConfigUpdate) {
         const currentConfig = this.readAdminConfig();
-        const nextUserTags = {
-          influencer: this.normalizeUserTagList(
-            body.userTags.influencer ?? currentConfig?.userTags?.influencer,
-          ),
-          brand: this.normalizeUserTagList(
-            body.userTags.brand ?? currentConfig?.userTags?.brand,
-          ),
-          photographer: this.normalizeUserTagList(
-            body.userTags.photographer ?? currentConfig?.userTags?.photographer,
-          ),
-          commission: this.normalizeUserTagList(
-            body.userTags.commission ?? currentConfig?.userTags?.commission,
-          ),
-        };
-        this.writeAdminConfig({
-          ...currentConfig,
-          userTags: nextUserTags,
-        });
+        const nextConfig = { ...currentConfig };
+
+        if (body.userTags) {
+          nextConfig.userTags = {
+            influencer: this.normalizeUserTagList(
+              body.userTags.influencer ?? currentConfig?.userTags?.influencer,
+            ),
+            brand: this.normalizeUserTagList(
+              body.userTags.brand ?? currentConfig?.userTags?.brand,
+            ),
+            photographer: this.normalizeUserTagList(
+              body.userTags.photographer ??
+                currentConfig?.userTags?.photographer,
+            ),
+            commission: this.normalizeUserTagList(
+              body.userTags.commission ?? currentConfig?.userTags?.commission,
+            ),
+          };
+        }
+
+        if (body.equipmentOptions) {
+          nextConfig.equipmentOptions = this.normalizeEquipmentOptionList(
+            body.equipmentOptions,
+          );
+        }
+
+        if (body.pricingOptions) {
+          nextConfig.pricingOptions = this.normalizePricingOptionList(
+            body.pricingOptions,
+          );
+        }
+
+        if (body.creatorTypeOptions) {
+          nextConfig.creatorTypeOptions = normalizeCreatorTypeConfig(
+            body.creatorTypeOptions,
+          );
+        }
+
+        if (body.collaborationAvailability) {
+          nextConfig.collaborationAvailability =
+            normalizeCollaborationOptionConfig(body.collaborationAvailability);
+        }
+
+        this.writeAdminConfig(nextConfig);
       }
       return { message: "Visibility updated" };
     } catch (err: unknown) {
@@ -884,6 +1904,20 @@ export class AdminListsController {
     };
   }
 
+  @Get("collaboration-availability-config")
+  async getCollaborationAvailabilityConfig() {
+    const config = this.readAdminConfig();
+    return normalizeCollaborationOptionConfig(
+      config?.collaborationAvailability,
+    );
+  }
+
+  @Get("creator-type-options-config")
+  async getCreatorTypeOptionsConfig() {
+    const config = this.readAdminConfig();
+    return normalizeCreatorTypeConfig(config?.creatorTypeOptions);
+  }
+
   // ============ Commission Override Management ============
 
   /**
@@ -897,12 +1931,16 @@ export class AdminListsController {
     const normalizedType = String(userType || "")
       .trim()
       .toLowerCase();
-    if (!["influencer", "brand"].includes(normalizedType)) {
-      throw new BadRequestException("userType must be 'influencer' or 'brand'");
+    if (!["influencer", "brand", "photographer"].includes(normalizedType)) {
+      throw new BadRequestException("userType must be 'influencer', 'brand', or 'photographer'");
     }
 
     const model =
-      normalizedType === "influencer" ? this.influencerModel : this.brandModel;
+      normalizedType === "influencer"
+        ? this.influencerModel
+        : normalizedType === "photographer"
+          ? this.photographerModel
+          : this.brandModel;
 
     const user: any = await model
       .findById(userId)
@@ -959,12 +1997,16 @@ export class AdminListsController {
     const normalizedType = String(userType || "")
       .trim()
       .toLowerCase();
-    if (!["influencer", "brand"].includes(normalizedType)) {
-      throw new BadRequestException("userType must be 'influencer' or 'brand'");
+    if (!["influencer", "brand", "photographer"].includes(normalizedType)) {
+      throw new BadRequestException("userType must be 'influencer', 'brand', or 'photographer'");
     }
 
     const model =
-      normalizedType === "influencer" ? this.influencerModel : this.brandModel;
+      normalizedType === "influencer"
+        ? this.influencerModel
+        : normalizedType === "photographer"
+          ? this.photographerModel
+          : this.brandModel;
 
     // Validate override type
     if (
@@ -1030,6 +2072,9 @@ export class AdminListsController {
       early_access_brand: "Early Access",
       partner_brand: "Partner",
       internal_test_brand: "Internal/Test",
+      early_access_photographer: "Early Access",
+      partner_photographer: "Partner",
+      internal_test_photographer: "Internal/Test",
       launch_partner: "Partner",
       zero_commission_creator: "Early Access",
       zero_commission_brand: "Early Access",
@@ -1084,12 +2129,16 @@ export class AdminListsController {
     const normalizedType = String(userType || "")
       .trim()
       .toLowerCase();
-    if (!["influencer", "brand"].includes(normalizedType)) {
-      throw new BadRequestException("userType must be 'influencer' or 'brand'");
+    if (!["influencer", "brand", "photographer"].includes(normalizedType)) {
+      throw new BadRequestException("userType must be 'influencer', 'brand', or 'photographer'");
     }
 
     const model =
-      normalizedType === "influencer" ? this.influencerModel : this.brandModel;
+      normalizedType === "influencer"
+        ? this.influencerModel
+        : normalizedType === "photographer"
+          ? this.photographerModel
+          : this.brandModel;
 
     const currentUser = await model.findById(userId).select("adminTags").lean();
     if (!currentUser) {
@@ -1135,20 +2184,25 @@ export class AdminListsController {
     const normalizedType = String(userType || "")
       .trim()
       .toLowerCase();
-    if (!["influencer", "brand"].includes(normalizedType)) {
-      throw new BadRequestException("userType must be 'influencer' or 'brand'");
+    if (!["influencer", "brand", "photographer"].includes(normalizedType)) {
+      throw new BadRequestException("userType must be 'influencer', 'brand', or 'photographer'");
     }
 
     const model =
-      normalizedType === "influencer" ? this.influencerModel : this.brandModel;
+      normalizedType === "influencer"
+        ? this.influencerModel
+        : normalizedType === "photographer"
+          ? this.photographerModel
+          : this.brandModel;
+
+    const selectFields =
+      normalizedType === "brand"
+        ? "brandName email commissionBadge commissionOverride"
+        : "name email commissionBadge commissionOverride";
 
     const users = await model
       .find({ commissionBadge: badge })
-      .select(
-        normalizedType === "influencer"
-          ? "name email commissionBadge commissionOverride"
-          : "brandName email commissionBadge commissionOverride",
-      )
+      .select(selectFields)
       .lean();
 
     return {

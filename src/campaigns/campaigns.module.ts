@@ -6,27 +6,38 @@ import {
   InfluencerSchema,
   PhotographerSchema,
   AppSettingsSchema,
+  CounterSchema,
 } from "../database/schemas/profile.schemas";
 import { CampaignInviteSchema } from "../database/schemas/campaign-invite.schema";
 import { CampaignSubmissionSchema } from "../database/schemas/campaign-submission.schema";
 import { CampaignTransactionSchema } from "../database/schemas/campaign-transaction.schema";
 import { AnalyticsEventSchema } from "../database/schemas/analytics-event.schema";
+import { ProfileFlagSchema } from "../database/schemas/profile-flag.schema";
+import { TrackingLinkSchema } from "../database/schemas/tracking-link.schema";
+import { LinkClickSchema } from "../database/schemas/link-click.schema";
+import { LinkConversionSchema } from "../database/schemas/link-conversion.schema";
 import { CampaignsController } from "./campaigns.controller";
 import { CampaignsService } from "./campaigns.service";
 import { CampaignInvitesController } from "./campaign-invites.controller";
 import { CampaignInvitesService } from "./campaign-invites.service";
 import { AnalyticsEventsController } from "./analytics-events.controller";
 import { AnalyticsEventsService } from "./analytics-events.service";
+import { TrackingLinksController } from "./tracking-links.controller";
+import { TrackingLinksService } from "./tracking-links.service";
 import { PlansModule } from "../plans/plans.module";
 import { CloudinaryService } from "../cloudinary.service";
 import { PushModule } from "../push/push.module";
 import { NotificationsModule } from "../notifications/notifications.module";
+import { WhatsAppModule } from "../whatsapp/whatsapp.module";
+import { ProfileVerificationModule } from "../profile-verification/profile-verification.module";
 
 @Module({
   imports: [
     PlansModule,
     PushModule,
     NotificationsModule,
+    WhatsAppModule,
+    ProfileVerificationModule,
     MongooseModule.forFeature([
       { name: "Campaign", schema: CampaignSchema, collection: "campaigns" },
       {
@@ -65,18 +76,42 @@ import { NotificationsModule } from "../notifications/notifications.module";
         schema: AppSettingsSchema,
         collection: "appsettings",
       },
+      {
+        name: "ProfileFlag",
+        schema: ProfileFlagSchema,
+        collection: "profile_flags",
+      },
+      { name: "Counter", schema: CounterSchema, collection: "counters" },
+      {
+        name: "TrackingLink",
+        schema: TrackingLinkSchema,
+        collection: "trackinglinks",
+      },
+      {
+        name: "LinkClick",
+        schema: LinkClickSchema,
+        collection: "linkclicks",
+      },
+      {
+        name: "LinkConversion",
+        schema: LinkConversionSchema,
+        collection: "linkconversions",
+      },
     ]),
   ],
   controllers: [
     CampaignsController,
     CampaignInvitesController,
     AnalyticsEventsController,
+    TrackingLinksController,
   ],
   providers: [
     CampaignsService,
     CampaignInvitesService,
     AnalyticsEventsService,
+    TrackingLinksService,
     CloudinaryService,
   ],
+  exports: [CampaignsService, CampaignInvitesService],
 })
 export class CampaignsModule {}

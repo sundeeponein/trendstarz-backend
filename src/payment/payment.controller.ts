@@ -196,8 +196,44 @@ export class PaymentController {
   }
 
   /**
+   * Mark an approved premium payment as refunded (Admin only)
+   * PATCH /payment/:id/refund
+   */
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Patch(":id/refund")
+  async refundPayment(
+    @Param("id") paymentId: string,
+    @Body() body: { reason?: string },
+    @Req() req: any,
+  ) {
+    const adminId = req.user?.userId;
+    if (!adminId) throw new BadRequestException("Not authenticated");
+    return this.paymentService.refundPayment(
+      paymentId,
+      adminId,
+      body.reason || "Refund marked by admin",
+    );
+  }
+
+  /**
+   * Premium payment summary for admin cards
+   * GET /payment/summary
+   * GET /payment/summary?days=7  — restrict to the last N days (e.g. dashboard widgets)
+   */
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Get("summary")
+  async getAdminSummary(@Query("days") days?: string) {
+    const parsedDays = Number(days);
+    const since =
+      Number.isFinite(parsedDays) && parsedDays > 0
+        ? new Date(Date.now() - parsedDays * 24 * 60 * 60 * 1000)
+        : undefined;
+    return this.paymentService.getAdminSummary(since);
+  }
+
+  /**
    * Get payments by status (Admin only)
-   * GET /payment/by-status?status=approved|rejected
+   * GET /payment/by-status?status=approved|rejected|pending|refunded
    */
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Get("by-status")
@@ -206,11 +242,11 @@ export class PaymentController {
     @Query("page") page: string = "1",
     @Query("limit") limit: string = "50",
   ) {
-    if (!status || !["approved", "rejected", "pending"].includes(status)) {
+    if (!status || !["approved", "rejected", "pending", "refunded"].includes(status)) {
       throw new BadRequestException("Invalid status");
     }
     return this.paymentService.getPaymentsByStatus(
-      status as "approved" | "rejected" | "pending",
+      status as "approved" | "rejected" | "pending" | "refunded",
       parseInt(page),
       parseInt(limit),
     );

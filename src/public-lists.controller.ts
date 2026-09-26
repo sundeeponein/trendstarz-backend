@@ -1,6 +1,21 @@
 import { Controller, Get, Query } from "@nestjs/common";
 import { InjectModel } from "@nestjs/mongoose";
 import { Model } from "mongoose";
+import {
+  resolveCampaignAccessModeConfigs,
+  resolveCampaignTypeConfigs,
+} from "./campaign-type-configs";
+import { seedMissingLocationsFromConfig } from "./utils/location-seed.util";
+import {
+  readAdminConfigFile,
+  visibleCollaborationOptionConfig,
+  visibleCreatorTypeConfig,
+} from "./utils/collaboration-options.util";
+import {
+  normalizeCommunityStateKey,
+  readWhatsAppCommunityConfig,
+  seedMissingWhatsAppCommunitiesFromConfig,
+} from "./utils/whatsapp-community-config.util";
 
 @Controller("tiers")
 export class TiersController {
@@ -84,12 +99,29 @@ export class CategoriesController {
   }
 }
 
+@Controller("creator-type-options")
+export class CreatorTypeOptionsController {
+  @Get()
+  getAll() {
+    const config = readAdminConfigFile();
+    return visibleCreatorTypeConfig(config?.creatorTypeOptions);
+  }
+}
+
 @Controller("states")
 export class StatesController {
-  constructor(@InjectModel("State") private readonly stateModel: Model<any>) {}
+  constructor(
+    @InjectModel("State") private readonly stateModel: Model<any>,
+    @InjectModel("District") private readonly districtModel: Model<any>,
+  ) {}
 
   @Get()
   async getAll() {
+    const totalStates = await this.stateModel.countDocuments();
+    if (totalStates === 0) {
+      await seedMissingLocationsFromConfig(this.stateModel, this.districtModel);
+    }
+
     const states = await this.stateModel
       .find({ showInFrontend: { $ne: false } })
       .lean()
@@ -110,6 +142,14 @@ export class DistrictsController {
     @Query("state") state?: string,
     @Query("stateId") stateId?: string,
   ) {
+    const [totalStates, totalDistricts] = await Promise.all([
+      this.stateModel.countDocuments(),
+      this.districtModel.countDocuments(),
+    ]);
+    if (totalStates === 0 || totalDistricts === 0) {
+      await seedMissingLocationsFromConfig(this.stateModel, this.districtModel);
+    }
+
     let resolvedState = (state || "").trim();
 
     if (!resolvedState && stateId) {
@@ -141,6 +181,31 @@ export class DistrictsController {
   }
 }
 
+@Controller("public/whatsapp-community")
+export class PublicWhatsAppCommunityController {
+  constructor(
+    @InjectModel("WhatsAppCommunity")
+    private readonly whatsappCommunityModel: Model<any>,
+  ) {}
+
+  @Get()
+  async getByState(@Query("state") state?: string) {
+    const stateKey = normalizeCommunityStateKey(state);
+    if (!stateKey) return { success: true, data: null };
+    await seedMissingWhatsAppCommunitiesFromConfig(
+      this.whatsappCommunityModel,
+    );
+    const community = await this.whatsappCommunityModel
+      .findOne({ stateKey, isActive: { $ne: false } })
+      .lean();
+    if (community) return { success: true, data: community };
+    const fallback = readWhatsAppCommunityConfig().find(
+      (item) => item.stateKey === stateKey && item.isActive !== false,
+    );
+    return { success: true, data: fallback || null };
+  }
+}
+
 @Controller("social-media")
 export class SocialMediaController {
   constructor(
@@ -154,6 +219,15 @@ export class SocialMediaController {
       .lean()
       .limit(100);
     return socials.length ? socials : [];
+  }
+}
+
+@Controller("collaboration-availability-options")
+export class CollaborationAvailabilityOptionsController {
+  @Get()
+  async getAll() {
+    const config = readAdminConfigFile();
+    return visibleCollaborationOptionConfig(config?.collaborationAvailability);
   }
 }
 
@@ -189,6 +263,23 @@ export class PublicSupportContactController {
   }
 }
 
+@Controller("public/campaign-type-configs")
+export class PublicCampaignTypeConfigsController {
+  constructor(
+    @InjectModel("AppSettings") private readonly appSettingsModel: Model<any>,
+  ) {}
+
+  @Get()
+  async get() {
+    const settings: any =
+      (await this.appSettingsModel.findOne({}).lean()) || {};
+    return {
+      items: resolveCampaignTypeConfigs(settings.campaignTypeConfigs),
+      accessModes: resolveCampaignAccessModeConfigs(settings.campaignAccessModeConfigs),
+    };
+  }
+}
+
 @Controller("equipment-options")
 export class EquipmentOptionsController {
   private equipmentOptions: any[] = [];
@@ -219,6 +310,7 @@ export class EquipmentOptionsController {
 
   @Get()
   async getAll() {
+    this.loadEquipmentOptions();
     return this.equipmentOptions.length ? this.equipmentOptions : [];
   }
 }
@@ -253,6 +345,7 @@ export class PricingOptionsController {
 
   @Get()
   async getAll() {
+    this.loadPricingOptions();
     return this.pricingOptions.length ? this.pricingOptions : [];
   }
 }

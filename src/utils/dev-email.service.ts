@@ -39,12 +39,8 @@ export class DevEmailService {
       console.warn(
         "[DevEmailService] DEV_SMTP_USER/DEV_SMTP_PASS not configured. Skipping SMTP send.",
       );
-      console.log("[DevEmailService] To:", to);
-      console.log("[DevEmailService] Subject:", subject);
-      console.log("[DevEmailService] Text:", text);
-      if (html) {
-        console.log("[DevEmailService] Html:", html);
-      }
+      // FIX #32: Don't log sensitive user info (email addresses, message bodies)
+      console.warn("[DevEmailService] Email not sent in dev mode (SMTP not configured).");
       return;
     }
 

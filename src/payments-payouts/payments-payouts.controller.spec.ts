@@ -10,11 +10,16 @@ describe("PaymentsPayoutsController", () => {
     const serviceMock: Partial<jest.Mocked<PaymentsPayoutsService>> = {
       calculatePayment: jest.fn(),
       submitPaymentProof: jest.fn(),
+      createRazorpayOrderForCampaign: jest.fn(),
+      verifyRazorpayCampaignPayment: jest.fn(),
+      handleRazorpayXWebhook: jest.fn(),
       listForAdmin: jest.fn(),
       getAdminSummary: jest.fn(),
+      getGatewayReadiness: jest.fn(),
       verifyCollection: jest.fn(),
       rejectCollection: jest.fn(),
       markPayoutPaid: jest.fn(),
+      runAutoPayoutSweep: jest.fn(),
       listMine: jest.fn(),
     };
 
@@ -57,6 +62,40 @@ describe("PaymentsPayoutsController", () => {
     expect(result).toEqual({ success: true });
   });
 
+  it("createRazorpayOrder delegates campaignId and req.user.userId", async () => {
+    service.createRazorpayOrderForCampaign.mockResolvedValue({ success: true } as any);
+
+    const req = { user: { userId: "brand1" } };
+    const result = await controller.createRazorpayOrder("camp1", req);
+
+    expect(service.createRazorpayOrderForCampaign).toHaveBeenCalledWith("camp1", "brand1");
+    expect(result).toEqual({ success: true });
+  });
+
+  it("verifyRazorpayPayment delegates payload and req.user.userId", async () => {
+    service.verifyRazorpayCampaignPayment.mockResolvedValue({ success: true } as any);
+
+    const req = { user: { userId: "brand1" } };
+    const body = { orderId: "order_1", paymentId: "pay_1", signature: "sig_1" };
+    const result = await controller.verifyRazorpayPayment("camp1", req, body);
+
+    expect(service.verifyRazorpayCampaignPayment).toHaveBeenCalledWith("camp1", "brand1", body);
+    expect(result).toEqual({ success: true });
+  });
+
+  it("handleRazorpayXWebhook delegates raw body and signature", async () => {
+    service.handleRazorpayXWebhook.mockResolvedValue({ success: true } as any);
+
+    const req = { body: Buffer.from('{"event":"payout.processed"}', "utf8") };
+    const result = await controller.handleRazorpayXWebhook(req, "sig123");
+
+    expect(service.handleRazorpayXWebhook).toHaveBeenCalled();
+    const [rawBody, signature] = service.handleRazorpayXWebhook.mock.calls[0];
+    expect(Buffer.isBuffer(rawBody)).toBe(true);
+    expect(signature).toBe("sig123");
+    expect(result).toEqual({ success: true });
+  });
+
   it("list passes query status", async () => {
     service.listForAdmin.mockResolvedValue({ success: true, data: [] } as any);
 
@@ -72,6 +111,15 @@ describe("PaymentsPayoutsController", () => {
     const result = await controller.summary();
 
     expect(service.getAdminSummary).toHaveBeenCalled();
+    expect(result).toEqual({ success: true });
+  });
+
+  it("gatewayReadiness delegates to getGatewayReadiness", async () => {
+    service.getGatewayReadiness.mockReturnValue({ success: true } as any);
+
+    const result = await controller.gatewayReadiness();
+
+    expect(service.getGatewayReadiness).toHaveBeenCalled();
     expect(result).toEqual({ success: true });
   });
 
@@ -105,6 +153,16 @@ describe("PaymentsPayoutsController", () => {
     const result = await controller.markPaid("tx1", body);
 
     expect(service.markPayoutPaid).toHaveBeenCalledWith("tx1", body);
+    expect(result).toEqual({ success: true });
+  });
+
+  it("runAutoPayout delegates req.user.userId", async () => {
+    service.runAutoPayoutSweep.mockResolvedValue({ success: true } as any);
+
+    const req = { user: { userId: "admin1" } };
+    const result = await controller.runAutoPayout(req);
+
+    expect(service.runAutoPayoutSweep).toHaveBeenCalledWith("admin1");
     expect(result).toEqual({ success: true });
   });
 
