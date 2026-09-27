@@ -312,9 +312,13 @@ export class AdminUserTableController {
     }
     if (normalized === "featured_eligible" || normalized === "campaign_eligible") {
       filter.status = "accepted";
+      // Featured = exactly what the homepage grid uses (Premium + Public).
+      const isFeatured = normalized === "featured_eligible";
       applyApprovedEligibilityFilter(filter, {
         photoField: role.photoField,
         requireSocialTier: role.requireSocialTier,
+        requirePremium: isFeatured,
+        requirePublic: isFeatured,
       });
       const [blockedFromPublic, photoSafetyBlocked] = await Promise.all([
         this.blockedFromPublicIds(role.userType),
@@ -1052,7 +1056,15 @@ export class AdminUserTableController {
         requireSocialTier: role.requireSocialTier,
       });
 
-      const featuredFilter = { ...approvedFilter, _id: { $nin: blockedFromPublic } };
+      // Homepage Featured grid rule: approved + Premium + Public (see getFeatured*).
+      const featuredBase: any = { status: "accepted" };
+      applyApprovedEligibilityFilter(featuredBase, {
+        photoField: role.photoField,
+        requireSocialTier: role.requireSocialTier,
+        requirePremium: true,
+        requirePublic: true,
+      });
+      const featuredFilter = { ...featuredBase, _id: { $nin: blockedFromPublic } };
       const campaignFilter = { ...approvedFilter, _id: { $nin: campaignBlocked } };
 
       const [
