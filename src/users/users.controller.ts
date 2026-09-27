@@ -385,12 +385,11 @@ export class UsersController {
   }
 
   /**
-   * Welcome Page "Featured" sections — eligible-only (accepted + verified +
-   * approved), weighted-random selection (60% recently active / 20% recently
-   * approved / 20% random). NOT identical for guests vs logged-in viewers:
-   * guests only see Premium profiles (a registration incentive); logged-in
-   * viewers see the full Public + Members-Only eligible set regardless of
-   * Premium. See applyApprovedEligibilityFilter's requirePremium option.
+   * Welcome Page "Featured" sections — same rules for guests and logged-in
+   * viewers: discoverable (accepted + verified + admin-approved + complete),
+   * Public visibility, and an active Premium subscription. Ranked by viewer
+   * location, then featured score (see fetchFeaturedProfilesByScore).
+   * Viewer auth only affects the location context.
    */
   @Get("featured-profiles")
   async getFeaturedProfiles(

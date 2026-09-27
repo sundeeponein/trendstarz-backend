@@ -2619,6 +2619,7 @@ export class UsersService implements OnModuleInit {
       // Featured creators are available when the profile is Public, approved,
       // complete, and Premium is active.
       requirePremium: true,
+      requirePublic: true,
     });
     this.applyExcludedIds(
       filter,
@@ -2658,6 +2659,7 @@ export class UsersService implements OnModuleInit {
       requireSocialTier: false,
       viewerIsAuthenticated,
       requirePremium: true,
+      requirePublic: true,
     });
     this.applyExcludedIds(filter, await this.publicProfileBlockedIds("Brand"));
     return fetchFeaturedProfilesByScore(

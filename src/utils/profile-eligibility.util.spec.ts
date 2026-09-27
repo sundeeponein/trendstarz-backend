@@ -1,4 +1,5 @@
 import {
+  applyApprovedEligibilityFilter,
   applyDiscoverableProfileFilter,
   getLocationPriorityTier,
   isDiscoverableProfile,
@@ -88,6 +89,19 @@ describe("profile-eligibility shared discovery policy", () => {
       viewerIsAuthenticated: true,
     });
     expect(memberFilter.profileVisibility).toEqual({ $nin: ["PRIVATE"] });
+  });
+
+  it("featured (requirePublic) excludes Members-Only even for logged-in viewers", () => {
+    for (const viewerIsAuthenticated of [false, true]) {
+      const filter = applyApprovedEligibilityFilter({}, {
+        photoField: "profileImages",
+        viewerIsAuthenticated,
+        requirePremium: true,
+        requirePublic: true,
+      });
+      expect(filter.profileVisibility).toEqual({ $nin: ["PRIVATE", "MEMBERS_ONLY"] });
+      expect(filter.isPremium).toBe(true);
+    }
   });
 
   it("applies location tier order district > state > country > remaining", () => {

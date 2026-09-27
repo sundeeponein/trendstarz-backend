@@ -1093,7 +1093,7 @@ export class ProfileVerificationService {
    * Homepage "Featured" sections eligibility checklist (Featured Influencers /
    * Brands / Photo-Videographers) for the admin profile-moderation view.
    * Mirrors (but is not literally shared code with) applyApprovedEligibilityFilter
-   * (profile-eligibility.util.ts, requirePremium option) — if that changes,
+   * (profile-eligibility.util.ts, requirePremium + requirePublic options) — if that changes,
    * update this too. The homepage hero uses TrendStarz's own marketing
    * content only, so no per-user homepage consent exists any more.
    */

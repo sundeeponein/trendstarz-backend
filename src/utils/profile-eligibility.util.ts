@@ -172,24 +172,30 @@ export function applySearchEligibilityFilter(
 
 export interface ApprovedEligibilityOptions extends DiscoverabilityOptions {
   /**
-   * Require an active Premium subscription. The Homepage Hero always
-   * requires this (guest and logged-in alike). The Featured Grid sections
-   * require it only for guest viewers — logged-in viewers see a broader
-   * Public + Members-Only set without the Premium bar, as an incentive to
-   * register.
+   * Require an active Premium subscription. The homepage Featured grid
+   * sections require this for every viewer (guest and logged-in alike).
    */
   requirePremium?: boolean;
+  /**
+   * Require profileVisibility PUBLIC (missing counts as PUBLIC). The homepage
+   * Featured grid only ever shows Public profiles — Members-Only profiles stay
+   * findable in Search for logged-in viewers but are never featured.
+   */
+  requirePublic?: boolean;
 }
 
 /**
  * "Is this profile recommended by TrendStarz?" — Welcome/Featured eligibility.
- * Everything Search requires, plus admin approval.
+ * Everything Search requires, plus the optional Premium / Public bars.
  */
 export function applyApprovedEligibilityFilter(
   filter: Record<string, any> = {},
   options: ApprovedEligibilityOptions = {},
 ): Record<string, any> {
   applyDiscoverableProfileFilter(filter, options);
+  if (options.requirePublic) {
+    filter.profileVisibility = { $nin: ["PRIVATE", "MEMBERS_ONLY"] };
+  }
   if (options.requirePremium) {
     filter.isPremium = true;
     filter.$and = [...(Array.isArray(filter.$and) ? filter.$and : []), {

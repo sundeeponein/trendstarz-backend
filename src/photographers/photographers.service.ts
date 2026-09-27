@@ -219,6 +219,7 @@ export class PhotographersService {
       requireSocialTier: true,
       viewerIsAuthenticated,
       requirePremium: true,
+      requirePublic: true,
     });
     const blocked = await this.blockedPhotographerIds();
     if (blocked.length) {
