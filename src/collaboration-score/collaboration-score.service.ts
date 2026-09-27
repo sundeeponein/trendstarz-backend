@@ -54,7 +54,8 @@ const BRAND_SAFE_FIELDS = [
   "collaborationScore",
   "campaignReadiness",
   "trendstarzRecommended",
-  "pricingSuggestion",
+  // pricingSuggestion is intentionally excluded — it's guidance for the
+  // creator only (self/admin see the full audit), never shown to other users.
   "categoryMatch",
   "portfolioScore",
   "createdAt",

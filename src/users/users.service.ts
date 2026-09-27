@@ -1,3 +1,4 @@
+import { publicScoreFields } from "../utils/public-score-fields.util";
 import { Injectable, BadRequestException, NotFoundException, OnModuleInit } from "@nestjs/common";
 import { Cron, CronExpression } from "@nestjs/schedule";
 import * as fs from "fs";
@@ -941,7 +942,6 @@ export class UsersService implements OnModuleInit {
           collaborationScore: 1,
           campaignReadiness: 1,
           trendstarzRecommended: 1,
-          pricingSuggestion: 1,
           categoryMatch: 1,
         },
       )
@@ -2074,10 +2074,7 @@ export class UsersService implements OnModuleInit {
             phoneNumber: undefined,
             website: undefined,
             contactRestricted: true,
-            collaborationScore: audit?.collaborationScore ?? null,
-            campaignReadiness: audit?.campaignReadiness ?? null,
-            trendstarzRecommended: audit?.trendstarzRecommended ?? false,
-            suggestedPriceRange: audit?.pricingSuggestion ?? null,
+            ...publicScoreFields(audit, !!viewerId),
           };
         }),
       );

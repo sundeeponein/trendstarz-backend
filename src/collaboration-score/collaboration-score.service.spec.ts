@@ -574,7 +574,8 @@ describe("CollaborationScoreService", () => {
       expect(result.collaborationScore).toBe(82);
       expect(result.campaignReadiness).toBe("Campaign Ready");
       expect(result.trendstarzRecommended).toBe(true);
-      expect(result.pricingSuggestion).toEqual({ reelPrice: 1500 });
+      // Suggested pricing is creator-only guidance — never shown to brands.
+      expect(result.pricingSuggestion).toBeUndefined();
       expect(result.categoryMatch).toEqual(["Fashion"]);
     });
   });
