@@ -30,9 +30,11 @@ import { PushModule } from "../push/push.module";
 import { NotificationsModule } from "../notifications/notifications.module";
 import { WhatsAppModule } from "../whatsapp/whatsapp.module";
 import { ProfileVerificationModule } from "../profile-verification/profile-verification.module";
+import { PlatformEventsModule } from "../platform-events/platform-events.module";
 
 @Module({
   imports: [
+    PlatformEventsModule,
     PlansModule,
     PushModule,
     NotificationsModule,

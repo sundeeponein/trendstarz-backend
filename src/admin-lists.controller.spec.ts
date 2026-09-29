@@ -198,4 +198,59 @@ describe("AdminListsController", () => {
       },
     });
   });
+
+  describe("forceCompleteCampaign → campaign_completed", () => {
+    const CAMPAIGN_MODEL_INDEX = 10;
+    const CAMPAIGNS_SERVICE_INDEX = 19;
+
+    function createWithCampaign(campaign: any) {
+      const args: any[] = Array.from({ length: 20 }, () => ({}));
+      args[CAMPAIGN_MODEL_INDEX] = {
+        findById: jest.fn().mockResolvedValue(campaign),
+      };
+      const campaignsService = {
+        recordCampaignCompleted: jest.fn().mockResolvedValue(undefined),
+      };
+      args[CAMPAIGNS_SERVICE_INDEX] = campaignsService;
+      const controller = new (AdminListsController as any)(
+        ...args,
+      ) as AdminListsController;
+      return { controller, campaignsService };
+    }
+
+    it("records campaign_completed with the admin as actor after saving", async () => {
+      const campaign: any = { _id: "c1", status: "active" };
+      campaign.save = jest.fn().mockResolvedValue(campaign);
+      const { controller, campaignsService } = createWithCampaign(campaign);
+
+      await controller.forceCompleteCampaign(
+        "c1",
+        { reason: "Brand confirmed all deliverables were received." } as any,
+        { user: { userId: "64b0000000000000000000aa" } },
+      );
+
+      expect(campaign.save).toHaveBeenCalled();
+      expect(campaignsService.recordCampaignCompleted).toHaveBeenCalledWith(
+        campaign,
+        {
+          userId: "64b0000000000000000000aa",
+          userRole: "admin",
+        },
+      );
+    });
+
+    it("records nothing when the campaign is not active", async () => {
+      const campaign: any = { _id: "c1", status: "draft", save: jest.fn() };
+      const { controller, campaignsService } = createWithCampaign(campaign);
+
+      await expect(
+        controller.forceCompleteCampaign(
+          "c1",
+          { reason: "Brand confirmed all deliverables." } as any,
+          { user: {} },
+        ),
+      ).rejects.toThrow();
+      expect(campaignsService.recordCampaignCompleted).not.toHaveBeenCalled();
+    });
+  });
 });

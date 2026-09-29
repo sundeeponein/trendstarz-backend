@@ -12,6 +12,8 @@ import { CloudinaryFolders } from "../cloudinary-folders";
 import { PushService } from "../push/push.service";
 import { NotificationsService } from "../notifications/notifications.service";
 import { WhatsAppService } from "../whatsapp/whatsapp.service";
+import { PlatformEventsService } from "../platform-events/platform-events.service";
+import { PlatformEventActorRole } from "../platform-events/platform-event-types";
 import {
   ACCEPTED_OR_LATER_STATUSES,
   ENABLE_CAMPAIGN_WHATSAPP,
@@ -79,6 +81,14 @@ type RequestKind =
 
 type InfluencerFeedScope = "campaign" | "collaboration";
 
+/** Campaign owner role for PlatformEvents — Campaign.ownerType is "brand" | "photographer". */
+function persistedOwnerTypeForEvent(campaign: any): "brand" | "photographer" {
+  return String(campaign?.ownerType || campaign?.createdByRole || "brand") ===
+    "photographer"
+    ? "photographer"
+    : "brand";
+}
+
 @Injectable()
 export class CampaignsService {
   constructor(
@@ -98,6 +108,7 @@ export class CampaignsService {
     private readonly whatsAppService: WhatsAppService,
     private readonly profileVerificationService: ProfileVerificationService,
     private readonly campaignInvitesService: CampaignInvitesService,
+    private readonly platformEvents: PlatformEventsService,
   ) {}
 
   // Safety net for the manual "Mark Complete" action: once a campaign's timeline
@@ -196,7 +207,24 @@ export class CampaignsService {
         { _id: campaignId, status: "active" },
         { $set: { status: "completed", completedBy: "auto", completedAt: now } },
       );
-      if (result.modifiedCount) completedCount++;
+      if (result.modifiedCount) {
+        completedCount++;
+        try {
+          const completed = await this.campaignModel
+            .findById(campaignId)
+            .select(
+              "brandId ownerType campaignType campaignMode completedAt completedBy",
+            )
+            .lean();
+          await this.recordCampaignCompleted(completed, { userRole: "system" });
+        } catch (e) {
+          console.error(
+            "autoCompleteExpiredCampaigns: campaign_completed event failed",
+            campaignId,
+            e,
+          );
+        }
+      }
     }
 
     return { success: true, checked: candidates.length, completedCount };
@@ -975,7 +1003,24 @@ export class CampaignsService {
       );
     }
 
-    return await campaign.save();
+    const saved = await campaign.save();
+    const ownerRole = persistedOwnerTypeForEvent(saved);
+    await this.platformEvents.record({
+      eventType: "campaign_created",
+      timestamp: saved.createdAt || new Date(),
+      userId: ownerId,
+      userRole: ownerRole,
+      brandId: ownerId,
+      campaignId: saved._id,
+      metadata: {
+        ownerType: ownerRole,
+        campaignType: saved.campaignType || null,
+        campaignMode: saved.campaignMode || null,
+        initialStatus: saved.status || null,
+      },
+      dedupeKey: `campaign_created:${String(saved._id)}`,
+    });
+    return saved;
   }
 
   private async nextCampaignNumber(): Promise<number> {
@@ -1529,6 +1574,16 @@ export class CampaignsService {
     }
 
     if (previousStatus !== "completed" && saved.status === "completed") {
+      const completedBy = String(saved.completedBy || "");
+      await this.recordCampaignCompleted(
+        saved,
+        completedBy === "host"
+          ? {
+              userId: saved.brandId,
+              userRole: persistedOwnerTypeForEvent(saved),
+            }
+          : { userRole: completedBy === "admin" ? "admin" : "system" },
+      );
       // Ending a campaign is an absolute cutoff: anyone still accepted/working with no
       // submission gets closed out and marked refunded, and anyone who never even accepted
       // gets withdrawn too — no admin action needed, nothing is left dangling as 'pending'.
@@ -1543,6 +1598,36 @@ export class CampaignsService {
           /* non-critical */
         });
     }
+  }
+
+  /**
+   * campaign_completed PlatformEvent — campaign-level (one per campaign), for every
+   * path that closes a campaign: host update / moderation (handleStatusTransitionSideEffects),
+   * the auto-complete cron, and admin force-complete (admin-lists.controller.ts).
+   */
+  async recordCampaignCompleted(
+    campaign: any,
+    actor: { userId?: unknown; userRole: PlatformEventActorRole },
+  ): Promise<void> {
+    if (!campaign?._id) return;
+    const ownerType = persistedOwnerTypeForEvent(campaign);
+    await this.platformEvents.record({
+      eventType: "campaign_completed",
+      timestamp: campaign.completedAt
+        ? new Date(campaign.completedAt)
+        : new Date(),
+      userId: actor.userId,
+      userRole: actor.userRole,
+      brandId: campaign.brandId,
+      campaignId: campaign._id,
+      metadata: {
+        ownerType,
+        completedBy: campaign.completedBy || null,
+        campaignType: campaign.campaignType || null,
+        campaignMode: campaign.campaignMode || null,
+      },
+      dedupeKey: `campaign_completed:${String(campaign._id)}`,
+    });
   }
 
   /** Tells the brand/photographer who created the campaign/collab that admin approved it and it's now live. */

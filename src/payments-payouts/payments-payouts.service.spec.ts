@@ -4,6 +4,7 @@ import { Test, TestingModule } from "@nestjs/testing";
 import { PaymentsPayoutsService } from "./payments-payouts.service";
 import { PushService } from "../push/push.service";
 import { NotificationsService } from "../notifications/notifications.service";
+import { PlatformEventsService } from "../platform-events/platform-events.service";
 import { RazorpayService } from "../payment/razorpay.service";
 
 describe("PaymentsPayoutsService", () => {
@@ -16,6 +17,7 @@ describe("PaymentsPayoutsService", () => {
   let influencerModel: any;
   let photographerModel: any;
   let razorpayService: any;
+  let platformEvents: { record: jest.Mock };
 
   beforeEach(async () => {
     const mockCampaignModel = {
@@ -97,6 +99,10 @@ describe("PaymentsPayoutsService", () => {
         { provide: RazorpayService, useValue: mockRazorpayService },
         { provide: PushService, useValue: mockPushService },
         { provide: NotificationsService, useValue: mockNotificationsService },
+        {
+          provide: PlatformEventsService,
+          useValue: { record: jest.fn().mockResolvedValue(true) },
+        },
       ],
     }).compile();
 
@@ -109,6 +115,7 @@ describe("PaymentsPayoutsService", () => {
     influencerModel = module.get(getModelToken("Influencer"));
     photographerModel = module.get(getModelToken("Photographer"));
     razorpayService = module.get(RazorpayService);
+    platformEvents = module.get(PlatformEventsService);
 
     appSettingsModel.findOne.mockReturnValue({
       lean: jest.fn().mockResolvedValue({}),
@@ -600,6 +607,321 @@ describe("PaymentsPayoutsService", () => {
       expect(tx.payoutRetryCount).toBe(2);
       expect(tx.save).toHaveBeenCalled();
     });
+  });
+
+  describe("payment_completed platform events", () => {
+    const paymentEvents = () =>
+      platformEvents.record.mock.calls
+        .map((c) => c[0])
+        .filter((e) => e.eventType === "payment_completed");
+
+    const inviteLookup = (invite: any) => ({
+      select: jest
+        .fn()
+        .mockReturnValue({ lean: jest.fn().mockResolvedValue(invite) }),
+    });
+
+    it("records the collection stage when the payer's payment is verified", async () => {
+      const tx: any = {
+        _id: "tx1",
+        transactionType: "paid_collab",
+        campaignId: "camp1",
+        inviteId: "inv1",
+        payerId: "brand1",
+        payerRole: "brand",
+        collectionStatus: "proof_submitted",
+        payerTotal: 1180,
+        save: jest.fn().mockResolvedValue(true),
+      };
+      transactionModel.findById.mockResolvedValue(tx);
+      inviteModel.findById.mockReturnValue(
+        inviteLookup({
+          status: "completed",
+          brandId: "brand1",
+          influencerId: "inf1",
+          selectedPlatform: "Instagram",
+        }),
+      );
+      inviteModel.findByIdAndUpdate.mockResolvedValue(undefined);
+
+      await service.verifyCollection("tx1");
+
+      expect(paymentEvents()).toHaveLength(1);
+      const [event] = paymentEvents();
+      expect(event).toMatchObject({
+        userId: "brand1",
+        userRole: "brand",
+        brandId: "brand1",
+        influencerId: "inf1",
+        campaignId: "camp1",
+        inviteId: "inv1",
+        platform: "Instagram",
+        timestamp: tx.collectedAt,
+        dedupeKey: "payment_completed:collection:tx1",
+        metadata: expect.objectContaining({
+          stage: "collection",
+          via: "manual_verification",
+          payerTotal: 1180,
+        }),
+      });
+    });
+
+    it("records nothing when the transaction does not exist", async () => {
+      transactionModel.findById.mockResolvedValue(null);
+      await expect(service.verifyCollection("bad")).rejects.toThrow(
+        NotFoundException,
+      );
+      expect(paymentEvents()).toHaveLength(0);
+    });
+
+    it("records the payout stage when an admin marks the payout paid", async () => {
+      const tx: any = {
+        _id: "tx2",
+        collectionStatus: "verified",
+        payoutStatus: "pending",
+        inviteId: "inv1",
+        save: jest.fn().mockResolvedValue(true),
+      };
+      transactionModel.findById.mockResolvedValue(tx);
+      inviteModel.findById.mockReturnValue(
+        inviteLookup({
+          status: "completed",
+          completedAt: new Date(Date.now() - 30 * 60 * 60 * 1000),
+          updatedAt: new Date(Date.now() - 30 * 60 * 60 * 1000),
+          brandId: "brand1",
+          influencerId: "inf1",
+        }),
+      );
+
+      await service.markPayoutPaid("tx2", { payoutUtr: "UTR1" });
+
+      expect(paymentEvents()[0]).toMatchObject({
+        userRole: "admin",
+        timestamp: tx.paidOutAt,
+        dedupeKey: "payment_completed:payout:tx2",
+        metadata: expect.objectContaining({ stage: "payout", via: "manual" }),
+      });
+    });
+
+    it("records nothing when mark-paid is rejected", async () => {
+      transactionModel.findById.mockResolvedValue({
+        _id: "tx1",
+        collectionStatus: "proof_submitted",
+      });
+      inviteModel.findById.mockReturnValue(
+        inviteLookup({ status: "completed" }),
+      );
+      await expect(
+        service.markPayoutPaid("tx1", { payoutUtr: "U" }),
+      ).rejects.toThrow(BadRequestException);
+      expect(paymentEvents()).toHaveLength(0);
+    });
+
+    it("uses the same dedupeKey when a processed RazorpayX webhook is redelivered", async () => {
+      moduleRefRazorpay(service).verifyWebhookSignature.mockReturnValue(true);
+      const tx: any = {
+        _id: "tx_w",
+        payoutTransferId: "pout_1",
+        payoutStatus: "processing",
+        inviteId: "inv1",
+        save: jest.fn().mockResolvedValue(true),
+      };
+      transactionModel.findOne.mockResolvedValue(tx);
+      inviteModel.findById.mockReturnValue(
+        inviteLookup({ brandId: "brand1", influencerId: "inf1" }),
+      );
+      inviteModel.findByIdAndUpdate.mockResolvedValue(undefined);
+      const body = Buffer.from(
+        JSON.stringify({
+          event: "payout.processed",
+          payload: {
+            payout: { entity: { id: "pout_1", status: "processed" } },
+          },
+        }),
+        "utf8",
+      );
+
+      await service.handleRazorpayXWebhook(body, "sig");
+      await service.handleRazorpayXWebhook(body, "sig");
+
+      const keys = paymentEvents().map((e) => e.dedupeKey);
+      expect(keys).toEqual([
+        "payment_completed:payout:tx_w",
+        "payment_completed:payout:tx_w",
+      ]);
+      expect(paymentEvents()[0]).toMatchObject({
+        userRole: "system",
+        metadata: expect.objectContaining({ via: "razorpayx_webhook" }),
+      });
+    });
+
+    it("records nothing for a failed payout webhook", async () => {
+      moduleRefRazorpay(service).verifyWebhookSignature.mockReturnValue(true);
+      transactionModel.findOne.mockResolvedValue({
+        _id: "tx_f",
+        payoutTransferId: "pout_2",
+        payoutStatus: "processing",
+        save: jest.fn().mockResolvedValue(true),
+      });
+      await service.handleRazorpayXWebhook(
+        Buffer.from(
+          JSON.stringify({
+            event: "payout.failed",
+            payload: { payout: { entity: { id: "pout_2", status: "failed" } } },
+          }),
+          "utf8",
+        ),
+        "sig",
+      );
+      expect(paymentEvents()).toHaveLength(0);
+    });
+
+    it("still completes the payment when event recording fails", async () => {
+      platformEvents.record.mockResolvedValue(false);
+      inviteModel.findById.mockImplementation(() => {
+        throw new Error("lookup exploded");
+      });
+      const tx: any = {
+        _id: "tx9",
+        transactionType: "pay_to_join",
+        payerId: "inf1",
+        payerRole: "influencer",
+        collectionStatus: "proof_submitted",
+        save: jest.fn().mockResolvedValue(true),
+      };
+      transactionModel.findById.mockResolvedValue(tx);
+
+      const result = await service.verifyCollection("tx9");
+      expect(result.success).toBe(true);
+      expect(tx.collectionStatus).toBe("verified");
+    });
+  });
+});
+
+/**
+ * Real PlatformEventsService over an in-memory store that enforces the unique
+ * dedupeKey index the same way MongoDB does (E11000 on a second insert).
+ */
+function uniqueEventStore() {
+  const rows: any[] = [];
+  const duplicate = () =>
+    Object.assign(new Error("E11000 duplicate key"), { code: 11000 });
+  return {
+    rows,
+    create: jest.fn((doc: any) => {
+      if (doc.dedupeKey && rows.some((r) => r.dedupeKey === doc.dedupeKey)) {
+        return Promise.reject(duplicate());
+      }
+      rows.push(doc);
+      return Promise.resolve(doc);
+    }),
+  };
+}
+
+describe("PaymentsPayoutsService – payout webhook retries (real PlatformEventsService)", () => {
+  let service: PaymentsPayoutsService;
+  let store: ReturnType<typeof uniqueEventStore>;
+  let tx: any;
+
+  const processedWebhook = Buffer.from(
+    JSON.stringify({
+      event: "payout.processed",
+      payload: {
+        payout: { entity: { id: "pout_1", status: "processed", utr: "UTR1" } },
+      },
+    }),
+    "utf8",
+  );
+
+  beforeEach(async () => {
+    store = uniqueEventStore();
+    tx = {
+      _id: "64b0000000000000000000f1",
+      payoutTransferId: "pout_1",
+      payoutStatus: "processing",
+      inviteId: "64b0000000000000000000f2",
+      campaignId: "64b0000000000000000000f3",
+      save: jest.fn().mockResolvedValue(true),
+    };
+    const invite = {
+      brandId: "64b0000000000000000000f4",
+      influencerId: "64b0000000000000000000f5",
+    };
+    const module: TestingModule = await Test.createTestingModule({
+      providers: [
+        PaymentsPayoutsService,
+        PlatformEventsService,
+        { provide: getModelToken("PlatformEvent"), useValue: store },
+        { provide: getModelToken("Campaign"), useValue: {} },
+        {
+          provide: getModelToken("CampaignInvite"),
+          useValue: {
+            findById: jest.fn().mockReturnValue({
+              select: jest
+                .fn()
+                .mockReturnValue({ lean: jest.fn().mockResolvedValue(invite) }),
+            }),
+            findByIdAndUpdate: jest.fn().mockResolvedValue(undefined),
+          },
+        },
+        {
+          provide: getModelToken("CampaignTransaction"),
+          useValue: { findOne: jest.fn().mockResolvedValue(tx) },
+        },
+        { provide: getModelToken("AppSettings"), useValue: {} },
+        { provide: getModelToken("Brand"), useValue: {} },
+        { provide: getModelToken("Influencer"), useValue: {} },
+        { provide: getModelToken("Photographer"), useValue: {} },
+        { provide: getModelToken("LinkConversion"), useValue: {} },
+        {
+          provide: RazorpayService,
+          useValue: { verifyWebhookSignature: jest.fn().mockReturnValue(true) },
+        },
+        {
+          provide: PushService,
+          useValue: { sendToUser: jest.fn().mockResolvedValue(undefined) },
+        },
+        {
+          provide: NotificationsService,
+          useValue: { createForUser: jest.fn().mockResolvedValue(undefined) },
+        },
+      ],
+    }).compile();
+    service = module.get(PaymentsPayoutsService);
+  });
+
+  it("stores exactly one payment_completed event when the same webhook is delivered three times", async () => {
+    for (let i = 0; i < 3; i++) {
+      const res = await service.handleRazorpayXWebhook(processedWebhook, "sig");
+      expect(res.success).toBe(true);
+    }
+    expect(store.rows).toHaveLength(1);
+    expect(store.rows[0]).toMatchObject({
+      eventType: "payment_completed",
+      dedupeKey: `payment_completed:payout:${tx._id}`,
+      metadata: expect.objectContaining({
+        stage: "payout",
+        via: "razorpayx_webhook",
+      }),
+    });
+    expect(String(store.rows[0].inviteId)).toBe(tx.inviteId);
+  });
+
+  it("stores exactly one event when retries arrive concurrently", async () => {
+    const results = await Promise.all([
+      service.handleRazorpayXWebhook(processedWebhook, "sig"),
+      service.handleRazorpayXWebhook(processedWebhook, "sig"),
+    ]);
+    expect(results.every((r) => r.success)).toBe(true);
+    expect(store.rows).toHaveLength(1);
+  });
+
+  it("keeps the first event's timestamp (paidOutAt is not reset by a retry)", async () => {
+    await service.handleRazorpayXWebhook(processedWebhook, "sig");
+    const firstPaidOutAt = tx.paidOutAt;
+    await service.handleRazorpayXWebhook(processedWebhook, "sig");
+    expect(tx.paidOutAt).toBe(firstPaidOutAt);
+    expect(store.rows[0].timestamp).toBe(firstPaidOutAt);
   });
 });
 

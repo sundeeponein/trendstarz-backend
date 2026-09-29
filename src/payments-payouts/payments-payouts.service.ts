@@ -18,6 +18,8 @@ import {
 import { PushService } from "../push/push.service";
 import { NotificationsService } from "../notifications/notifications.service";
 import { RazorpayService } from "../payment/razorpay.service";
+import { PlatformEventsService } from "../platform-events/platform-events.service";
+import { PlatformEventActorRole } from "../platform-events/platform-event-types";
 
 type FeeSettings = {
   platformFeeEnabled: boolean;
@@ -64,7 +66,67 @@ export class PaymentsPayoutsService {
     private readonly razorpayService: RazorpayService,
     private readonly pushService: PushService,
     private readonly notificationsService: NotificationsService,
+    private readonly platformEvents: PlatformEventsService,
   ) {}
+
+  /**
+   * payment_completed PlatformEvent. A collaboration has two money movements, told
+   * apart by metadata.stage:
+   *   - "collection": the payer's (usually the brand's) payment was verified
+   *   - "payout":     the recipient's payout was marked paid
+   * One of each per transaction (deduped — RazorpayX webhooks can be redelivered).
+   */
+  private async recordPaymentCompleted(
+    tx: any,
+    stage: "collection" | "payout",
+    actor: { userId?: unknown; userRole: PlatformEventActorRole },
+    via: string,
+  ): Promise<void> {
+    if (!tx?._id) return;
+    let invite: any = null;
+    try {
+      invite = tx.inviteId
+        ? await this.inviteModel
+            .findById(tx.inviteId)
+            .select(
+              "brandId influencerId campaignId recipientRole selectedPlatform",
+            )
+            .lean()
+        : null;
+    } catch {
+      // Still record the payment with the transaction's own references.
+    }
+    await this.platformEvents.record({
+      eventType: "payment_completed",
+      timestamp:
+        stage === "collection"
+          ? tx.collectedAt || new Date()
+          : tx.paidOutAt || new Date(),
+      userId: actor.userId,
+      userRole: actor.userRole,
+      brandId: invite?.brandId,
+      campaignId: tx.campaignId ?? invite?.campaignId,
+      influencerId: invite?.influencerId,
+      inviteId: tx.inviteId,
+      recipientRole: invite?.recipientRole || null,
+      platform: invite?.selectedPlatform || null,
+      metadata: {
+        stage,
+        via,
+        transactionId: String(tx._id),
+        transactionType: tx.transactionType || null,
+        direction: tx.direction || null,
+        gateway:
+          stage === "collection"
+            ? tx.gateway || null
+            : tx.payoutGatewayProvider || null,
+        agreedAmount: tx.agreedAmount ?? null,
+        payerTotal: tx.payerTotal ?? null,
+        recipientPayout: tx.recipientPayout ?? null,
+      },
+      dedupeKey: `payment_completed:${stage}:${String(tx._id)}`,
+    });
+  }
 
   private roundPercent(amount: number, percent: number): number {
     return Math.round((amount * percent) / 100);
@@ -143,7 +205,17 @@ export class PaymentsPayoutsService {
     return Number.isFinite(fallback) && fallback >= 0 ? fallback : 24;
   }
 
-  private async markInvitePayoutReleased(tx: any, paidOutAt?: Date) {
+  private async markInvitePayoutReleased(
+    tx: any,
+    paidOutAt?: Date,
+    via: "manual" | "razorpayx_webhook" | "auto_sweep" = "manual",
+  ) {
+    await this.recordPaymentCompleted(
+      tx,
+      "payout",
+      { userRole: via === "manual" ? "admin" : "system" },
+      via,
+    );
     if (!tx?.inviteId) return;
     await this.inviteModel.findByIdAndUpdate(tx.inviteId, {
       $set: {
@@ -433,7 +505,11 @@ export class PaymentsPayoutsService {
 
     await tx.save();
     if (tx.payoutStatus === "paid") {
-      await this.markInvitePayoutReleased(tx, tx.paidOutAt);
+      await this.markInvitePayoutReleased(
+        tx,
+        tx.paidOutAt,
+        "razorpayx_webhook",
+      );
     }
     return {
       success: true,
@@ -1267,6 +1343,13 @@ export class PaymentsPayoutsService {
 
     await tx.save();
 
+    await this.recordPaymentCompleted(
+      tx,
+      "collection",
+      { userId: tx.payerId, userRole: tx.payerRole },
+      allowGatewayVerification ? "razorpay" : "manual_verification",
+    );
+
     if (tx.payerRole === "brand") {
       await this.recordCampaignPaymentConversion(String(tx.payerId), tx.payerTotal, tx._id);
     }
@@ -1706,7 +1789,7 @@ export class PaymentsPayoutsService {
 
         await tx.save();
         if (tx.payoutStatus === "paid") {
-          await this.markInvitePayoutReleased(tx, tx.paidOutAt);
+          await this.markInvitePayoutReleased(tx, tx.paidOutAt, "auto_sweep");
         }
       } catch (error: any) {
         tx.payoutStatus = "pending";

@@ -1301,6 +1301,10 @@ export class AdminListsController {
     campaign.adminOverrideAt = now;
 
     const saved = await campaign.save();
+    await this.campaignsService.recordCampaignCompleted(saved, {
+      userId: adminId,
+      userRole: "admin",
+    });
     return { success: true, campaign: saved };
   }
 

@@ -6,6 +6,7 @@ import { PlansService } from "../plans/plans.service";
 import { CloudinaryService } from "../cloudinary.service";
 import { PushService } from "../push/push.service";
 import { NotificationsService } from "../notifications/notifications.service";
+import { PlatformEventsService } from "../platform-events/platform-events.service";
 import { WhatsAppService } from "../whatsapp/whatsapp.service";
 import { ProfileVerificationService } from "../profile-verification/profile-verification.service";
 import { CampaignInvitesService } from "./campaign-invites.service";
@@ -17,6 +18,7 @@ describe("CampaignsService", () => {
   let brandModel: any;
   let plansService: any;
   let profileFlagModel: any;
+  let platformEvents: { record: jest.Mock };
 
   const mockCampaign = {
     _id: "507f1f77bcf86cd799439011",
@@ -124,6 +126,10 @@ describe("CampaignsService", () => {
         { provide: CloudinaryService, useValue: {} },
         { provide: PushService, useValue: {} },
         { provide: NotificationsService, useValue: {} },
+        {
+          provide: PlatformEventsService,
+          useValue: { record: jest.fn().mockResolvedValue(true) },
+        },
         { provide: WhatsAppService, useValue: {} },
         {
           provide: ProfileVerificationService,
@@ -147,6 +153,7 @@ describe("CampaignsService", () => {
     brandModel = module.get(getModelToken("Brand"));
     profileFlagModel = module.get(getModelToken("ProfileFlag"));
     plansService = module.get(PlansService);
+    platformEvents = module.get(PlatformEventsService);
   });
 
   afterEach(() => {
@@ -380,6 +387,138 @@ describe("CampaignsService", () => {
       await expect(service.remove("bad-id", mockBrand._id)).rejects.toThrow(
         NotFoundException,
       );
+    });
+  });
+
+  describe("platform events", () => {
+    const eventsOfType = (type: string) =>
+      platformEvents.record.mock.calls
+        .map((c) => c[0])
+        .filter((e) => e.eventType === type);
+
+    it("records campaign_created after the campaign is saved", async () => {
+      await service.create(mockBrand._id, {
+        title: "New Campaign",
+        description: "Test",
+        minInfluencers: 1,
+        maxInfluencers: 1,
+      });
+      const [event] = eventsOfType("campaign_created");
+      expect(event).toMatchObject({
+        userId: mockBrand._id,
+        userRole: "brand",
+        brandId: mockBrand._id,
+        campaignId: "new-id",
+        dedupeKey: "campaign_created:new-id",
+      });
+      expect(event.platform).toBeUndefined();
+    });
+
+    it("records nothing when campaign creation is rejected", async () => {
+      campaignModel.countDocuments.mockResolvedValue(5);
+      await expect(
+        service.create(mockBrand._id, {
+          title: "Over limit",
+          minInfluencers: 1,
+          maxInfluencers: 1,
+        }),
+      ).rejects.toThrow(BadRequestException);
+      expect(platformEvents.record).not.toHaveBeenCalled();
+    });
+
+    it("records campaign_completed when the host completes the campaign", async () => {
+      const completedAt = new Date("2026-06-20T00:00:00Z");
+      await service.handleStatusTransitionSideEffects("active", {
+        _id: "c1",
+        brandId: mockBrand._id,
+        ownerType: "brand",
+        status: "completed",
+        completedBy: "host",
+        completedAt,
+      });
+      const [event] = eventsOfType("campaign_completed");
+      expect(event).toMatchObject({
+        userId: mockBrand._id,
+        userRole: "brand",
+        campaignId: "c1",
+        timestamp: completedAt,
+        dedupeKey: "campaign_completed:c1",
+        metadata: expect.objectContaining({ completedBy: "host" }),
+      });
+    });
+
+    it("records no campaign_completed for other transitions", async () => {
+      await service.handleStatusTransitionSideEffects("completed", {
+        _id: "c1",
+        status: "completed",
+      });
+      await service.handleStatusTransitionSideEffects("draft", {
+        _id: "c1",
+        status: "pending_review",
+      });
+      expect(eventsOfType("campaign_completed")).toHaveLength(0);
+    });
+
+    it("records campaign_completed as a system action when the cron auto-completes", async () => {
+      const completedAt = new Date("2026-06-26T00:00:00Z");
+      campaignModel.find = jest.fn().mockReturnValue({
+        select: jest.fn().mockReturnValue({
+          lean: jest
+            .fn()
+            .mockResolvedValue([
+              { _id: "c2", endDate: new Date("2026-06-01") },
+            ]),
+        }),
+      });
+      campaignInviteModel.findOne = jest.fn().mockReturnValue({
+        select: jest
+          .fn()
+          .mockReturnValue({ lean: jest.fn().mockResolvedValue(null) }),
+      });
+      campaignModel.updateOne = jest
+        .fn()
+        .mockResolvedValue({ modifiedCount: 1 });
+      campaignModel.findById = jest.fn().mockReturnValue({
+        select: jest.fn().mockReturnValue({
+          lean: jest.fn().mockResolvedValue({
+            _id: "c2",
+            brandId: mockBrand._id,
+            completedBy: "auto",
+            completedAt,
+          }),
+        }),
+      });
+
+      await service.autoCompleteExpiredCampaigns();
+
+      expect(eventsOfType("campaign_completed")[0]).toMatchObject({
+        userRole: "system",
+        campaignId: "c2",
+        timestamp: completedAt,
+      });
+    });
+
+    it("records nothing when the cron's conditional update did not complete the campaign", async () => {
+      campaignModel.find = jest.fn().mockReturnValue({
+        select: jest.fn().mockReturnValue({
+          lean: jest
+            .fn()
+            .mockResolvedValue([
+              { _id: "c2", endDate: new Date("2026-06-01") },
+            ]),
+        }),
+      });
+      campaignInviteModel.findOne = jest.fn().mockReturnValue({
+        select: jest
+          .fn()
+          .mockReturnValue({ lean: jest.fn().mockResolvedValue(null) }),
+      });
+      campaignModel.updateOne = jest
+        .fn()
+        .mockResolvedValue({ modifiedCount: 0 });
+
+      await service.autoCompleteExpiredCampaigns();
+      expect(eventsOfType("campaign_completed")).toHaveLength(0);
     });
   });
 });

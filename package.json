@@ -35,7 +35,10 @@
     "cleanup:orphan-campaign-invites:apply": "node cron/cleanupOrphanCampaignInvites.js --apply",
     "cleanup:collab-availability-locations": "node cron/removeCollaborationAvailabilityLocations.js",
     "cleanup:collab-availability-locations:apply": "node cron/removeCollaborationAvailabilityLocations.js --apply",
-    "migrate:email-verified-field": "node cron/migrateEmailVerifiedToIsEmailVerified.js"
+    "migrate:email-verified-field": "node cron/migrateEmailVerifiedToIsEmailVerified.js",
+    "backfill:platform-events": "node cron/backfillPlatformEvents.js",
+    "backfill:platform-events:apply": "node cron/backfillPlatformEvents.js --apply",
+    "audit:id-types": "node cron/auditIdTypes.js"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.115.0",

@@ -9,6 +9,7 @@ import { CampaignInvitesService } from "./campaign-invites.service";
 import { PlansService } from "../plans/plans.service";
 import { PushService } from "../push/push.service";
 import { NotificationsService } from "../notifications/notifications.service";
+import { PlatformEventsService } from "../platform-events/platform-events.service";
 import { WhatsAppService } from "../whatsapp/whatsapp.service";
 import { ProfileVerificationService } from "../profile-verification/profile-verification.service";
 import { TrackingLinksService } from "./tracking-links.service";
@@ -74,6 +75,7 @@ const laterInviteProviders = [
   { provide: WhatsAppService, useValue: inertService() },
   { provide: ProfileVerificationService, useValue: inertService() },
   { provide: TrackingLinksService, useValue: inertService() },
+  { provide: PlatformEventsService, useValue: inertService() },
 ];
 
 describe("CampaignInvitesService (admin disputes + remind)", () => {
@@ -1513,5 +1515,766 @@ describe("CampaignInvitesService unlockContact policy", () => {
 
     expect(result.unlockType).toBe("paid_collab_payment");
     expect(invite.unlockType).toBe("paid_collab_payment");
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// PlatformEvents: each business action records its event only after it succeeds.
+// (Storage/normalization/dedupe itself is covered in platform-events.service.spec.ts.)
+// ─────────────────────────────────────────────────────────────────────────────
+describe("CampaignInvitesService – platform events", () => {
+  let service: CampaignInvitesService;
+  let inviteModel: any;
+  let submissionModel: any;
+  let campaignModel: any;
+  let txModel: any;
+  let platformEvents: { record: jest.Mock; recordOnce: jest.Mock };
+
+  const eventsOfType = (type: string) =>
+    platformEvents.record.mock.calls
+      .map((c) => c[0])
+      .filter((e) => e.eventType === type);
+
+  function doc(fields: any) {
+    const d: any = { ...fields };
+    d.save = jest.fn().mockImplementation(() => Promise.resolve(d));
+    return d;
+  }
+
+  beforeEach(async () => {
+    platformEvents = {
+      record: jest.fn().mockResolvedValue(true),
+      recordOnce: jest.fn().mockResolvedValue(0),
+    };
+
+    inviteModel = jest.fn().mockImplementation((data: any) => ({
+      ...data,
+      save: jest.fn().mockResolvedValue({
+        ...data,
+        _id: "inv-new",
+        createdAt: new Date("2026-06-10T10:00:00Z"),
+      }),
+    }));
+    inviteModel.findById = jest.fn();
+    inviteModel.findOne = jest.fn(() => queryOf(null));
+    inviteModel.find = jest.fn(() => queryOf([]));
+    inviteModel.countDocuments = jest.fn().mockResolvedValue(0);
+    inviteModel.updateMany = jest.fn().mockResolvedValue({ modifiedCount: 0 });
+    inviteModel.create = jest.fn();
+
+    submissionModel = {
+      findOne: jest.fn(),
+      create: jest.fn(),
+      find: jest.fn(() => queryOf([])),
+      findById: jest.fn(),
+    };
+    campaignModel = jest.fn();
+    campaignModel.findById = jest.fn();
+    txModel = {
+      find: jest.fn().mockResolvedValue([]),
+      updateMany: jest.fn().mockResolvedValue(undefined),
+    };
+
+    const verifiedProfile = {
+      select: jest.fn().mockReturnValue({
+        lean: jest.fn().mockResolvedValue({
+          name: "X",
+          isEmailVerified: true,
+          isMobileVerified: true,
+          socialMedia: [],
+        }),
+      }),
+      lean: jest.fn().mockResolvedValue({ name: "X", socialMedia: [] }),
+    };
+    const brandModel: any = jest.fn();
+    brandModel.findById = jest.fn().mockReturnValue(verifiedProfile);
+    const influencerModel: any = jest.fn();
+    influencerModel.findById = jest.fn().mockReturnValue(verifiedProfile);
+
+    const module: TestingModule = await Test.createTestingModule({
+      providers: [
+        CampaignInvitesService,
+        {
+          provide: getModelToken("CampaignInvite"),
+          useValue: lenientModel(inviteModel),
+        },
+        {
+          provide: getModelToken("CampaignSubmission"),
+          useValue: lenientModel(submissionModel),
+        },
+        {
+          provide: getModelToken("Campaign"),
+          useValue: lenientModel(campaignModel),
+        },
+        { provide: getModelToken("Brand"), useValue: lenientModel(brandModel) },
+        {
+          provide: getModelToken("Photographer"),
+          useValue: lenientModel(jest.fn()),
+        },
+        {
+          provide: getModelToken("Influencer"),
+          useValue: lenientModel(influencerModel),
+        },
+        {
+          provide: getModelToken("CampaignTransaction"),
+          useValue: lenientModel(txModel),
+        },
+        {
+          provide: PlansService,
+          useValue: {
+            getUserPlanCapabilities: jest.fn().mockResolvedValue({
+              hasPremium: false,
+              features: [{ key: "canInviteUsers", value: true }],
+              limits: [{ key: "maxInvitesPerCampaign", value: -1 }],
+            }),
+          },
+        },
+        {
+          provide: PushService,
+          useValue: { sendToUser: jest.fn().mockResolvedValue(undefined) },
+        },
+        {
+          provide: NotificationsService,
+          useValue: { createForUser: jest.fn().mockResolvedValue(undefined) },
+        },
+        ...laterInviteProviders.filter(
+          (p) => p.provide !== PlatformEventsService,
+        ),
+        { provide: PlatformEventsService, useValue: platformEvents },
+      ],
+    }).compile();
+
+    service = module.get<CampaignInvitesService>(CampaignInvitesService);
+  });
+
+  const activeCampaign = {
+    _id: "camp1",
+    brandId: "brand1",
+    title: "Camp",
+    status: "active",
+    campaignMode: "invite_only",
+    ownerType: "brand",
+    pricePerInfluencer: 500000,
+    startDate: new Date("2026-06-01"),
+    endDate: new Date("2026-08-31"),
+    timelineStart: new Date("2026-06-01"),
+    timelineEnd: new Date("2026-08-31"),
+  };
+
+  describe("creator_invited", () => {
+    it("records the invite after it is saved", async () => {
+      campaignModel.findById.mockReturnValue(queryOf(activeCampaign));
+
+      await service.create("brand1", {
+        campaignId: "camp1",
+        influencerId: "inf1",
+        selectedPlatform: "Instagram",
+      });
+
+      const [event] = eventsOfType("creator_invited");
+      expect(event).toMatchObject({
+        userId: "brand1",
+        userRole: "brand",
+        brandId: "brand1",
+        campaignId: "camp1",
+        influencerId: "inf1",
+        inviteId: "inv-new",
+        recipientRole: "influencer",
+        platform: "Instagram",
+        dedupeKey: "creator_invited:inv-new",
+        metadata: expect.objectContaining({ campaignLiveAtInvite: true }),
+      });
+      expect(event.timestamp).toEqual(new Date("2026-06-10T10:00:00Z"));
+    });
+
+    it("records nothing when the invite is rejected", async () => {
+      campaignModel.findById.mockReturnValue(
+        queryOf({
+          ...activeCampaign,
+          acceptanceDeadline: new Date(Date.now() - 60_000),
+        }),
+      );
+      await expect(
+        service.create("brand1", { campaignId: "camp1", influencerId: "inf1" }),
+      ).rejects.toThrow(BadRequestException);
+      expect(platformEvents.record).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("creator_applied", () => {
+    it("records the application after the invite row is created", async () => {
+      campaignModel.findById.mockReturnValue(
+        queryOf({ ...activeCampaign, campaignMode: "tier_filtered_open" }),
+      );
+      inviteModel.create.mockResolvedValue({
+        _id: "inv-app",
+        campaignId: "camp1",
+        influencerId: "inf1",
+        brandId: "brand1",
+      });
+
+      await service.applyToCampaign("inf1", "camp1");
+
+      expect(eventsOfType("creator_applied")[0]).toMatchObject({
+        userId: "inf1",
+        userRole: "influencer",
+        campaignId: "camp1",
+        inviteId: "inv-app",
+        dedupeKey: "creator_applied:inv-app",
+      });
+    });
+
+    it("records nothing for a duplicate application", async () => {
+      campaignModel.findById.mockReturnValue(
+        queryOf({ ...activeCampaign, campaignMode: "tier_filtered_open" }),
+      );
+      inviteModel.findOne.mockReturnValue(queryOf({ _id: "existing" }));
+      await expect(service.applyToCampaign("inf1", "camp1")).rejects.toThrow(
+        BadRequestException,
+      );
+      expect(platformEvents.record).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("invite_accepted / invite_declined", () => {
+    it("records invite_accepted with the accept time and chosen platform", async () => {
+      const invite = doc({
+        _id: "inv1",
+        influencerId: "inf1",
+        brandId: "brand1",
+        campaignId: "camp1",
+        status: "pending",
+      });
+      inviteModel.findById.mockResolvedValue(invite);
+      campaignModel.findById.mockReturnValue(queryOf(activeCampaign));
+
+      await service.respond("inv1", "inf1", "accepted", "2026-07-15");
+
+      const [event] = eventsOfType("invite_accepted");
+      expect(event).toMatchObject({
+        userId: "inf1",
+        userRole: "influencer",
+        inviteId: "inv1",
+        dedupeKey: "invite_accepted:inv1",
+      });
+      expect(event.timestamp).toBe(invite.acceptedAt);
+    });
+
+    it("records invite_declined", async () => {
+      const invite = doc({
+        _id: "inv1",
+        influencerId: "inf1",
+        brandId: "brand1",
+        campaignId: "camp1",
+        status: "pending",
+      });
+      inviteModel.findById.mockResolvedValue(invite);
+
+      await service.respond("inv1", "inf1", "declined");
+
+      expect(eventsOfType("invite_declined")[0]).toMatchObject({
+        inviteId: "inv1",
+        dedupeKey: "invite_declined:inv1",
+      });
+      expect(eventsOfType("invite_accepted")).toHaveLength(0);
+    });
+
+    it("records nothing when the accept fails validation", async () => {
+      inviteModel.findById.mockResolvedValue(
+        doc({
+          _id: "inv1",
+          influencerId: "inf1",
+          brandId: "brand1",
+          campaignId: "camp1",
+          status: "pending",
+        }),
+      );
+      campaignModel.findById.mockReturnValue(
+        queryOf({
+          ...activeCampaign,
+          acceptanceDeadline: new Date(Date.now() - 1000),
+        }),
+      );
+      await expect(
+        service.respond("inv1", "inf1", "accepted", "2026-07-15"),
+      ).rejects.toThrow(BadRequestException);
+      expect(platformEvents.record).not.toHaveBeenCalled();
+    });
+
+    it("records nothing when the invite was already answered", async () => {
+      inviteModel.findById.mockResolvedValue(
+        doc({
+          _id: "inv1",
+          influencerId: "inf1",
+          brandId: "brand1",
+          campaignId: "camp1",
+          status: "accepted",
+        }),
+      );
+      await expect(service.respond("inv1", "inf1", "declined")).rejects.toThrow(
+        BadRequestException,
+      );
+      expect(platformEvents.record).not.toHaveBeenCalled();
+    });
+
+    it("records invite_accepted when the owner accepts the creator's counter-offer", async () => {
+      inviteModel.findById.mockResolvedValue(
+        doc({
+          _id: "inv1",
+          influencerId: "inf1",
+          brandId: "brand1",
+          campaignId: "camp1",
+          status: "counter_sent",
+          counterOffer: {
+            status: "sent",
+            requestedAmount: 700,
+            requestedAmountPaise: 70000,
+          },
+        }),
+      );
+      campaignModel.findById.mockReturnValue(queryOf(activeCampaign));
+
+      await service.respondToCounter("inv1", "brand1", "accept");
+
+      expect(eventsOfType("invite_accepted")[0]).toMatchObject({
+        userId: "brand1",
+        userRole: "brand",
+        inviteId: "inv1",
+        metadata: expect.objectContaining({ viaCounterAcceptedByOwner: true }),
+      });
+    });
+
+    it("records nothing when the owner declines the counter (invite goes back to pending)", async () => {
+      inviteModel.findById.mockResolvedValue(
+        doc({
+          _id: "inv1",
+          influencerId: "inf1",
+          brandId: "brand1",
+          campaignId: "camp1",
+          status: "counter_sent",
+          counterOffer: { status: "sent", requestedAmountPaise: 70000 },
+        }),
+      );
+      await service.respondToCounter("inv1", "brand1", "decline");
+      expect(platformEvents.record).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("invite_viewed", () => {
+    const feed = [
+      {
+        _id: "inv-open",
+        influencerId: "inf1",
+        status: "pending",
+        campaignId: { _id: "camp1", status: "active", brandId: "brand1" },
+        brandId: { _id: "brand1" },
+      },
+      {
+        _id: "inv-done",
+        influencerId: "inf1",
+        status: "accepted",
+        campaignId: { _id: "camp1", status: "active", brandId: "brand1" },
+        brandId: { _id: "brand1" },
+      },
+    ];
+
+    it("records a once-only view for each still-open invite shown in the feed", async () => {
+      inviteModel.find.mockReturnValue(queryOf(feed));
+
+      await service.findByInfluencer("inf1", "campaign");
+
+      expect(platformEvents.recordOnce).toHaveBeenCalledTimes(1);
+      const inputs = platformEvents.recordOnce.mock.calls[0][0];
+      expect(inputs).toHaveLength(1);
+      expect(inputs[0]).toMatchObject({
+        eventType: "invite_viewed",
+        userId: "inf1",
+        inviteId: "inv-open",
+        dedupeKey: "invite_viewed:inv-open",
+      });
+    });
+
+    it("does not count the scope-less background lookup (brand profile page) as a view", async () => {
+      inviteModel.find.mockReturnValue(queryOf(feed));
+      await service.findByInfluencer("inf1");
+      expect(platformEvents.recordOnce).not.toHaveBeenCalled();
+    });
+
+    it("records views from the photographer feed", async () => {
+      inviteModel.find.mockReturnValue(
+        queryOf(feed.map((i) => ({ ...i, recipientRole: "photographer" }))),
+      );
+      await service.findByPhotographer("inf1");
+      expect(platformEvents.recordOnce.mock.calls[0][0][0]).toMatchObject({
+        userRole: "photographer",
+        recipientRole: "photographer",
+        dedupeKey: "invite_viewed:inv-open",
+      });
+    });
+
+    it("returns the feed without waiting for the view write (non-blocking)", async () => {
+      inviteModel.find.mockReturnValue(queryOf(feed));
+      // A write that never completes must not hold up the response.
+      platformEvents.recordOnce.mockReturnValue(new Promise(() => undefined));
+      const result = await service.findByInfluencer("inf1", "campaign");
+      expect(result).toHaveLength(2);
+      expect(platformEvents.recordOnce).toHaveBeenCalledTimes(1);
+    });
+
+    it("still returns the feed when event recording fails", async () => {
+      inviteModel.find.mockReturnValue(queryOf(feed));
+      platformEvents.recordOnce.mockRejectedValue(new Error("db down"));
+      await expect(
+        service.findByInfluencer("inf1", "campaign"),
+      ).resolves.toHaveLength(2);
+    });
+  });
+
+  describe("content_submitted / content_approved / content_rejected", () => {
+    it("records content_submitted with the detected platform", async () => {
+      inviteModel.findById.mockResolvedValue(
+        doc({
+          _id: "inv1",
+          influencerId: "inf1",
+          brandId: "brand1",
+          campaignId: "camp1",
+          status: "working",
+        }),
+      );
+      campaignModel.findById.mockReturnValue(queryOf(activeCampaign));
+      submissionModel.findOne.mockResolvedValue(null);
+      submissionModel.create.mockImplementation((d: any) =>
+        Promise.resolve({ _id: "sub1", ...d }),
+      );
+
+      await service.submitPost("inv1", "inf1", {
+        postUrl: "https://www.instagram.com/p/abc",
+      });
+
+      expect(eventsOfType("content_submitted")[0]).toMatchObject({
+        userId: "inf1",
+        platform: "instagram",
+        inviteId: "inv1",
+        dedupeKey: "content_submitted:inv1:0",
+        metadata: expect.objectContaining({
+          submissionId: "sub1",
+          isResubmission: false,
+        }),
+      });
+    });
+
+    it("records nothing when the submission is rejected", async () => {
+      inviteModel.findById.mockResolvedValue(
+        doc({
+          _id: "inv1",
+          influencerId: "inf1",
+          brandId: "brand1",
+          campaignId: "camp1",
+          status: "pending",
+        }),
+      );
+      await expect(
+        service.submitPost("inv1", "inf1", {
+          postUrl: "https://www.instagram.com/p/abc",
+        }),
+      ).rejects.toThrow(BadRequestException);
+      expect(platformEvents.record).not.toHaveBeenCalled();
+    });
+
+    it("records content_approved when the owner approves", async () => {
+      inviteModel.findById.mockResolvedValue(
+        doc({
+          _id: "inv1",
+          influencerId: "inf1",
+          brandId: "brand1",
+          campaignId: "camp1",
+          status: "submitted",
+        }),
+      );
+      campaignModel.findById.mockReturnValue(queryOf(activeCampaign));
+      submissionModel.findOne.mockResolvedValue(
+        doc({
+          _id: "sub1",
+          status: "submitted",
+          postPlatform: "instagram",
+          submittedAt: new Date(Date.now() - 72 * 3600_000),
+        }),
+      );
+
+      await service.reviewSubmission("inv1", "brand1", "approve");
+
+      expect(eventsOfType("content_approved")[0]).toMatchObject({
+        userId: "brand1",
+        userRole: "brand",
+        platform: "instagram",
+        dedupeKey: "content_approved:inv1",
+        metadata: expect.objectContaining({ via: "owner_review" }),
+      });
+    });
+
+    it("records nothing while the review window is still open", async () => {
+      inviteModel.findById.mockResolvedValue(
+        doc({
+          _id: "inv1",
+          influencerId: "inf1",
+          brandId: "brand1",
+          campaignId: "camp1",
+          status: "submitted",
+        }),
+      );
+      campaignModel.findById.mockReturnValue(queryOf(activeCampaign));
+      submissionModel.findOne.mockResolvedValue(
+        doc({ _id: "sub1", status: "submitted", submittedAt: new Date() }),
+      );
+
+      await expect(
+        service.reviewSubmission("inv1", "brand1", "approve"),
+      ).rejects.toThrow(BadRequestException);
+      expect(platformEvents.record).not.toHaveBeenCalled();
+    });
+
+    it("records no content event when the owner disputes (not a final outcome)", async () => {
+      inviteModel.findById.mockResolvedValue(
+        doc({
+          _id: "inv1",
+          influencerId: "inf1",
+          brandId: "brand1",
+          campaignId: "camp1",
+          status: "submitted",
+        }),
+      );
+      campaignModel.findById.mockReturnValue(queryOf(activeCampaign));
+      submissionModel.findOne.mockResolvedValue(
+        doc({ _id: "sub1", status: "submitted", submittedAt: new Date() }),
+      );
+
+      await service.reviewSubmission(
+        "inv1",
+        "brand1",
+        "dispute",
+        undefined,
+        "The mention of the brand handle is missing entirely.",
+        "Missing mention",
+      );
+      expect(platformEvents.record).not.toHaveBeenCalled();
+    });
+
+    it("records content_approved as a system action when a stale submission auto-completes", async () => {
+      const submission = doc({
+        _id: "sub1",
+        inviteId: "inv1",
+        status: "submitted",
+        postPlatform: "youtube",
+      });
+      submissionModel.find.mockReturnValue(queryOf([{ _id: "sub1" }]));
+      submissionModel.findById.mockResolvedValue(submission);
+      inviteModel.findById.mockResolvedValue(
+        doc({
+          _id: "inv1",
+          influencerId: "inf1",
+          brandId: "brand1",
+          campaignId: "camp1",
+          status: "submitted",
+        }),
+      );
+
+      await service.autoApproveStaleSubmissions();
+
+      expect(eventsOfType("content_approved")[0]).toMatchObject({
+        userRole: "system",
+        platform: "youtube",
+        metadata: expect.objectContaining({ via: "auto_complete" }),
+      });
+    });
+
+    it("records content_rejected when an admin resolves a dispute for the host", async () => {
+      inviteModel.findById.mockResolvedValue(
+        doc({
+          _id: "inv1",
+          influencerId: "inf1",
+          brandId: "brand1",
+          campaignId: "camp1",
+          status: "disputed",
+          reportedIssue: { reportedAt: new Date() },
+        }),
+      );
+      submissionModel.findOne.mockResolvedValue(
+        doc({ _id: "sub1", status: "disputed" }),
+      );
+
+      await service.adminResolveDispute("inv1", { outcome: "withdrawn" });
+
+      expect(eventsOfType("content_rejected")[0]).toMatchObject({
+        userRole: "admin",
+        dedupeKey: "content_rejected:inv1",
+        metadata: expect.objectContaining({ via: "dispute_admin" }),
+      });
+    });
+
+    it("records no content event for a resolved report that never had a submission", async () => {
+      inviteModel.findById.mockResolvedValue(
+        doc({
+          _id: "inv1",
+          influencerId: "inf1",
+          status: "working",
+          reportedIssue: { reportedAt: new Date() },
+        }),
+      );
+      submissionModel.findOne.mockResolvedValue(null);
+
+      await service.adminResolveDispute("inv1", { outcome: "withdrawn" });
+      expect(platformEvents.record).not.toHaveBeenCalled();
+    });
+  });
+
+  it("never records creator_selected (no such business action exists yet)", async () => {
+    campaignModel.findById.mockReturnValue(queryOf(activeCampaign));
+    await service.create("brand1", {
+      campaignId: "camp1",
+      influencerId: "inf1",
+    });
+    expect(eventsOfType("creator_selected")).toHaveLength(0);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// invite_viewed end-to-end: real PlatformEventsService over a store that enforces
+// the unique dedupeKey index, so refresh/duplicate behavior is what production does.
+// ─────────────────────────────────────────────────────────────────────────────
+describe("CampaignInvitesService – invite_viewed with real PlatformEventsService", () => {
+  let service: CampaignInvitesService;
+  let rows: any[];
+  let inviteModel: any;
+
+  const OPEN = "64b0000000000000000000a1";
+  const ACCEPTED = "64b0000000000000000000a2";
+  const CAMPAIGN = "64b0000000000000000000a3";
+  const BRAND = "64b0000000000000000000a4";
+  const CREATOR = "64b0000000000000000000a5";
+
+  const feed = () => [
+    {
+      _id: OPEN,
+      influencerId: CREATOR,
+      status: "pending",
+      campaignId: { _id: CAMPAIGN, status: "active", brandId: BRAND },
+      brandId: { _id: BRAND },
+    },
+    {
+      _id: ACCEPTED,
+      influencerId: CREATOR,
+      status: "accepted",
+      campaignId: { _id: CAMPAIGN, status: "active", brandId: BRAND },
+      brandId: { _id: BRAND },
+    },
+  ];
+
+  /** Lets the fire-and-forget view write finish before asserting on the store. */
+  const settle = () => new Promise((r) => setImmediate(r));
+
+  beforeEach(async () => {
+    rows = [];
+    const eventModel = {
+      find: jest.fn((q: any) =>
+        queryOf(rows.filter((r) => q.dedupeKey.$in.includes(r.dedupeKey))),
+      ),
+      insertMany: jest.fn((docs: any[]) => {
+        const dupes = docs.filter((d) =>
+          rows.some((r) => r.dedupeKey === d.dedupeKey),
+        );
+        docs.filter((d) => !dupes.includes(d)).forEach((d) => rows.push(d));
+        return dupes.length
+          ? Promise.reject(
+              Object.assign(new Error("E11000"), {
+                writeErrors: dupes.map(() => ({ code: 11000 })),
+              }),
+            )
+          : Promise.resolve(docs);
+      }),
+      create: jest.fn(),
+    };
+    inviteModel = jest.fn();
+    inviteModel.find = jest.fn(() => queryOf(feed()));
+
+    const module: TestingModule = await Test.createTestingModule({
+      providers: [
+        CampaignInvitesService,
+        PlatformEventsService,
+        { provide: getModelToken("PlatformEvent"), useValue: eventModel },
+        {
+          provide: getModelToken("CampaignInvite"),
+          useValue: lenientModel(inviteModel),
+        },
+        {
+          provide: getModelToken("CampaignSubmission"),
+          useValue: lenientModel({}),
+        },
+        { provide: getModelToken("Campaign"), useValue: lenientModel({}) },
+        { provide: getModelToken("Brand"), useValue: lenientModel(jest.fn()) },
+        {
+          provide: getModelToken("Photographer"),
+          useValue: lenientModel(jest.fn()),
+        },
+        {
+          provide: getModelToken("Influencer"),
+          useValue: lenientModel(jest.fn()),
+        },
+        {
+          provide: getModelToken("CampaignTransaction"),
+          useValue: lenientModel({}),
+        },
+        { provide: PlansService, useValue: {} },
+        { provide: PushService, useValue: inertService() },
+        { provide: NotificationsService, useValue: inertService() },
+        ...laterInviteProviders.filter(
+          (p) => p.provide !== PlatformEventsService,
+        ),
+      ],
+    }).compile();
+    service = module.get(CampaignInvitesService);
+  });
+
+  it("records one view per open invite, however often the feed is refreshed", async () => {
+    for (let i = 0; i < 5; i++) {
+      await service.findByInfluencer(CREATOR, "campaign");
+      await settle();
+    }
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      eventType: "invite_viewed",
+      dedupeKey: `invite_viewed:${OPEN}`,
+    });
+    expect(String(rows[0].inviteId)).toBe(OPEN);
+    expect(String(rows[0].userId)).toBe(CREATOR);
+    expect(String(rows[0].brandId)).toBe(BRAND);
+  });
+
+  it("records one view when two feed loads race", async () => {
+    await Promise.all([
+      service.findByInfluencer(CREATOR, "campaign"),
+      service.findByInfluencer(CREATOR, "collaboration"),
+    ]);
+    await settle();
+    expect(rows).toHaveLength(1);
+  });
+
+  it("records nothing for the scope-less background lookup", async () => {
+    await service.findByInfluencer(CREATOR);
+    await settle();
+    expect(rows).toHaveLength(0);
+  });
+
+  it("records nothing for a requester who has no invites (e.g. a brand hitting the endpoint)", async () => {
+    inviteModel.find.mockReturnValue(queryOf([]));
+    await service.findByInfluencer(BRAND, "campaign");
+    await settle();
+    expect(rows).toHaveLength(0);
+  });
+
+  it("records no views for already-answered invites", async () => {
+    inviteModel.find.mockReturnValue(queryOf([feed()[1]]));
+    await service.findByInfluencer(CREATOR, "campaign");
+    await settle();
+    expect(rows).toHaveLength(0);
   });
 });

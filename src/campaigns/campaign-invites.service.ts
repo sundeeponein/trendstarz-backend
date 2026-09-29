@@ -23,6 +23,11 @@ import {
 } from "./campaign-alert-messages";
 import { ProfileVerificationService } from "../profile-verification/profile-verification.service";
 import { TrackingLinksService } from "./tracking-links.service";
+import {
+  PlatformEventsService,
+  RecordPlatformEventInput,
+} from "../platform-events/platform-events.service";
+import { PlatformEventActorRole } from "../platform-events/platform-event-types";
 
 function detectPlatform(url: string): string {
   if (!url) return "other";
@@ -103,7 +108,97 @@ export class CampaignInvitesService {
     private readonly whatsAppService: WhatsAppService,
     private readonly profileVerificationService: ProfileVerificationService,
     private readonly trackingLinksService: TrackingLinksService,
+    private readonly platformEvents: PlatformEventsService,
   ) {}
+
+  /** The invite-scoped references every invite/submission PlatformEvent carries. */
+  private inviteEventRefs(
+    invite: any,
+  ): Pick<
+    RecordPlatformEventInput,
+    "brandId" | "campaignId" | "influencerId" | "inviteId" | "recipientRole"
+  > {
+    return {
+      brandId: invite?.brandId,
+      campaignId: invite?.campaignId,
+      influencerId: invite?.influencerId,
+      inviteId: invite?._id,
+      recipientRole: this.normalizeRecipientRole(invite?.recipientRole),
+    };
+  }
+
+  /** content_approved / content_rejected — one per invite (one submission per invite; approval/rejection is final). */
+  private async recordContentReviewed(
+    outcome: "approved" | "rejected",
+    invite: any,
+    submission: any,
+    actor: { userId?: unknown; userRole: PlatformEventActorRole },
+    via: string,
+    reviewedAt: Date,
+  ): Promise<void> {
+    const eventType =
+      outcome === "approved" ? "content_approved" : "content_rejected";
+    await this.platformEvents.record({
+      eventType,
+      timestamp: reviewedAt,
+      userId: actor.userId,
+      userRole: actor.userRole,
+      ...this.inviteEventRefs(invite),
+      platform: submission?.postPlatform || invite?.selectedPlatform || null,
+      metadata: {
+        via,
+        submissionId: submission?._id ? String(submission._id) : null,
+        postType: submission?.postType || null,
+        resubmissionCount: Number(submission?.resubmissionCount || 0),
+        isLate: !!submission?.isLate,
+      },
+      dedupeKey: `${eventType}:${String(invite?._id)}`,
+    });
+  }
+
+  /** Invite statuses where the recipient still has to respond — the only ones an "invite viewed" is meaningful for. */
+  private static readonly AWAITING_RESPONSE_STATUSES = [
+    "pending",
+    "invited",
+    "counter_sent",
+  ];
+
+  /**
+   * invite_viewed — first time each still-open invite is delivered to the recipient's
+   * invite feed. Deduped per invite (one event ever): the feed is re-fetched on every
+   * dashboard load/refresh, and time-to-first-view is the signal worth keeping.
+   * Fire-and-forget so the feed response is never slowed or failed by it.
+   */
+  private recordInviteViews(
+    invites: any[],
+    viewerId: string,
+    viewerRole: "influencer" | "photographer",
+  ) {
+    const inputs: RecordPlatformEventInput[] = (invites || [])
+      .filter((inv: any) =>
+        CampaignInvitesService.AWAITING_RESPONSE_STATUSES.includes(
+          String(inv?.status || "").toLowerCase(),
+        ),
+      )
+      .map((inv: any) => ({
+        eventType: "invite_viewed",
+        userId: viewerId,
+        userRole: viewerRole,
+        ...this.inviteEventRefs(inv),
+        // brandId is populated against Brand, so it's null for photographer-owned
+        // collaborations — fall back to the populated campaign's owner id.
+        brandId: inv?.brandId ?? inv?.campaignId?.brandId,
+        platform: inv?.selectedPlatform || null,
+        metadata: { inviteStatus: String(inv?.status || "") },
+        dedupeKey: `invite_viewed:${String(inv?._id)}`,
+      }));
+    if (!inputs.length) return;
+    this.platformEvents.recordOnce(inputs).catch((err: any) => {
+      this.logger.error(
+        `invite_viewed recording failed: ${err?.message || err}`,
+      );
+    });
+  }
 
   private async getSubmissionApprovalWaitHours(): Promise<number> {
     const settings: any = await this.appSettingsModel.findOne({}).lean();
@@ -136,6 +231,9 @@ export class CampaignInvitesService {
     submission: any,
     invite: any,
     now = new Date(),
+    actor: { userId?: unknown; userRole: PlatformEventActorRole } = {
+      userRole: "system",
+    },
   ) {
     submission.status = "approved";
     submission.brandFeedback =
@@ -148,6 +246,15 @@ export class CampaignInvitesService {
     invite.status = "completed";
     invite.completedAt = now;
     await invite.save();
+
+    await this.recordContentReviewed(
+      "approved",
+      invite,
+      submission,
+      actor,
+      "auto_complete",
+      now,
+    );
 
     const inviteId = String(invite._id || submission.inviteId || "");
     const txQuery: any = {
@@ -941,6 +1048,27 @@ export class CampaignInvitesService {
     });
     const saved = await invite.save();
 
+    const senderRole: PlatformEventActorRole =
+      String(campaign?.ownerType || "") === "photographer"
+        ? "photographer"
+        : "brand";
+    await this.platformEvents.record({
+      eventType: "creator_invited",
+      timestamp: saved.createdAt || new Date(),
+      userId: brandId,
+      userRole: senderRole,
+      ...this.inviteEventRefs(saved),
+      platform: saved.selectedPlatform || null,
+      metadata: {
+        campaignMode: campaign?.campaignMode || null,
+        campaignType: campaign?.campaignType || null,
+        // Invites can be queued while a collaboration is still pending review;
+        // the recipient only sees it once the campaign is live.
+        campaignLiveAtInvite: this.isCampaignLiveForRecipient(campaign),
+      },
+      dedupeKey: `creator_invited:${String(saved._id)}`,
+    });
+
     if (this.isCampaignLiveForRecipient(campaign)) {
       try {
         const sender = await this.resolveSenderProfile(brandId);
@@ -1341,6 +1469,13 @@ export class CampaignInvitesService {
       return this.isCampaignLiveForRecipient(campaign);
     });
 
+    // Every screen that renders the invite feed (dashboard, campaign management) passes a
+    // scope; the only scope-less caller is brand-profile-view's background lookup for a
+    // completed invite, which doesn't show invites — so it must not count as a view.
+    if (feedScope) {
+      this.recordInviteViews(visible, influencerId, "influencer");
+    }
+
     const visibleWithSubmissions = await this.attachLatestSubmissions(visible);
 
     // Strip brand contact details from invites that haven't been unlocked yet
@@ -1390,6 +1525,8 @@ export class CampaignInvitesService {
       if (this.isCampaignDeletedForRecipient(campaign)) return false;
       return this.isCampaignLiveForRecipient(campaign);
     });
+
+    this.recordInviteViews(visible, photographerId, "photographer");
 
     const visibleWithSubmissions = await this.attachLatestSubmissions(visible);
 
@@ -2424,6 +2561,30 @@ export class CampaignInvitesService {
     invite.status = status;
     const updated = await invite.save();
 
+    if (status === "accepted" || status === "declined") {
+      const respondedAt = new Date();
+      await this.platformEvents.record({
+        eventType:
+          status === "accepted" ? "invite_accepted" : "invite_declined",
+        timestamp:
+          status === "accepted"
+            ? invite.acceptedAt || respondedAt
+            : respondedAt,
+        userId: influencerId,
+        userRole: this.normalizeRecipientRole(invite?.recipientRole),
+        ...this.inviteEventRefs(invite),
+        platform: invite.selectedPlatform || null,
+        metadata: {
+          selectedContentType: invite.selectedContentType || null,
+          agreedAmount: invite.agreedAmount ?? null,
+          agreedAmountPaise: invite.agreedAmountPaise ?? null,
+          // true when the recipient is answering the owner's counter-offer rather than the original invite.
+          viaOwnerCounter: isRecipientResolvingBrandCounter,
+        },
+        dedupeKey: `${status === "accepted" ? "invite_accepted" : "invite_declined"}:${String(invite._id)}`,
+      });
+    }
+
     // Log acceptance details for observability (platform/content/tier)
     if (status === "accepted") {
       try {
@@ -2724,6 +2885,35 @@ export class CampaignInvitesService {
     const updated = await invite.save();
 
     if (action === "accept") {
+      const ownerRoleForEvent: PlatformEventActorRole =
+        (await this.safeFindById(this.photographerModel, requesterId, "_id"))
+          ? "photographer"
+          : "brand";
+      await this.platformEvents.record({
+        eventType: "invite_accepted",
+        timestamp: invite.acceptedAt || new Date(),
+        userId: requesterId,
+        userRole: ownerRoleForEvent,
+        ...this.inviteEventRefs(invite),
+        platform:
+          invite?.counterOffer?.selectedPlatform ||
+          invite.selectedPlatform ||
+          null,
+        metadata: {
+          // The recipient's counter-offer was accepted by the campaign owner.
+          viaCounterAcceptedByOwner: true,
+          selectedContentType:
+            invite?.counterOffer?.selectedContentType ||
+            invite.selectedContentType ||
+            null,
+          agreedAmount: invite.agreedAmount ?? null,
+          agreedAmountPaise: invite.agreedAmountPaise ?? null,
+        },
+        dedupeKey: `invite_accepted:${String(invite._id)}`,
+      });
+    }
+
+    if (action === "accept") {
       this.trackingLinksService
         .getOrCreateForInvite(
           String(invite._id),
@@ -2967,6 +3157,20 @@ export class CampaignInvitesService {
       selectedPlatform: chosenPlatform ?? null,
       agreedAmount: this.toRupeesFromPaise(campaign.pricePerInfluencer ?? 0),
       agreedAmountPaise: Number(campaign.pricePerInfluencer || 0),
+    });
+
+    await this.platformEvents.record({
+      eventType: "creator_applied",
+      timestamp: invite.createdAt || new Date(),
+      userId: influencerId,
+      userRole: "influencer",
+      ...this.inviteEventRefs(invite),
+      platform: chosenPlatform,
+      metadata: {
+        campaignMode: campaign.campaignMode || null,
+        campaignType: campaign.campaignType || null,
+      },
+      dedupeKey: `creator_applied:${String(invite._id)}`,
     });
 
     // Notify brand
@@ -3229,6 +3433,26 @@ export class CampaignInvitesService {
     await invite.save();
     this.invalidateAttentionCache();
 
+    const resubmissionCount = Number(submission?.resubmissionCount || 0);
+    await this.platformEvents.record({
+      eventType: "content_submitted",
+      timestamp: submission?.submittedAt || new Date(),
+      userId: influencerId,
+      userRole: this.normalizeRecipientRole(invite?.recipientRole),
+      ...this.inviteEventRefs(invite),
+      platform: postPlatform,
+      metadata: {
+        submissionId: String(submission?._id || ""),
+        postType: submission?.postType || null,
+        isResubmission: canResubmit,
+        resubmissionCount,
+        isLate: lateInfo.isLate,
+        daysLate: lateInfo.daysLate,
+      },
+      // A submission can be re-posted once after a dispute — each attempt is its own event.
+      dedupeKey: `content_submitted:${String(invite._id)}:${resubmissionCount}`,
+    });
+
     await this.campaignTransactionModel.updateMany(
       { inviteId: { $in: [invite._id, String(invite._id)] } },
       { $set: { workStatus: "submitted" } },
@@ -3448,7 +3672,13 @@ export class CampaignInvitesService {
         submission.hostAutoCompleteEnabled &&
         now.getTime() >= unlockAt.getTime()
       ) {
-        await this.autoCompleteSubmission(submission, invite, now);
+        await this.autoCompleteSubmission(submission, invite, now, {
+          userId: brandId,
+          userRole:
+            String(campaign?.ownerType || "") === "photographer"
+              ? "photographer"
+              : "brand",
+        });
         return { success: true, submission, autoCompleted: true };
       }
     }
@@ -3476,6 +3706,21 @@ export class CampaignInvitesService {
       invite.completedAt = new Date();
       await invite.save();
       this.invalidateAttentionCache();
+
+      await this.recordContentReviewed(
+        "approved",
+        invite,
+        submission,
+        {
+          userId: brandId,
+          userRole:
+            String(campaign?.ownerType || "") === "photographer"
+              ? "photographer"
+              : "brand",
+        },
+        "owner_review",
+        now,
+      );
 
       const txs = await this.campaignTransactionModel.find({
         inviteId: { $in: [invite._id, String(invite._id)] },
@@ -3787,6 +4032,26 @@ export class CampaignInvitesService {
         outcome === "pay_influencer" ? "approved" : "rejected";
       submission.reviewedAt = now;
       await submission.save();
+
+      // Only when there actually was content — a plain "not yet posted" report
+      // resolved in the host's favour has no submission to reject.
+      await this.recordContentReviewed(
+        outcome === "pay_influencer" ? "approved" : "rejected",
+        invite,
+        submission,
+        {
+          userRole:
+            opts.resolvedBy === "admin"
+              ? "admin"
+              : opts.resolvedBy === "influencer"
+                ? this.normalizeRecipientRole(invite?.recipientRole)
+                : "system",
+          userId:
+            opts.resolvedBy === "influencer" ? invite.influencerId : undefined,
+        },
+        `dispute_${opts.resolvedBy}`,
+        now,
+      );
     }
 
     // Guard against ever downgrading a transaction that's already been paid out via the

@@ -15,9 +15,11 @@ import { PaymentsPayoutsService } from "./payments-payouts.service";
 import { PushModule } from "../push/push.module";
 import { NotificationsModule } from "../notifications/notifications.module";
 import { RazorpayService } from "../payment/razorpay.service";
+import { PlatformEventsModule } from "../platform-events/platform-events.module";
 
 @Module({
   imports: [
+    PlatformEventsModule,
     MongooseModule.forFeature([
       { name: "Campaign", schema: CampaignSchema, collection: "campaigns" },
       {
