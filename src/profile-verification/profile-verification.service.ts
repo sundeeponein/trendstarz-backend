@@ -4,21 +4,13 @@ import {
   Injectable,
   NotFoundException,
 } from "@nestjs/common";
+import { resolveTier, tierForFollowers } from "../utils/tier-ranges.util";
 import { InjectModel } from "@nestjs/mongoose";
 import { Model, Types } from "mongoose";
 import { WhatsAppService } from "../whatsapp/whatsapp.service";
 
 type ProfileRole = "influencer" | "brand" | "photographer" | "admin";
 export type ProfileUserType = "Influencer" | "Brand" | "Photographer" | "User";
-
-const TIER_RANGES: Record<string, [number, number]> = {
-  Starter: [0, 100],
-  Nano: [101, 1000],
-  Micro: [1001, 10000],
-  "Mid-Tier": [10001, 100000],
-  Macro: [100001, Number.MAX_SAFE_INTEGER],
-  "Mega / Celebrity": [100001, Number.MAX_SAFE_INTEGER],
-};
 
 const FLAG_META: Record<
   string,
@@ -474,11 +466,9 @@ export class ProfileVerificationService {
     );
   }
 
+  /** Canonical tier label for a follower count (utils/tier-ranges.util.ts — the single definition). */
   private expectedTier(followers: number): string {
-    for (const [tier, [min, max]] of Object.entries(TIER_RANGES)) {
-      if (followers >= min && followers <= max) return tier;
-    }
-    return "";
+    return tierForFollowers(followers)?.label || "";
   }
 
   private computeCompletion(
@@ -797,10 +787,11 @@ export class ProfileVerificationService {
           if (!platform || !handle) await add("SOCIAL_LINK_BROKEN");
           const followers = Number(sm?.followersCount || 0);
           const expected = followers > 0 ? this.expectedTier(followers) : "";
+          // Compare canonical tiers, so stored spellings like "Mid Tier" still match "Mid-Tier".
           if (
             expected &&
             this.hasText(sm?.tier) &&
-            expected !== String(sm.tier).trim()
+            tierForFollowers(followers)?.key !== resolveTier(sm.tier)?.key
           ) {
             await add("TIER_MISMATCH", {
               message: `${sm.platform || "Social profile"} has ${followers} followers, expected ${expected} tier.`,
@@ -1410,10 +1401,13 @@ export class ProfileVerificationService {
           },
         },
       );
-      // Mark photo and tier as verified so re-upload / tier-change auto-verify
-      // from here on — until admin explicitly unverifies either.
+      // Mark the photo as verified so re-uploads auto-verify until admin unverifies.
+      // Stage 3A-0: approval deliberately does NOT set creatorTierVerified any more —
+      // approving a profile is not a verification of its social accounts or tiers.
+      // Only the explicit "Social Profile & Creator Tier" admin toggle
+      // (AdminUserTableController.updateContactVerification) writes that field.
       await profileModel.findByIdAndUpdate(userId, {
-        $set: { profilePhotoVerified: true, creatorTierVerified: true },
+        $set: { profilePhotoVerified: true },
       });
     }
     return this.adminDetail(actor, userType, userId);

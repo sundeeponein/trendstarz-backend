@@ -81,10 +81,24 @@ export function normalizeSocialMediaList(value: unknown): any[] {
     const handle = normalizeSocialHandle(item?.handle, platform);
     const handleError = validateSocialHandle(handle, platform);
     if (handleError) throw new BadRequestException(handleError);
-    return {
-      ...item,
+    // Only creator-editable fields pass through (Stage 3A-0). Identity,
+    // followersCount and verification/observed data are server-owned — see
+    // mergeSocialMediaEntries in social-account.util.ts.
+    const out: Record<string, any> = {
+      platform,
       handle,
+      tier:
+        item?.tier !== undefined && item?.tier !== null
+          ? String(item.tier).trim()
+          : undefined,
       contentTypes,
     };
+    if (
+      item &&
+      Object.prototype.hasOwnProperty.call(item, "selfReportedStats")
+    ) {
+      out.selfReportedStats = item.selfReportedStats;
+    }
+    return out;
   });
 }

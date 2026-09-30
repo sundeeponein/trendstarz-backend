@@ -15,6 +15,10 @@ import {
 } from "../utils/profile-selection-limits.util";
 import { normalizeSocialMediaList } from "../utils/social-handle.util";
 import {
+  mergeSocialMediaEntries,
+  socialIdentityChanges,
+} from "../utils/social-account.util";
+import {
   applyDiscoverableProfileFilter,
   applySearchEligibilityFilter,
   applyApprovedEligibilityFilter,
@@ -486,9 +490,20 @@ export class PhotographersService {
 
     const current: any = await this.photographerModel
       .findById(userId)
-      .select("phoneNumber email isMobileVerified isEmailVerified profileImages")
+      .select(
+        "phoneNumber email isMobileVerified isEmailVerified profileImages socialMedia",
+      )
       .lean();
     if (!current) throw new NotFoundException("Photographer not found");
+    const socialBefore: any[] = Array.isArray(current.socialMedia)
+      ? current.socialMedia
+      : [];
+    if (update.socialMedia) {
+      update.socialMedia = mergeSocialMediaEntries(
+        socialBefore,
+        update.socialMedia,
+      );
+    }
 
     // Cleanup old images if profileImages is being replaced — mirrors
     // updateInfluencerProfile()/updateBrandProfile() in users.service.ts.
@@ -570,7 +585,11 @@ export class PhotographersService {
       await this.clearGalleryFlags(userId);
     }
     if (update.socialMedia) {
-      await this.autoVerifyTierIfFixed(userId, update.socialMedia);
+      await this.noteCreatorSocialUpdate(
+        userId,
+        socialBefore,
+        update.socialMedia,
+      );
     }
     const {
       password: _pw,
@@ -581,59 +600,53 @@ export class PhotographersService {
     return safe;
   }
 
-  private async autoVerifyTierIfFixed(userId: string, socialMedia: any[]) {
-    if (!Array.isArray(socialMedia) || socialMedia.length === 0) return;
-    const hasValidEntry = socialMedia.some(
-      (s: any) =>
-        String(s?.handle || "").trim() &&
-        (String(s?.tier || "").trim() || Number(s?.followersCount || 0) > 0),
+  /**
+   * Stage 3A-0: a creator's own save must never restore an admin's social/tier
+   * verification (replaces autoVerifyTierIfFixed). A handle/tier change is only
+   * noted on any open ADMIN-opened social/tier flag; the flag stays Open and
+   * creatorTierVerified is untouched. See UsersService.noteCreatorSocialUpdate.
+   */
+  private async noteCreatorSocialUpdate(
+    userId: string,
+    before: any[],
+    after: any[],
+  ) {
+    const changes = socialIdentityChanges(before, after).filter(
+      (c) => c.handleChanged || c.tierChanged,
     );
-    if (!hasValidEntry) return;
-
-    const tierFlagCodes = [
-      "SOCIAL_LINK_MISSING",
-      "SOCIAL_LINK_BROKEN",
-      "SOCIAL_LINK_PRIVATE",
-      "TIER_MISMATCH",
-      "FOLLOWER_COUNT_MISMATCH",
-    ];
-    const openCount = await this.profileFlagModel.countDocuments({
-      userId: String(userId),
-      userType: "Photographer",
-      status: "Open",
-      flagCode: { $in: tierFlagCodes },
-    });
-    if (openCount === 0) return;
-
-    const now = new Date();
-    await this.profileFlagModel.updateMany(
-      {
-        userId: String(userId),
-        userType: "Photographer",
-        status: "Open",
-        flagCode: { $in: tierFlagCodes },
-      },
-      {
-        $set: {
-          status: "Resolved",
-          reviewedBy: "AUTO",
-          reviewedAt: now,
-          reviewNotes: "Auto-resolved: user updated social tier/handle.",
+    if (!changes.length) return;
+    try {
+      await this.profileFlagModel.updateMany(
+        {
+          userId: String(userId),
+          userType: "Photographer",
+          status: "Open",
+          createdBy: "ADMIN",
+          flagCode: { $in: SOCIAL_TIER_VISIBILITY_BLOCK_FLAG_CODES },
         },
-        $push: {
-          auditLog: {
-            action: "auto_resolved",
-            actorId: String(userId),
-            actorRole: "user",
-            note: "User selected a valid social tier after admin unverify.",
-            actedAt: now,
+        {
+          $push: {
+            auditLog: {
+              action: "creator_updated",
+              actorId: String(userId),
+              actorRole: "user",
+              note: `Creator updated ${changes
+                .map(
+                  (c) =>
+                    `${c.platform || "social"} ${[c.handleChanged && "handle", c.tierChanged && "tier"].filter(Boolean).join("+")}`,
+                )
+                .join(", ")} — awaiting admin re-verification.`,
+              actedAt: new Date(),
+            },
           },
         },
-      },
-    );
-    await this.photographerModel.findByIdAndUpdate(userId, {
-      $set: { creatorTierVerified: true },
-    });
+      );
+    } catch (err: any) {
+      console.error(
+        "[photographers] could not note creator social update on flags:",
+        err?.message || err,
+      );
+    }
   }
 
   async searchPhotographers(query: {

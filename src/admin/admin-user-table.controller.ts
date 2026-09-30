@@ -20,6 +20,11 @@ import { Payment } from "../database/schemas/payment.schema";
 import { EarlyAccessAssignmentService } from "./early-access-assignment.service";
 import { FirebaseAdminService } from "../utils/firebase-admin.service";
 import { AuthService } from "../auth/auth.service";
+import {
+  derivePlatformKey,
+  isSocialAccountId,
+  newSocialAccountId,
+} from "../utils/social-account.util";
 import * as bcrypt from "bcryptjs";
 import * as crypto from "crypto";
 import {
@@ -1446,13 +1451,7 @@ export class AdminUserTableController {
     return { message: "Photographer verification updated", user: saved };
   }
 
-  @Patch("users/:type/:id/social-media/:idx")
-  async patchSocialMediaEntry(
-    @Param("type") type: string,
-    @Param("id") id: string,
-    @Param("idx") idx: string,
-    @Body() body: { handle?: string; tier?: string; changedBy?: string; changedByName?: string },
-  ) {
+  private socialMediaModelFor(type: string) {
     const normalizedType = String(type || "").toLowerCase();
     const model =
       normalizedType === "influencer"
@@ -1463,16 +1462,96 @@ export class AdminUserTableController {
             ? this.photographerModel
             : null;
     if (!model) throw new BadRequestException("Unsupported user type");
+    return model;
+  }
 
-    const user = await model.findById(id);
+  /**
+   * Stage 3A-0: admin edits address a social account by its stable
+   * socialAccountId, never by array position (creator saves rebuild the array,
+   * so a position can point at a different account by the time the admin saves).
+   */
+  @Patch("users/:type/:id/social-accounts/:socialAccountId")
+  async patchSocialAccount(
+    @Param("type") type: string,
+    @Param("id") id: string,
+    @Param("socialAccountId") socialAccountId: string,
+    @Body()
+    body: {
+      handle?: string;
+      tier?: string;
+      changedBy?: string;
+      changedByName?: string;
+    },
+  ) {
+    if (!isSocialAccountId(socialAccountId)) {
+      throw new BadRequestException("Invalid social account id");
+    }
+    const user = await this.socialMediaModelFor(type).findById(id);
+    if (!user) throw new NotFoundException("User not found");
+    const list: any[] = Array.isArray(user.socialMedia) ? user.socialMedia : [];
+    const index = list.findIndex(
+      (e: any) => e?.socialAccountId === socialAccountId,
+    );
+    if (index < 0) {
+      throw new NotFoundException(
+        "Social account not found on this profile — it may have been changed. Refresh and try again.",
+      );
+    }
+    return this.applyAdminSocialEdit(user, index, body);
+  }
+
+  /**
+   * Legacy position-based route, kept only for the deploy window before the
+   * socialAccountId backfill: it still edits entries that have NO id yet, but
+   * refuses any entry that has one (those must go through
+   * PATCH users/:type/:id/social-accounts/:socialAccountId).
+   */
+  @Patch("users/:type/:id/social-media/:idx")
+  async patchSocialMediaEntry(
+    @Param("type") type: string,
+    @Param("id") id: string,
+    @Param("idx") idx: string,
+    @Body()
+    body: {
+      handle?: string;
+      tier?: string;
+      changedBy?: string;
+      changedByName?: string;
+    },
+  ) {
+    const user = await this.socialMediaModelFor(type).findById(id);
     if (!user) throw new NotFoundException("User not found");
 
-    const index = parseInt(idx, 10);
+    const index = /^\d+$/.test(String(idx)) ? parseInt(idx, 10) : -1;
     const sm = Array.isArray(user.socialMedia) ? user.socialMedia[index] : null;
     if (!sm) throw new BadRequestException("Social media entry not found");
+    if (sm.socialAccountId) {
+      throw new BadRequestException(
+        "This social account now has a stable id — please refresh the page and edit it again.",
+      );
+    }
+    return this.applyAdminSocialEdit(user, index, body);
+  }
+
+  private async applyAdminSocialEdit(
+    user: any,
+    index: number,
+    body: {
+      handle?: string;
+      tier?: string;
+      changedBy?: string;
+      changedByName?: string;
+    },
+  ) {
+    const sm = user.socialMedia[index];
+    // Entries edited before the backfill get their identity here (same as a creator save would).
+    if (!sm.socialAccountId) sm.socialAccountId = newSocialAccountId();
+    if (!sm.platformKey) sm.platformKey = derivePlatformKey(sm.platform);
+    const socialAccountId = String(sm.socialAccountId);
 
     const logEntry = {
       platformIdx: index,
+      socialAccountId,
       platform: sm.platform || "",
       oldHandle: sm.handle || "",
       newHandle: body.handle !== undefined ? String(body.handle).trim() : sm.handle || "",
@@ -1486,8 +1565,14 @@ export class AdminUserTableController {
     if (body.handle !== undefined) sm.handle = String(body.handle).trim();
     if (body.tier !== undefined) sm.tier = String(body.tier).trim();
 
+    // One latest log/notice per account: match by id, or by position for pre-backfill rows.
+    const sameAccount = (e: any) =>
+      e?.socialAccountId
+        ? e.socialAccountId === socialAccountId
+        : e?.platformIdx === index;
+
     if (!Array.isArray(user.socialMediaEditLog)) user.socialMediaEditLog = [];
-    const existingIdx = user.socialMediaEditLog.findIndex((e: any) => e.platformIdx === index);
+    const existingIdx = user.socialMediaEditLog.findIndex(sameAccount);
     if (existingIdx >= 0) {
       user.socialMediaEditLog[existingIdx] = logEntry;
     } else {
@@ -1497,6 +1582,7 @@ export class AdminUserTableController {
     if (!Array.isArray(user.adminSocialNotifications)) user.adminSocialNotifications = [];
     const notifEntry = {
       platformIdx: index,
+      socialAccountId,
       platform: logEntry.platform,
       oldHandle: logEntry.oldHandle,
       newHandle: logEntry.newHandle,
@@ -1506,7 +1592,8 @@ export class AdminUserTableController {
       changedAt: logEntry.changedAt,
       seen: false,
     };
-    const existingNotifIdx = user.adminSocialNotifications.findIndex((e: any) => e.platformIdx === index);
+    const existingNotifIdx =
+      user.adminSocialNotifications.findIndex(sameAccount);
     if (existingNotifIdx >= 0) {
       user.adminSocialNotifications[existingNotifIdx] = notifEntry;
     } else {

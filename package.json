@@ -38,7 +38,9 @@
     "migrate:email-verified-field": "node cron/migrateEmailVerifiedToIsEmailVerified.js",
     "backfill:platform-events": "node cron/backfillPlatformEvents.js",
     "backfill:platform-events:apply": "node cron/backfillPlatformEvents.js --apply",
-    "audit:id-types": "node cron/auditIdTypes.js"
+    "audit:id-types": "node cron/auditIdTypes.js",
+    "backfill:social-account-identity": "node cron/backfillSocialAccountIdentity.js",
+    "backfill:social-account-identity:apply": "node cron/backfillSocialAccountIdentity.js --apply"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.115.0",

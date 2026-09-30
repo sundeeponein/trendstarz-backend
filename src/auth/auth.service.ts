@@ -32,6 +32,7 @@ import {
   normalizeSocialMediaList,
   validateSocialHandle,
 } from "../utils/social-handle.util";
+import { mergeSocialMediaEntries } from "../utils/social-account.util";
 import { consumeOtpVerificationToken } from "../otp/otp.controller";
 import { CloudinaryService } from "../cloudinary.service";
 import { CloudinaryFolders } from "../cloudinary-folders";
@@ -1927,7 +1928,8 @@ export class AuthService {
       creatorTypes: normalizedCreatorTypes,
       location: { state: stateName, district: districtName },
       languages: languageNames,
-      socialMedia: socialMediaMapped,
+      // Only creator-editable fields + a server-generated socialAccountId (Stage 3A-0).
+      socialMedia: mergeSocialMediaEntries([], socialMediaMapped),
       collaborationAvailability: normalizeCollaborationAvailability(
         data?.collaborationAvailability,
         "influencer",
@@ -2134,7 +2136,8 @@ export class AuthService {
       categories: categoryNames,
       location: { state: stateName, district: districtName },
       languages: languageNames,
-      socialMedia: socialMediaMapped,
+      // Only creator-editable fields + a server-generated socialAccountId (Stage 3A-0).
+      socialMedia: mergeSocialMediaEntries([], socialMediaMapped),
       signupAttribution,
       brandLogo: normalizedBrandLogo,
       products: [],
@@ -2357,7 +2360,7 @@ export class AuthService {
         data?.collaborationAvailability,
         "photographer",
       ),
-      socialMedia: normalizedSocialMedia,
+      socialMedia: mergeSocialMediaEntries([], normalizedSocialMedia),
       profileImages: normalizedProfileImages,
       signupAttribution,
     });

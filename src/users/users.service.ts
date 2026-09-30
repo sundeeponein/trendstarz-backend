@@ -18,6 +18,10 @@ import {
   normalizeSelectionList,
 } from "../utils/profile-selection-limits.util";
 import { normalizeSocialMediaList } from "../utils/social-handle.util";
+import {
+  mergeSocialMediaEntries,
+  socialIdentityChanges,
+} from "../utils/social-account.util";
 import { invalidateAccountStatusCache } from "../auth/jwt-auth.guard";
 import { consumeOtpVerificationToken } from "../otp/otp.controller";
 import {
@@ -1309,71 +1313,59 @@ export class UsersService implements OnModuleInit {
   }
 
   /**
-   * Auto-verify social tier when user provides a valid handle + tier/followers.
-   * Only triggers if admin previously unverified the tier (open tier flag exists).
-   * Once resolved, creatorTierVerified stays true until admin unverifies again.
+   * Stage 3A-0: a creator's own profile save must never restore an admin's
+   * social/tier verification decision (this replaces autoVerifyTierIfFixed,
+   * which resolved the flags and set creatorTierVerified = true on any save).
+   *
+   * If the creator changed a handle or tier while an ADMIN-opened social/tier
+   * flag is open, the change is only noted on that flag's audit log so the
+   * admin can see the creator responded — the flag stays Open and
+   * creatorTierVerified is untouched. System-opened (createdBy AUTO) data
+   * flags are still re-evaluated by ProfileVerificationService's
+   * refreshAutomaticFlags, exactly as before.
    */
-  private async autoVerifyTierIfFixed(
+  private async noteCreatorSocialUpdate(
     userId: string,
-    userType: "Influencer" | "Photographer",
-    socialMedia: any[],
+    userType: "Influencer" | "Photographer" | "Brand",
+    before: any[],
+    after: any[],
   ) {
-    if (!Array.isArray(socialMedia) || socialMedia.length === 0) return;
-    const hasValidEntry = socialMedia.some(
-      (s: any) =>
-        String(s?.handle || "").trim() &&
-        (String(s?.tier || "").trim() || Number(s?.followersCount || 0) > 0),
+    const changes = socialIdentityChanges(before, after).filter(
+      (c) => c.handleChanged || c.tierChanged,
     );
-    if (!hasValidEntry) return;
-
-    const tierFlagCodes = [
-      "SOCIAL_LINK_MISSING",
-      "SOCIAL_LINK_BROKEN",
-      "SOCIAL_LINK_PRIVATE",
-      "TIER_MISMATCH",
-      "FOLLOWER_COUNT_MISMATCH",
-    ];
-    const openCount = await this.profileFlagModel.countDocuments({
-      userId: String(userId),
-      userType,
-      status: "Open",
-      flagCode: { $in: tierFlagCodes },
-    });
-    if (openCount === 0) return;
-
-    const now = new Date();
-    await this.profileFlagModel.updateMany(
-      {
-        userId: String(userId),
-        userType,
-        status: "Open",
-        flagCode: { $in: tierFlagCodes },
-      },
-      {
-        $set: {
-          status: "Resolved",
-          reviewedBy: "AUTO",
-          reviewedAt: now,
-          reviewNotes: "Auto-resolved: user updated social tier/handle.",
+    if (!changes.length) return;
+    try {
+      await this.profileFlagModel.updateMany(
+        {
+          userId: String(userId),
+          userType,
+          status: "Open",
+          createdBy: "ADMIN",
+          flagCode: { $in: SOCIAL_TIER_VISIBILITY_BLOCK_FLAG_CODES },
         },
-        $push: {
-          auditLog: {
-            action: "auto_resolved",
-            actorId: String(userId),
-            actorRole: "user",
-            note: "User selected a valid social tier after admin unverify.",
-            actedAt: now,
+        {
+          $push: {
+            auditLog: {
+              action: "creator_updated",
+              actorId: String(userId),
+              actorRole: "user",
+              note: `Creator updated ${changes
+                .map(
+                  (c) =>
+                    `${c.platform || "social"} ${[c.handleChanged && "handle", c.tierChanged && "tier"].filter(Boolean).join("+")}`,
+                )
+                .join(", ")} — awaiting admin re-verification.`,
+              actedAt: new Date(),
+            },
           },
         },
-      },
-    );
-    const model =
-      userType === "Photographer"
-        ? this.photographerModel
-        : this.influencerModel;
-    await model.findByIdAndUpdate(userId, {
-      $set: { creatorTierVerified: true },
-    });
+      );
+    } catch (err: any) {
+      console.error(
+        "[users] could not note creator social update on flags:",
+        err?.message || err,
+      );
+    }
   }
 
   /** True if the user has an active premium subscription right now. */
@@ -3384,6 +3376,15 @@ export class UsersService implements OnModuleInit {
     // NOTE: isPremium is intentionally excluded — it is only set via upgradeSelfPremium or admin setPremium
     const userDoc: any = await this.influencerModel.findById(userId);
     if (!userDoc) return { message: "Influencer not found", userId };
+    const socialBefore: any[] = Array.isArray(userDoc.socialMedia)
+      ? userDoc.socialMedia.map((e: any) => (e?.toObject ? e.toObject() : e))
+      : [];
+    if (updateData.socialMedia) {
+      updateData.socialMedia = mergeSocialMediaEntries(
+        socialBefore,
+        updateData.socialMedia,
+      );
+    }
     const shouldReviewPhoto = Object.prototype.hasOwnProperty.call(
       updateData,
       "profileImages",
@@ -3494,9 +3495,10 @@ export class UsersService implements OnModuleInit {
       await this.clearGalleryFlags(userId, "Influencer");
     }
     if (updateData.socialMedia) {
-      await this.autoVerifyTierIfFixed(
+      await this.noteCreatorSocialUpdate(
         userId,
         "Influencer",
+        socialBefore,
         updateData.socialMedia,
       );
     }
@@ -3607,9 +3609,15 @@ export class UsersService implements OnModuleInit {
 
     const existingBrand: any = await this.brandModel
       .findById(userId)
-      .select("phoneNumber email isMobileVerified isEmailVerified")
+      .select("phoneNumber email isMobileVerified isEmailVerified socialMedia")
       .lean();
     if (!existingBrand) return { message: "Brand not found", userId };
+    if (updateData.socialMedia) {
+      updateData.socialMedia = mergeSocialMediaEntries(
+        existingBrand.socialMedia,
+        updateData.socialMedia,
+      );
+    }
 
     if (Object.prototype.hasOwnProperty.call(updateData, "phoneNumber")) {
       const existingPhone = this.normalizePhone(existingBrand.phoneNumber);

@@ -41,6 +41,12 @@ const ProfileVerificationFields = {
   // but the explicit toggle action also persists a direct boolean here so it
   // survives a plain document save/fetch instead of silently no-op-ing.
   profilePhotoVerified: { type: Boolean, default: false },
+  // LEGACY (Stage 3A-0): profile-level flag that used to conflate profile approval,
+  // social-account ownership and tier correctness. Kept for compatibility until
+  // Stage 3A-1's per-account verification replaces it. Written ONLY by the explicit
+  // admin "Social Profile & Creator Tier" toggle — never by profile approval and
+  // never by a creator's own save. Values set before Stage 3A-0 may come from
+  // approval, so they are not evidence that an admin reviewed each account.
   creatorTierVerified: { type: Boolean, default: false },
   galleryImagesVerified: { type: Boolean, default: false },
   lastReviewedAt: { type: Date, default: null },
@@ -120,6 +126,11 @@ export const TierSchema = new Schema({
   icon: { type: String },
   desc: { type: String },
   showInFrontend: { type: Boolean, default: true },
+  // Stage 3A-0, additive: numeric bounds matching utils/tier-ranges.util.ts
+  // (maxFollowers null = no upper bound). Filled by the identity backfill.
+  key: { type: String },
+  minFollowers: { type: Number },
+  maxFollowers: { type: Number, default: undefined },
 });
 export const TierModel = model("Tier", TierSchema);
 
@@ -295,6 +306,11 @@ export const InfluencerSchema = new Schema(
     },
     socialMedia: [
       {
+        // Stage 3A-0: server-generated stable account id (survives array
+        // rebuilds/reorders) and canonical platform key. Never taken from the
+        // browser — see mergeSocialMediaEntries (utils/social-account.util.ts).
+        socialAccountId: { type: String },
+        platformKey: { type: String },
         platform: { type: String },
         handle: { type: String },
         tier: { type: String },
@@ -320,6 +336,7 @@ export const InfluencerSchema = new Schema(
     socialMediaEditLog: [
       {
         platformIdx: { type: Number },
+        socialAccountId: { type: String },
         platform: { type: String },
         oldHandle: { type: String },
         newHandle: { type: String },
@@ -333,6 +350,7 @@ export const InfluencerSchema = new Schema(
     adminSocialNotifications: [
       {
         platformIdx: { type: Number },
+        socialAccountId: { type: String },
         platform: { type: String },
         oldHandle: { type: String },
         newHandle: { type: String },
@@ -466,6 +484,11 @@ export const BrandSchema = new Schema(
   {
     socialMedia: [
       {
+        // Stage 3A-0: server-generated stable account id (survives array
+        // rebuilds/reorders) and canonical platform key. Never taken from the
+        // browser — see mergeSocialMediaEntries (utils/social-account.util.ts).
+        socialAccountId: { type: String },
+        platformKey: { type: String },
         platform: { type: String },
         handle: { type: String },
         tier: { type: String },
@@ -488,6 +511,7 @@ export const BrandSchema = new Schema(
     socialMediaEditLog: [
       {
         platformIdx: { type: Number },
+        socialAccountId: { type: String },
         platform: { type: String },
         oldHandle: { type: String },
         newHandle: { type: String },
@@ -501,6 +525,7 @@ export const BrandSchema = new Schema(
     adminSocialNotifications: [
       {
         platformIdx: { type: Number },
+        socialAccountId: { type: String },
         platform: { type: String },
         oldHandle: { type: String },
         newHandle: { type: String },
@@ -774,6 +799,11 @@ export const PhotographerSchema = new Schema(
     // Social platforms for trust (at least one required before inviting/hiring)
     socialMedia: [
       {
+        // Stage 3A-0: server-generated stable account id (survives array
+        // rebuilds/reorders) and canonical platform key. Never taken from the
+        // browser — see mergeSocialMediaEntries (utils/social-account.util.ts).
+        socialAccountId: { type: String },
+        platformKey: { type: String },
         platform: { type: String },
         handle: { type: String },
         tier: { type: String },
@@ -789,6 +819,7 @@ export const PhotographerSchema = new Schema(
     socialMediaEditLog: [
       {
         platformIdx: { type: Number },
+        socialAccountId: { type: String },
         platform: { type: String },
         oldHandle: { type: String },
         newHandle: { type: String },
@@ -802,6 +833,7 @@ export const PhotographerSchema = new Schema(
     adminSocialNotifications: [
       {
         platformIdx: { type: Number },
+        socialAccountId: { type: String },
         platform: { type: String },
         oldHandle: { type: String },
         newHandle: { type: String },

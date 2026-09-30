@@ -558,3 +558,247 @@ describe("UsersService profile update guards", () => {
     });
   });
 });
+
+// ── Stage 3A-0: creator saves vs server-owned social data ───────────────────
+describe("UsersService social accounts on creator save (Stage 3A-0)", () => {
+  const ID_A = "64b0000000000000000000a1";
+  const make = (models: {
+    influencerModel?: any;
+    brandModel?: any;
+    profileFlagModel?: any;
+  }) =>
+    new UsersService(
+      {} as any, // cloudinaryService
+      {} as any, // firebaseAdminService
+      {} as any, // userModel
+      models.influencerModel || ({} as any),
+      models.brandModel || ({} as any),
+      {} as any, // photographerModel
+      {} as any, // campaignInviteModel
+      {} as any, // campaignModel
+      models.profileFlagModel ||
+        ({ updateMany: jest.fn().mockResolvedValue({}) } as any),
+      {} as any, // collaborationAuditModel
+      {} as any, // paymentModel
+      {} as any, // transactionModel
+      {} as any, // socialOAuthConnectionModel
+      {
+        canViewSocialLinks: jest.fn().mockResolvedValue(true),
+        listActive: jest.fn().mockResolvedValue({ plans: [] }),
+      } as any,
+      { revokePermissions: jest.fn() } as any,
+      {} as any, // reviewModel
+      {} as any, // campaignTransactionModel
+    );
+
+  const storedEntry = () => ({
+    socialAccountId: ID_A,
+    platformKey: "instagram",
+    platform: "Instagram",
+    handle: "creator.one",
+    tier: "Micro",
+    followersCount: 0,
+    contentTypes: [],
+    // Server-owned data a later phase adds — must survive any creator save.
+    ownershipVerification: {
+      status: "verified",
+      method: "manual",
+      decidedHandle: "creator.one",
+    },
+    observedFollowers: { count: 8200, source: "admin_manual" },
+  });
+
+  const influencerDoc = (entries: any[]) => {
+    const doc: any = {
+      phoneNumber: "9000000000",
+      email: "c@example.com",
+      socialMedia: entries,
+      creatorTierVerified: false,
+      set: jest.fn((k: string, v: any) => {
+        doc[k] = v;
+      }),
+      save: jest.fn(() => Promise.resolve(doc)),
+    };
+    return doc;
+  };
+
+  const browserPayload = (over: any = {}) => ({
+    socialMedia: [
+      {
+        platform: "Instagram",
+        handle: "creator.one",
+        tier: "Micro",
+        followersCount: 0,
+        contentTypes: [{ name: "Reel", enabled: true, price: 5000 }],
+        ownershipVerification: { status: "verified" },
+        socialAccountId: "64b0000000000000000000ff",
+        ...over,
+      },
+    ],
+  });
+
+  it("keeps the account id and server-owned data, and ignores spoofed fields", async () => {
+    const doc = influencerDoc([storedEntry()]);
+    const service = make({
+      influencerModel: { findById: jest.fn().mockResolvedValue(doc) },
+    });
+
+    await service.updateInfluencerProfile("inf-1", browserPayload());
+
+    const [saved] = doc.set.mock.calls.find(
+      ([k]: any[]) => k === "socialMedia",
+    )[1];
+    expect(saved).toMatchObject({
+      socialAccountId: ID_A,
+      platformKey: "instagram",
+      followersCount: 0,
+      ownershipVerification: {
+        status: "verified",
+        method: "manual",
+        decidedHandle: "creator.one",
+      },
+      observedFollowers: { count: 8200, source: "admin_manual" },
+      contentTypes: [{ name: "Reel", enabled: true, price: 5000 }],
+    });
+    expect(doc.save).toHaveBeenCalled();
+  });
+
+  it("an unverified account cannot verify itself through a save", async () => {
+    const unverified: any = storedEntry();
+    delete unverified.ownershipVerification;
+    delete unverified.observedFollowers;
+    const doc = influencerDoc([unverified]);
+    const service = make({
+      influencerModel: { findById: jest.fn().mockResolvedValue(doc) },
+    });
+
+    await service.updateInfluencerProfile(
+      "inf-1",
+      browserPayload({ observedFollowers: { count: 1 } }),
+    );
+
+    const [saved] = doc.set.mock.calls.find(
+      ([k]: any[]) => k === "socialMedia",
+    )[1];
+    expect(saved.ownershipVerification).toBeUndefined();
+    expect(saved.observedFollowers).toBeUndefined();
+  });
+
+  it("never auto-verifies: re-saving after an admin flag leaves creatorTierVerified and the flag alone", async () => {
+    const doc = influencerDoc([storedEntry()]);
+    const influencerModel = {
+      findById: jest.fn().mockResolvedValue(doc),
+      findByIdAndUpdate: jest.fn(),
+    };
+    const profileFlagModel = {
+      updateMany: jest.fn().mockResolvedValue({}),
+      countDocuments: jest.fn().mockResolvedValue(3),
+    };
+    const service = make({ influencerModel, profileFlagModel });
+
+    await service.updateInfluencerProfile(
+      "inf-1",
+      browserPayload({ tier: "Mid-Tier" }),
+    );
+
+    expect(influencerModel.findByIdAndUpdate).not.toHaveBeenCalled();
+    expect(doc.creatorTierVerified).toBe(false);
+    // Only an audit note on ADMIN-opened flags — never a status change.
+    expect(profileFlagModel.updateMany).toHaveBeenCalledTimes(1);
+    const [filter, update] = profileFlagModel.updateMany.mock.calls[0];
+    expect(filter).toMatchObject({
+      userId: "inf-1",
+      userType: "Influencer",
+      status: "Open",
+      createdBy: "ADMIN",
+    });
+    expect(update.$set).toBeUndefined();
+    expect(update.$push.auditLog).toMatchObject({
+      action: "creator_updated",
+      actorRole: "user",
+    });
+    expect(update.$push.auditLog.note).toContain("Instagram tier");
+  });
+
+  it("adds no note when nothing identity-related changed, and still saves normal fields", async () => {
+    const doc = influencerDoc([storedEntry()]);
+    const profileFlagModel = { updateMany: jest.fn().mockResolvedValue({}) };
+    const service = make({
+      influencerModel: { findById: jest.fn().mockResolvedValue(doc) },
+      profileFlagModel,
+    });
+
+    await service.updateInfluencerProfile("inf-1", {
+      ...browserPayload(),
+      gender: "female",
+    });
+
+    expect(profileFlagModel.updateMany).not.toHaveBeenCalled();
+    expect(doc.set).toHaveBeenCalledWith("gender", "female");
+    expect(doc.save).toHaveBeenCalled();
+  });
+
+  it("merges brand socials against the stored ones", async () => {
+    const brandModel = {
+      findById: jest.fn(() => ({
+        select: jest.fn(() => ({
+          lean: jest.fn().mockResolvedValue({
+            phoneNumber: "9000000000",
+            email: "b@example.com",
+            socialMedia: [{ ...storedEntry(), tier: "Nano" }],
+          }),
+        })),
+      })),
+      findByIdAndUpdate: jest.fn().mockResolvedValue({ _id: "brand-1" }),
+    };
+    const service = make({ brandModel });
+
+    await service.updateBrandProfile(
+      "brand-1",
+      browserPayload({ tier: "Nano", followersCount: 55 }),
+    );
+
+    const [, update] = brandModel.findByIdAndUpdate.mock.calls[0];
+    const saved = (update.$set || update).socialMedia[0];
+    expect(saved).toMatchObject({
+      socialAccountId: ID_A,
+      tier: "Nano",
+      followersCount: 0,
+    });
+    expect(saved.ownershipVerification).toMatchObject({ status: "verified" });
+  });
+
+  it("a creator save cannot set creatorTierVerified (influencer and brand)", async () => {
+    const doc = influencerDoc([storedEntry()]);
+    const service = make({
+      influencerModel: { findById: jest.fn().mockResolvedValue(doc) },
+    });
+    await service.updateInfluencerProfile("inf-1", {
+      ...browserPayload(),
+      creatorTierVerified: true,
+    } as any);
+    expect(
+      doc.set.mock.calls.some(([k]: any[]) => k === "creatorTierVerified"),
+    ).toBe(false);
+    expect(doc.creatorTierVerified).toBe(false);
+
+    const brandModel = {
+      findById: jest.fn(() => ({
+        select: jest.fn(() => ({
+          lean: jest.fn().mockResolvedValue({
+            phoneNumber: "9000000000",
+            email: "b@example.com",
+            socialMedia: [],
+          }),
+        })),
+      })),
+      findByIdAndUpdate: jest.fn().mockResolvedValue({ _id: "brand-1" }),
+    };
+    await make({ brandModel }).updateBrandProfile("brand-1", {
+      creatorTierVerified: true,
+      description: "x",
+    } as any);
+    const [, update] = brandModel.findByIdAndUpdate.mock.calls[0];
+    expect("creatorTierVerified" in (update.$set || update)).toBe(false);
+  });
+});

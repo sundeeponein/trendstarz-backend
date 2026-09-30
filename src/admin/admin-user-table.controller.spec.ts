@@ -79,3 +79,199 @@ describe("AdminUserTableController issueTemporaryPassword", () => {
     expect(authService.issueTemporaryPassword).not.toHaveBeenCalled();
   });
 });
+
+describe("AdminUserTableController social account editing (Stage 3A-0)", () => {
+  const ID_A = "64b0000000000000000000a1";
+  const ID_B = "64b0000000000000000000b2";
+  // Constructor: influencer(0), user(1), brand(2), photographer(3), payment(4), flag(5), earlyAccess(6), firebase(7), auth(8).
+  function setup(socialMedia: any[]) {
+    const user: any = {
+      socialMedia,
+      socialMediaEditLog: [],
+      adminSocialNotifications: [],
+      save: jest.fn(() => Promise.resolve(user)),
+    };
+    const influencerModel = { findById: jest.fn().mockResolvedValue(user) };
+    const args: any[] = Array.from({ length: 9 }, () => ({}));
+    args[0] = influencerModel;
+    const controller = new (AdminUserTableController as any)(...args);
+    return { controller, user };
+  }
+  const body = {
+    handle: "new.handle",
+    tier: "Macro",
+    changedBy: "admin-1",
+    changedByName: "Asha",
+  };
+
+  it("edits the account with that socialAccountId, whatever its position", async () => {
+    const { controller, user } = setup([
+      {
+        socialAccountId: ID_B,
+        platform: "YouTube",
+        handle: "yt",
+        tier: "Nano",
+      },
+      {
+        socialAccountId: ID_A,
+        platform: "Instagram",
+        handle: "old",
+        tier: "Micro",
+      },
+    ]);
+
+    await controller.patchSocialAccount("influencer", "u1", ID_A, body);
+
+    expect(user.socialMedia[1]).toMatchObject({
+      handle: "new.handle",
+      tier: "Macro",
+    });
+    expect(user.socialMedia[0]).toMatchObject({ handle: "yt", tier: "Nano" });
+    expect(user.socialMediaEditLog[0]).toMatchObject({
+      socialAccountId: ID_A,
+      platform: "Instagram",
+      oldHandle: "old",
+      newHandle: "new.handle",
+      oldTier: "Micro",
+      newTier: "Macro",
+      changedByName: "Asha",
+    });
+    expect(user.adminSocialNotifications[0]).toMatchObject({
+      socialAccountId: ID_A,
+      newTier: "Macro",
+      seen: false,
+    });
+    expect(user.save).toHaveBeenCalled();
+  });
+
+  it("keeps one latest log/notice per account, replaced by id", async () => {
+    const { controller, user } = setup([
+      {
+        socialAccountId: ID_A,
+        platform: "Instagram",
+        handle: "old",
+        tier: "Micro",
+      },
+    ]);
+    await controller.patchSocialAccount("influencer", "u1", ID_A, body);
+    await controller.patchSocialAccount("influencer", "u1", ID_A, {
+      tier: "Mid-Tier",
+    });
+    expect(user.socialMediaEditLog).toHaveLength(1);
+    expect(user.adminSocialNotifications).toHaveLength(1);
+    expect(user.socialMediaEditLog[0]).toMatchObject({
+      oldTier: "Macro",
+      newTier: "Mid-Tier",
+    });
+  });
+
+  it("returns an error instead of editing another account when the id is unknown or invalid", async () => {
+    const { controller, user } = setup([
+      {
+        socialAccountId: ID_A,
+        platform: "Instagram",
+        handle: "old",
+        tier: "Micro",
+      },
+    ]);
+    await expect(
+      controller.patchSocialAccount("influencer", "u1", ID_B, body),
+    ).rejects.toThrow(/not found/);
+    await expect(
+      controller.patchSocialAccount("influencer", "u1", "0", body),
+    ).rejects.toThrow(/Invalid social account id/);
+    expect(user.socialMedia[0].handle).toBe("old");
+    expect(user.save).not.toHaveBeenCalled();
+  });
+
+  it("legacy position route refuses an entry that already has an id", async () => {
+    const { controller, user } = setup([
+      {
+        socialAccountId: ID_A,
+        platform: "Instagram",
+        handle: "old",
+        tier: "Micro",
+      },
+    ]);
+    await expect(
+      controller.patchSocialMediaEntry("influencer", "u1", "0", body),
+    ).rejects.toThrow(/refresh/);
+    expect(user.save).not.toHaveBeenCalled();
+  });
+
+  it("legacy position route still edits a pre-backfill entry and gives it an identity", async () => {
+    const { controller, user } = setup([
+      { platform: "X / Twitter", handle: "old", tier: "Starter" },
+    ]);
+    await controller.patchSocialMediaEntry("influencer", "u1", "0", body);
+    expect(user.socialMedia[0]).toMatchObject({
+      handle: "new.handle",
+      tier: "Macro",
+      platformKey: "x",
+    });
+    expect(user.socialMedia[0].socialAccountId).toMatch(/^[a-f0-9]{24}$/);
+    expect(user.socialMediaEditLog[0].socialAccountId).toBe(
+      user.socialMedia[0].socialAccountId,
+    );
+  });
+
+  it("rejects an unsupported user type", async () => {
+    const { controller } = setup([]);
+    await expect(
+      controller.patchSocialAccount("admin", "u1", ID_A, body),
+    ).rejects.toThrow(/Unsupported user type/);
+  });
+});
+
+describe("AdminUserTableController explicit creator-tier toggle still works (Stage 3A-0)", () => {
+  // Constructor: influencer(0), user(1), brand(2), photographer(3), payment(4), flag(5), earlyAccess(6), firebase(7), auth(8).
+  function setup(initial: Record<string, any>) {
+    const user: any = {
+      _id: "u1",
+      verificationStatus: "approved",
+      verifiedByTrendStarz: true,
+      ...initial,
+      save: jest.fn(() => Promise.resolve(user)),
+    };
+    const flagModel = {
+      updateMany: jest.fn().mockResolvedValue({ modifiedCount: 1 }),
+      updateOne: jest.fn().mockResolvedValue({ upsertedCount: 1 }),
+      findOne: jest.fn(() => ({ lean: jest.fn().mockResolvedValue(null) })),
+      create: jest.fn().mockResolvedValue({}),
+    };
+    const args: any[] = Array.from({ length: 9 }, () => ({}));
+    args[0] = { findById: jest.fn().mockResolvedValue(user) };
+    args[5] = flagModel;
+    const controller = new (AdminUserTableController as any)(...args);
+    return { controller, user, flagModel };
+  }
+
+  it("verifying sets creatorTierVerified and resolves the social/tier flags", async () => {
+    const { controller, user, flagModel } = setup({
+      creatorTierVerified: false,
+    });
+    await controller.updateContactVerification("influencer", "u1", {
+      creatorTierVerified: true,
+    });
+    expect(user.creatorTierVerified).toBe(true);
+    expect(user.save).toHaveBeenCalled();
+    const resolve = flagModel.updateMany.mock.calls.find(([f]: any[]) =>
+      f?.flagCode?.$in?.includes("TIER_MISMATCH"),
+    );
+    expect(resolve).toBeDefined();
+    expect(resolve[1].$set.status).toBe("Resolved");
+  });
+
+  it("un-verifying clears it and demotes the approval, as before", async () => {
+    const { controller, user } = setup({ creatorTierVerified: true });
+    await controller.updateContactVerification("influencer", "u1", {
+      creatorTierVerified: false,
+    });
+    expect(user.creatorTierVerified).toBe(false);
+    expect(user).toMatchObject({
+      verificationStatus: "pending",
+      verifiedByTrendStarz: false,
+      adminReviewPending: true,
+    });
+  });
+});
