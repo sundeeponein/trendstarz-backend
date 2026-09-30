@@ -1673,7 +1673,8 @@ export class CampaignInvitesService {
     const campaign: any = await this.campaignModel
       .findById(invite.campaignId)
       .select(
-        "title platforms socialMedia deliverables specialInstructions image images galleryImages postingDeadlineMode",
+        // description … hashtags: the host's brief, listed by name in the pre-submit reminder.
+        "title platforms socialMedia deliverables specialInstructions image images galleryImages postingDeadlineMode description script promotionUrl suggestedCaption hashtags",
       )
       .lean();
     return { invite: inviteForResponse, campaign };
