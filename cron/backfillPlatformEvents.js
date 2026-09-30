@@ -45,7 +45,7 @@ async function run() {
       projection: { brandId: 1, ownerType: 1, createdByRole: 1, campaignType: 1, campaignMode: 1, status: 1, createdAt: 1, completedAt: 1, completedBy: 1 },
     }).toArray(),
     db.collection('campaigninvites').find({}, {
-      projection: { campaignId: 1, brandId: 1, influencerId: 1, recipientRole: 1, status: 1, selectedPlatform: 1, agreedAmount: 1, createdAt: 1, acceptedAt: 1, withdrawnAt: 1, withdrawnReason: 1 },
+      projection: { campaignId: 1, brandId: 1, influencerId: 1, recipientRole: 1, status: 1, selectedPlatform: 1, agreedAmount: 1, createdAt: 1, acceptedAt: 1, withdrawnAt: 1, withdrawnReason: 1, 'counterOffer.status': 1, 'counterOffer.resolvedAt': 1 },
     }).toArray(),
     db.collection('campaignsubmissions').find({}, {
       projection: { campaignId: 1, influencerId: 1, inviteId: 1, status: 1, postPlatform: 1, postType: 1, isLate: 1, resubmissionCount: 1, submittedAt: 1, reviewedAt: 1, autoCompletedAt: 1 },

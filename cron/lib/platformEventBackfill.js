@@ -210,11 +210,27 @@ function deriveEvents(data, toObjectId) {
       })));
     }
 
-    const acceptedAt = validDate(invite.acceptedAt);
+    // invite.acceptedAt is also stamped when the creator SENDS a counter-offer, so it is only
+    // an acceptance time when no counter is involved. A counter that ended in acceptance
+    // records the real moment in counterOffer.resolvedAt; an open/declined counter means
+    // acceptedAt is just the counter-send time, not an acceptance at all.
+    const counterStatus = String((invite.counterOffer && invite.counterOffer.status) || 'none');
+    let acceptedAt = null;
+    let acceptedFrom = null;
+    if (counterStatus === 'accepted') {
+      acceptedAt = validDate(invite.counterOffer.resolvedAt);
+      acceptedFrom = 'invite.counterOffer.resolvedAt';
+      if (!acceptedAt) skip('invite_accepted: counter accepted but no resolvedAt');
+    } else if (counterStatus === 'none') {
+      acceptedAt = validDate(invite.acceptedAt);
+      acceptedFrom = 'invite.acceptedAt';
+    } else if (validDate(invite.acceptedAt)) {
+      skip('invite_accepted: acceptedAt is a counter-offer send time (counter ' + counterStatus + ')');
+    }
     if (acceptedAt) {
       events.push(buildEvent(toObjectId, Object.assign({}, refs, {
         eventType: 'invite_accepted',
-        derivedFrom: 'invite.acceptedAt',
+        derivedFrom: acceptedFrom,
         timestamp: acceptedAt,
         // Actor unknown: the creator accepts, but the owner can also accept the creator's counter.
         platform: invite.selectedPlatform,

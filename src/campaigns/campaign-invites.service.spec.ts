@@ -2327,6 +2327,55 @@ describe("CampaignInvitesService – platform events", () => {
         expect(eventsOfType("invite_accepted")).toHaveLength(0);
       });
 
+      it("regression: invite_accepted is later than counter_offer_sent when the owner accepts the counter", async () => {
+        const sentAt = new Date("2026-07-01T10:00:00.000Z");
+        const acceptedLater = new Date("2026-07-01T11:30:00.000Z");
+        jest.useFakeTimers({
+          now: sentAt,
+          doNotFake: ["nextTick", "setImmediate", "queueMicrotask"],
+        });
+        try {
+          const invite = openInvite({ selectedPlatform: "Instagram" });
+          inviteModel.findById.mockResolvedValue(invite);
+          campaignModel.findById.mockReturnValue(
+            queryOf({
+              ...activeCampaign,
+              socialMedia: [
+                {
+                  platform: "Instagram",
+                  contentTypes: [{ name: "Reel", enabled: true, price: 5000 }],
+                },
+              ],
+            }),
+          );
+
+          await service.respond(
+            "inv1",
+            "inf1",
+            "counter_sent",
+            "2026-07-15",
+            "Instagram",
+            "Reel",
+            7000,
+          );
+          // The operational field is stamped at counter-send time — that is the trap.
+          expect(invite.acceptedAt).toEqual(sentAt);
+
+          jest.setSystemTime(acceptedLater);
+          await service.respondToCounter("inv1", "brand1", "accept");
+        } finally {
+          jest.useRealTimers();
+        }
+
+        const [counter] = eventsOfType("counter_offer_sent");
+        const [accepted] = eventsOfType("invite_accepted");
+        expect(counter.timestamp).toEqual(sentAt);
+        expect(accepted.timestamp).toEqual(acceptedLater);
+        expect(counter.timestamp.getTime()).toBeLessThan(
+          accepted.timestamp.getTime(),
+        );
+      });
+
       it("records the owner's revised counter", async () => {
         inviteModel.findById.mockResolvedValue(
           openInvite({

@@ -367,4 +367,82 @@ describe("platform event backfill", () => {
       }
     });
   });
+
+  describe("invite_accepted vs counter-offers (acceptedAt is stamped at counter-send)", () => {
+    const acceptedEvents = (invites: any[]) => {
+      const data = fixture();
+      data.invites = invites;
+      data.submissions = [];
+      data.transactions = [];
+      return backfill.deriveEvents(data, oid);
+    };
+    const invite = (n: number, fields: any) => ({
+      _id: oid(id(200 + n)),
+      campaignId: CAMPAIGN,
+      brandId: BRAND,
+      influencerId: oid(CREATOR),
+      createdAt: at("2026-01-02T00:00:00Z"),
+      ...fields,
+    });
+
+    it("uses counterOffer.resolvedAt when a counter ended in acceptance", () => {
+      const res = acceptedEvents([
+        invite(1, {
+          status: "payment_confirmed",
+          acceptedAt: at("2026-01-03T10:00:00Z"), // counter-send time
+          counterOffer: {
+            status: "accepted",
+            resolvedAt: at("2026-01-03T12:00:00Z"),
+          },
+        }),
+      ]);
+      const [event] = res.events.filter(
+        (e: any) => e.eventType === "invite_accepted",
+      );
+      expect(event.timestamp).toEqual(at("2026-01-03T12:00:00Z"));
+      expect(event.metadata.derivedFrom).toBe("invite.counterOffer.resolvedAt");
+    });
+
+    it("uses acceptedAt when no counter was involved", () => {
+      const res = acceptedEvents([
+        invite(2, {
+          status: "accepted",
+          acceptedAt: at("2026-01-04T09:00:00Z"),
+          counterOffer: { status: "none" },
+        }),
+      ]);
+      const [event] = res.events.filter(
+        (e: any) => e.eventType === "invite_accepted",
+      );
+      expect(event.timestamp).toEqual(at("2026-01-04T09:00:00Z"));
+    });
+
+    it("does not invent an acceptance from an open or declined counter", () => {
+      const res = acceptedEvents([
+        invite(3, {
+          status: "counter_sent",
+          acceptedAt: at("2026-01-05T09:00:00Z"),
+          counterOffer: { status: "sent" },
+        }),
+        invite(4, {
+          status: "withdrawn",
+          acceptedAt: at("2026-01-05T09:00:00Z"),
+          counterOffer: { status: "declined" },
+        }),
+      ]);
+      expect(
+        res.events.filter((e: any) => e.eventType === "invite_accepted"),
+      ).toHaveLength(0);
+      expect(
+        res.skipped[
+          "invite_accepted: acceptedAt is a counter-offer send time (counter sent)"
+        ],
+      ).toBe(1);
+      expect(
+        res.skipped[
+          "invite_accepted: acceptedAt is a counter-offer send time (counter declined)"
+        ],
+      ).toBe(1);
+    });
+  });
 });

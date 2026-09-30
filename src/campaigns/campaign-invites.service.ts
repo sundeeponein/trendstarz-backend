@@ -3011,7 +3011,9 @@ export class CampaignInvitesService {
       const ownerRoleForEvent = await this.ownerRoleFor(requesterId);
       await this.platformEvents.record({
         eventType: "invite_accepted",
-        timestamp: invite.acceptedAt || new Date(),
+        // Not invite.acceptedAt: that field is set when the creator *sends* the counter
+        // (and kept here), so it predates this acceptance. resolvedAt is the accept moment.
+        timestamp: invite.counterOffer?.resolvedAt || new Date(),
         userId: requesterId,
         userRole: ownerRoleForEvent,
         ...this.inviteEventRefs(invite),
