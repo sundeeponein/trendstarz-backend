@@ -94,18 +94,36 @@ const perTypeRow = (
 
 describe("Stage 2A data-quality analysis", () => {
   describe("cohort boundaries", () => {
-    it("are labelled as observed first events, never as deployments", () => {
+    it("use the confirmed Railway deployment times", () => {
       const r = buildDataQualityReport(data());
-      expect(r.cohorts.cohortConfidence).toBe("observed_first_event");
+      expect(r.cohorts.cohortConfidence).toBe("confirmed_deployment");
       expect(r.cohorts.stage1).toMatchObject({
-        startsAt: "2026-09-29T16:58:00.000Z",
-        deployedAt: null,
-        cohortConfidence: "observed_first_event",
+        startsAt: "2026-09-29T16:51:36.101Z",
+        deployedAt: "2026-09-29T16:51:36.101Z",
+        cohortConfidence: "confirmed_deployment",
       });
-      expect(r.cohorts.stage15.startsAt).toBe("2026-09-30T04:11:00.000Z");
-      expect(r.stage2bReadiness.warnings.join(" ")).toMatch(
+      expect(r.cohorts.stage15.startsAt).toBe("2026-09-30T03:52:04.413Z");
+      expect(r.stage2bReadiness.warnings.join(" ")).not.toMatch(
         /not a confirmed deployment time/,
       );
+    });
+
+    it("never has a deployment later than the first observed event", () => {
+      for (const c of Object.values(PLATFORM_EVENT_COHORTS)) {
+        if (c.deployedAt)
+          expect(c.deployedAt.getTime()).toBeLessThanOrEqual(
+            c.observedFirstEventAt.getTime(),
+          );
+      }
+    });
+
+    it("falls back to the observed boundary, labelled as such, when no deployment is confirmed", () => {
+      const c = {
+        ...PLATFORM_EVENT_COHORTS.stage1,
+        deployedAt: null,
+        confidence: "observed_first_event" as const,
+      };
+      expect(cohortStart(c)).toBe(c.observedFirstEventAt);
     });
 
     it("prefers a confirmed deployedAt when one is set", () => {
