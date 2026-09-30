@@ -11,6 +11,7 @@ describe("PhotographersService profile update guards", () => {
       {} as any,
       {} as any,
       {} as any,
+      { reconcile: jest.fn().mockResolvedValue(0) } as any,
     );
 
   it("resets mobile verification when verified phone is changed", async () => {
@@ -128,6 +129,7 @@ describe("PhotographersService profile update guards", () => {
       {} as any,
       {} as any,
       {} as any,
+      { reconcile: jest.fn().mockResolvedValue(0) } as any,
     );
 
     const canView = await (service as any).canViewPhotographerContact(
@@ -176,6 +178,10 @@ describe("PhotographersService social accounts on creator save (Stage 3A-0)", ()
       updateMany: jest.fn().mockResolvedValue({}),
       countDocuments: jest.fn().mockResolvedValue(2),
     };
+    const verification = {
+      reconcile: jest.fn().mockResolvedValue(0),
+      decide: jest.fn(),
+    };
     const service = new PhotographersService(
       photographerModel as any,
       {} as any,
@@ -185,8 +191,9 @@ describe("PhotographersService social accounts on creator save (Stage 3A-0)", ()
       {} as any,
       {} as any,
       {} as any,
+      verification as any,
     );
-    return { service, photographerModel, profileFlagModel };
+    return { service, photographerModel, profileFlagModel, verification };
   };
 
   it("preserves identity and server fields, never sets creatorTierVerified, and only notes admin flags", async () => {
@@ -232,5 +239,41 @@ describe("PhotographersService social accounts on creator save (Stage 3A-0)", ()
     } as any);
     const [, update] = photographerModel.findByIdAndUpdate.mock.calls[0];
     expect(update.$set.creatorTierVerified).toBeUndefined();
+  });
+
+  it("Stage 3A-1: spoofed per-account verification never reaches the store; a handle change is reconciled", async () => {
+    const { service, photographerModel, verification } = setup();
+    await service.updateProfile("photo-1", {
+      socialMedia: [
+        {
+          platform: "Instagram",
+          handle: "shooter.renamed",
+          tier: "Nano",
+          ownershipVerification: {
+            status: "verified",
+            decidedHandle: "shooter.renamed",
+          },
+          tierVerification: { status: "verified", decidedTier: "Nano" },
+          decidedById: "admin-1",
+          method: "manual",
+        },
+      ],
+    } as any);
+    const [, update] = photographerModel.findByIdAndUpdate.mock.calls[0];
+    const saved = update.$set.socialMedia[0];
+    expect(saved.ownershipVerification).toBeUndefined();
+    expect(saved.decidedById).toBeUndefined();
+    expect(saved.method).toBeUndefined();
+    expect(verification.decide).not.toHaveBeenCalled();
+    expect(verification.reconcile).toHaveBeenCalledWith(
+      "Photographer",
+      "photo-1",
+      [
+        expect.objectContaining({
+          socialAccountId: ID_A,
+          handle: "shooter.renamed",
+        }),
+      ],
+    );
   });
 });

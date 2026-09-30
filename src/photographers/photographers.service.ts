@@ -18,6 +18,7 @@ import {
   mergeSocialMediaEntries,
   socialIdentityChanges,
 } from "../utils/social-account.util";
+import { SocialAccountVerificationService } from "../social-account-verification/social-account-verification.service";
 import {
   applyDiscoverableProfileFilter,
   applySearchEligibilityFilter,
@@ -89,6 +90,7 @@ export class PhotographersService {
     private readonly collaborationAuditModel: Model<any>,
     private readonly cloudinaryService: CloudinaryService,
     private readonly plansService: PlansService,
+    private readonly socialAccountVerification: SocialAccountVerificationService,
   ) {}
 
   /** Brand-safe Collaboration Score fields only — see UsersService's sibling helper. */
@@ -588,6 +590,12 @@ export class PhotographersService {
       await this.noteCreatorSocialUpdate(
         userId,
         socialBefore,
+        update.socialMedia,
+      );
+      // Stage 3A-1: a changed handle/tier resets that account's decision to pending.
+      await this.socialAccountVerification.reconcile(
+        "Photographer",
+        String(userId),
         update.socialMedia,
       );
     }

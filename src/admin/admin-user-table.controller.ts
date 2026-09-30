@@ -25,6 +25,11 @@ import {
   isSocialAccountId,
   newSocialAccountId,
 } from "../utils/social-account.util";
+import {
+  SocialAccountVerificationService,
+  SocialDecisionBody,
+  toSocialProfileType,
+} from "../social-account-verification/social-account-verification.service";
 import * as bcrypt from "bcryptjs";
 import * as crypto from "crypto";
 import {
@@ -54,6 +59,7 @@ export class AdminUserTableController {
     private readonly earlyAccessAssignmentService: EarlyAccessAssignmentService,
     private readonly firebaseAdminService: FirebaseAdminService,
     private readonly authService: AuthService,
+    private readonly socialAccountVerification: SocialAccountVerificationService,
   ) {}
 
   private getPaging(pageRaw?: string, limitRaw?: string) {
@@ -1497,7 +1503,7 @@ export class AdminUserTableController {
         "Social account not found on this profile — it may have been changed. Refresh and try again.",
       );
     }
-    return this.applyAdminSocialEdit(user, index, body);
+    return this.applyAdminSocialEdit(user, index, body, type, id);
   }
 
   /**
@@ -1530,7 +1536,7 @@ export class AdminUserTableController {
         "This social account now has a stable id — please refresh the page and edit it again.",
       );
     }
-    return this.applyAdminSocialEdit(user, index, body);
+    return this.applyAdminSocialEdit(user, index, body, type, id);
   }
 
   private async applyAdminSocialEdit(
@@ -1542,6 +1548,8 @@ export class AdminUserTableController {
       changedBy?: string;
       changedByName?: string;
     },
+    type: string,
+    profileId: string,
   ) {
     const sm = user.socialMedia[index];
     // Entries edited before the backfill get their identity here (same as a creator save would).
@@ -1601,7 +1609,109 @@ export class AdminUserTableController {
     }
 
     const saved = await user.save();
+    // Stage 3A-1: an admin handle/tier edit also resets that account's decision to pending.
+    await this.socialAccountVerification.reconcile(
+      toSocialProfileType(type),
+      String(profileId),
+      saved?.socialMedia ?? user.socialMedia,
+    );
     return { message: "Social media updated", user: saved };
+  }
+
+  /**
+   * Stage 3A-1: effective ownership/tier verification for every social account
+   * on a profile. Admin-only data — never part of profile responses.
+   */
+  @Get("users/:type/:id/social-account-verifications")
+  async listSocialAccountVerifications(
+    @Param("type") type: string,
+    @Param("id") id: string,
+  ) {
+    const profileType = toSocialProfileType(type);
+    const user: any = await this.socialMediaModelFor(type)
+      .findById(id)
+      .select("socialMedia")
+      .lean();
+    if (!user) throw new NotFoundException("User not found");
+    const accounts = await this.socialAccountVerification.listForProfile(
+      profileType,
+      String(id),
+      user.socialMedia,
+    );
+    return { accounts };
+  }
+
+  @Patch(
+    "users/:type/:id/social-accounts/:socialAccountId/ownership-verification",
+  )
+  async decideSocialOwnership(
+    @Param("type") type: string,
+    @Param("id") id: string,
+    @Param("socialAccountId") socialAccountId: string,
+    @Body() body: SocialDecisionBody,
+    @Req() req: any,
+  ) {
+    return this.decideSocialAccount(
+      type,
+      id,
+      socialAccountId,
+      "ownership",
+      body,
+      req,
+    );
+  }
+
+  @Patch("users/:type/:id/social-accounts/:socialAccountId/tier-verification")
+  async decideSocialTier(
+    @Param("type") type: string,
+    @Param("id") id: string,
+    @Param("socialAccountId") socialAccountId: string,
+    @Body() body: SocialDecisionBody,
+    @Req() req: any,
+  ) {
+    return this.decideSocialAccount(
+      type,
+      id,
+      socialAccountId,
+      "tier",
+      body,
+      req,
+    );
+  }
+
+  private async decideSocialAccount(
+    type: string,
+    id: string,
+    socialAccountId: string,
+    reviewType: "ownership" | "tier",
+    body: SocialDecisionBody,
+    req: any,
+  ) {
+    const profileType = toSocialProfileType(type);
+    if (!isSocialAccountId(socialAccountId)) {
+      throw new BadRequestException("Invalid social account id");
+    }
+    const user: any = await this.socialMediaModelFor(type)
+      .findById(id)
+      .select("socialMedia")
+      .lean();
+    if (!user) throw new NotFoundException("User not found");
+    const entry = (
+      Array.isArray(user.socialMedia) ? user.socialMedia : []
+    ).find((e: any) => e?.socialAccountId === socialAccountId);
+    if (!entry) {
+      throw new NotFoundException(
+        "Social account not found on this profile — it may have been changed. Refresh and try again.",
+      );
+    }
+    const account = await this.socialAccountVerification.decide(req?.user, {
+      profileType,
+      profileId: String(id),
+      entry,
+      reviewType,
+      body: body || {},
+    });
+    return { message: "Social account review saved", account };
   }
 
   /**

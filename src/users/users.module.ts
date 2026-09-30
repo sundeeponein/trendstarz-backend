@@ -3,6 +3,7 @@ import { UsersController } from "./users.controller";
 import { BrandsController } from "./brands.controller";
 import { InfluencersController } from "./influencers.controller";
 import { UsersService } from "./users.service";
+import { SocialAccountVerificationModule } from "../social-account-verification/social-account-verification.module";
 import { CloudinaryService } from "../cloudinary.service";
 import { MongooseModule } from "@nestjs/mongoose";
 import {
@@ -29,6 +30,7 @@ import { PhotographersModule } from "../photographers/photographers.module";
 
 @Module({
   imports: [
+    SocialAccountVerificationModule,
     MongooseModule.forFeature([
       { name: "User", schema: UserSchema, collection: "users" },
       {

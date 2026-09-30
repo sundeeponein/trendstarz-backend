@@ -1,4 +1,6 @@
 import { AdminUserTableController } from "./admin-user-table.controller";
+import { JwtAuthGuard } from "../auth/jwt-auth.guard";
+import { RolesGuard } from "../auth/roles.guard";
 
 // The deleted/active status filter used by the admin user tables (moved here
 // from AdminListsController). It doesn't touch `this`, so it's called directly.
@@ -45,7 +47,8 @@ describe("AdminUserTableController issueTemporaryPassword", () => {
         expiresAt: new Date("2026-10-01T00:00:00Z"),
       }),
     };
-    const args: any[] = Array.from({ length: 9 }, () => ({}));
+    const args: any[] = Array.from({ length: 10 }, () => ({}));
+    args[9] = { reconcile: jest.fn().mockResolvedValue(0) };
     args[8] = authService;
     const controller = new (AdminUserTableController as any)(...args);
     return { controller, authService };
@@ -92,7 +95,8 @@ describe("AdminUserTableController social account editing (Stage 3A-0)", () => {
       save: jest.fn(() => Promise.resolve(user)),
     };
     const influencerModel = { findById: jest.fn().mockResolvedValue(user) };
-    const args: any[] = Array.from({ length: 9 }, () => ({}));
+    const args: any[] = Array.from({ length: 10 }, () => ({}));
+    args[9] = { reconcile: jest.fn().mockResolvedValue(0) };
     args[0] = influencerModel;
     const controller = new (AdminUserTableController as any)(...args);
     return { controller, user };
@@ -239,7 +243,8 @@ describe("AdminUserTableController explicit creator-tier toggle still works (Sta
       findOne: jest.fn(() => ({ lean: jest.fn().mockResolvedValue(null) })),
       create: jest.fn().mockResolvedValue({}),
     };
-    const args: any[] = Array.from({ length: 9 }, () => ({}));
+    const args: any[] = Array.from({ length: 10 }, () => ({}));
+    args[9] = { reconcile: jest.fn().mockResolvedValue(0) };
     args[0] = { findById: jest.fn().mockResolvedValue(user) };
     args[5] = flagModel;
     const controller = new (AdminUserTableController as any)(...args);
@@ -273,5 +278,198 @@ describe("AdminUserTableController explicit creator-tier toggle still works (Sta
       verifiedByTrendStarz: false,
       adminReviewPending: true,
     });
+  });
+});
+
+describe("AdminUserTableController per-account verification (Stage 3A-1)", () => {
+  const ID_A = "64b0000000000000000000a1";
+  const ID_B = "64b0000000000000000000b2";
+  const adminReq = { user: { role: "admin", userId: "admin-1" } };
+  // Constructor: influencer(0), user(1), brand(2), photographer(3), payment(4), flag(5), earlyAccess(6), firebase(7), auth(8), socialAccountVerification(9).
+  function setup(
+    profile: any,
+    type: "influencer" | "brand" | "photographer" = "influencer",
+  ) {
+    const model = {
+      findById: jest.fn(() => ({
+        select: jest.fn(() => ({ lean: jest.fn().mockResolvedValue(profile) })),
+      })),
+    };
+    const verification = {
+      decide: jest.fn((actor: any, params: any) =>
+        Promise.resolve({ socialAccountId: params.entry.socialAccountId }),
+      ),
+      listForProfile: jest.fn().mockResolvedValue([{ socialAccountId: ID_A }]),
+      reconcile: jest.fn().mockResolvedValue(0),
+    };
+    const args: any[] = Array.from({ length: 10 }, () => ({}));
+    args[{ influencer: 0, brand: 2, photographer: 3 }[type]] = model;
+    args[9] = verification;
+    const controller = new (AdminUserTableController as any)(...args);
+    return { controller, model, verification };
+  }
+  const accounts = () => [
+    { socialAccountId: ID_B, platform: "YouTube", handle: "yt", tier: "Nano" },
+    {
+      socialAccountId: ID_A,
+      platform: "Instagram",
+      handle: "ig",
+      tier: "Micro",
+    },
+  ];
+
+  it.each([
+    ["decideSocialOwnership", "ownership"],
+    ["decideSocialTier", "tier"],
+  ])(
+    "%s passes the exact account (by id, not position) and the token actor",
+    async (method, reviewType) => {
+      const profile = { socialMedia: accounts(), creatorTierVerified: true };
+      const snapshot = JSON.parse(JSON.stringify(profile));
+      const { controller, verification } = setup(profile, "photographer");
+      const body = { status: "verified", note: "ok", decidedById: "spoof" };
+
+      const res = await controller[method](
+        "photographer",
+        "ph-1",
+        ID_A,
+        body,
+        adminReq,
+      );
+
+      expect(res).toEqual({
+        message: "Social account review saved",
+        account: { socialAccountId: ID_A },
+      });
+      const [actor, params] = verification.decide.mock.calls[0];
+      expect(actor).toBe(adminReq.user);
+      expect(params).toMatchObject({
+        profileType: "Photographer",
+        profileId: "ph-1",
+        reviewType,
+        entry: { socialAccountId: ID_A, handle: "ig" },
+        body,
+      });
+      // The endpoint reads the profile and never writes it (creatorTierVerified included).
+      expect(profile).toEqual(snapshot);
+    },
+  );
+
+  it("400 for a malformed socialAccountId, before any lookup", async () => {
+    const { controller, model, verification } = setup({
+      socialMedia: accounts(),
+    });
+    for (const bad of ["0", "not-an-id", `${ID_A}0`, ID_A.toUpperCase()]) {
+      await expect(
+        controller.decideSocialOwnership(
+          "influencer",
+          "u1",
+          bad,
+          { status: "verified" },
+          adminReq,
+        ),
+      ).rejects.toThrow("Invalid social account id");
+    }
+    expect(model.findById).not.toHaveBeenCalled();
+    expect(verification.decide).not.toHaveBeenCalled();
+  });
+
+  it("404 for an unknown socialAccountId or profile", async () => {
+    const { controller, verification } = setup({
+      socialMedia: [accounts()[0]],
+    });
+    await expect(
+      controller.decideSocialTier(
+        "influencer",
+        "u1",
+        ID_A,
+        { status: "verified" },
+        adminReq,
+      ),
+    ).rejects.toMatchObject({ status: 404 });
+
+    const missing = setup(null);
+    await expect(
+      missing.controller.decideSocialTier(
+        "influencer",
+        "u1",
+        ID_A,
+        { status: "verified" },
+        adminReq,
+      ),
+    ).rejects.toMatchObject({ status: 404 });
+    await expect(
+      missing.controller.listSocialAccountVerifications("influencer", "u1"),
+    ).rejects.toMatchObject({ status: 404 });
+    expect(verification.decide).not.toHaveBeenCalled();
+  });
+
+  it("400 for an unsupported profile type", async () => {
+    const { controller } = setup({ socialMedia: accounts() });
+    await expect(
+      controller.decideSocialOwnership(
+        "admin",
+        "u1",
+        ID_A,
+        { status: "verified" },
+        adminReq,
+      ),
+    ).rejects.toThrow("Unsupported user type");
+  });
+
+  it("lists effective states for every account on the profile", async () => {
+    const profile = { socialMedia: accounts() };
+    const { controller, verification } = setup(profile, "brand");
+    await expect(
+      controller.listSocialAccountVerifications("brand", "b-1"),
+    ).resolves.toEqual({ accounts: [{ socialAccountId: ID_A }] });
+    expect(verification.listForProfile).toHaveBeenCalledWith(
+      "Brand",
+      "b-1",
+      profile.socialMedia,
+    );
+  });
+
+  it("an admin handle/tier edit reconciles the saved accounts", async () => {
+    const user: any = {
+      socialMedia: accounts(),
+      socialMediaEditLog: [],
+      adminSocialNotifications: [],
+      save: jest.fn(() => Promise.resolve(user)),
+    };
+    const verification = { reconcile: jest.fn().mockResolvedValue(1) };
+    const args: any[] = Array.from({ length: 10 }, () => ({}));
+    args[0] = { findById: jest.fn().mockResolvedValue(user) };
+    args[9] = verification;
+    const controller = new (AdminUserTableController as any)(...args);
+
+    await controller.patchSocialAccount("influencer", "u1", ID_A, {
+      handle: "ig.new",
+    });
+
+    expect(verification.reconcile).toHaveBeenCalledWith(
+      "Influencer",
+      "u1",
+      expect.arrayContaining([
+        expect.objectContaining({ socialAccountId: ID_A, handle: "ig.new" }),
+      ]),
+    );
+  });
+
+  it("the whole controller is behind JwtAuthGuard + RolesGuard, and RolesGuard refuses creators", () => {
+    const guards = Reflect.getMetadata("__guards__", AdminUserTableController);
+    expect(guards).toEqual([JwtAuthGuard, RolesGuard]);
+
+    const ctx = (user: any) => ({
+      switchToHttp: () => ({ getRequest: () => ({ user }) }),
+    });
+    const guard = new RolesGuard();
+    for (const role of ["influencer", "brand", "photographer", undefined]) {
+      expect(() => guard.canActivate(ctx({ role }) as any)).toThrow(
+        "Admin access only",
+      );
+    }
+    expect(guard.canActivate(ctx({ role: "admin" }) as any)).toBe(true);
+    expect(guard.canActivate(ctx({ role: "subadmin" }) as any)).toBe(true);
   });
 });

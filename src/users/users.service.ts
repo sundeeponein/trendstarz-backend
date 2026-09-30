@@ -22,6 +22,7 @@ import {
   mergeSocialMediaEntries,
   socialIdentityChanges,
 } from "../utils/social-account.util";
+import { SocialAccountVerificationService } from "../social-account-verification/social-account-verification.service";
 import { invalidateAccountStatusCache } from "../auth/jwt-auth.guard";
 import { consumeOtpVerificationToken } from "../otp/otp.controller";
 import {
@@ -926,6 +927,7 @@ export class UsersService implements OnModuleInit {
     @InjectModel("Review") private readonly reviewModel: Model<any>,
     @InjectModel("CampaignTransaction")
     private readonly campaignTransactionModel: Model<any>,
+    private readonly socialAccountVerification: SocialAccountVerificationService,
   ) {}
 
   /**
@@ -3501,6 +3503,12 @@ export class UsersService implements OnModuleInit {
         socialBefore,
         updateData.socialMedia,
       );
+      // Stage 3A-1: a changed handle/tier resets that account's decision to pending.
+      await this.socialAccountVerification.reconcile(
+        "Influencer",
+        String(userId),
+        updateData.socialMedia,
+      );
     }
     return { message: "Profile updated", user: updated };
   }
@@ -3668,6 +3676,14 @@ export class UsersService implements OnModuleInit {
     if (!updated) return { message: "Brand not found", userId };
     if (shouldClearBrandGallery) {
       await this.clearGalleryFlags(userId, "Brand");
+    }
+    if (updateData.socialMedia) {
+      // Stage 3A-1: a changed handle/tier resets that account's decision to pending.
+      await this.socialAccountVerification.reconcile(
+        "Brand",
+        String(userId),
+        updateData.socialMedia,
+      );
     }
     return { message: "Profile updated", user: updated };
   }

@@ -13,10 +13,12 @@ import { UsageCounterSchema } from "../database/schemas/usage-counter.schema";
 import { ProfileFlagSchema } from "../database/schemas/profile-flag.schema";
 import { CollaborationAuditSchema } from "../database/schemas/collaboration-audit.schema";
 import { PlansModule } from "../plans/plans.module";
+import { SocialAccountVerificationModule } from "../social-account-verification/social-account-verification.module";
 
 @Module({
   imports: [
     PlansModule,
+    SocialAccountVerificationModule,
     MongooseModule.forFeature([
       {
         name: "Photographer",

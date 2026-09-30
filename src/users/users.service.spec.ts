@@ -17,6 +17,7 @@ describe("UsersService profile update guards", () => {
     metaOAuthService?: any;
     reviewModel?: any;
     campaignTransactionModel?: any;
+    socialAccountVerification?: any;
   }) => {
     const cloudinaryService = overrides?.cloudinaryService || ({} as any);
     const firebaseAdminService = overrides?.firebaseAdminService || ({} as any);
@@ -56,6 +57,8 @@ describe("UsersService profile update guards", () => {
       metaOAuthService,
       overrides?.reviewModel || ({} as any),
       overrides?.campaignTransactionModel || ({} as any),
+      overrides?.socialAccountVerification ||
+        ({ reconcile: jest.fn().mockResolvedValue(0) } as any),
     );
   };
 
@@ -566,6 +569,7 @@ describe("UsersService social accounts on creator save (Stage 3A-0)", () => {
     influencerModel?: any;
     brandModel?: any;
     profileFlagModel?: any;
+    socialAccountVerification?: any;
   }) =>
     new UsersService(
       {} as any, // cloudinaryService
@@ -589,6 +593,8 @@ describe("UsersService social accounts on creator save (Stage 3A-0)", () => {
       { revokePermissions: jest.fn() } as any,
       {} as any, // reviewModel
       {} as any, // campaignTransactionModel
+      models.socialAccountVerification ||
+        ({ reconcile: jest.fn().mockResolvedValue(0) } as any),
     );
 
   const storedEntry = () => ({
@@ -800,5 +806,208 @@ describe("UsersService social accounts on creator save (Stage 3A-0)", () => {
     } as any);
     const [, update] = brandModel.findByIdAndUpdate.mock.calls[0];
     expect("creatorTierVerified" in (update.$set || update)).toBe(false);
+  });
+});
+
+// ── Stage 3A-1: creator saves vs per-account verification ───────────────────
+describe("UsersService creator saves vs per-account verification (Stage 3A-1)", () => {
+  const ID_A = "64b0000000000000000000a1";
+  const verificationService = () => ({
+    reconcile: jest.fn().mockResolvedValue(0),
+    decide: jest.fn(),
+    listForProfile: jest.fn(),
+  });
+  const make = (models: {
+    influencerModel?: any;
+    brandModel?: any;
+    socialAccountVerification: any;
+  }) =>
+    new UsersService(
+      {} as any, // cloudinaryService
+      {} as any, // firebaseAdminService
+      {} as any, // userModel
+      models.influencerModel || ({} as any),
+      models.brandModel || ({} as any),
+      {} as any, // photographerModel
+      {} as any, // campaignInviteModel
+      {} as any, // campaignModel
+      { updateMany: jest.fn().mockResolvedValue({}) } as any, // profileFlagModel
+      {} as any, // collaborationAuditModel
+      {} as any, // paymentModel
+      {} as any, // transactionModel
+      {} as any, // socialOAuthConnectionModel
+      {
+        canViewSocialLinks: jest.fn().mockResolvedValue(true),
+        listActive: jest.fn().mockResolvedValue({ plans: [] }),
+      } as any,
+      { revokePermissions: jest.fn() } as any,
+      {} as any, // reviewModel
+      {} as any, // campaignTransactionModel
+      models.socialAccountVerification,
+    );
+
+  const stored = () => ({
+    socialAccountId: ID_A,
+    platformKey: "instagram",
+    platform: "Instagram",
+    handle: "creator.one",
+    tier: "Micro",
+    followersCount: 0,
+    contentTypes: [],
+  });
+
+  // Everything a creator might try to smuggle in to look verified.
+  const spoofed = {
+    ownershipVerification: {
+      status: "verified",
+      method: "manual",
+      decidedHandle: "creator.new",
+      decidedAt: "2026-01-01T00:00:00.000Z",
+      decidedById: "admin-1",
+      decidedByName: "Asha",
+    },
+    tierVerification: { status: "verified", decidedTier: "Mid-Tier" },
+    status: "verified",
+    method: "manual",
+    decidedHandle: "creator.new",
+    decidedTier: "Mid-Tier",
+    decidedAt: "2026-01-01T00:00:00.000Z",
+    decidedById: "admin-1",
+    decidedByName: "Asha",
+    socialAccountId: "64b0000000000000000000ff",
+    platformKey: "youtube",
+    followersCount: 999999,
+  };
+
+  const influencerDoc = () => {
+    const doc: any = {
+      phoneNumber: "9000000000",
+      email: "c@example.com",
+      socialMedia: [stored()],
+      creatorTierVerified: true, // legacy value — must stay exactly as is
+      set: jest.fn((k: string, v: any) => {
+        doc[k] = v;
+      }),
+      save: jest.fn(() => Promise.resolve(doc)),
+    };
+    return doc;
+  };
+
+  it("influencer: spoofed verification fields never persist, the store is never written, and reconcile gets the server entry", async () => {
+    const doc = influencerDoc();
+    const svc = verificationService();
+    const service = make({
+      influencerModel: { findById: jest.fn().mockResolvedValue(doc) },
+      socialAccountVerification: svc,
+    });
+
+    await service.updateInfluencerProfile("inf-1", {
+      ...spoofed,
+      creatorTierVerified: false,
+      socialMedia: [
+        {
+          platform: "Instagram",
+          handle: "creator.new",
+          tier: "Mid-Tier",
+          contentTypes: [{ name: "Reel", enabled: true, price: 5000 }],
+          ...spoofed,
+        },
+      ],
+    } as any);
+
+    const [saved] = doc.set.mock.calls.find(
+      ([k]: any[]) => k === "socialMedia",
+    )[1];
+    for (const key of [
+      "ownershipVerification",
+      "tierVerification",
+      "status",
+      "method",
+      "decidedHandle",
+      "decidedTier",
+      "decidedAt",
+      "decidedById",
+      "decidedByName",
+    ]) {
+      expect(saved[key]).toBeUndefined();
+    }
+    expect(saved).toMatchObject({
+      socialAccountId: ID_A,
+      platformKey: "instagram",
+      followersCount: 0,
+      handle: "creator.new",
+      tier: "Mid-Tier",
+    });
+    for (const key of Object.keys(spoofed)) {
+      expect(doc.set.mock.calls.some(([k]: any[]) => k === key)).toBe(false);
+    }
+    // Legacy profile-level field untouched (neither cleared nor set).
+    expect(doc.creatorTierVerified).toBe(true);
+    expect(
+      doc.set.mock.calls.some(([k]: any[]) => k === "creatorTierVerified"),
+    ).toBe(false);
+
+    // A creator save can only ever invalidate — never decide.
+    expect(svc.decide).not.toHaveBeenCalled();
+    expect(svc.reconcile).toHaveBeenCalledTimes(1);
+    const [type, id, list] = svc.reconcile.mock.calls[0];
+    expect([type, id]).toEqual(["Influencer", "inf-1"]);
+    expect(list[0]).toMatchObject({
+      socialAccountId: ID_A,
+      handle: "creator.new",
+      tier: "Mid-Tier",
+    });
+  });
+
+  it("influencer: no reconcile when socialMedia isn't part of the save", async () => {
+    const doc = influencerDoc();
+    const svc = verificationService();
+    const service = make({
+      influencerModel: { findById: jest.fn().mockResolvedValue(doc) },
+      socialAccountVerification: svc,
+    });
+    await service.updateInfluencerProfile("inf-1", { gender: "female" });
+    expect(svc.reconcile).not.toHaveBeenCalled();
+  });
+
+  it("brand: reconcile runs with the merged list after the save", async () => {
+    const svc = verificationService();
+    const brandModel = {
+      findById: jest.fn(() => ({
+        select: jest.fn(() => ({
+          lean: jest.fn().mockResolvedValue({
+            phoneNumber: "9000000000",
+            email: "b@example.com",
+            socialMedia: [stored()],
+          }),
+        })),
+      })),
+      findByIdAndUpdate: jest.fn().mockResolvedValue({ _id: "brand-1" }),
+    };
+    await make({
+      brandModel,
+      socialAccountVerification: svc,
+    }).updateBrandProfile("brand-1", {
+      socialMedia: [
+        {
+          platform: "Instagram",
+          handle: "brand.new",
+          tier: "Micro",
+          ...spoofed,
+        },
+      ],
+    } as any);
+    const [, update] = brandModel.findByIdAndUpdate.mock.calls[0];
+    const saved = (update.$set || update).socialMedia[0];
+    expect(saved.ownershipVerification).toBeUndefined();
+    expect(saved.tierVerification).toBeUndefined();
+    expect(svc.decide).not.toHaveBeenCalled();
+    expect(svc.reconcile).toHaveBeenCalledWith(
+      "Brand",
+      "brand-1",
+      expect.arrayContaining([
+        expect.objectContaining({ socialAccountId: ID_A, handle: "brand.new" }),
+      ]),
+    );
   });
 });
