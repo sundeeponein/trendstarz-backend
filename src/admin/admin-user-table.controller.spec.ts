@@ -34,3 +34,48 @@ describe("AdminUserTableController status filter", () => {
     });
   });
 });
+
+describe("AdminUserTableController issueTemporaryPassword", () => {
+  // Constructor: 6 models, EarlyAccessAssignmentService, FirebaseAdminService, AuthService (index 8).
+  function setup() {
+    const authService = {
+      issueTemporaryPassword: jest.fn().mockResolvedValue({
+        success: true,
+        email: "user@test.com",
+        expiresAt: new Date("2026-10-01T00:00:00Z"),
+      }),
+    };
+    const args: any[] = Array.from({ length: 9 }, () => ({}));
+    args[8] = authService;
+    const controller = new (AdminUserTableController as any)(...args);
+    return { controller, authService };
+  }
+
+  it("lets a full admin issue one and never returns the password", async () => {
+    const { controller, authService } = setup();
+    const res = await controller.issueTemporaryPassword("influencer", "u1", {
+      user: { role: "admin", userId: "admin-1" },
+    });
+    expect(authService.issueTemporaryPassword).toHaveBeenCalledWith(
+      "influencer",
+      "u1",
+      "admin-1",
+    );
+    expect(res).toEqual({
+      success: true,
+      message: "Temporary password emailed to user@test.com.",
+      email: "user@test.com",
+      expiresAt: new Date("2026-10-01T00:00:00Z"),
+    });
+  });
+
+  it("refuses subadmins", async () => {
+    const { controller, authService } = setup();
+    await expect(
+      controller.issueTemporaryPassword("brand", "u1", {
+        user: { role: "subadmin", userId: "s1" },
+      }),
+    ).rejects.toThrow("Only admins can issue temporary passwords.");
+    expect(authService.issueTemporaryPassword).not.toHaveBeenCalled();
+  });
+});

@@ -8,6 +8,7 @@ import {
   UseGuards,
   Query,
   Req,
+  ForbiddenException,
   BadRequestException,
   NotFoundException,
 } from "@nestjs/common";
@@ -18,6 +19,7 @@ import { Model, Types } from "mongoose";
 import { Payment } from "../database/schemas/payment.schema";
 import { EarlyAccessAssignmentService } from "./early-access-assignment.service";
 import { FirebaseAdminService } from "../utils/firebase-admin.service";
+import { AuthService } from "../auth/auth.service";
 import * as bcrypt from "bcryptjs";
 import * as crypto from "crypto";
 import {
@@ -46,6 +48,7 @@ export class AdminUserTableController {
     @InjectModel("ProfileFlag") private readonly flagModel: Model<any>,
     private readonly earlyAccessAssignmentService: EarlyAccessAssignmentService,
     private readonly firebaseAdminService: FirebaseAdminService,
+    private readonly authService: AuthService,
   ) {}
 
   private getPaging(pageRaw?: string, limitRaw?: string) {
@@ -1512,6 +1515,37 @@ export class AdminUserTableController {
 
     const saved = await user.save();
     return { message: "Social media updated", user: saved };
+  }
+
+  /**
+   * Support action for users locked out after a password reset: emails them a
+   * temporary password (set in both MongoDB and Firebase, email marked verified,
+   * forced change on first login, expires in 24h). The password itself is never
+   * returned to the admin. Full admins only — not subadmins.
+   */
+  @Post("users/:type/:id/temporary-password")
+  async issueTemporaryPassword(
+    @Param("type") type: string,
+    @Param("id") id: string,
+    @Req() req: any,
+  ) {
+    if (req?.user?.role !== "admin") {
+      throw new ForbiddenException(
+        "Only admins can issue temporary passwords.",
+      );
+    }
+    const adminId = String(req?.user?.userId || req?.user?.id || "admin");
+    const result = await this.authService.issueTemporaryPassword(
+      type,
+      id,
+      adminId,
+    );
+    return {
+      success: true,
+      message: `Temporary password emailed to ${result.email}.`,
+      email: result.email,
+      expiresAt: result.expiresAt,
+    };
   }
 
   @Patch("users/:type/:id/contact-verification")

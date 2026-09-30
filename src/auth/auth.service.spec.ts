@@ -1,6 +1,11 @@
 import { Test, TestingModule } from "@nestjs/testing";
 import { getModelToken } from "@nestjs/mongoose";
-import { UnauthorizedException, BadRequestException } from "@nestjs/common";
+import {
+  UnauthorizedException,
+  BadRequestException,
+  NotFoundException,
+  InternalServerErrorException,
+} from "@nestjs/common";
 import { AuthService } from "./auth.service";
 import * as bcrypt from "bcryptjs";
 import { FirebaseAdminService } from "../utils/firebase-admin.service";
@@ -435,6 +440,270 @@ describe("AuthService", () => {
       const result = await service.getPublicSettings();
       expect(result.preApproveInfluencers).toBe(true);
       expect(result.preApproveBrands).toBe(false);
+    });
+  });
+
+  // ── Password drift between MongoDB and Firebase (users locked out after a reset) ──
+  describe("login password self-heal from Firebase", () => {
+    let firebase: any;
+    const nowSeconds = () => Math.floor(Date.now() / 1000);
+    const freshToken = (overrides: any = {}) => ({
+      uid: "fb-uid-1",
+      email: "inf@test.com",
+      email_verified: true,
+      auth_time: nowSeconds(),
+      firebase: { sign_in_provider: "password" },
+      ...overrides,
+    });
+    const influencerDoc = (overrides: any = {}) => ({
+      ...mockInfluencer,
+      mustChangePassword: true,
+      tempPasswordExpiresAt: new Date(Date.now() + 3600_000),
+      save: jest.fn().mockResolvedValue(undefined),
+      ...overrides,
+    });
+
+    beforeEach(() => {
+      firebase = (service as any).firebaseAdminService;
+      firebase.isConfigured.mockReturnValue(true);
+      (bcrypt.compare as jest.Mock).mockResolvedValue(false); // MongoDB hash is stale
+    });
+
+    it("re-syncs MongoDB to the entered password when Firebase just accepted it", async () => {
+      const doc = influencerDoc();
+      influencerModel.findOne.mockResolvedValue(doc);
+      firebase.verifyIdToken.mockResolvedValue(freshToken());
+
+      const result = await service.login(
+        "inf@test.com",
+        "NewPass#2026",
+        "fb-token",
+      );
+
+      expect(result.token).toBe("mock-jwt-token");
+      expect(bcrypt.hash).toHaveBeenCalledWith("NewPass#2026", 10);
+      expect(doc.password).toBe(hashedPw);
+      expect(doc.firebaseUid).toBe("fb-uid-1");
+      expect(doc.mustChangePassword).toBe(false);
+      expect(doc.save).toHaveBeenCalled();
+    });
+
+    it.each([
+      ["no Firebase token", undefined, freshToken()],
+      [
+        "a stale Firebase sign-in (older than 5 minutes)",
+        "t",
+        freshToken({ auth_time: nowSeconds() - 10 * 60 }),
+      ],
+      [
+        "a non-password sign-in (e.g. phone)",
+        "t",
+        freshToken({ firebase: { sign_in_provider: "phone" } }),
+      ],
+      ["a different email", "t", freshToken({ email: "someone@else.com" })],
+      [
+        "an unverified Firebase email",
+        "t",
+        freshToken({ email_verified: false }),
+      ],
+    ])("refuses with %s", async (_label, token, decoded) => {
+      const doc = influencerDoc();
+      influencerModel.findOne.mockResolvedValue(doc);
+      firebase.verifyIdToken.mockResolvedValue(decoded);
+
+      await expect(
+        service.login("inf@test.com", "Wrong#2026", token as any),
+      ).rejects.toThrow("Invalid credentials");
+      expect(bcrypt.hash).not.toHaveBeenCalled();
+      expect(doc.save).not.toHaveBeenCalled();
+    });
+
+    it("refuses when the Firebase token is invalid", async () => {
+      influencerModel.findOne.mockResolvedValue(influencerDoc());
+      firebase.verifyIdToken.mockRejectedValue(
+        new BadRequestException("Invalid Firebase ID token."),
+      );
+      await expect(service.login("inf@test.com", "x", "bad")).rejects.toThrow(
+        "Invalid credentials",
+      );
+      expect(bcrypt.hash).not.toHaveBeenCalled();
+    });
+
+    it("refuses when Firebase Admin is not configured", async () => {
+      firebase.isConfigured.mockReturnValue(false);
+      influencerModel.findOne.mockResolvedValue(influencerDoc());
+      await expect(service.login("inf@test.com", "x", "t")).rejects.toThrow(
+        "Invalid credentials",
+      );
+      expect(firebase.verifyIdToken).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("temporary password at login", () => {
+    it("logs in and tells the app to force a password change", async () => {
+      influencerModel.findOne.mockResolvedValue({
+        ...mockInfluencer,
+        mustChangePassword: true,
+        tempPasswordExpiresAt: new Date(Date.now() + 3600_000),
+      });
+      const result: any = await service.login("inf@test.com", "Temp#Pass2026");
+      expect(result.user.mustChangePassword).toBe(true);
+    });
+
+    it("rejects an expired temporary password", async () => {
+      influencerModel.findOne.mockResolvedValue({
+        ...mockInfluencer,
+        mustChangePassword: true,
+        tempPasswordExpiresAt: new Date(Date.now() - 1000),
+      });
+      await expect(
+        service.login("inf@test.com", "Temp#Pass2026"),
+      ).rejects.toThrow(/temporary password has expired/);
+    });
+
+    it("reports mustChangePassword false for normal accounts", async () => {
+      influencerModel.findOne.mockResolvedValue(mockInfluencer);
+      const result: any = await service.login("inf@test.com", "password123");
+      expect(result.user.mustChangePassword).toBe(false);
+    });
+  });
+
+  describe("issueTemporaryPassword", () => {
+    let firebase: any;
+    const pendingInfluencer = (overrides: any = {}) => ({
+      _id: "inf1",
+      email: "Inf@Test.com",
+      name: "Asha",
+      status: "pending",
+      isEmailVerified: false,
+      password: "old-hash",
+      resetToken: "abc",
+      save: jest.fn().mockResolvedValue(undefined),
+      ...overrides,
+    });
+
+    beforeEach(() => {
+      firebase = (service as any).firebaseAdminService;
+      firebase.isConfigured.mockReturnValue(true);
+      firebase.setEmailUserPassword = jest
+        .fn()
+        .mockResolvedValue({ uid: "fb-uid-9" });
+    });
+
+    it("sets the password in Firebase and MongoDB, verifies the email and emails it — without returning it", async () => {
+      const doc: any = pendingInfluencer();
+      influencerModel.findById.mockResolvedValue(doc);
+      const before = Date.now();
+
+      const result: any = await service.issueTemporaryPassword(
+        "influencer",
+        "inf1",
+        "admin-7",
+      );
+
+      const [fbEmail, tempPassword, fbVerified] =
+        firebase.setEmailUserPassword.mock.calls[0];
+      expect(fbEmail).toBe("inf@test.com");
+      expect(fbVerified).toBe(true);
+      expect(tempPassword).toHaveLength(14);
+      expect((service as any).isStrongPassword(tempPassword)).toBe(true);
+      expect(bcrypt.hash).toHaveBeenCalledWith(tempPassword, 10);
+
+      expect(doc).toMatchObject({
+        password: hashedPw,
+        isEmailVerified: true,
+        firebaseUid: "fb-uid-9",
+        mustChangePassword: true,
+        tempPasswordIssuedBy: "admin-7",
+        resetToken: null,
+        // Admin approval is a separate decision — untouched.
+        status: "pending",
+      });
+      const ttl = new Date(doc.tempPasswordExpiresAt).getTime() - before;
+      expect(ttl).toBeGreaterThanOrEqual(24 * 3600_000 - 1000);
+      expect(ttl).toBeLessThanOrEqual(24 * 3600_000 + 1000);
+      expect(doc.save).toHaveBeenCalled();
+
+      const mail = (sendAppEmail as jest.Mock).mock.calls[0][0];
+      expect(mail.to).toBe("Inf@Test.com");
+      expect(mail.text).toContain(tempPassword);
+      expect(JSON.stringify(result)).not.toContain(tempPassword);
+      expect(result).toMatchObject({ success: true, email: "Inf@Test.com" });
+    });
+
+    it("generates a different strong password every time", () => {
+      const seen = new Set<string>();
+      for (let i = 0; i < 50; i++) {
+        const pw = (service as any).generateTemporaryPassword();
+        expect((service as any).isStrongPassword(pw)).toBe(true);
+        expect(pw).not.toMatch(/[<>&"'0O1lI]/);
+        seen.add(pw);
+      }
+      expect(seen.size).toBe(50);
+    });
+
+    it("changes nothing in MongoDB when Firebase fails", async () => {
+      const doc = pendingInfluencer();
+      influencerModel.findById.mockResolvedValue(doc);
+      firebase.setEmailUserPassword.mockRejectedValue(
+        new Error("firebase down"),
+      );
+
+      await expect(
+        service.issueTemporaryPassword("influencer", "inf1", "a"),
+      ).rejects.toThrow("firebase down");
+      expect(doc.save).not.toHaveBeenCalled();
+      expect(doc.password).toBe("old-hash");
+      expect(sendAppEmail).not.toHaveBeenCalled();
+    });
+
+    it("tells the admin when the email could not be sent", async () => {
+      influencerModel.findById.mockResolvedValue(pendingInfluencer());
+      (sendAppEmail as jest.Mock).mockRejectedValueOnce(new Error("smtp down"));
+      await expect(
+        service.issueTemporaryPassword("influencer", "inf1", "a"),
+      ).rejects.toThrow(InternalServerErrorException);
+    });
+
+    it("rejects admin/unknown roles, missing and deleted accounts", async () => {
+      await expect(
+        service.issueTemporaryPassword("admin", "x", "a"),
+      ).rejects.toThrow(BadRequestException);
+      influencerModel.findById.mockResolvedValue(null);
+      await expect(
+        service.issueTemporaryPassword("influencer", "x", "a"),
+      ).rejects.toThrow(NotFoundException);
+      influencerModel.findById.mockResolvedValue(
+        pendingInfluencer({ isDeleted: true }),
+      );
+      await expect(
+        service.issueTemporaryPassword("influencer", "inf1", "a"),
+      ).rejects.toThrow(BadRequestException);
+      expect(firebase.setEmailUserPassword).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("changing the temporary password", () => {
+    it("clears the forced-change flag", async () => {
+      const doc: any = {
+        ...mockInfluencer,
+        mustChangePassword: true,
+        tempPasswordExpiresAt: new Date(Date.now() + 3600_000),
+        save: jest.fn().mockResolvedValue(undefined),
+      };
+      influencerModel.findById.mockResolvedValue(doc);
+
+      await service.changePassword(
+        "inf1",
+        "influencer",
+        "Temp#Pass2026",
+        "Mine#Pass2026",
+        "Mine#Pass2026",
+      );
+
+      expect(doc.mustChangePassword).toBe(false);
+      expect(doc.tempPasswordExpiresAt).toBeNull();
+      expect(doc.save).toHaveBeenCalled();
     });
   });
 });

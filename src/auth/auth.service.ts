@@ -3,6 +3,8 @@ import {
   UnauthorizedException,
   BadRequestException,
   ForbiddenException,
+  NotFoundException,
+  InternalServerErrorException,
 } from "@nestjs/common";
 import * as bcrypt from "bcryptjs";
 import * as crypto from "crypto";
@@ -15,6 +17,7 @@ import { WhatsAppService } from "../whatsapp/whatsapp.service";
 import {
   verifyEmailTemplate,
   resetPasswordTemplate,
+  temporaryPasswordTemplate,
 } from "../email/templates/auth.templates";
 import { getJwtSecret } from "./jwt-secret";
 import { SELF_DELETION_GRACE_PERIOD_DAYS } from "../users/users.service";
@@ -564,6 +567,7 @@ export class AuthService {
     user.password = await bcrypt.hash(newPassword, 10);
     user.resetToken = null;
     user.resetTokenExpires = null;
+    this.clearTemporaryPassword(user);
     await user.save();
     return { success: true, message: "Password reset successfully." };
   }
@@ -625,6 +629,7 @@ export class AuthService {
     match.user.firebaseUid = decoded.uid;
     match.user.resetToken = null;
     match.user.resetTokenExpires = null;
+    this.clearTemporaryPassword(match.user);
     const autoApproved =
       match.role !== "admin"
         ? await this.maybeAutoApproveAfterContactVerification(
@@ -708,6 +713,7 @@ export class AuthService {
       user.firebaseUid = firebaseUser.uid;
     }
     user.password = await bcrypt.hash(newPassword, 10);
+    this.clearTemporaryPassword(user);
     await user.save();
 
     return { success: true, message: "Password changed successfully." };
@@ -954,6 +960,200 @@ export class AuthService {
       // MongoDB remains the source of truth for admin/manual verification.
       // Firebase sync is best-effort so login is not blocked by provider drift.
     }
+  }
+
+  /** How long an admin-issued temporary password stays valid. */
+  static readonly TEMP_PASSWORD_TTL_HOURS = 24;
+  /** A Firebase sign-in older than this can't be used to re-sync the password. */
+  private static readonly PASSWORD_SELF_HEAL_MAX_AUTH_AGE_SECONDS = 5 * 60;
+
+  /** Clears an admin-issued temporary password once the user sets a real one. */
+  private clearTemporaryPassword(user: any): void {
+    user.mustChangePassword = false;
+    user.tempPasswordExpiresAt = null;
+  }
+
+  /**
+   * Creator/brand/photographer password check at login.
+   *
+   * MongoDB's bcrypt hash is the password of record, but Firebase holds a copy
+   * too, and the two can drift: the reset page confirms the new password in
+   * Firebase first (consuming the one-time link) and only then updates MongoDB,
+   * so a failed second step — or a reset done on Firebase's hosted page —
+   * leaves Firebase on the new password and MongoDB on the old one, locking the
+   * user out. When the hash doesn't match, a Firebase ID token proving a fresh
+   * email/password sign-in for this same verified email means the user just
+   * authenticated with this password, so MongoDB is re-synced to it.
+   */
+  private async assertLoginPassword(
+    user: any,
+    password: string,
+    normalizedEmail: string,
+    firebaseIdToken: string | undefined,
+    options?: { localAuthBypass?: boolean },
+  ): Promise<void> {
+    const matches = await bcrypt.compare(password, user.password);
+    if (matches) {
+      if (
+        user.mustChangePassword &&
+        user.tempPasswordExpiresAt &&
+        new Date(user.tempPasswordExpiresAt).getTime() < Date.now()
+      ) {
+        throw new UnauthorizedException(
+          "Your temporary password has expired. Use Forgot password or contact support for a new one.",
+        );
+      }
+      return;
+    }
+
+    if (
+      !options?.localAuthBypass &&
+      firebaseIdToken &&
+      this.firebaseAdminService.isConfigured()
+    ) {
+      let decoded: any = null;
+      try {
+        decoded =
+          await this.firebaseAdminService.verifyIdToken(firebaseIdToken);
+      } catch {
+        decoded = null;
+      }
+      const firebaseEmail = String(decoded?.email || "")
+        .trim()
+        .toLowerCase();
+      const authAgeSeconds =
+        Math.floor(Date.now() / 1000) - Number(decoded?.auth_time || 0);
+      if (
+        decoded &&
+        firebaseEmail === normalizedEmail &&
+        decoded.email_verified === true &&
+        decoded.firebase?.sign_in_provider === "password" &&
+        authAgeSeconds >= 0 &&
+        authAgeSeconds <= AuthService.PASSWORD_SELF_HEAL_MAX_AUTH_AGE_SECONDS
+      ) {
+        user.password = await bcrypt.hash(password, 10);
+        user.firebaseUid = decoded.uid;
+        this.clearTemporaryPassword(user);
+        await user.save();
+        console.warn(
+          `[auth] Re-synced password from Firebase for user ${String(user._id)} (MongoDB hash was out of date).`,
+        );
+        return;
+      }
+    }
+
+    throw new UnauthorizedException("Invalid credentials");
+  }
+
+  /** 14 chars, always upper + lower + digit + special; no look-alikes (0/O, 1/l/I) or HTML-sensitive chars. */
+  private generateTemporaryPassword(): string {
+    const sets = [
+      "ABCDEFGHJKLMNPQRSTUVWXYZ",
+      "abcdefghijkmnpqrstuvwxyz",
+      "23456789",
+      "!@#$%*-_+=?",
+    ];
+    const all = sets.join("");
+    const chars = sets.map((set) => set[crypto.randomInt(set.length)]);
+    while (chars.length < 14) chars.push(all[crypto.randomInt(all.length)]);
+    for (let i = chars.length - 1; i > 0; i--) {
+      const j = crypto.randomInt(i + 1);
+      [chars[i], chars[j]] = [chars[j], chars[i]];
+    }
+    return chars.join("");
+  }
+
+  /**
+   * Admin support action for users locked out after a password reset: sets a
+   * random temporary password in BOTH MongoDB and Firebase, marks the email
+   * verified in both (only the mailbox owner receives it, so using it proves
+   * ownership), and emails it to the user. The admin never sees the password.
+   * It expires after TEMP_PASSWORD_TTL_HOURS and the app forces a change on
+   * first login. Admin approval status is deliberately left untouched.
+   */
+  async issueTemporaryPassword(
+    role: string,
+    userId: string,
+    issuedBy: string,
+  ): Promise<{ success: true; email: string; expiresAt: Date }> {
+    const normalizedRole = String(role || "").toLowerCase();
+    const model =
+      normalizedRole === "influencer"
+        ? this.influencerModel
+        : normalizedRole === "brand"
+          ? this.brandModel
+          : normalizedRole === "photographer"
+            ? this.photographerModel
+            : null;
+    if (!model) {
+      throw new BadRequestException(
+        "Temporary passwords can be issued only for influencer, brand or photographer accounts.",
+      );
+    }
+
+    const user: any = await model.findById(userId);
+    if (!user) throw new NotFoundException("User not found.");
+    if (user.isDeleted === true || user.isDeleted === "true") {
+      throw new BadRequestException("This account has been deleted.");
+    }
+    const email = String(user.email || "")
+      .trim()
+      .toLowerCase();
+    if (!email)
+      throw new BadRequestException("This account has no email address.");
+
+    const temporaryPassword = this.generateTemporaryPassword();
+    const now = new Date();
+    const expiresAt = new Date(
+      now.getTime() + AuthService.TEMP_PASSWORD_TTL_HOURS * 60 * 60 * 1000,
+    );
+
+    // Firebase first: if it fails, nothing has changed yet and the admin can simply retry.
+    let firebaseUid: string | undefined;
+    if (this.firebaseAdminService.isConfigured()) {
+      const firebaseUser = await this.firebaseAdminService.setEmailUserPassword(
+        email,
+        temporaryPassword,
+        true,
+      );
+      firebaseUid = firebaseUser.uid;
+    }
+
+    user.password = await bcrypt.hash(temporaryPassword, 10);
+    user.isEmailVerified = true;
+    user.emailVerifiedAt = user.emailVerifiedAt || now;
+    if (firebaseUid) user.firebaseUid = firebaseUid;
+    user.resetToken = null;
+    user.resetTokenExpires = null;
+    user.mustChangePassword = true;
+    user.tempPasswordExpiresAt = expiresAt;
+    user.tempPasswordIssuedAt = now;
+    user.tempPasswordIssuedBy = String(issuedBy || "admin");
+    await user.save();
+
+    const frontendBase = (
+      process.env.FRONTEND_URL || "https://www.trendstarz.in"
+    ).replace(/\/$/, "");
+    const { subject, html, text } = temporaryPasswordTemplate({
+      name: user.name || user.brandName || "",
+      temporaryPassword,
+      loginUrl: `${frontendBase}/login`,
+      expiresInHours: AuthService.TEMP_PASSWORD_TTL_HOURS,
+    });
+    try {
+      await sendAppEmail({ to: user.email, subject, html, text });
+    } catch (err: any) {
+      // The password is already changed, so the admin must know the user never got it.
+      console.error(
+        `[auth] Temporary password email failed for user ${String(user._id)}:`,
+        err?.message || err,
+      );
+      throw new InternalServerErrorException(
+        "The temporary password was set, but the email could not be sent. Please try again to issue a new one.",
+      );
+    }
+
+    return { success: true, email: user.email, expiresAt };
   }
 
   private async assertVerifiedFirebaseLogin(
@@ -1285,8 +1485,13 @@ export class AuthService {
     }
 
     if (influencer) {
-      const isMatch = await bcrypt.compare(password, influencer.password);
-      if (!isMatch) throw new UnauthorizedException("Invalid credentials");
+      await this.assertLoginPassword(
+        influencer,
+        password,
+        normalizedEmail,
+        firebaseIdToken,
+        options,
+      );
       if (influencer.isDeleted === true || influencer.isDeleted === "true") {
         if (influencer.status === "deletion_pending") {
           return this.buildDeletionPendingLoginResponse(
@@ -1351,13 +1556,20 @@ export class AuthService {
           profileImage: profileImageUrl,
           isPremium: !!influencer.isPremium,
           premiumEnd: influencer.premiumEnd || null,
+          // Admin-issued temporary password → the app must force a password change.
+          mustChangePassword: !!influencer.mustChangePassword,
         },
       };
     }
 
     if (brand) {
-      const isMatch = await bcrypt.compare(password, brand.password);
-      if (!isMatch) throw new UnauthorizedException("Invalid credentials");
+      await this.assertLoginPassword(
+        brand,
+        password,
+        normalizedEmail,
+        firebaseIdToken,
+        options,
+      );
       if (brand.isDeleted === true || brand.isDeleted === "true") {
         if (brand.status === "deletion_pending") {
           return this.buildDeletionPendingLoginResponse(brand, "brand");
@@ -1413,13 +1625,20 @@ export class AuthService {
           brandLogo: brandLogoArr,
           isPremium: !!brand.isPremium,
           premiumEnd: brand.premiumEnd || null,
+          // Admin-issued temporary password → the app must force a password change.
+          mustChangePassword: !!brand.mustChangePassword,
         },
       };
     }
 
     if (photographer) {
-      const isMatch = await bcrypt.compare(password, photographer.password);
-      if (!isMatch) throw new UnauthorizedException("Invalid credentials");
+      await this.assertLoginPassword(
+        photographer,
+        password,
+        normalizedEmail,
+        firebaseIdToken,
+        options,
+      );
       if (
         photographer.isDeleted === true ||
         photographer.isDeleted === "true"
@@ -1486,6 +1705,8 @@ export class AuthService {
           profileImage: profileImageUrl,
           isPremium: !!photographer.isPremium,
           premiumEnd: photographer.premiumEnd || null,
+          // Admin-issued temporary password → the app must force a password change.
+          mustChangePassword: !!photographer.mustChangePassword,
         },
       };
     }

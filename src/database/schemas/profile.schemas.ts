@@ -431,6 +431,13 @@ export const InfluencerSchema = new Schema(
     },
     resetToken: { type: String, default: null },
     resetTokenExpires: { type: Number, default: null },
+    // Admin-issued temporary password (support for users locked out after a reset).
+    // While mustChangePassword is set, login succeeds only until tempPasswordExpiresAt
+    // and the app forces a password change; any real password change clears these.
+    mustChangePassword: { type: Boolean, default: false },
+    tempPasswordExpiresAt: { type: Date, default: null },
+    tempPasswordIssuedAt: { type: Date, default: null },
+    tempPasswordIssuedBy: { type: String, default: null },
   },
   { timestamps: true },
 );
@@ -682,6 +689,13 @@ export const BrandSchema = new Schema(
     freeUnlocksUsed: { type: Number, default: 0 },
     resetToken: { type: String, default: null },
     resetTokenExpires: { type: Number, default: null },
+    // Admin-issued temporary password (support for users locked out after a reset).
+    // While mustChangePassword is set, login succeeds only until tempPasswordExpiresAt
+    // and the app forces a password change; any real password change clears these.
+    mustChangePassword: { type: Boolean, default: false },
+    tempPasswordExpiresAt: { type: Date, default: null },
+    tempPasswordIssuedAt: { type: Date, default: null },
+    tempPasswordIssuedBy: { type: String, default: null },
   },
   { timestamps: true },
 );
@@ -847,6 +861,13 @@ export const PhotographerSchema = new Schema(
     },
     resetToken: { type: String, default: null },
     resetTokenExpires: { type: Number, default: null },
+    // Admin-issued temporary password (support for users locked out after a reset).
+    // While mustChangePassword is set, login succeeds only until tempPasswordExpiresAt
+    // and the app forces a password change; any real password change clears these.
+    mustChangePassword: { type: Boolean, default: false },
+    tempPasswordExpiresAt: { type: Date, default: null },
+    tempPasswordIssuedAt: { type: Date, default: null },
+    tempPasswordIssuedBy: { type: String, default: null },
     isPremium: { type: Boolean, default: false },
     // Self-service opt-in: user must explicitly enable this before their
     // profile photo/logo can appear in public marketing surfaces (e.g. the

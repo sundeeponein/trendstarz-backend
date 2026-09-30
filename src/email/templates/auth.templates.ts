@@ -9,6 +9,15 @@ import {
   EmailTemplate,
 } from "../layout";
 
+function escapeHtml(value: string): string {
+  return String(value)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // 1. Email Verification
 // ─────────────────────────────────────────────────────────────────────────────
@@ -96,6 +105,43 @@ export function resetPasswordTemplate(resetUrl: string): EmailTemplate {
   );
 
   const text = `Reset your TrendStarz password:\n${resetUrl}\n\nThis link expires in 1 hour. If you requested more than one reset email, use only the most recent link.\nIf you did not request this, you can safely ignore this email.`;
+
+  return { subject, html, text };
+}
+
+/**
+ * Admin-issued temporary password (support path for users locked out after a
+ * password reset). The password is shown only in this email — never to the admin.
+ */
+export function temporaryPasswordTemplate(params: {
+  name?: string;
+  temporaryPassword: string;
+  loginUrl: string;
+  expiresInHours: number;
+}): EmailTemplate {
+  const subject = "Your temporary TrendStarz password";
+  const greeting = params.name ? `Hi ${escapeHtml(params.name)},` : "Hi,";
+
+  const html = wrapEmail(
+    h2("Your temporary password") +
+      p(greeting) +
+      p(
+        "Our support team has reset your TrendStarz password so you can get back into your account. Use this temporary password to log in:",
+      ) +
+      p(
+        `<code style="font-size:18px;letter-spacing:1px;">${escapeHtml(params.temporaryPassword)}</code>`,
+      ) +
+      btn("Log in to TrendStarz", params.loginUrl, BRAND_PURPLE) +
+      p(
+        `This temporary password expires in <strong>${params.expiresInHours} hours</strong>. You'll be asked to choose a new password right after you log in.`,
+      ) +
+      p(
+        "If you didn't ask TrendStarz support for help, please reply to this email right away.",
+        `color:${TEXT_MUTED};font-size:13px;`,
+      ),
+  );
+
+  const text = `${params.name ? `Hi ${params.name},` : "Hi,"}\n\nOur support team has reset your TrendStarz password. Log in with this temporary password:\n\n${params.temporaryPassword}\n\n${params.loginUrl}\n\nIt expires in ${params.expiresInHours} hours, and you'll be asked to choose a new password right after you log in.\nIf you didn't ask TrendStarz support for help, please reply to this email right away.`;
 
   return { subject, html, text };
 }
