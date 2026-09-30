@@ -76,6 +76,7 @@ import { MonetizationModule } from "./monetization/monetization.module";
 import { ProfileVerificationModule } from "./profile-verification/profile-verification.module";
 import { WhatsAppModule } from "./whatsapp/whatsapp.module";
 import { CollaborationScoreModule } from "./collaboration-score/collaboration-score.module";
+import { PlatformEventsModule } from "./platform-events/platform-events.module";
 
 @Module({
   imports: [
@@ -180,6 +181,7 @@ import { CollaborationScoreModule } from "./collaboration-score/collaboration-sc
     ProfileVerificationModule,
     WhatsAppModule,
     CollaborationScoreModule,
+    PlatformEventsModule,
   ],
   controllers: [
     AppController,

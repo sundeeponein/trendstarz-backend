@@ -27,7 +27,11 @@ import {
   PlatformEventsService,
   RecordPlatformEventInput,
 } from "../platform-events/platform-events.service";
-import { PlatformEventActorRole } from "../platform-events/platform-event-types";
+import {
+  InviteWithdrawnReason,
+  PlatformEventActorRole,
+} from "../platform-events/platform-event-types";
+import { inviteWithdrawnEvent } from "../platform-events/invite-withdrawn.event";
 
 function detectPlatform(url: string): string {
   if (!url) return "other";
@@ -112,6 +116,25 @@ export class CampaignInvitesService {
   ) {}
 
   /** The invite-scoped references every invite/submission PlatformEvent carries. */
+  /** Owner accounts are brands or photographers; the id alone tells which. */
+  private async ownerRoleFor(ownerId: string): Promise<PlatformEventActorRole> {
+    return (await this.safeFindById(this.photographerModel, ownerId, "_id"))
+      ? "photographer"
+      : "brand";
+  }
+
+  private recordInviteWithdrawn(
+    invite: any,
+    reason: InviteWithdrawnReason,
+    actor: { userId?: unknown; userRole: PlatformEventActorRole },
+    previousStatus: string,
+    at: Date,
+  ) {
+    return this.platformEvents.record(
+      inviteWithdrawnEvent(invite, reason, actor, previousStatus, at),
+    );
+  }
+
   private inviteEventRefs(
     invite: any,
   ): Pick<
@@ -369,22 +392,67 @@ export class CampaignInvitesService {
     const acceptedCount = await this.countAcceptedForRole(campaignId, role);
     if (acceptedCount < closeAt) return;
 
-    await this.inviteModel.updateMany(
-      {
-        _id: { $ne: acceptedInviteId },
-        campaignId,
-        status: { $in: ["pending", "invited", "counter_sent"] },
-        $or: this.getRoleInviteQuery(role),
+    const closeFilter = {
+      _id: { $ne: acceptedInviteId },
+      campaignId,
+      status: { $in: ["pending", "invited", "counter_sent"] },
+      $or: this.getRoleInviteQuery(role),
+    };
+    // Snapshot what's about to close (with its prior status) so each gets an invite_withdrawn.
+    // Best-effort: this runs after the acceptance is saved, so a failed lookup must never fail it.
+    let closing: any[] = [];
+    try {
+      closing = await this.inviteModel
+        .find(closeFilter)
+        .select(
+          "_id status brandId campaignId influencerId recipientRole selectedPlatform",
+        )
+        .lean();
+    } catch (err: any) {
+      this.logger.error(
+        `invite_withdrawn(auto_close) snapshot failed for campaign ${String(campaignId)}: ${err?.message || err}`,
+      );
+    }
+    const now = new Date();
+
+    await this.inviteModel.updateMany(closeFilter, {
+      $set: {
+        status: "withdrawn",
+        withdrawnAt: now,
+        withdrawnReason: `Auto-closed after ${closeAt} ${role} acceptance${closeAt === 1 ? "" : "s"}.`,
+        updatedAt: new Date(),
       },
-      {
-        $set: {
+    });
+
+    if (!closing.length) return;
+    // Only the ones this update actually closed (one may have been accepted in between).
+    let closed: any[] = [];
+    try {
+      closed = await this.inviteModel
+        .find({
+          _id: { $in: closing.map((inv) => inv._id) },
           status: "withdrawn",
-          withdrawnAt: new Date(),
-          withdrawnReason: `Auto-closed after ${closeAt} ${role} acceptance${closeAt === 1 ? "" : "s"}.`,
-          updatedAt: new Date(),
-        },
-      },
-    );
+          withdrawnAt: now,
+        })
+        .select("_id")
+        .lean();
+    } catch (err: any) {
+      this.logger.error(
+        `invite_withdrawn(auto_close) confirm lookup failed for campaign ${String(campaignId)} ` +
+          `(${closing.length} invite(s) unrecorded): ${err?.message || err}`,
+      );
+    }
+    const closedIds = new Set((closed || []).map((inv) => String(inv._id)));
+    for (const inv of closing) {
+      if (!closedIds.has(String(inv._id))) continue;
+      await this.recordInviteWithdrawn(
+        inv,
+        "auto_close",
+        { userRole: "system" },
+        inv.status,
+        now,
+      );
+    }
   }
 
   private async safeFindById(
@@ -2046,11 +2114,19 @@ export class CampaignInvitesService {
         "Only pending or accepted invites can be withdrawn.",
       );
     }
+    const previousStatus = invite.status;
     invite.status = "withdrawn";
     invite.withdrawnAt = new Date();
     if (reason) invite.withdrawnReason = reason;
     invite.updatedAt = new Date();
     await invite.save();
+    await this.recordInviteWithdrawn(
+      invite,
+      "owner",
+      { userId: brandId, userRole: await this.ownerRoleFor(brandId) },
+      previousStatus,
+      invite.withdrawnAt,
+    );
     return { success: true, status: invite.status };
   }
 
@@ -2561,6 +2637,30 @@ export class CampaignInvitesService {
     invite.status = status;
     const updated = await invite.save();
 
+    if (status === "counter_sent") {
+      await this.platformEvents.record({
+        eventType: "counter_offer_sent",
+        timestamp: invite?.counterOffer?.sentAt || new Date(),
+        userId: influencerId,
+        userRole: this.normalizeRecipientRole(invite?.recipientRole),
+        ...this.inviteEventRefs(invite),
+        platform:
+          invite?.counterOffer?.selectedPlatform ||
+          invite.selectedPlatform ||
+          null,
+        metadata: {
+          by: "recipient",
+          selectedContentType:
+            invite?.counterOffer?.selectedContentType || null,
+          offeredAmountPaise: invite?.counterOffer?.offeredAmountPaise ?? null,
+          requestedAmountPaise:
+            invite?.counterOffer?.requestedAmountPaise ?? null,
+        },
+        // A recipient may counter only once per invite.
+        dedupeKey: `counter_offer_sent:${String(invite._id)}:recipient`,
+      });
+    }
+
     if (status === "accepted" || status === "declined") {
       const respondedAt = new Date();
       await this.platformEvents.record({
@@ -2794,6 +2894,28 @@ export class CampaignInvitesService {
       };
       const updatedCounter = await invite.save();
 
+      await this.platformEvents.record({
+        eventType: "counter_offer_sent",
+        timestamp: invite.counterOffer.sentAt,
+        userId: requesterId,
+        userRole: await this.ownerRoleFor(requesterId),
+        ...this.inviteEventRefs(invite),
+        platform:
+          invite?.counterOffer?.selectedPlatform ||
+          invite.selectedPlatform ||
+          null,
+        metadata: {
+          by: "owner",
+          selectedContentType:
+            invite?.counterOffer?.selectedContentType || null,
+          offeredAmountPaise: invite.counterOffer.offeredAmountPaise ?? null,
+          requestedAmountPaise:
+            invite.counterOffer.requestedAmountPaise ?? null,
+        },
+        // The owner can revise only a freshly received counter, so at most once per invite.
+        dedupeKey: `counter_offer_sent:${String(invite._id)}:owner`,
+      });
+
       const recipientRole = this.normalizeRecipientRole(invite?.recipientRole);
       const recipientId = String(
         invite?.influencerId || invite?.photographerId || "",
@@ -2885,10 +3007,7 @@ export class CampaignInvitesService {
     const updated = await invite.save();
 
     if (action === "accept") {
-      const ownerRoleForEvent: PlatformEventActorRole =
-        (await this.safeFindById(this.photographerModel, requesterId, "_id"))
-          ? "photographer"
-          : "brand";
+      const ownerRoleForEvent = await this.ownerRoleFor(requesterId);
       await this.platformEvents.record({
         eventType: "invite_accepted",
         timestamp: invite.acceptedAt || new Date(),
@@ -3231,8 +3350,23 @@ export class CampaignInvitesService {
     this.assertCampaignLiveForRecipient(campaign, "start work");
     this.assertCampaignNotEnded(campaign, "start work");
 
+    const previousStatus = status;
     invite.status = "working";
     await invite.save();
+
+    await this.platformEvents.record({
+      eventType: "work_started",
+      userId: influencerId,
+      userRole: this.normalizeRecipientRole(invite?.recipientRole),
+      ...this.inviteEventRefs(invite),
+      platform: invite.selectedPlatform || null,
+      metadata: {
+        // accepted = unpaid/free collab; payment_confirmed = owner's payment already verified.
+        previousStatus,
+        selectedContentType: invite.selectedContentType || null,
+      },
+      dedupeKey: `work_started:${String(invite._id)}`,
+    });
 
     await this.campaignTransactionModel.updateMany(
       { inviteId: { $in: [invite._id, String(invite._id)] } },
@@ -3823,6 +3957,29 @@ export class CampaignInvitesService {
       };
       await invite.save();
 
+      const resubmissionCount = Number(submission.resubmissionCount || 0);
+      await this.platformEvents.record({
+        eventType: "content_disputed",
+        timestamp: now,
+        userId: brandId,
+        userRole:
+          String(campaign?.ownerType || "") === "photographer"
+            ? "photographer"
+            : "brand",
+        ...this.inviteEventRefs(invite),
+        platform: submission?.postPlatform || invite.selectedPlatform || null,
+        metadata: {
+          submissionId: String(submission._id || ""),
+          // Fixed list chosen by the owner (e.g. "Missing hashtag"); the free-text description is not copied.
+          issueReason: issueReason || null,
+          isFinalRejection,
+          escalatedToAdmin: isFinalRejection,
+          resubmissionCount,
+        },
+        // A submission can be disputed once, and its single resubmission once more.
+        dedupeKey: `content_disputed:${String(invite._id)}:${resubmissionCount}`,
+      });
+
       // Freeze the payout — admin must resolve before money moves.
       // workStatus: 'disputed' signals the issue; payoutStatus: 'frozen' holds funds.
       await this.campaignTransactionModel.updateMany(
@@ -4005,6 +4162,7 @@ export class CampaignInvitesService {
     }
 
     const now = new Date();
+    const previousStatus = invite.status;
     invite.status = outcome === "pay_influencer" ? "completed" : "withdrawn";
     if (outcome === "pay_influencer") {
       invite.completedAt = now;
@@ -4026,6 +4184,27 @@ export class CampaignInvitesService {
     invite.updatedAt = now;
     await invite.save();
 
+    const disputeActor: { userId?: unknown; userRole: PlatformEventActorRole } =
+      {
+        userRole:
+          opts.resolvedBy === "admin"
+            ? "admin"
+            : opts.resolvedBy === "influencer"
+              ? this.normalizeRecipientRole(invite?.recipientRole)
+              : "system",
+        userId:
+          opts.resolvedBy === "influencer" ? invite.influencerId : undefined,
+      };
+    if (outcome === "refund_host") {
+      await this.recordInviteWithdrawn(
+        invite,
+        "dispute_refund",
+        disputeActor,
+        previousStatus,
+        invite.withdrawnAt || now,
+      );
+    }
+
     const submission = await this.submissionModel.findOne({ inviteId });
     if (submission) {
       submission.status =
@@ -4039,16 +4218,7 @@ export class CampaignInvitesService {
         outcome === "pay_influencer" ? "approved" : "rejected",
         invite,
         submission,
-        {
-          userRole:
-            opts.resolvedBy === "admin"
-              ? "admin"
-              : opts.resolvedBy === "influencer"
-                ? this.normalizeRecipientRole(invite?.recipientRole)
-                : "system",
-          userId:
-            opts.resolvedBy === "influencer" ? invite.influencerId : undefined,
-        },
+        disputeActor,
         `dispute_${opts.resolvedBy}`,
         now,
       );
@@ -4288,11 +4458,19 @@ export class CampaignInvitesService {
     }
 
     const now = new Date();
+    const previousStatus = invite.status;
     invite.status = "withdrawn";
     if (!invite.withdrawnAt) invite.withdrawnAt = now;
     invite.withdrawnReason = reason;
     invite.updatedAt = now;
     await invite.save();
+    await this.recordInviteWithdrawn(
+      invite,
+      "expired_unsubmitted",
+      { userRole: "system" },
+      previousStatus,
+      invite.withdrawnAt,
+    );
 
     await this.campaignTransactionModel.updateMany(
       {
@@ -4352,11 +4530,19 @@ export class CampaignInvitesService {
     }
 
     const now = new Date();
+    const previousStatus = invite.status;
     invite.status = "withdrawn";
     if (!invite.withdrawnAt) invite.withdrawnAt = now;
     invite.withdrawnReason = reason;
     invite.updatedAt = now;
     await invite.save();
+    await this.recordInviteWithdrawn(
+      invite,
+      "expired_never_accepted",
+      { userRole: "system" },
+      previousStatus,
+      invite.withdrawnAt,
+    );
 
     this.invalidateAttentionCache();
 

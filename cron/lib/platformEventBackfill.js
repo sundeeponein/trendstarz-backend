@@ -13,6 +13,15 @@
 //                          sent by the owner); open campaigns mix owner invites and
 //                          creator applications with no stored way to tell them apart
 //   - content_submitted    only the latest attempt (a resubmission overwrites submittedAt)
+//   - invite_withdrawn     only when withdrawnAt is stored (the admin cancel-participation
+//                          override never set it); metadata.reason only when withdrawnReason
+//                          is one of the exact strings the system itself writes — owner-typed
+//                          reasons, dispute refunds, etc. stay reason: null
+//   - work_started,
+//     content_disputed,
+//     counter_offer_sent   never (no reliable timestamp: work start isn't stored, a resubmission
+//                          clears the dispute's reviewedAt, and only the latest counter's
+//                          sentAt survives)
 //
 // Every derived event uses the SAME dedupeKey the live code uses, so re-running
 // the backfill — or running it after live events already exist — never duplicates.
@@ -29,7 +38,23 @@ const BACKFILLABLE_EVENT_TYPES = [
   'content_rejected',
   'campaign_completed',
   'payment_completed',
+  'invite_withdrawn',
 ];
+
+/** System-written withdrawnReason strings (campaign-invites.service.ts) → invite_withdrawn reason. */
+function classifyWithdrawnReason(text) {
+  const t = String(text || '').trim();
+  if (/^Auto-closed after \d+ (influencer|photographer) acceptances?\.$/.test(t)) return 'auto_close';
+  if (t === 'Campaign ended before this invite was accepted.') return 'expired_never_accepted';
+  if (
+    t === "Campaign's grace period ended with no submission." ||
+    t === 'Campaign ended by host before submission.' ||
+    t === 'Posting deadline and grace period expired with no submission.'
+  ) {
+    return 'expired_unsubmitted';
+  }
+  return null;
+}
 
 function idString(value) {
   if (value == null) return '';
@@ -198,6 +223,25 @@ function deriveEvents(data, toObjectId) {
       })));
     }
     if (String(invite.status || '') === 'declined') skip('invite_declined: no decline timestamp stored');
+
+    if (String(invite.status || '') === 'withdrawn') {
+      const withdrawnAt = validDate(invite.withdrawnAt);
+      if (!withdrawnAt) {
+        skip('invite_withdrawn: withdrawn without withdrawnAt (e.g. admin cancel-participation)');
+      } else {
+        const reason = classifyWithdrawnReason(invite.withdrawnReason);
+        if (!reason) skip('invite_withdrawn: reason not classifiable (recorded with reason: null)');
+        events.push(buildEvent(toObjectId, Object.assign({}, refs, {
+          eventType: 'invite_withdrawn',
+          derivedFrom: 'invite.withdrawnAt',
+          timestamp: withdrawnAt,
+          userRole: reason ? 'system' : null,
+          platform: invite.selectedPlatform,
+          metadata: { reason, previousStatus: null },
+          dedupeKey: `invite_withdrawn:${id}`,
+        })));
+      }
+    }
   }
 
   for (const submission of data.submissions || []) {
@@ -320,6 +364,7 @@ function toUpsertOps(events, now) {
 
 module.exports = {
   BACKFILLABLE_EVENT_TYPES,
+  classifyWithdrawnReason,
   deriveEvents,
   toUpsertOps,
 };

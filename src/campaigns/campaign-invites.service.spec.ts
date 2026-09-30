@@ -2056,7 +2056,8 @@ describe("CampaignInvitesService – platform events", () => {
         "The mention of the brand handle is missing entirely.",
         "Missing mention",
       );
-      expect(platformEvents.record).not.toHaveBeenCalled();
+      expect(eventsOfType("content_approved")).toHaveLength(0);
+      expect(eventsOfType("content_rejected")).toHaveLength(0);
     });
 
     it("records content_approved as a system action when a stale submission auto-completes", async () => {
@@ -2123,7 +2124,384 @@ describe("CampaignInvitesService – platform events", () => {
       submissionModel.findOne.mockResolvedValue(null);
 
       await service.adminResolveDispute("inv1", { outcome: "withdrawn" });
-      expect(platformEvents.record).not.toHaveBeenCalled();
+      expect(eventsOfType("content_approved")).toHaveLength(0);
+      expect(eventsOfType("content_rejected")).toHaveLength(0);
+      expect(eventsOfType("invite_withdrawn")[0]).toMatchObject({
+        userRole: "admin",
+        metadata: { reason: "dispute_refund", previousStatus: "working" },
+      });
+    });
+  });
+
+  describe("Stage 1.5 lifecycle events", () => {
+    const openInvite = (overrides: any = {}) =>
+      doc({
+        _id: "inv1",
+        influencerId: "inf1",
+        brandId: "brand1",
+        campaignId: "camp1",
+        status: "pending",
+        ...overrides,
+      });
+
+    describe("invite_withdrawn", () => {
+      it("records an owner withdrawal with the prior status", async () => {
+        inviteModel.findById.mockResolvedValue(
+          openInvite({ status: "accepted" }),
+        );
+
+        await service.withdrawInvite(
+          "inv1",
+          "brand1",
+          "Changed plans — call 98xxxxxx",
+        );
+
+        const [event] = eventsOfType("invite_withdrawn");
+        expect(event).toMatchObject({
+          userId: "brand1",
+          userRole: "brand",
+          inviteId: "inv1",
+          dedupeKey: "invite_withdrawn:inv1",
+          metadata: { reason: "owner", previousStatus: "accepted" },
+        });
+        // The owner's free-text reason is not copied into the event.
+        expect(JSON.stringify(event)).not.toContain("98xxxxxx");
+      });
+
+      it("records nothing when the withdrawal is refused", async () => {
+        inviteModel.findById.mockResolvedValue(
+          openInvite({ status: "working" }),
+        );
+        await expect(service.withdrawInvite("inv1", "brand1")).rejects.toThrow(
+          BadRequestException,
+        );
+        expect(platformEvents.record).not.toHaveBeenCalled();
+      });
+
+      it("records auto_close for each invite the acceptance closed out", async () => {
+        inviteModel.findById.mockResolvedValue(openInvite());
+        campaignModel.findById.mockReturnValue(
+          queryOf({ ...activeCampaign, maxInfluencers: 1 }),
+        );
+        inviteModel.countDocuments
+          .mockResolvedValueOnce(0)
+          .mockResolvedValueOnce(1);
+        inviteModel.find
+          .mockReturnValueOnce(
+            queryOf([
+              {
+                _id: "inv2",
+                status: "pending",
+                campaignId: "camp1",
+                influencerId: "inf2",
+              },
+              {
+                _id: "inv3",
+                status: "counter_sent",
+                campaignId: "camp1",
+                influencerId: "inf3",
+              },
+            ]),
+          )
+          // inv3 was accepted between the snapshot and the update, so only inv2 closed.
+          .mockReturnValueOnce(queryOf([{ _id: "inv2" }]));
+
+        await service.respond("inv1", "inf1", "accepted", "2026-07-15");
+
+        const withdrawn = eventsOfType("invite_withdrawn");
+        expect(withdrawn).toHaveLength(1);
+        expect(withdrawn[0]).toMatchObject({
+          inviteId: "inv2",
+          userRole: "system",
+          metadata: { reason: "auto_close", previousStatus: "pending" },
+        });
+        expect(eventsOfType("invite_accepted")).toHaveLength(1);
+      });
+
+      it("still completes the acceptance when the auto-close snapshot fails", async () => {
+        const invite = openInvite();
+        inviteModel.findById.mockResolvedValue(invite);
+        campaignModel.findById.mockReturnValue(
+          queryOf({ ...activeCampaign, maxInfluencers: 1 }),
+        );
+        inviteModel.countDocuments
+          .mockResolvedValueOnce(0)
+          .mockResolvedValueOnce(1);
+        inviteModel.find.mockImplementationOnce(() => {
+          throw new Error("db blip");
+        });
+
+        await service.respond("inv1", "inf1", "accepted", "2026-07-15");
+
+        expect(invite.status).toBe("accepted");
+        expect(inviteModel.updateMany).toHaveBeenCalled();
+        expect(eventsOfType("invite_withdrawn")).toHaveLength(0);
+      });
+
+      it("records expired_never_accepted when the campaign ends first", async () => {
+        inviteModel.findById.mockResolvedValue(
+          openInvite({ status: "counter_sent" }),
+        );
+        await service.expireNeverAcceptedInvite(
+          "inv1",
+          "Campaign ended before this invite was accepted.",
+        );
+        expect(eventsOfType("invite_withdrawn")[0]).toMatchObject({
+          userRole: "system",
+          metadata: {
+            reason: "expired_never_accepted",
+            previousStatus: "counter_sent",
+          },
+        });
+      });
+
+      it("records expired_unsubmitted, but not while a report blocks the expiry", async () => {
+        inviteModel.findById.mockResolvedValueOnce(
+          openInvite({
+            status: "working",
+            reportedIssue: { reportedAt: new Date() },
+          }),
+        );
+        await service.expireUnsubmittedInvite(
+          "inv1",
+          "Posting deadline and grace period expired with no submission.",
+        );
+        expect(platformEvents.record).not.toHaveBeenCalled();
+
+        inviteModel.findById.mockResolvedValueOnce(
+          openInvite({ status: "working" }),
+        );
+        await service.expireUnsubmittedInvite(
+          "inv1",
+          "Posting deadline and grace period expired with no submission.",
+        );
+        expect(eventsOfType("invite_withdrawn")[0]).toMatchObject({
+          metadata: {
+            reason: "expired_unsubmitted",
+            previousStatus: "working",
+          },
+        });
+      });
+    });
+
+    describe("counter_offer_sent", () => {
+      it("records the creator's counter-offer", async () => {
+        inviteModel.findById.mockResolvedValue(
+          openInvite({ selectedPlatform: "Instagram" }),
+        );
+        campaignModel.findById.mockReturnValue(
+          queryOf({
+            ...activeCampaign,
+            socialMedia: [
+              {
+                platform: "Instagram",
+                contentTypes: [{ name: "Reel", enabled: true, price: 5000 }],
+              },
+            ],
+          }),
+        );
+
+        await service.respond(
+          "inv1",
+          "inf1",
+          "counter_sent",
+          "2026-07-15",
+          "Instagram",
+          "Reel",
+          7000,
+          "Can you do 7k?",
+        );
+
+        const [event] = eventsOfType("counter_offer_sent");
+        expect(event).toMatchObject({
+          userId: "inf1",
+          userRole: "influencer",
+          dedupeKey: "counter_offer_sent:inv1:recipient",
+          metadata: expect.objectContaining({
+            by: "recipient",
+            selectedContentType: "Reel",
+          }),
+        });
+        expect(event.metadata.requestedAmountPaise).toBeGreaterThan(0);
+        expect(JSON.stringify(event)).not.toContain("Can you do 7k");
+        expect(eventsOfType("invite_accepted")).toHaveLength(0);
+      });
+
+      it("records the owner's revised counter", async () => {
+        inviteModel.findById.mockResolvedValue(
+          openInvite({
+            status: "counter_sent",
+            counterOffer: {
+              status: "sent",
+              requestedAmount: 700,
+              requestedAmountPaise: 70000,
+            },
+          }),
+        );
+
+        await service.respondToCounter(
+          "inv1",
+          "brand1",
+          "counter",
+          "Can do 600",
+          600,
+        );
+
+        expect(eventsOfType("counter_offer_sent")[0]).toMatchObject({
+          userId: "brand1",
+          userRole: "brand",
+          dedupeKey: "counter_offer_sent:inv1:owner",
+          metadata: expect.objectContaining({
+            by: "owner",
+            offeredAmountPaise: 70000,
+          }),
+        });
+      });
+
+      it("records nothing when a second revision is refused", async () => {
+        inviteModel.findById.mockResolvedValue(
+          openInvite({
+            status: "counter_sent",
+            counterOffer: { status: "brand_sent" },
+          }),
+        );
+        await expect(
+          service.respondToCounter("inv1", "brand1", "counter", "", 500),
+        ).rejects.toThrow(BadRequestException);
+        expect(platformEvents.record).not.toHaveBeenCalled();
+      });
+    });
+
+    describe("work_started", () => {
+      it("records the move to working", async () => {
+        inviteModel.findById.mockResolvedValue(
+          openInvite({
+            status: "payment_confirmed",
+            selectedPlatform: "YouTube",
+          }),
+        );
+        campaignModel.findById.mockReturnValue(queryOf(activeCampaign));
+
+        await service.startWork("inv1", "inf1");
+
+        expect(eventsOfType("work_started")[0]).toMatchObject({
+          userId: "inf1",
+          platform: "YouTube",
+          dedupeKey: "work_started:inv1",
+          metadata: expect.objectContaining({
+            previousStatus: "payment_confirmed",
+          }),
+        });
+      });
+
+      it("records nothing when work had already started (idempotent call)", async () => {
+        inviteModel.findById.mockResolvedValue(
+          openInvite({ status: "working" }),
+        );
+        await service.startWork("inv1", "inf1");
+        expect(platformEvents.record).not.toHaveBeenCalled();
+      });
+
+      it("records nothing when work cannot start yet", async () => {
+        inviteModel.findById.mockResolvedValue(
+          openInvite({ status: "pending" }),
+        );
+        await expect(service.startWork("inv1", "inf1")).rejects.toThrow(
+          BadRequestException,
+        );
+        expect(platformEvents.record).not.toHaveBeenCalled();
+      });
+    });
+
+    describe("content_disputed", () => {
+      it("records the owner's dispute with the chosen issue but not the free-text description", async () => {
+        inviteModel.findById.mockResolvedValue(
+          openInvite({ status: "submitted" }),
+        );
+        campaignModel.findById.mockReturnValue(queryOf(activeCampaign));
+        submissionModel.findOne.mockResolvedValue(
+          doc({
+            _id: "sub1",
+            status: "submitted",
+            postPlatform: "instagram",
+            submittedAt: new Date(),
+          }),
+        );
+
+        await service.reviewSubmission(
+          "inv1",
+          "brand1",
+          "dispute",
+          undefined,
+          "The @brand handle is missing, contact me at owner@example.com",
+          "Missing mention",
+        );
+
+        const [event] = eventsOfType("content_disputed");
+        expect(event).toMatchObject({
+          userId: "brand1",
+          userRole: "brand",
+          platform: "instagram",
+          dedupeKey: "content_disputed:inv1:0",
+          metadata: expect.objectContaining({
+            issueReason: "Missing mention",
+            isFinalRejection: false,
+            submissionId: "sub1",
+          }),
+        });
+        expect(JSON.stringify(event)).not.toContain("owner@example.com");
+      });
+
+      it("keys a dispute of the resubmission separately (final rejection)", async () => {
+        inviteModel.findById.mockResolvedValue(
+          openInvite({ status: "submitted" }),
+        );
+        campaignModel.findById.mockReturnValue(queryOf(activeCampaign));
+        submissionModel.findOne.mockResolvedValue(
+          doc({
+            _id: "sub1",
+            status: "submitted",
+            resubmissionCount: 1,
+            submittedAt: new Date(),
+          }),
+        );
+
+        await service.reviewSubmission(
+          "inv1",
+          "brand1",
+          "dispute",
+          "Still wrong",
+        );
+
+        expect(eventsOfType("content_disputed")[0]).toMatchObject({
+          dedupeKey: "content_disputed:inv1:1",
+          metadata: expect.objectContaining({
+            isFinalRejection: true,
+            escalatedToAdmin: true,
+          }),
+        });
+      });
+
+      it("records nothing when the dispute is invalid", async () => {
+        inviteModel.findById.mockResolvedValue(
+          openInvite({ status: "submitted" }),
+        );
+        campaignModel.findById.mockReturnValue(queryOf(activeCampaign));
+        submissionModel.findOne.mockResolvedValue(
+          doc({ _id: "sub1", status: "submitted", submittedAt: new Date() }),
+        );
+        await expect(
+          service.reviewSubmission(
+            "inv1",
+            "brand1",
+            "dispute",
+            undefined,
+            "too short",
+            "Missing mention",
+          ),
+        ).rejects.toThrow(BadRequestException);
+        expect(platformEvents.record).not.toHaveBeenCalled();
+      });
     });
   });
 

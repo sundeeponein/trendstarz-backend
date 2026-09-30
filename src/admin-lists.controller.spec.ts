@@ -253,4 +253,102 @@ describe("AdminListsController", () => {
       expect(campaignsService.recordCampaignCompleted).not.toHaveBeenCalled();
     });
   });
+
+  describe("cancelCampaignParticipation → invite_withdrawn(admin_cancel)", () => {
+    const CAMPAIGN_MODEL_INDEX = 10;
+    const INVITE_MODEL_INDEX = 11;
+    const PLATFORM_EVENTS_INDEX = 20;
+    const queryOf = (value: any) => ({
+      select: jest
+        .fn()
+        .mockReturnValue({ lean: jest.fn().mockResolvedValue(value) }),
+    });
+
+    function setup(snapshot: any[], confirmed: any[]) {
+      const campaign: any = { _id: "c1", status: "active" };
+      campaign.save = jest.fn().mockResolvedValue(campaign);
+      const inviteModel = {
+        find: jest
+          .fn()
+          .mockReturnValueOnce(queryOf(snapshot))
+          .mockReturnValueOnce(queryOf(confirmed)),
+        updateMany: jest
+          .fn()
+          .mockResolvedValue({ modifiedCount: confirmed.length }),
+      };
+      const platformEvents = { record: jest.fn().mockResolvedValue(true) };
+      const args: any[] = Array.from({ length: 21 }, () => ({}));
+      args[CAMPAIGN_MODEL_INDEX] = {
+        findById: jest.fn().mockResolvedValue(campaign),
+      };
+      args[INVITE_MODEL_INDEX] = inviteModel;
+      args[PLATFORM_EVENTS_INDEX] = platformEvents;
+      const controller = new (AdminListsController as any)(
+        ...args,
+      ) as AdminListsController;
+      return { controller, campaign, inviteModel, platformEvents };
+    }
+
+    const reason = {
+      reason: "Brand requested emergency stop for this campaign.",
+    } as any;
+    const req = { user: { userId: "64b0000000000000000000aa" } };
+
+    it("records admin_cancel for each invite the override actually withdrew", async () => {
+      const { controller, platformEvents, inviteModel } = setup(
+        [
+          {
+            _id: "i1",
+            status: "pending",
+            campaignId: "c1",
+            influencerId: "u1",
+          },
+          {
+            _id: "i2",
+            status: "accepted",
+            campaignId: "c1",
+            influencerId: "u2",
+          },
+        ],
+        [{ _id: "i1" }], // i2 moved on (e.g. payment confirmed) before the update
+      );
+
+      const res: any = await controller.cancelCampaignParticipation(
+        "c1",
+        reason,
+        req,
+      );
+
+      expect(res.cancelledInvites).toBe(1);
+      expect(inviteModel.updateMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          status: { $in: ["pending", "invited", "counter_sent", "accepted"] },
+        }),
+        { $set: { status: "withdrawn" } },
+      );
+      expect(platformEvents.record).toHaveBeenCalledTimes(1);
+      expect(platformEvents.record.mock.calls[0][0]).toMatchObject({
+        eventType: "invite_withdrawn",
+        inviteId: "i1",
+        userId: "64b0000000000000000000aa",
+        userRole: "admin",
+        dedupeKey: "invite_withdrawn:i1",
+        metadata: { reason: "admin_cancel", previousStatus: "pending" },
+      });
+    });
+
+    it("still cancels when the snapshot lookup fails", async () => {
+      const { controller, campaign, inviteModel, platformEvents } = setup(
+        [],
+        [],
+      );
+      inviteModel.find = jest.fn(() => {
+        throw new Error("db blip");
+      });
+      await controller.cancelCampaignParticipation("c1", reason, req);
+      expect(inviteModel.updateMany).toHaveBeenCalled();
+      expect(campaign.status).toBe("cancelled");
+      expect(platformEvents.record).not.toHaveBeenCalled();
+    });
+  });
 });

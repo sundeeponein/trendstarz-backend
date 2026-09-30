@@ -39,6 +39,8 @@ import { PendingUserCleanupService } from "./admin/pending-user-cleanup.service"
 import { PendingUploadCleanupService } from "./admin/pending-upload-cleanup.service";
 import { AssetFolderBackfillService } from "./admin/asset-folder-backfill.service";
 import { CampaignsService } from "./campaigns/campaigns.service";
+import { PlatformEventsService } from "./platform-events/platform-events.service";
+import { inviteWithdrawnEvent } from "./platform-events/invite-withdrawn.event";
 import {
   ACCEPTED_OR_LATER_STATUSES,
   SUBMITTED_OR_LATER_STATUSES,
@@ -212,6 +214,7 @@ export class AdminListsController {
     private readonly pendingUploadCleanupService: PendingUploadCleanupService,
     private readonly assetFolderBackfillService: AssetFolderBackfillService,
     private readonly campaignsService: CampaignsService,
+    private readonly platformEvents: PlatformEventsService,
   ) {
     // Load plans-config.json on initialization
     this.loadPlansConfig();
@@ -1340,13 +1343,61 @@ export class AdminListsController {
       "counter_sent",
       "accepted",
     ];
+    const cancelFilter = {
+      campaignId: { $in: [campaign._id, String(campaign._id)] },
+      status: { $in: cancellableStatuses },
+    };
+    // Snapshot (with prior status) so each cancelled invite gets an invite_withdrawn.
+    // Best-effort: event bookkeeping must never block the override itself.
+    let cancelling: any[] = [];
+    try {
+      cancelling = await this.campaignInviteModel
+        .find(cancelFilter)
+        .select(
+          "_id status brandId campaignId influencerId recipientRole selectedPlatform",
+        )
+        .lean();
+    } catch (err: any) {
+      console.error(
+        `invite_withdrawn(admin_cancel) snapshot failed for campaign ${id}:`,
+        err?.message || err,
+      );
+    }
     const { modifiedCount } = await this.campaignInviteModel.updateMany(
-      {
-        campaignId: { $in: [campaign._id, String(campaign._id)] },
-        status: { $in: cancellableStatuses },
-      },
+      cancelFilter,
       { $set: { status: "withdrawn" } },
     );
+    if (cancelling.length) {
+      // Only the ones this update actually withdrew (one may have moved on in between).
+      let withdrawn: any[] = [];
+      try {
+        withdrawn = await this.campaignInviteModel
+          .find({
+            _id: { $in: cancelling.map((inv) => inv._id) },
+            status: "withdrawn",
+          })
+          .select("_id")
+          .lean();
+      } catch (err: any) {
+        console.error(
+          `invite_withdrawn(admin_cancel) confirm lookup failed for campaign ${id} (${cancelling.length} invite(s) unrecorded):`,
+          err?.message || err,
+        );
+      }
+      const withdrawnIds = new Set(withdrawn.map((inv) => String(inv._id)));
+      for (const inv of cancelling) {
+        if (!withdrawnIds.has(String(inv._id))) continue;
+        await this.platformEvents.record(
+          inviteWithdrawnEvent(
+            inv,
+            "admin_cancel",
+            { userId: adminId, userRole: "admin" },
+            inv.status,
+            now,
+          ),
+        );
+      }
+    }
 
     campaign.status = "cancelled";
     campaign.adminOverrideAction = "cancel_participation";

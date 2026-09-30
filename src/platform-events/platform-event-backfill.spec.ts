@@ -1,5 +1,8 @@
 import { Types } from "mongoose";
-import { PLATFORM_EVENT_TYPES } from "./platform-event-types";
+import {
+  INVITE_WITHDRAWN_REASONS,
+  PLATFORM_EVENT_TYPES,
+} from "./platform-event-types";
 
 // The backfill runs as a plain-node cron script; its derivation logic lives in a
 // CommonJS module so it can be tested here without a database.
@@ -250,5 +253,118 @@ describe("platform event backfill", () => {
       expect(op.updateOne.upsert).toBe(true);
       expect(Object.keys(op.updateOne.update)).toEqual(["$setOnInsert"]);
     }
+  });
+
+  describe("invite_withdrawn", () => {
+    const withdrawn = (n: number, fields: any) => ({
+      _id: oid(id(100 + n)),
+      campaignId: CAMPAIGN,
+      brandId: BRAND,
+      influencerId: oid(CREATOR),
+      status: "withdrawn",
+      createdAt: at("2026-01-02T00:00:00Z"),
+      ...fields,
+    });
+    const deriveWithdrawn = (invites: any[]) => {
+      const data = fixture();
+      data.invites = invites;
+      data.submissions = [];
+      data.transactions = [];
+      return backfill.deriveEvents(data, oid);
+    };
+    const withdrawnEvents = (res: any) =>
+      res.events.filter((e: any) => e.eventType === "invite_withdrawn");
+
+    it("classifies only the exact reason strings the system writes", () => {
+      expect(
+        backfill.classifyWithdrawnReason(
+          "Auto-closed after 1 influencer acceptance.",
+        ),
+      ).toBe("auto_close");
+      expect(
+        backfill.classifyWithdrawnReason(
+          "Auto-closed after 3 photographer acceptances.",
+        ),
+      ).toBe("auto_close");
+      expect(
+        backfill.classifyWithdrawnReason(
+          "Campaign ended before this invite was accepted.",
+        ),
+      ).toBe("expired_never_accepted");
+      for (const t of [
+        "Campaign's grace period ended with no submission.",
+        "Campaign ended by host before submission.",
+        "Posting deadline and grace period expired with no submission.",
+      ]) {
+        expect(backfill.classifyWithdrawnReason(t)).toBe("expired_unsubmitted");
+      }
+      expect(
+        backfill.classifyWithdrawnReason("Auto-closed because I said so"),
+      ).toBeNull();
+      expect(backfill.classifyWithdrawnReason("Budget cut")).toBeNull();
+      expect(backfill.classifyWithdrawnReason(undefined)).toBeNull();
+    });
+
+    it("only ever classifies into known reasons", () => {
+      for (const t of [
+        "Auto-closed after 2 influencer acceptances.",
+        "Campaign ended by host before submission.",
+      ]) {
+        expect(INVITE_WITHDRAWN_REASONS).toContain(
+          backfill.classifyWithdrawnReason(t),
+        );
+      }
+    });
+
+    it("derives the event from withdrawnAt, with reason null when unclassifiable", () => {
+      const res = deriveWithdrawn([
+        withdrawn(1, {
+          withdrawnAt: at("2026-01-05T00:00:00Z"),
+          withdrawnReason: "Campaign ended before this invite was accepted.",
+        }),
+        withdrawn(2, {
+          withdrawnAt: at("2026-01-06T00:00:00Z"),
+          withdrawnReason: "Found someone cheaper, call me",
+        }),
+      ]);
+      const events = withdrawnEvents(res);
+      expect(events).toHaveLength(2);
+      expect(events[0]).toMatchObject({
+        timestamp: at("2026-01-05T00:00:00Z"),
+        userRole: "system",
+        dedupeKey: `invite_withdrawn:${id(101)}`,
+        metadata: {
+          reason: "expired_never_accepted",
+          previousStatus: null,
+          derivedFrom: "invite.withdrawnAt",
+        },
+      });
+      expect(events[1].metadata.reason).toBeNull();
+      expect(events[1].userRole).toBeNull();
+      // Owner-typed text never reaches the event.
+      expect(JSON.stringify(events)).not.toContain("cheaper");
+    });
+
+    it("skips withdrawals without a timestamp (admin cancel-participation never set one)", () => {
+      const res = deriveWithdrawn([withdrawn(3, {})]);
+      expect(withdrawnEvents(res)).toHaveLength(0);
+      expect(
+        res.skipped[
+          "invite_withdrawn: withdrawn without withdrawnAt (e.g. admin cancel-participation)"
+        ],
+      ).toBe(1);
+    });
+
+    it("never derives the events that have no reliable timestamp", () => {
+      const types = derive().events.map((e: any) => e.eventType);
+      for (const t of [
+        "work_started",
+        "content_disputed",
+        "counter_offer_sent",
+      ]) {
+        expect(types).not.toContain(t);
+        expect(backfill.BACKFILLABLE_EVENT_TYPES).not.toContain(t);
+      }
+    });
   });
 });
