@@ -578,6 +578,9 @@ describe("AuthService", () => {
       isEmailVerified: false,
       password: "old-hash",
       resetToken: "abc",
+      // The user clicked "Forgot password" 10 minutes ago.
+      passwordResetRequestedAt: new Date(Date.now() - 10 * 60_000),
+      tempPasswordIssuedAt: null,
       save: jest.fn().mockResolvedValue(undefined),
       ...overrides,
     });
@@ -629,6 +632,95 @@ describe("AuthService", () => {
       expect(mail.text).toContain(tempPassword);
       expect(JSON.stringify(result)).not.toContain(tempPassword);
       expect(result).toMatchObject({ success: true, email: "Inf@Test.com" });
+    });
+
+    describe("only after the user clicked Forgot password", () => {
+      it("refuses when the user never requested a reset", async () => {
+        influencerModel.findById.mockResolvedValue(
+          pendingInfluencer({ passwordResetRequestedAt: null }),
+        );
+        await expect(
+          service.issueTemporaryPassword("influencer", "inf1", "a"),
+        ).rejects.toThrow(/click "Forgot password" first/);
+        expect(firebase.setEmailUserPassword).not.toHaveBeenCalled();
+      });
+
+      it("refuses when the request is older than 24 hours", async () => {
+        influencerModel.findById.mockResolvedValue(
+          pendingInfluencer({
+            passwordResetRequestedAt: new Date(Date.now() - 25 * 3600_000),
+          }),
+        );
+        await expect(
+          service.issueTemporaryPassword("influencer", "inf1", "a"),
+        ).rejects.toThrow(/within 24 hours/);
+      });
+
+      it("allows only one temporary password per request", async () => {
+        influencerModel.findById.mockResolvedValue(
+          pendingInfluencer({
+            tempPasswordIssuedAt: new Date(Date.now() - 60_000),
+          }),
+        );
+        await expect(
+          service.issueTemporaryPassword("influencer", "inf1", "a"),
+        ).rejects.toThrow(/already sent for this request/);
+        expect(firebase.setEmailUserPassword).not.toHaveBeenCalled();
+      });
+
+      it("allows another after the user requests a reset again", async () => {
+        const doc: any = pendingInfluencer({
+          tempPasswordIssuedAt: new Date(Date.now() - 2 * 3600_000),
+          passwordResetRequestedAt: new Date(Date.now() - 60_000),
+        });
+        influencerModel.findById.mockResolvedValue(doc);
+        await service.issueTemporaryPassword("influencer", "inf1", "a");
+        expect(new Date(doc.tempPasswordIssuedAt).getTime()).toBeGreaterThan(
+          Date.now() - 5000,
+        );
+      });
+
+      it("leaves the request usable when the email fails, so the admin can retry", async () => {
+        const doc: any = pendingInfluencer();
+        influencerModel.findById.mockResolvedValue(doc);
+        (sendAppEmail as jest.Mock).mockRejectedValueOnce(
+          new Error("smtp down"),
+        );
+        await expect(
+          service.issueTemporaryPassword("influencer", "inf1", "a"),
+        ).rejects.toThrow(InternalServerErrorException);
+        expect(doc.tempPasswordIssuedAt).toBeNull();
+
+        await service.issueTemporaryPassword("influencer", "inf1", "a");
+        expect(doc.tempPasswordIssuedAt).toBeInstanceOf(Date);
+      });
+    });
+
+    describe("recording the Forgot password click", () => {
+      it("records it for creators in the Firebase reset flow", async () => {
+        influencerModel.findOne.mockResolvedValue({ ...mockInfluencer });
+        await service.ensureFirebasePasswordResetUser("inf@test.com");
+        expect(influencerModel.updateOne).toHaveBeenCalledWith(
+          { _id: "inf1" },
+          { $set: { passwordResetRequestedAt: expect.any(Date) } },
+        );
+      });
+
+      it("never blocks the reset when recording fails", async () => {
+        influencerModel.findOne.mockResolvedValue({ ...mockInfluencer });
+        influencerModel.updateOne.mockRejectedValueOnce(new Error("db blip"));
+        await expect(
+          service.ensureFirebasePasswordResetUser("inf@test.com"),
+        ).resolves.toMatchObject({
+          canSendFirebaseReset: true,
+        });
+      });
+
+      it("records nothing for admin accounts", async () => {
+        userModel.findOne.mockResolvedValue({ ...mockAdmin, save: jest.fn() });
+        await service.ensureFirebasePasswordResetUser("admin@test.com");
+        expect(userModel.updateOne).not.toHaveBeenCalled();
+      });
     });
 
     it("generates a different strong password every time", () => {

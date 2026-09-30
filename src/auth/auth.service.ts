@@ -469,6 +469,7 @@ export class AuthService {
     const resetUrl = `${frontendBase}/reset-password?token=${resetToken}`;
     user.resetToken = resetTokenHash;
     user.resetTokenExpires = Date.now() + 1000 * 60 * 60; // 1 hour expiry
+    if (!adminUser) user.passwordResetRequestedAt = new Date();
     await user.save();
     const { subject, html, text } = resetPasswordTemplate(resetUrl);
     await sendAppEmail({ to: user.email, subject, html, text });
@@ -588,6 +589,8 @@ export class AuthService {
         message: "If that email is registered, a reset link has been sent.",
       };
     }
+
+    await this.recordPasswordResetRequest(match.user, match.role);
 
     if (this.firebaseAdminService.isConfigured()) {
       await this.firebaseAdminService.ensureEmailUser(normalizedEmail);
@@ -964,6 +967,38 @@ export class AuthService {
 
   /** How long an admin-issued temporary password stays valid. */
   static readonly TEMP_PASSWORD_TTL_HOURS = 24;
+  /** An admin can issue a temporary password only this long after the user clicked "Forgot password". */
+  static readonly TEMP_PASSWORD_REQUEST_WINDOW_HOURS = 24;
+
+  /**
+   * Remembers that the user clicked "Forgot password" — the signal that unlocks
+   * the admin's "Send temporary password" button. Best-effort: never blocks the reset.
+   */
+  private async recordPasswordResetRequest(
+    user: any,
+    role: TrendstarzRole,
+  ): Promise<void> {
+    const model =
+      role === "influencer"
+        ? this.influencerModel
+        : role === "brand"
+          ? this.brandModel
+          : role === "photographer"
+            ? this.photographerModel
+            : null;
+    if (!model || !user?._id) return;
+    try {
+      await model.updateOne(
+        { _id: user._id },
+        { $set: { passwordResetRequestedAt: new Date() } },
+      );
+    } catch (err: any) {
+      console.error(
+        `[auth] Could not record password reset request for ${String(user._id)}:`,
+        err?.message || err,
+      );
+    }
+  }
   /** A Firebase sign-in older than this can't be used to re-sync the password. */
   private static readonly PASSWORD_SELF_HEAL_MAX_AUTH_AGE_SECONDS = 5 * 60;
 
@@ -1102,6 +1137,27 @@ export class AuthService {
     if (!email)
       throw new BadRequestException("This account has no email address.");
 
+    // Only in response to the user's own "Forgot password" click, within the window,
+    // and once per click (an earlier issue for this same request locks it again).
+    const requestedAt = user.passwordResetRequestedAt
+      ? new Date(user.passwordResetRequestedAt)
+      : null;
+    const windowMs =
+      AuthService.TEMP_PASSWORD_REQUEST_WINDOW_HOURS * 60 * 60 * 1000;
+    if (!requestedAt || Date.now() - requestedAt.getTime() > windowMs) {
+      throw new BadRequestException(
+        `Ask the user to click "Forgot password" first — a temporary password can be sent only within ${AuthService.TEMP_PASSWORD_REQUEST_WINDOW_HOURS} hours of that.`,
+      );
+    }
+    if (
+      user.tempPasswordIssuedAt &&
+      new Date(user.tempPasswordIssuedAt).getTime() >= requestedAt.getTime()
+    ) {
+      throw new BadRequestException(
+        'A temporary password was already sent for this request. Ask the user to click "Forgot password" again if they need another one.',
+      );
+    }
+
     const temporaryPassword = this.generateTemporaryPassword();
     const now = new Date();
     const expiresAt = new Date(
@@ -1127,8 +1183,6 @@ export class AuthService {
     user.resetTokenExpires = null;
     user.mustChangePassword = true;
     user.tempPasswordExpiresAt = expiresAt;
-    user.tempPasswordIssuedAt = now;
-    user.tempPasswordIssuedBy = String(issuedBy || "admin");
     await user.save();
 
     const frontendBase = (
@@ -1152,6 +1206,11 @@ export class AuthService {
         "The temporary password was set, but the email could not be sent. Please try again to issue a new one.",
       );
     }
+
+    // Stamped only once the email is out, so a failed send leaves the button usable for a retry.
+    user.tempPasswordIssuedAt = now;
+    user.tempPasswordIssuedBy = String(issuedBy || "admin");
+    await user.save();
 
     return { success: true, email: user.email, expiresAt };
   }

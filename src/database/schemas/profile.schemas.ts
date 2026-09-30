@@ -438,6 +438,9 @@ export const InfluencerSchema = new Schema(
     tempPasswordExpiresAt: { type: Date, default: null },
     tempPasswordIssuedAt: { type: Date, default: null },
     tempPasswordIssuedBy: { type: String, default: null },
+    // Last time the user clicked "Forgot password". Admins can issue a temporary
+    // password only within 24h of this, and only once per request.
+    passwordResetRequestedAt: { type: Date, default: null },
   },
   { timestamps: true },
 );
@@ -696,6 +699,9 @@ export const BrandSchema = new Schema(
     tempPasswordExpiresAt: { type: Date, default: null },
     tempPasswordIssuedAt: { type: Date, default: null },
     tempPasswordIssuedBy: { type: String, default: null },
+    // Last time the user clicked "Forgot password". Admins can issue a temporary
+    // password only within 24h of this, and only once per request.
+    passwordResetRequestedAt: { type: Date, default: null },
   },
   { timestamps: true },
 );
@@ -868,6 +874,9 @@ export const PhotographerSchema = new Schema(
     tempPasswordExpiresAt: { type: Date, default: null },
     tempPasswordIssuedAt: { type: Date, default: null },
     tempPasswordIssuedBy: { type: String, default: null },
+    // Last time the user clicked "Forgot password". Admins can issue a temporary
+    // password only within 24h of this, and only once per request.
+    passwordResetRequestedAt: { type: Date, default: null },
     isPremium: { type: Boolean, default: false },
     // Self-service opt-in: user must explicitly enable this before their
     // profile photo/logo can appear in public marketing surfaces (e.g. the
