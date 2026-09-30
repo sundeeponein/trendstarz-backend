@@ -78,6 +78,7 @@ import { WhatsAppModule } from "./whatsapp/whatsapp.module";
 import { CollaborationScoreModule } from "./collaboration-score/collaboration-score.module";
 import { PlatformEventsModule } from "./platform-events/platform-events.module";
 import { PlatformDataQualityModule } from "./platform-data-quality/platform-data-quality.module";
+import { PlatformMetricsModule } from "./platform-metrics/platform-metrics.module";
 
 @Module({
   imports: [
@@ -184,6 +185,7 @@ import { PlatformDataQualityModule } from "./platform-data-quality/platform-data
     CollaborationScoreModule,
     PlatformEventsModule,
     PlatformDataQualityModule,
+    PlatformMetricsModule,
   ],
   controllers: [
     AppController,
