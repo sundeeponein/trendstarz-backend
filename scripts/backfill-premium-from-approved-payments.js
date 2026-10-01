@@ -13,12 +13,16 @@
  * whether a `subscriptions` row exists either.
  *
  * Usage:
- *   node scripts/backfill-premium-from-approved-payments.js          # apply
  *   node scripts/backfill-premium-from-approved-payments.js --dry-run # preview only
+ *   node scripts/backfill-premium-from-approved-payments.js --apply   # write
  *
- * Safe to re-run — only touches users whose current isPremium/premiumEnd
- * don't already match their latest approved payment, and never grants
- * premium for a payment whose computed period has already expired.
+ * With neither flag it does NOTHING and exits 0. It used to apply by default
+ * and was wired into Railway's pre-deploy command, so it ran on every deploy —
+ * and since an admin "remove Premium" leaves the payment approved/captured,
+ * each deploy could silently re-grant Premium an admin had removed. Its
+ * one-time job is done; run it by hand with --apply only if ever needed again.
+ *
+ * Never grants premium for a payment whose computed period has already expired.
  */
 
 const mongoose = require('mongoose');
@@ -26,6 +30,18 @@ require('dotenv').config();
 
 const MONGO_URI = process.env.MONGODB_URI || process.env.MONGO_URI || 'mongodb://localhost:27017/trendstarz';
 const DRY_RUN = process.argv.includes('--dry-run');
+const APPLY = process.argv.includes('--apply');
+
+if (!DRY_RUN && !APPLY) {
+  console.log(
+    '[backfill-premium] One-time script: no --apply or --dry-run flag given, so nothing was done.',
+  );
+  process.exit(0);
+}
+if (DRY_RUN && APPLY) {
+  console.error('[backfill-premium] Pass either --dry-run or --apply, not both.');
+  process.exit(1);
+}
 
 const USER_TYPE_TO_COLLECTION = {
   Influencer: 'influencers',
