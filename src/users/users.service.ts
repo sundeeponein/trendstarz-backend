@@ -23,6 +23,11 @@ import {
   socialIdentityChanges,
 } from "../utils/social-account.util";
 import { SocialAccountVerificationService } from "../social-account-verification/social-account-verification.service";
+import {
+  changedProfileSections,
+  recordCreatorUpdate,
+  sectionsProjection,
+} from "../utils/creator-update.util";
 import { invalidateAccountStatusCache } from "../auth/jwt-auth.guard";
 import { consumeOtpVerificationToken } from "../otp/otp.controller";
 import {
@@ -3387,6 +3392,11 @@ export class UsersService implements OnModuleInit {
         updateData.socialMedia,
       );
     }
+    // Admin "updated since review" signal — which sections this save really changes.
+    const changedSections = changedProfileSections(
+      userDoc.toObject ? userDoc.toObject() : userDoc,
+      updateData,
+    );
     const shouldReviewPhoto = Object.prototype.hasOwnProperty.call(
       updateData,
       "profileImages",
@@ -3490,6 +3500,7 @@ export class UsersService implements OnModuleInit {
     }
 
     const updated = await userDoc.save();
+    await recordCreatorUpdate(this.influencerModel, userId, changedSections);
     if (shouldReviewPhoto) {
       await this.clearProfilePhotoFlags(userId, "Influencer");
     }
@@ -3668,12 +3679,18 @@ export class UsersService implements OnModuleInit {
     // NOTE: isPremium is intentionally excluded — it is only set via upgradeSelfPremium or admin setPremium
     const shouldClearBrandGallery =
       Array.isArray(updateData.products) && updateData.products.length > 0;
+    const brandBefore: any = await this.brandModel
+      .findById(userId)
+      .select(sectionsProjection(updateData))
+      .lean();
+    const changedSections = changedProfileSections(brandBefore, updateData);
     const updated = await this.brandModel.findByIdAndUpdate(
       userId,
       updateData,
       { new: true },
     );
     if (!updated) return { message: "Brand not found", userId };
+    await recordCreatorUpdate(this.brandModel, userId, changedSections);
     if (shouldClearBrandGallery) {
       await this.clearGalleryFlags(userId, "Brand");
     }

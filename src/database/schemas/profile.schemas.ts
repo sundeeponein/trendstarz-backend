@@ -48,6 +48,11 @@ const ProfileVerificationFields = {
   // never by a creator's own save. Values set before Stage 3A-0 may come from
   // approval, so they are not evidence that an admin reviewed each account.
   creatorTierVerified: { type: Boolean, default: false },
+  // Admin "updated since review" signal (see utils/creator-update.util.ts).
+  // select:false — admin-only metadata, never part of public/brand responses.
+  creatorUpdatedAt: { type: Date, default: null, select: false },
+  creatorUpdatedFields: { type: [String], default: undefined, select: false },
+  creatorUpdatesReviewedAt: { type: Date, default: null, select: false },
   galleryImagesVerified: { type: Boolean, default: false },
   lastReviewedAt: { type: Date, default: null },
   reviewedBy: { type: String, default: "" },

@@ -147,3 +147,38 @@ describe("ProfileVerificationService.adminAction (Stage 3A-0 approval semantics)
     ).rejects.toThrow("Invalid moderation action");
   });
 });
+
+describe("ProfileVerificationService.adminAction clears the 'updated since review' signal on approval", () => {
+  it.each(["approve", "approve_warning"])(
+    "%s marks creator updates reviewed",
+    async (action) => {
+      const writes: any[] = [];
+      const profileModel = {
+        updateOne: jest.fn().mockResolvedValue({ modifiedCount: 0 }),
+        findByIdAndUpdate: jest.fn((_id: string, update: any) => {
+          writes.push(update);
+          return Promise.resolve({});
+        }),
+      };
+      const service = new ProfileVerificationService(
+        { updateMany: jest.fn().mockResolvedValue({}) } as any,
+        profileModel as any,
+        {} as any,
+        {} as any,
+        {} as any,
+        {} as any,
+      );
+      jest.spyOn(service as any, "adminDetail").mockResolvedValue({ ok: true });
+      await service.adminAction(
+        { role: "admin", userId: "a" },
+        "Influencer",
+        "inf-1",
+        { action },
+      );
+      const clearing = writes.find(
+        (w) => w.$unset?.creatorUpdatedFields !== undefined,
+      );
+      expect(clearing.$set.creatorUpdatesReviewedAt).toBeInstanceOf(Date);
+    },
+  );
+});

@@ -756,3 +756,174 @@ describe("AdminUserTableController social-account comparison (Stage 3A-3)", () =
     );
   });
 });
+
+describe("AdminUserTableController 'updated since review' filters", () => {
+  const CHANGED = "64b0000000000000000000c3";
+  function setup(model: any = {}) {
+    const verification = {
+      profileIdsWithChangedReviews: jest.fn((_t: string, ids?: string[]) =>
+        Promise.resolve(
+          new Set(ids ? ids.filter((i) => i === CHANGED) : [CHANGED]),
+        ),
+      ),
+    };
+    const args: any[] = Array.from({ length: 12 }, () => ({}));
+    args[0] = model;
+    args[9] = verification;
+    const controller = new (AdminUserTableController as any)(...args);
+    return { controller, verification };
+  }
+  const role = {
+    userType: "Influencer",
+    photoField: "profileImages",
+    requireSocialTier: true,
+  };
+
+  it("profile_updated: approved profiles with any unreviewed creator change", async () => {
+    const { controller, verification } = setup();
+    const filter: any = { status: { $ne: "deleted" } };
+    await controller.applyContactVerificationFilter(
+      filter,
+      "profile_updated",
+      role,
+    );
+    expect(filter.$and).toEqual([
+      {
+        $or: [
+          {
+            $and: [
+              {
+                $or: [
+                  { verificationStatus: "approved" },
+                  { verifiedByTrendStarz: true },
+                ],
+              },
+              { "creatorUpdatedFields.0": { $exists: true } },
+            ],
+          },
+        ],
+      },
+    ]);
+    expect(verification.profileIdsWithChangedReviews).not.toHaveBeenCalled();
+    // Approval status itself is never part of what this changes.
+    expect(filter.status).toEqual({ $ne: "deleted" });
+  });
+
+  it("social_changed: social updates since approval OR a 3A-1 review reset by a change", async () => {
+    const { controller, verification } = setup();
+    const filter: any = { $and: [{ existing: true }] };
+    await controller.applyContactVerificationFilter(
+      filter,
+      "social_changed",
+      role,
+    );
+    expect(verification.profileIdsWithChangedReviews).toHaveBeenCalledWith(
+      "Influencer",
+    );
+    expect(filter.$and[0]).toEqual({ existing: true });
+    const anyOf = filter.$and[1].$or;
+    expect(anyOf[0].$and[1]).toEqual({ creatorUpdatedFields: "socialMedia" });
+    expect(anyOf[1]._id.$in.map(String)).toEqual([CHANGED, CHANGED]); // string + ObjectId forms
+  });
+
+  it("annotates rows: pending only for approved profiles; social reset per profile", async () => {
+    const { controller } = setup();
+    const rows: any[] = [
+      {
+        _id: CHANGED,
+        verificationStatus: "approved",
+        creatorUpdatedFields: ["location"],
+      },
+      {
+        _id: "64b0000000000000000000d4",
+        verificationStatus: "pending",
+        creatorUpdatedFields: ["name"],
+      },
+      { _id: "64b0000000000000000000e5", verifiedByTrendStarz: true },
+    ];
+    await controller.annotateReviewSignals(rows, "Influencer");
+    expect(
+      rows.map((r) => [
+        r.creatorUpdatesPending,
+        r.socialReviewChanged,
+        r.creatorUpdatedFields,
+      ]),
+    ).toEqual([
+      [true, true, ["location"]],
+      [false, false, ["name"]],
+      [false, false, []],
+    ]);
+  });
+
+  describe("mark updates reviewed", () => {
+    function modelWith(result: any, exists = true) {
+      const lean = jest.fn().mockResolvedValue(result);
+      return {
+        findOneAndUpdate: jest.fn(() => ({
+          select: jest.fn(() => ({ lean })),
+        })),
+        exists: jest.fn().mockResolvedValue(exists ? { _id: "u1" } : null),
+      };
+    }
+
+    it("clears the signal only if the admin saw the latest update", async () => {
+      const seen = "2026-10-01T10:00:00.000Z";
+      const model = modelWith({
+        creatorUpdatedAt: new Date(seen),
+        creatorUpdatesReviewedAt: new Date(),
+      });
+      const { controller } = setup(model);
+      const res = await controller.markCreatorUpdatesReviewed(
+        "influencer",
+        "u1",
+        { seenUpdatedAt: seen },
+      );
+      const [filter, update] = model.findOneAndUpdate.mock.calls[0] as any[];
+      expect(filter).toEqual({ _id: "u1", creatorUpdatedAt: new Date(seen) });
+      expect(update.$unset).toEqual({ creatorUpdatedFields: "" });
+      expect(update.$set.creatorUpdatesReviewedAt).toBeInstanceOf(Date);
+      // Only the signal is touched — never approval, tier, verification or visibility.
+      expect(Object.keys(update.$set)).toEqual(["creatorUpdatesReviewedAt"]);
+      expect(res.creatorUpdatedFields).toEqual([]);
+    });
+
+    it("409 when the creator saved again since the admin loaded it", async () => {
+      const { controller } = setup(modelWith(null, true));
+      await expect(
+        controller.markCreatorUpdatesReviewed("influencer", "u1", {
+          seenUpdatedAt: "2026-10-01T10:00:00.000Z",
+        }),
+      ).rejects.toMatchObject({ status: 409 });
+    });
+
+    it("404 for an unknown user, 400 for a bad date or type", async () => {
+      await expect(
+        setup(modelWith(null, false)).controller.markCreatorUpdatesReviewed(
+          "influencer",
+          "u1",
+          {},
+        ),
+      ).rejects.toMatchObject({ status: 404 });
+      await expect(
+        setup(modelWith(null)).controller.markCreatorUpdatesReviewed(
+          "influencer",
+          "u1",
+          { seenUpdatedAt: "nope" },
+        ),
+      ).rejects.toThrow("Invalid seenUpdatedAt");
+      await expect(
+        setup().controller.markCreatorUpdatesReviewed("admin", "u1", {}),
+      ).rejects.toThrow("Unsupported user type");
+    });
+
+    it("is a POST on the guarded admin controller", () => {
+      const proto = AdminUserTableController.prototype as any;
+      expect(
+        Reflect.getMetadata("path", proto.markCreatorUpdatesReviewed),
+      ).toBe("users/:type/:id/creator-updates/reviewed");
+      expect(
+        Reflect.getMetadata("__guards__", AdminUserTableController),
+      ).toEqual([JwtAuthGuard, RolesGuard]);
+    });
+  });
+});

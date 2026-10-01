@@ -11,6 +11,7 @@ import {
   ForbiddenException,
   BadRequestException,
   NotFoundException,
+  ConflictException,
 } from "@nestjs/common";
 import { JwtAuthGuard } from "../auth/jwt-auth.guard";
 import { RolesGuard } from "../auth/roles.guard";
@@ -321,6 +322,40 @@ export class AdminUserTableController {
     }
     if (normalized === "admin_review_rejected") {
       filter.verificationStatus = "rejected";
+      return;
+    }
+    // Approved profiles the creator changed afterwards (review signal only —
+    // approval, visibility and badges are untouched). "social_changed" also
+    // includes any profile whose Stage 3A-1 account review was reset by a
+    // handle/tier change.
+    if (normalized === "profile_updated" || normalized === "social_changed") {
+      const approvedAndUpdated = {
+        $and: [
+          {
+            $or: [
+              { verificationStatus: "approved" },
+              { verifiedByTrendStarz: true },
+            ],
+          },
+          normalized === "profile_updated"
+            ? { "creatorUpdatedFields.0": { $exists: true } }
+            : { creatorUpdatedFields: "socialMedia" },
+        ],
+      };
+      const anyOf: Record<string, unknown>[] = [approvedAndUpdated];
+      if (normalized === "social_changed") {
+        const changed = [
+          ...(await this.socialAccountVerification.profileIdsWithChangedReviews(
+            toSocialProfileType(role.userType),
+          )),
+        ];
+        if (changed.length)
+          anyOf.push({ _id: { $in: this.toExcludedIdValues(changed) } });
+      }
+      filter.$and = [
+        ...(Array.isArray(filter.$and) ? filter.$and : []),
+        { $or: anyOf },
+      ];
       return;
     }
     if (normalized === "callback_requested") {
@@ -774,6 +809,7 @@ export class AdminUserTableController {
     }
     const influencers = await this.influencerModel
       .find(filter)
+      .select(AdminUserTableController.CREATOR_UPDATE_FIELDS)
       .sort({ firstRegisteredAt: -1, createdAt: -1, _id: -1 })
       .skip(paging.skip)
       .limit(paging.limit)
@@ -815,6 +851,7 @@ export class AdminUserTableController {
       u.galleryActionRequired = galleryFlagged.has(id);
       u.paymentActionRequired = paymentFlagged.has(id);
     }
+    await this.annotateReviewSignals(influencers, "Influencer");
     return influencers;
   }
 
@@ -850,6 +887,7 @@ export class AdminUserTableController {
     }
     const brands = await this.brandModel
       .find(filter)
+      .select(AdminUserTableController.CREATOR_UPDATE_FIELDS)
       .sort({ firstRegisteredAt: -1, createdAt: -1, _id: -1 })
       .skip(paging.skip)
       .limit(paging.limit)
@@ -896,6 +934,7 @@ export class AdminUserTableController {
       b.galleryActionRequired = galleryFlagged.has(id);
       b.paymentActionRequired = paymentFlagged.has(id);
     }
+    await this.annotateReviewSignals(brands, "Brand");
     return brands;
   }
 
@@ -930,6 +969,7 @@ export class AdminUserTableController {
 
     const photographers = await this.photographerModel
       .find(filter)
+      .select(AdminUserTableController.CREATOR_UPDATE_FIELDS)
       .sort({ firstRegisteredAt: -1, createdAt: -1, _id: -1 })
       .skip(paging.skip)
       .limit(paging.limit)
@@ -972,6 +1012,7 @@ export class AdminUserTableController {
       p.paymentActionRequired = paymentFlagged.has(id);
     }
 
+    await this.annotateReviewSignals(photographers, "Photographer");
     return photographers;
   }
 
@@ -983,6 +1024,84 @@ export class AdminUserTableController {
    * private helper from a different service.
    */
   /** `_id` is ObjectId-typed but ProfileFlag.userId is stored as a string — $nin needs both forms to actually exclude anything. */
+  /** select:false review-signal fields the admin list (and only it) needs. */
+  private static readonly CREATOR_UPDATE_FIELDS =
+    "+creatorUpdatedAt +creatorUpdatedFields +creatorUpdatesReviewedAt";
+
+  /**
+   * Per-row review signals for the admin table/detail:
+   *  - creatorUpdatesPending: an approved profile the creator changed since the
+   *    last admin review (creatorUpdatedFields lists what);
+   *  - socialReviewChanged: a social account review reset by a handle/tier change.
+   */
+  private async annotateReviewSignals(
+    rows: any[],
+    userType: "Influencer" | "Brand" | "Photographer",
+  ): Promise<void> {
+    const ids = rows.map((r) => String(r?._id || "")).filter(Boolean);
+    const changed =
+      await this.socialAccountVerification.profileIdsWithChangedReviews(
+        userType,
+        ids,
+      );
+    for (const r of rows) {
+      const approved =
+        r?.verificationStatus === "approved" ||
+        r?.verifiedByTrendStarz === true;
+      const fields = Array.isArray(r?.creatorUpdatedFields)
+        ? r.creatorUpdatedFields
+        : [];
+      r.creatorUpdatedFields = fields;
+      r.creatorUpdatesPending = approved && fields.length > 0;
+      r.socialReviewChanged = changed.has(String(r?._id || ""));
+    }
+  }
+
+  /**
+   * Clears the "updated since review" signal once an admin has looked at the
+   * changes. `seenUpdatedAt` is the creatorUpdatedAt the admin was looking at:
+   * if the creator saved again since, nothing is cleared (409) so a newer
+   * change can't be dismissed unseen.
+   */
+  @Post("users/:type/:id/creator-updates/reviewed")
+  async markCreatorUpdatesReviewed(
+    @Param("type") type: string,
+    @Param("id") id: string,
+    @Body() body: { seenUpdatedAt?: string | null },
+  ) {
+    const model = this.socialMediaModelFor(type);
+    const filter: Record<string, unknown> = { _id: id };
+    const seen = body?.seenUpdatedAt ? new Date(body.seenUpdatedAt) : null;
+    if (seen && Number.isNaN(seen.getTime())) {
+      throw new BadRequestException("Invalid seenUpdatedAt");
+    }
+    if (seen) filter.creatorUpdatedAt = seen;
+    const updated: any = await model
+      .findOneAndUpdate(
+        filter,
+        {
+          $set: { creatorUpdatesReviewedAt: new Date() },
+          $unset: { creatorUpdatedFields: "" },
+        },
+        { new: true },
+      )
+      .select(AdminUserTableController.CREATOR_UPDATE_FIELDS)
+      .lean();
+    if (!updated) {
+      const exists = await model.exists({ _id: id });
+      if (!exists) throw new NotFoundException("User not found");
+      throw new ConflictException(
+        "The creator updated their profile again since you loaded it. Refresh to see the latest changes.",
+      );
+    }
+    return {
+      message: "Updates marked as reviewed",
+      creatorUpdatedAt: updated.creatorUpdatedAt ?? null,
+      creatorUpdatedFields: [],
+      creatorUpdatesReviewedAt: updated.creatorUpdatesReviewedAt ?? null,
+    };
+  }
+
   private toExcludedIdValues(ids: string[]): any[] {
     return ids.flatMap((id) => {
       const value = String(id || "").trim();

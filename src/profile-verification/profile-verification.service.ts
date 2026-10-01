@@ -1406,8 +1406,13 @@ export class ProfileVerificationService {
       // approving a profile is not a verification of its social accounts or tiers.
       // Only the explicit "Social Profile & Creator Tier" admin toggle
       // (AdminUserTableController.updateContactVerification) writes that field.
+      // Approving also counts as reviewing any creator updates made so far.
       await profileModel.findByIdAndUpdate(userId, {
-        $set: { profilePhotoVerified: true },
+        $set: {
+          profilePhotoVerified: true,
+          creatorUpdatesReviewedAt: new Date(),
+        },
+        $unset: { creatorUpdatedFields: "" },
       });
     }
     return this.adminDetail(actor, userType, userId);

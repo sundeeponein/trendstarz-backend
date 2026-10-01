@@ -276,6 +276,38 @@ export class SocialAccountVerificationService {
     return this.view(entry, state);
   }
 
+  /**
+   * Profiles that have at least one ownership/tier review reset to pending by
+   * a handle/tier change (and not re-decided since). Read-only; used by the
+   * admin "Social media changed" filter and row badge.
+   */
+  async profileIdsWithChangedReviews(
+    profileType: SocialProfileType,
+    profileIds?: string[],
+  ): Promise<Set<string>> {
+    const query: Record<string, unknown> = {
+      profileType,
+      $or: [
+        {
+          "ownership.status": "pending",
+          "ownership.invalidatedAt": { $ne: null },
+        },
+        { "tier.status": "pending", "tier.invalidatedAt": { $ne: null } },
+      ],
+    };
+    if (profileIds) {
+      if (!profileIds.length) return new Set();
+      query.profileId = { $in: profileIds };
+    }
+    const rows = (await this.stateModel
+      .find(query)
+      .select("profileId")
+      .lean()) as Array<{
+      profileId?: unknown;
+    }>;
+    return new Set(rows.map((r) => String(r.profileId)));
+  }
+
   /** Effective ownership/tier status for every social account on a profile (admin view). */
   async listForProfile(
     profileType: SocialProfileType,

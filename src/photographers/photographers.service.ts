@@ -20,6 +20,11 @@ import {
 } from "../utils/social-account.util";
 import { SocialAccountVerificationService } from "../social-account-verification/social-account-verification.service";
 import {
+  changedProfileSections,
+  recordCreatorUpdate,
+  sectionsProjection,
+} from "../utils/creator-update.util";
+import {
   applyDiscoverableProfileFilter,
   applySearchEligibilityFilter,
   applyApprovedEligibilityFilter,
@@ -567,10 +572,16 @@ export class PhotographersService {
       }
     }
 
+    const photographerBefore: any = await this.photographerModel
+      .findById(userId)
+      .select(sectionsProjection(update))
+      .lean();
+    const changedSections = changedProfileSections(photographerBefore, update);
     const updated = await this.photographerModel
       .findByIdAndUpdate(userId, { $set: update }, { new: true })
       .lean();
     if (!updated) throw new NotFoundException("Photographer not found");
+    await recordCreatorUpdate(this.photographerModel, userId, changedSections);
     if (
       Object.prototype.hasOwnProperty.call(update, "profileImages") &&
       this.hasPrimaryProfileImageChanged(

@@ -277,3 +277,51 @@ describe("PhotographersService social accounts on creator save (Stage 3A-0)", ()
     );
   });
 });
+
+describe("PhotographersService creator save records changed sections", () => {
+  it("records only what changed, after the write", async () => {
+    const order: string[] = [];
+    const photographerModel = {
+      findById: jest.fn().mockReturnValue({
+        select: jest.fn().mockReturnValue({
+          lean: jest.fn().mockResolvedValue({
+            phoneNumber: "9000000000",
+            email: "p@example.com",
+            isMobileVerified: true,
+            location: { state: "TS" },
+            socialMedia: [],
+          }),
+        }),
+      }),
+      findByIdAndUpdate: jest.fn(() => {
+        order.push("write");
+        return { lean: jest.fn().mockResolvedValue({ _id: "photo-1" }) };
+      }),
+      updateOne: jest.fn(() => {
+        order.push("record");
+        return Promise.resolve({});
+      }),
+    };
+    const service = new PhotographersService(
+      photographerModel as any,
+      {} as any,
+      { updateMany: jest.fn().mockResolvedValue({}) } as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      { reconcile: jest.fn().mockResolvedValue(0) } as any,
+    );
+    await service.updateProfile("photo-1", {
+      location: { state: "AP" },
+    } as any);
+    expect(order).toEqual(["write", "record"]);
+    expect(photographerModel.updateOne).toHaveBeenCalledWith(
+      { _id: "photo-1" },
+      expect.objectContaining({
+        $addToSet: { creatorUpdatedFields: { $each: ["location"] } },
+      }),
+    );
+  });
+});

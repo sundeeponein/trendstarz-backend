@@ -1100,3 +1100,146 @@ describe("UsersService creator saves vs platform observation (Stage 3A-2)", () =
     }
   });
 });
+
+// ── Admin "updated since review" signal on creator saves ────────────────────
+describe("UsersService creator saves record changed sections", () => {
+  const make = (models: { influencerModel?: any; brandModel?: any }) =>
+    new UsersService(
+      {} as any,
+      {} as any,
+      {} as any,
+      models.influencerModel || ({} as any),
+      models.brandModel || ({} as any),
+      {} as any,
+      {} as any,
+      {} as any,
+      { updateMany: jest.fn().mockResolvedValue({}) } as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {
+        canViewSocialLinks: jest.fn().mockResolvedValue(true),
+        listActive: jest.fn().mockResolvedValue({ plans: [] }),
+      } as any,
+      { revokePermissions: jest.fn() } as any,
+      {} as any,
+      {} as any,
+      { reconcile: jest.fn().mockResolvedValue(0) } as any,
+    );
+
+  const influencerDoc = (over: Record<string, any> = {}) => {
+    const doc: any = {
+      phoneNumber: "9000000000",
+      email: "c@example.com",
+      name: "Asha",
+      location: { state: "Telangana", district: "Hyderabad" },
+      socialMedia: [],
+      ...over,
+      set: jest.fn((k: string, v: any) => {
+        doc[k] = v;
+      }),
+      save: jest.fn(() => Promise.resolve(doc)),
+    };
+    doc.toObject = () => {
+      const plain = { ...doc };
+      delete plain.set;
+      delete plain.save;
+      delete plain.toObject;
+      return plain;
+    };
+    return doc;
+  };
+
+  it("influencer: records only the sections that really changed, after the save", async () => {
+    const doc = influencerDoc();
+    const influencerModel = {
+      findById: jest.fn().mockResolvedValue(doc),
+      updateOne: jest.fn().mockResolvedValue({}),
+    };
+    await make({ influencerModel }).updateInfluencerProfile("inf-1", {
+      name: "Asha",
+      location: { district: "Hyderabad", state: "Andhra Pradesh" },
+    });
+    expect(doc.save).toHaveBeenCalled();
+    expect(influencerModel.updateOne).toHaveBeenCalledWith(
+      { _id: "inf-1" },
+      expect.objectContaining({
+        $addToSet: { creatorUpdatedFields: { $each: ["location"] } },
+      }),
+    );
+  });
+
+  it("influencer: an unchanged re-save records nothing", async () => {
+    const doc = influencerDoc();
+    const influencerModel = {
+      findById: jest.fn().mockResolvedValue(doc),
+      updateOne: jest.fn().mockResolvedValue({}),
+    };
+    await make({ influencerModel }).updateInfluencerProfile("inf-1", {
+      name: "Asha",
+      location: { state: "Telangana", district: "Hyderabad" },
+    });
+    expect(influencerModel.updateOne).not.toHaveBeenCalled();
+  });
+
+  it("a creator cannot set or clear the review-signal fields directly", async () => {
+    const doc = influencerDoc();
+    const influencerModel = {
+      findById: jest.fn().mockResolvedValue(doc),
+      updateOne: jest.fn().mockResolvedValue({}),
+    };
+    await make({ influencerModel }).updateInfluencerProfile("inf-1", {
+      creatorUpdatedFields: [],
+      creatorUpdatesReviewedAt: "2030-01-01",
+      creatorUpdatedAt: null,
+    } as any);
+    for (const k of [
+      "creatorUpdatedFields",
+      "creatorUpdatesReviewedAt",
+      "creatorUpdatedAt",
+    ]) {
+      expect(doc.set.mock.calls.some(([key]: any[]) => key === k)).toBe(false);
+    }
+    expect(influencerModel.updateOne).not.toHaveBeenCalled();
+  });
+
+  it("brand: reads only the touched fields before writing, then records the change", async () => {
+    const select = jest.fn(() => ({
+      lean: jest.fn().mockResolvedValue({ socialMedia: [] }),
+    }));
+    const calls: string[] = [];
+    const brandModel = {
+      findById: jest.fn(() => ({ select })),
+      findByIdAndUpdate: jest.fn(() => {
+        calls.push("write");
+        return Promise.resolve({ _id: "brand-1" });
+      }),
+      updateOne: jest.fn(() => {
+        calls.push("record");
+        return Promise.resolve({});
+      }),
+    };
+    // First findById (existing contact/social data) and the before-snapshot share the stub.
+    select.mockImplementationOnce(() => ({
+      lean: jest.fn().mockResolvedValue({
+        phoneNumber: "9000000000",
+        email: "b@example.com",
+        socialMedia: [],
+      }),
+    }));
+    await make({ brandModel }).updateBrandProfile("brand-1", {
+      socialMedia: [
+        { platform: "Instagram", handle: "brand.new", tier: "Micro" },
+      ],
+    } as any);
+    expect(select).toHaveBeenLastCalledWith("socialMedia");
+    expect(calls).toEqual(["write", "record"]);
+    expect(brandModel.updateOne).toHaveBeenCalledWith(
+      { _id: "brand-1" },
+      expect.objectContaining({
+        $addToSet: { creatorUpdatedFields: { $each: ["socialMedia"] } },
+      }),
+    );
+  });
+});

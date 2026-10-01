@@ -748,3 +748,52 @@ describe("social_account_reviews is append-only", () => {
     await expect(doc.save()).rejects.toThrow("append-only");
   });
 });
+
+describe("SocialAccountVerificationService.profileIdsWithChangedReviews", () => {
+  function svc(rows: any[]) {
+    const find = jest.fn(() => ({
+      select: jest.fn(() => ({ lean: jest.fn().mockResolvedValue(rows) })),
+    }));
+    const service = new SocialAccountVerificationService(
+      { find } as any,
+      {} as any,
+      {} as any,
+    );
+    return { service, find };
+  }
+
+  it("finds profiles with a review reset by a change (pending + invalidatedAt)", async () => {
+    const { service, find } = svc([
+      { profileId: "p1" },
+      { profileId: "p1" },
+      { profileId: "p2" },
+    ]);
+    expect([...(await service.profileIdsWithChangedReviews("Brand"))]).toEqual([
+      "p1",
+      "p2",
+    ]);
+    expect(find).toHaveBeenCalledWith({
+      profileType: "Brand",
+      $or: [
+        {
+          "ownership.status": "pending",
+          "ownership.invalidatedAt": { $ne: null },
+        },
+        { "tier.status": "pending", "tier.invalidatedAt": { $ne: null } },
+      ],
+    });
+  });
+
+  it("can be limited to a page of profiles, and skips the query for an empty page", async () => {
+    const { service, find } = svc([]);
+    await service.profileIdsWithChangedReviews("Influencer", ["a", "b"]);
+    expect((find.mock.calls[0] as any[])[0].profileId).toEqual({
+      $in: ["a", "b"],
+    });
+    const empty = svc([]);
+    expect(
+      (await empty.service.profileIdsWithChangedReviews("Influencer", [])).size,
+    ).toBe(0);
+    expect(empty.find).not.toHaveBeenCalled();
+  });
+});
