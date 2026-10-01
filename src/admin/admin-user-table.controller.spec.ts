@@ -47,7 +47,7 @@ describe("AdminUserTableController issueTemporaryPassword", () => {
         expiresAt: new Date("2026-10-01T00:00:00Z"),
       }),
     };
-    const args: any[] = Array.from({ length: 11 }, () => ({}));
+    const args: any[] = Array.from({ length: 12 }, () => ({}));
     args[9] = { reconcile: jest.fn().mockResolvedValue(0) };
     args[8] = authService;
     const controller = new (AdminUserTableController as any)(...args);
@@ -95,7 +95,7 @@ describe("AdminUserTableController social account editing (Stage 3A-0)", () => {
       save: jest.fn(() => Promise.resolve(user)),
     };
     const influencerModel = { findById: jest.fn().mockResolvedValue(user) };
-    const args: any[] = Array.from({ length: 11 }, () => ({}));
+    const args: any[] = Array.from({ length: 12 }, () => ({}));
     args[9] = { reconcile: jest.fn().mockResolvedValue(0) };
     args[0] = influencerModel;
     const controller = new (AdminUserTableController as any)(...args);
@@ -243,7 +243,7 @@ describe("AdminUserTableController explicit creator-tier toggle still works (Sta
       findOne: jest.fn(() => ({ lean: jest.fn().mockResolvedValue(null) })),
       create: jest.fn().mockResolvedValue({}),
     };
-    const args: any[] = Array.from({ length: 11 }, () => ({}));
+    const args: any[] = Array.from({ length: 12 }, () => ({}));
     args[9] = { reconcile: jest.fn().mockResolvedValue(0) };
     args[0] = { findById: jest.fn().mockResolvedValue(user) };
     args[5] = flagModel;
@@ -302,7 +302,7 @@ describe("AdminUserTableController per-account verification (Stage 3A-1)", () =>
       listForProfile: jest.fn().mockResolvedValue([{ socialAccountId: ID_A }]),
       reconcile: jest.fn().mockResolvedValue(0),
     };
-    const args: any[] = Array.from({ length: 11 }, () => ({}));
+    const args: any[] = Array.from({ length: 12 }, () => ({}));
     args[{ influencer: 0, brand: 2, photographer: 3 }[type]] = model;
     args[9] = verification;
     const controller = new (AdminUserTableController as any)(...args);
@@ -438,7 +438,7 @@ describe("AdminUserTableController per-account verification (Stage 3A-1)", () =>
       save: jest.fn(() => Promise.resolve(user)),
     };
     const verification = { reconcile: jest.fn().mockResolvedValue(1) };
-    const args: any[] = Array.from({ length: 11 }, () => ({}));
+    const args: any[] = Array.from({ length: 12 }, () => ({}));
     args[0] = { findById: jest.fn().mockResolvedValue(user) };
     args[9] = verification;
     const controller = new (AdminUserTableController as any)(...args);
@@ -501,7 +501,7 @@ describe("AdminUserTableController platform observation (Stage 3A-2)", () => {
       ),
       listForProfile: jest.fn().mockResolvedValue([{ socialAccountId: ID_A }]),
     };
-    const args: any[] = Array.from({ length: 11 }, () => ({}));
+    const args: any[] = Array.from({ length: 12 }, () => ({}));
     args[{ influencer: 0, brand: 2, photographer: 3 }[type]] = model;
     args[9] = verification;
     args[10] = observation;
@@ -613,6 +613,144 @@ describe("AdminUserTableController platform observation (Stage 3A-2)", () => {
     expect(
       Reflect.getMetadata("path", proto.listSocialAccountObservations),
     ).toBe("users/:type/:id/social-account-observations");
+    expect(Reflect.getMetadata("__guards__", AdminUserTableController)).toEqual(
+      [JwtAuthGuard, RolesGuard],
+    );
+  });
+});
+
+describe("AdminUserTableController social-account comparison (Stage 3A-3)", () => {
+  const ID_A = "64b0000000000000000000a1";
+  const ID_B = "64b0000000000000000000b2";
+  // Constructor: ..., socialAccountVerification(9), socialAccountObservation(10), socialAccountComparison(11).
+  function setup(
+    profile: any,
+    type: "influencer" | "brand" | "photographer" = "influencer",
+  ) {
+    const model = {
+      findById: jest.fn(() => ({
+        select: jest.fn(() => ({ lean: jest.fn().mockResolvedValue(profile) })),
+      })),
+      findByIdAndUpdate: jest.fn(),
+      updateOne: jest.fn(),
+    };
+    const verification = {
+      decide: jest.fn(),
+      reconcile: jest.fn(),
+      listForProfile: jest.fn(),
+    };
+    const observation = { observe: jest.fn(), listForProfile: jest.fn() };
+    const comparison = {
+      compareAccount: jest.fn((_t: string, _id: string, entry: any) =>
+        Promise.resolve({ socialAccountId: entry.socialAccountId }),
+      ),
+      compareProfile: jest.fn().mockResolvedValue([{ socialAccountId: ID_A }]),
+    };
+    const args: any[] = Array.from({ length: 12 }, () => ({}));
+    args[{ influencer: 0, brand: 2, photographer: 3 }[type]] = model;
+    args[9] = verification;
+    args[10] = observation;
+    args[11] = comparison;
+    const controller = new (AdminUserTableController as any)(...args);
+    return { controller, model, verification, observation, comparison };
+  }
+  const accounts = () => [
+    { socialAccountId: ID_B, platform: "YouTube", handle: "yt", tier: "Nano" },
+    {
+      socialAccountId: ID_A,
+      platform: "Instagram",
+      handle: "ig",
+      tier: "Micro",
+    },
+  ];
+
+  it("compares the account with that exact socialAccountId, read-only", async () => {
+    const profile = { socialMedia: accounts() };
+    const snapshot = JSON.parse(JSON.stringify(profile));
+    const { controller, model, verification, observation, comparison } = setup(
+      profile,
+      "brand",
+    );
+
+    await expect(
+      controller.getSocialAccountComparison("brand", "b-1", ID_A),
+    ).resolves.toEqual({
+      account: { socialAccountId: ID_A },
+    });
+    expect(comparison.compareAccount).toHaveBeenCalledWith(
+      "Brand",
+      "b-1",
+      expect.objectContaining({ socialAccountId: ID_A, handle: "ig" }),
+    );
+    // Nothing is written and no platform/decision call is made.
+    expect(profile).toEqual(snapshot);
+    expect(model.findByIdAndUpdate).not.toHaveBeenCalled();
+    expect(model.updateOne).not.toHaveBeenCalled();
+    expect(verification.decide).not.toHaveBeenCalled();
+    expect(verification.reconcile).not.toHaveBeenCalled();
+    expect(observation.observe).not.toHaveBeenCalled();
+  });
+
+  it("400 malformed id (before any lookup), 404 unknown account / wrong profile / missing profile, 400 bad type", async () => {
+    const { controller, model, comparison } = setup({
+      socialMedia: [accounts()[0]],
+    });
+    for (const bad of ["0", "abc", `${ID_A}0`, ID_A.toUpperCase()]) {
+      await expect(
+        controller.getSocialAccountComparison("influencer", "u1", bad),
+      ).rejects.toThrow("Invalid social account id");
+    }
+    expect(model.findById).not.toHaveBeenCalled();
+    // ID_A exists on another profile, not this one.
+    await expect(
+      controller.getSocialAccountComparison("influencer", "u1", ID_A),
+    ).rejects.toMatchObject({ status: 404 });
+    const missing = setup(null);
+    await expect(
+      missing.controller.getSocialAccountComparison("influencer", "u1", ID_A),
+    ).rejects.toMatchObject({
+      status: 404,
+    });
+    await expect(
+      missing.controller.listSocialAccountComparisons("influencer", "u1"),
+    ).rejects.toMatchObject({
+      status: 404,
+    });
+    await expect(
+      controller.getSocialAccountComparison("admin", "u1", ID_A),
+    ).rejects.toThrow("Unsupported user type");
+    expect(comparison.compareAccount).not.toHaveBeenCalled();
+  });
+
+  it("lists comparisons for every account on the profile", async () => {
+    const profile = { socialMedia: accounts() };
+    const { controller, comparison } = setup(profile, "photographer");
+    await expect(
+      controller.listSocialAccountComparisons("photographer", "ph-1"),
+    ).resolves.toEqual({
+      accounts: [{ socialAccountId: ID_A }],
+    });
+    expect(comparison.compareProfile).toHaveBeenCalledWith(
+      "Photographer",
+      "ph-1",
+      profile.socialMedia,
+    );
+  });
+
+  it("the comparison routes are GETs on the guarded admin controller", () => {
+    const proto = AdminUserTableController.prototype as any;
+    expect(Reflect.getMetadata("path", proto.getSocialAccountComparison)).toBe(
+      "users/:type/:id/social-accounts/:socialAccountId/comparison",
+    );
+    expect(
+      Reflect.getMetadata("path", proto.listSocialAccountComparisons),
+    ).toBe("users/:type/:id/social-account-comparisons");
+    expect(
+      Reflect.getMetadata("method", proto.getSocialAccountComparison),
+    ).toBe(0); // RequestMethod.GET
+    expect(
+      Reflect.getMetadata("method", proto.listSocialAccountComparisons),
+    ).toBe(0);
     expect(Reflect.getMetadata("__guards__", AdminUserTableController)).toEqual(
       [JwtAuthGuard, RolesGuard],
     );

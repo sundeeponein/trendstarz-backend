@@ -31,6 +31,7 @@ import {
   toSocialProfileType,
 } from "../social-account-verification/social-account-verification.service";
 import { SocialAccountObservationService } from "../social-account-observation/social-account-observation.service";
+import { SocialAccountComparisonService } from "../social-account-comparison/social-account-comparison.service";
 import * as bcrypt from "bcryptjs";
 import * as crypto from "crypto";
 import {
@@ -62,6 +63,7 @@ export class AdminUserTableController {
     private readonly authService: AuthService,
     private readonly socialAccountVerification: SocialAccountVerificationService,
     private readonly socialAccountObservation: SocialAccountObservationService,
+    private readonly socialAccountComparison: SocialAccountComparisonService,
   ) {}
 
   private getPaging(pageRaw?: string, limitRaw?: string) {
@@ -1728,6 +1730,50 @@ export class AdminUserTableController {
       );
     }
     return { profileType, entry };
+  }
+
+  /**
+   * Stage 3A-3: DECLARED vs VERIFIED vs OBSERVED for every social account on a
+   * profile. Read-only and admin-only — never calls a platform API, never
+   * changes the profile, a verification decision or an observation.
+   */
+  @Get("users/:type/:id/social-account-comparisons")
+  async listSocialAccountComparisons(
+    @Param("type") type: string,
+    @Param("id") id: string,
+  ) {
+    const profileType = toSocialProfileType(type);
+    const user: any = await this.socialMediaModelFor(type)
+      .findById(id)
+      .select("socialMedia")
+      .lean();
+    if (!user) throw new NotFoundException("User not found");
+    const accounts = await this.socialAccountComparison.compareProfile(
+      profileType,
+      String(id),
+      user.socialMedia,
+    );
+    return { accounts };
+  }
+
+  /** Stage 3A-3: the comparison for ONE social account, by its exact socialAccountId. */
+  @Get("users/:type/:id/social-accounts/:socialAccountId/comparison")
+  async getSocialAccountComparison(
+    @Param("type") type: string,
+    @Param("id") id: string,
+    @Param("socialAccountId") socialAccountId: string,
+  ) {
+    const { profileType, entry } = await this.findSocialAccount(
+      type,
+      id,
+      socialAccountId,
+    );
+    const account = await this.socialAccountComparison.compareAccount(
+      profileType,
+      String(id),
+      entry,
+    );
+    return { account };
   }
 
   /**
