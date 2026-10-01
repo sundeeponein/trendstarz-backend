@@ -1,5 +1,5 @@
 import axios from "axios";
-import { MetaOAuthService } from "./meta-oauth.service";
+import { MetaGraphError, MetaOAuthService } from "./meta-oauth.service";
 
 jest.mock("axios");
 const mockedAxios = axios as jest.Mocked<typeof axios>;
@@ -123,5 +123,84 @@ describe("MetaOAuthService", () => {
   it("revokePermissions never throws even if the Graph API call fails", async () => {
     mockedAxios.delete.mockRejectedValue(new Error("network error"));
     await expect(service.revokePermissions("page-1", "token")).resolves.toBeUndefined();
+  });
+
+  describe("Stage 3A-2 observation calls", () => {
+    const graphError = (code: number, status: number) =>
+      Object.assign(new Error("Request failed with access_token=EAAG-secret"), {
+        response: {
+          status,
+          data: {
+            error: { code, message: "Invalid OAuth access token EAAG-secret" },
+          },
+        },
+        config: { params: { access_token: "EAAG-secret" } },
+      });
+
+    it("fetchInstagramAccount returns id, username and followers", async () => {
+      mockedAxios.get.mockResolvedValueOnce({
+        data: { id: "178", username: "creator123", followers_count: 8450 },
+      });
+      await expect(
+        service.fetchInstagramAccount("178", "tok"),
+      ).resolves.toEqual({
+        id: "178",
+        username: "creator123",
+        followersCount: 8450,
+      });
+    });
+
+    it("fetchFacebookPages returns every page with its username (no selection)", async () => {
+      mockedAxios.get.mockResolvedValueOnce({
+        data: {
+          data: [
+            { id: "1", name: "A", username: "a.page", followers_count: 5 },
+            { id: "2", name: "B", link: "https://www.facebook.com/b" },
+          ],
+        },
+      });
+      await expect(service.fetchFacebookPages("tok")).resolves.toEqual([
+        {
+          id: "1",
+          name: "A",
+          username: "a.page",
+          link: null,
+          followersCount: 5,
+        },
+        {
+          id: "2",
+          name: "B",
+          username: null,
+          link: "https://www.facebook.com/b",
+          followersCount: null,
+        },
+      ]);
+      const [, config] = mockedAxios.get.mock.calls[0] as [string, any];
+      expect(config.params.fields).toContain("username");
+    });
+
+    it.each([
+      [
+        "fetchInstagramAccount",
+        (s: MetaOAuthService) => s.fetchInstagramAccount("178", "EAAG-secret"),
+      ],
+      [
+        "fetchFacebookPages",
+        (s: MetaOAuthService) => s.fetchFacebookPages("EAAG-secret"),
+      ],
+    ])(
+      "%s throws a MetaGraphError with codes only — no token, no Meta message",
+      async (_n, call) => {
+        mockedAxios.get.mockRejectedValueOnce(graphError(190, 400));
+        const err: any = await call(service).catch((e) => e);
+        expect(err).toBeInstanceOf(MetaGraphError);
+        expect(err.graphCode).toBe(190);
+        expect(err.httpStatus).toBe(400);
+        expect(JSON.stringify({ ...err, message: err.message })).not.toContain(
+          "EAAG-secret",
+        );
+        expect(err.message).not.toContain("Invalid OAuth");
+      },
+    );
   });
 });

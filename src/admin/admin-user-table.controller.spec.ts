@@ -47,7 +47,7 @@ describe("AdminUserTableController issueTemporaryPassword", () => {
         expiresAt: new Date("2026-10-01T00:00:00Z"),
       }),
     };
-    const args: any[] = Array.from({ length: 10 }, () => ({}));
+    const args: any[] = Array.from({ length: 11 }, () => ({}));
     args[9] = { reconcile: jest.fn().mockResolvedValue(0) };
     args[8] = authService;
     const controller = new (AdminUserTableController as any)(...args);
@@ -95,7 +95,7 @@ describe("AdminUserTableController social account editing (Stage 3A-0)", () => {
       save: jest.fn(() => Promise.resolve(user)),
     };
     const influencerModel = { findById: jest.fn().mockResolvedValue(user) };
-    const args: any[] = Array.from({ length: 10 }, () => ({}));
+    const args: any[] = Array.from({ length: 11 }, () => ({}));
     args[9] = { reconcile: jest.fn().mockResolvedValue(0) };
     args[0] = influencerModel;
     const controller = new (AdminUserTableController as any)(...args);
@@ -243,7 +243,7 @@ describe("AdminUserTableController explicit creator-tier toggle still works (Sta
       findOne: jest.fn(() => ({ lean: jest.fn().mockResolvedValue(null) })),
       create: jest.fn().mockResolvedValue({}),
     };
-    const args: any[] = Array.from({ length: 10 }, () => ({}));
+    const args: any[] = Array.from({ length: 11 }, () => ({}));
     args[9] = { reconcile: jest.fn().mockResolvedValue(0) };
     args[0] = { findById: jest.fn().mockResolvedValue(user) };
     args[5] = flagModel;
@@ -302,7 +302,7 @@ describe("AdminUserTableController per-account verification (Stage 3A-1)", () =>
       listForProfile: jest.fn().mockResolvedValue([{ socialAccountId: ID_A }]),
       reconcile: jest.fn().mockResolvedValue(0),
     };
-    const args: any[] = Array.from({ length: 10 }, () => ({}));
+    const args: any[] = Array.from({ length: 11 }, () => ({}));
     args[{ influencer: 0, brand: 2, photographer: 3 }[type]] = model;
     args[9] = verification;
     const controller = new (AdminUserTableController as any)(...args);
@@ -438,7 +438,7 @@ describe("AdminUserTableController per-account verification (Stage 3A-1)", () =>
       save: jest.fn(() => Promise.resolve(user)),
     };
     const verification = { reconcile: jest.fn().mockResolvedValue(1) };
-    const args: any[] = Array.from({ length: 10 }, () => ({}));
+    const args: any[] = Array.from({ length: 11 }, () => ({}));
     args[0] = { findById: jest.fn().mockResolvedValue(user) };
     args[9] = verification;
     const controller = new (AdminUserTableController as any)(...args);
@@ -471,5 +471,150 @@ describe("AdminUserTableController per-account verification (Stage 3A-1)", () =>
     }
     expect(guard.canActivate(ctx({ role: "admin" }) as any)).toBe(true);
     expect(guard.canActivate(ctx({ role: "subadmin" }) as any)).toBe(true);
+  });
+});
+
+describe("AdminUserTableController platform observation (Stage 3A-2)", () => {
+  const ID_A = "64b0000000000000000000a1";
+  const ID_B = "64b0000000000000000000b2";
+  const adminReq = { user: { role: "admin", userId: "admin-1" } };
+  // Constructor: ..., auth(8), socialAccountVerification(9), socialAccountObservation(10).
+  function setup(
+    profile: any,
+    type: "influencer" | "brand" | "photographer" = "influencer",
+  ) {
+    const model = {
+      findById: jest.fn(() => ({
+        select: jest.fn(() => ({ lean: jest.fn().mockResolvedValue(profile) })),
+      })),
+      findByIdAndUpdate: jest.fn(),
+      updateOne: jest.fn(),
+    };
+    const verification = {
+      decide: jest.fn(),
+      reconcile: jest.fn(),
+      listForProfile: jest.fn(),
+    };
+    const observation = {
+      observe: jest.fn((actor: any, params: any) =>
+        Promise.resolve({ socialAccountId: params.entry.socialAccountId }),
+      ),
+      listForProfile: jest.fn().mockResolvedValue([{ socialAccountId: ID_A }]),
+    };
+    const args: any[] = Array.from({ length: 11 }, () => ({}));
+    args[{ influencer: 0, brand: 2, photographer: 3 }[type]] = model;
+    args[9] = verification;
+    args[10] = observation;
+    const controller = new (AdminUserTableController as any)(...args);
+    return { controller, model, verification, observation };
+  }
+  const accounts = () => [
+    { socialAccountId: ID_B, platform: "YouTube", handle: "yt", tier: "Nano" },
+    {
+      socialAccountId: ID_A,
+      platform: "Instagram",
+      handle: "ig",
+      tier: "Micro",
+    },
+  ];
+
+  it("observes the account with that exact socialAccountId (not a position) as the token actor", async () => {
+    const profile = { socialMedia: accounts() };
+    const snapshot = JSON.parse(JSON.stringify(profile));
+    const { controller, model, verification, observation } = setup(
+      profile,
+      "brand",
+    );
+
+    const res = await controller.observeSocialAccount(
+      "brand",
+      "b-1",
+      ID_A,
+      adminReq,
+    );
+
+    expect(res).toEqual({
+      message: "Platform observation recorded",
+      account: { socialAccountId: ID_A },
+    });
+    const [actor, params] = observation.observe.mock.calls[0];
+    expect(actor).toBe(adminReq.user);
+    expect(params).toEqual({
+      profileType: "Brand",
+      profileId: "b-1",
+      entry: expect.objectContaining({ socialAccountId: ID_A, handle: "ig" }),
+    });
+    // Observation never writes the profile or the 3A-1 verification.
+    expect(profile).toEqual(snapshot);
+    expect(model.findByIdAndUpdate).not.toHaveBeenCalled();
+    expect(model.updateOne).not.toHaveBeenCalled();
+    expect(verification.decide).not.toHaveBeenCalled();
+    expect(verification.reconcile).not.toHaveBeenCalled();
+  });
+
+  it("400 for malformed ids, 404 for unknown account / wrong profile, 400 for unsupported type", async () => {
+    const { controller, model, observation } = setup({
+      socialMedia: [accounts()[0]],
+    });
+    for (const bad of ["0", "1", "not-an-id", ID_A.toUpperCase()]) {
+      await expect(
+        controller.observeSocialAccount("influencer", "u1", bad, adminReq),
+      ).rejects.toThrow("Invalid social account id");
+    }
+    expect(model.findById).not.toHaveBeenCalled();
+    // ID_A belongs to another profile / isn't on this one.
+    await expect(
+      controller.observeSocialAccount("influencer", "u1", ID_A, adminReq),
+    ).rejects.toMatchObject({
+      status: 404,
+    });
+    const missing = setup(null);
+    await expect(
+      missing.controller.observeSocialAccount(
+        "influencer",
+        "u1",
+        ID_A,
+        adminReq,
+      ),
+    ).rejects.toMatchObject({
+      status: 404,
+    });
+    await expect(
+      missing.controller.listSocialAccountObservations("influencer", "u1"),
+    ).rejects.toMatchObject({
+      status: 404,
+    });
+    await expect(
+      controller.observeSocialAccount("admin", "u1", ID_A, adminReq),
+    ).rejects.toThrow("Unsupported user type");
+    expect(observation.observe).not.toHaveBeenCalled();
+  });
+
+  it("lists observations for every account on the profile", async () => {
+    const profile = { socialMedia: accounts() };
+    const { controller, observation } = setup(profile, "photographer");
+    await expect(
+      controller.listSocialAccountObservations("photographer", "ph-1"),
+    ).resolves.toEqual({
+      accounts: [{ socialAccountId: ID_A }],
+    });
+    expect(observation.listForProfile).toHaveBeenCalledWith(
+      "Photographer",
+      "ph-1",
+      profile.socialMedia,
+    );
+  });
+
+  it("the observation routes sit on the guarded admin controller", () => {
+    const proto = AdminUserTableController.prototype as any;
+    expect(Reflect.getMetadata("path", proto.observeSocialAccount)).toBe(
+      "users/:type/:id/social-accounts/:socialAccountId/observe",
+    );
+    expect(
+      Reflect.getMetadata("path", proto.listSocialAccountObservations),
+    ).toBe("users/:type/:id/social-account-observations");
+    expect(Reflect.getMetadata("__guards__", AdminUserTableController)).toEqual(
+      [JwtAuthGuard, RolesGuard],
+    );
   });
 });

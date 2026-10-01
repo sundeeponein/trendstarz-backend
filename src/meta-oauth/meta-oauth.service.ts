@@ -9,6 +9,40 @@ export interface MetaTokenResult {
   expiresInSeconds: number | null;
 }
 
+/** A Graph API failure reduced to its codes — deliberately carries no token, URL or Meta message. */
+export class MetaGraphError extends Error {
+  constructor(
+    readonly graphCode: number | null,
+    readonly httpStatus: number | null,
+  ) {
+    super(
+      `Meta Graph API error (code ${graphCode ?? "?"}, HTTP ${httpStatus ?? "?"})`,
+    );
+    this.name = "MetaGraphError";
+  }
+}
+
+/** A Facebook Page as listed for observation — identity fields + follower count only. */
+export interface MetaPageRef {
+  id: string;
+  name: string;
+  username: string | null;
+  link: string | null;
+  followersCount: number | null;
+}
+
+function toMetaGraphError(err: unknown): MetaGraphError {
+  const e = err as {
+    response?: { status?: unknown; data?: { error?: { code?: unknown } } };
+  };
+  const code = Number(e?.response?.data?.error?.code);
+  const status = Number(e?.response?.status);
+  return new MetaGraphError(
+    Number.isFinite(code) ? code : null,
+    Number.isFinite(status) ? status : null,
+  );
+}
+
 export interface MetaFacebookPage {
   id: string;
   name: string;
@@ -169,6 +203,68 @@ export class MetaOAuthService {
     } catch (err: any) {
       this.logger.warn(`Failed to fetch Instagram business account stats for ${igAccountId}: ${err?.message || err}`);
       return null;
+    }
+  }
+
+  /**
+   * Stage 3A-2 (observation): the Instagram account's own identity + follower
+   * count. Unlike getInstagramBusinessAccountStats this THROWS a MetaGraphError
+   * (codes only — never the token or Meta's message) so callers can tell an
+   * expired authorization from an API failure.
+   */
+  async fetchInstagramAccount(
+    igAccountId: string,
+    accessToken: string,
+  ): Promise<{
+    id: string;
+    username: string | null;
+    followersCount: number | null;
+  }> {
+    try {
+      const resp = await axios.get(`${GRAPH_API_BASE}/${igAccountId}`, {
+        params: {
+          access_token: accessToken,
+          fields: "id,username,followers_count",
+        },
+      });
+      const followers = Number(resp.data?.followers_count);
+      return {
+        id: String(resp.data?.id || ""),
+        username: resp.data?.username ? String(resp.data.username) : null,
+        followersCount: Number.isFinite(followers) ? followers : null,
+      };
+    } catch (err) {
+      throw toMetaGraphError(err);
+    }
+  }
+
+  /**
+   * Stage 3A-2 (observation): every Facebook Page the token can see, with the
+   * Page's unique username, so a caller can pick the intended Page explicitly
+   * instead of pages[0]. Throws a MetaGraphError like fetchInstagramAccount.
+   */
+  async fetchFacebookPages(accessToken: string): Promise<MetaPageRef[]> {
+    try {
+      const resp = await axios.get(`${GRAPH_API_BASE}/me/accounts`, {
+        params: {
+          access_token: accessToken,
+          fields: "id,name,username,link,followers_count",
+          limit: 100,
+        },
+      });
+      const pages: any[] = resp.data?.data || [];
+      return pages.map((p) => {
+        const followers = Number(p?.followers_count);
+        return {
+          id: String(p?.id || ""),
+          name: String(p?.name || ""),
+          username: p?.username ? String(p.username) : null,
+          link: p?.link ? String(p.link) : null,
+          followersCount: Number.isFinite(followers) ? followers : null,
+        };
+      });
+    } catch (err) {
+      throw toMetaGraphError(err);
     }
   }
 

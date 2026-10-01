@@ -78,6 +78,7 @@ import { WhatsAppModule } from "./whatsapp/whatsapp.module";
 import { CollaborationScoreModule } from "./collaboration-score/collaboration-score.module";
 import { PlatformEventsModule } from "./platform-events/platform-events.module";
 import { SocialAccountVerificationModule } from "./social-account-verification/social-account-verification.module";
+import { SocialAccountObservationModule } from "./social-account-observation/social-account-observation.module";
 import { PlatformDataQualityModule } from "./platform-data-quality/platform-data-quality.module";
 import { PlatformMetricsModule } from "./platform-metrics/platform-metrics.module";
 
@@ -188,6 +189,7 @@ import { PlatformMetricsModule } from "./platform-metrics/platform-metrics.modul
     PlatformDataQualityModule,
     PlatformMetricsModule,
     SocialAccountVerificationModule,
+    SocialAccountObservationModule,
   ],
   controllers: [
     AppController,

@@ -1011,3 +1011,92 @@ describe("UsersService creator saves vs per-account verification (Stage 3A-1)", 
     );
   });
 });
+
+// ── Stage 3A-2: creator saves cannot inject platform observations ───────────
+describe("UsersService creator saves vs platform observation (Stage 3A-2)", () => {
+  const ID_A = "64b0000000000000000000a1";
+  const injected = {
+    observedFollowersCount: 999999,
+    externalAccountId: "fake",
+    observationStatus: "success",
+    observation: { status: "success", observedFollowersCount: 999999 },
+    observedHandle: "someone.else",
+    source: "youtube",
+    capturedAt: "2020-01-01T00:00:00.000Z",
+    externalUrl: "https://youtube.com/@fake",
+    lastError: null,
+  };
+
+  it("observation fields in a creator save are dropped, and followersCount stays server-owned", async () => {
+    const doc: any = {
+      phoneNumber: "9000000000",
+      email: "c@example.com",
+      socialMedia: [
+        {
+          socialAccountId: ID_A,
+          platformKey: "youtube",
+          platform: "YouTube",
+          handle: "creator123",
+          tier: "Micro",
+          followersCount: 0,
+          contentTypes: [],
+        },
+      ],
+      set: jest.fn((k: string, v: any) => {
+        doc[k] = v;
+      }),
+      save: jest.fn(() => Promise.resolve(doc)),
+    };
+    const service = new UsersService(
+      {} as any,
+      {} as any,
+      {} as any,
+      { findById: jest.fn().mockResolvedValue(doc) } as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      { updateMany: jest.fn().mockResolvedValue({}) } as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {
+        canViewSocialLinks: jest.fn().mockResolvedValue(true),
+        listActive: jest.fn().mockResolvedValue({ plans: [] }),
+      } as any,
+      { revokePermissions: jest.fn() } as any,
+      {} as any,
+      {} as any,
+      { reconcile: jest.fn().mockResolvedValue(0) } as any,
+    );
+
+    await service.updateInfluencerProfile("inf-1", {
+      ...injected,
+      socialMedia: [
+        {
+          platform: "YouTube",
+          handle: "creator123",
+          tier: "Micro",
+          socialAccountId: ID_A,
+          followersCount: 999999,
+          ...injected,
+        },
+      ],
+    } as any);
+
+    const [saved] = doc.set.mock.calls.find(
+      ([k]: any[]) => k === "socialMedia",
+    )[1];
+    for (const key of Object.keys(injected)) expect(saved[key]).toBeUndefined();
+    expect(saved).toMatchObject({
+      socialAccountId: ID_A,
+      followersCount: 0,
+      handle: "creator123",
+      tier: "Micro",
+    });
+    for (const key of Object.keys(injected)) {
+      expect(doc.set.mock.calls.some(([k]: any[]) => k === key)).toBe(false);
+    }
+  });
+});

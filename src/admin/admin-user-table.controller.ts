@@ -30,6 +30,7 @@ import {
   SocialDecisionBody,
   toSocialProfileType,
 } from "../social-account-verification/social-account-verification.service";
+import { SocialAccountObservationService } from "../social-account-observation/social-account-observation.service";
 import * as bcrypt from "bcryptjs";
 import * as crypto from "crypto";
 import {
@@ -60,6 +61,7 @@ export class AdminUserTableController {
     private readonly firebaseAdminService: FirebaseAdminService,
     private readonly authService: AuthService,
     private readonly socialAccountVerification: SocialAccountVerificationService,
+    private readonly socialAccountObservation: SocialAccountObservationService,
   ) {}
 
   private getPaging(pageRaw?: string, limitRaw?: string) {
@@ -1687,6 +1689,27 @@ export class AdminUserTableController {
     body: SocialDecisionBody,
     req: any,
   ) {
+    const { profileType, entry } = await this.findSocialAccount(
+      type,
+      id,
+      socialAccountId,
+    );
+    const account = await this.socialAccountVerification.decide(req?.user, {
+      profileType,
+      profileId: String(id),
+      entry,
+      reviewType,
+      body: body || {},
+    });
+    return { message: "Social account review saved", account };
+  }
+
+  /** The socialMedia entry with this exact socialAccountId on this profile (never by position). */
+  private async findSocialAccount(
+    type: string,
+    id: string,
+    socialAccountId: string,
+  ) {
     const profileType = toSocialProfileType(type);
     if (!isSocialAccountId(socialAccountId)) {
       throw new BadRequestException("Invalid social account id");
@@ -1704,14 +1727,55 @@ export class AdminUserTableController {
         "Social account not found on this profile — it may have been changed. Refresh and try again.",
       );
     }
-    const account = await this.socialAccountVerification.decide(req?.user, {
+    return { profileType, entry };
+  }
+
+  /**
+   * Stage 3A-2: latest platform observation for every social account on a
+   * profile. Admin-only data — never part of profile/brand responses.
+   */
+  @Get("users/:type/:id/social-account-observations")
+  async listSocialAccountObservations(
+    @Param("type") type: string,
+    @Param("id") id: string,
+  ) {
+    const profileType = toSocialProfileType(type);
+    const user: any = await this.socialMediaModelFor(type)
+      .findById(id)
+      .select("socialMedia")
+      .lean();
+    if (!user) throw new NotFoundException("User not found");
+    const accounts = await this.socialAccountObservation.listForProfile(
+      profileType,
+      String(id),
+      user.socialMedia,
+    );
+    return { accounts };
+  }
+
+  /**
+   * Stage 3A-2: fetch what the platform reports for ONE social account now.
+   * Observation only — never changes the declared handle/tier/followers or
+   * the Stage 3A-1 verification.
+   */
+  @Post("users/:type/:id/social-accounts/:socialAccountId/observe")
+  async observeSocialAccount(
+    @Param("type") type: string,
+    @Param("id") id: string,
+    @Param("socialAccountId") socialAccountId: string,
+    @Req() req: any,
+  ) {
+    const { profileType, entry } = await this.findSocialAccount(
+      type,
+      id,
+      socialAccountId,
+    );
+    const account = await this.socialAccountObservation.observe(req?.user, {
       profileType,
       profileId: String(id),
       entry,
-      reviewType,
-      body: body || {},
     });
-    return { message: "Social account review saved", account };
+    return { message: "Platform observation recorded", account };
   }
 
   /**
