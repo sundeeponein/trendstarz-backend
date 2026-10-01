@@ -56,6 +56,7 @@ function setup() {
       Promise<ObservationOutcome>,
       [string, string, string, unknown]
     >(),
+    connectedPlatforms: jest.fn().mockResolvedValue(new Set<string>()),
   };
   const service = new SocialAccountObservationService(
     currentModel as any,
@@ -352,6 +353,42 @@ describe("SocialAccountObservationService (Stage 3A-2)", () => {
       [ID_IG, null],
       [null, null],
     ]);
+  });
+
+  it("says whether Instagram/Facebook are connected (YouTube needs no connection)", async () => {
+    const { service, meta } = setup();
+    meta.connectedPlatforms.mockResolvedValue(new Set(["facebook"]));
+    const fbEntry = {
+      socialAccountId: "64b0000000000000000000c3",
+      platformKey: "facebook",
+      platform: "Facebook",
+      handle: "mypage.official",
+    };
+    const list = await service.listForProfile("Influencer", "inf-1", [
+      ytEntry(),
+      igEntry(),
+      fbEntry,
+      {
+        socialAccountId: "64b0000000000000000000d4",
+        platform: "LinkedIn",
+        handle: "x",
+      },
+    ]);
+    expect(meta.connectedPlatforms).toHaveBeenCalledWith("Influencer", "inf-1");
+    expect(
+      list.map((a) => [a.platformKey, a.requiresConnection, a.connected]),
+    ).toEqual([
+      ["youtube", false, null],
+      ["instagram", true, false],
+      ["facebook", true, true],
+      ["linkedin", false, null],
+    ]);
+  });
+
+  it("doesn't look up Meta connections for a profile without Instagram/Facebook", async () => {
+    const { service, meta } = setup();
+    await service.listForProfile("Influencer", "inf-1", [ytEntry()]);
+    expect(meta.connectedPlatforms).not.toHaveBeenCalled();
   });
 
   it("depends only on its own two collections and the platform observers", () => {

@@ -274,6 +274,40 @@ export class MetaObserver {
   ) {}
 
   /**
+   * Which Meta platforms this profile has a usable connection for — so the
+   * admin UI can say "manual check" instead of offering a Fetch that can only
+   * fail. Filters on the token's presence without ever selecting it.
+   */
+  async connectedPlatforms(
+    profileType: SocialProfileType,
+    profileId: string,
+  ): Promise<Set<"instagram" | "facebook">> {
+    const rows = (await this.connectionModel
+      .find({
+        userId: profileId,
+        userType: profileType,
+        platform: { $in: ["instagram", "facebook"] },
+        revokedAt: null,
+        accessToken: { $exists: true, $nin: [null, ""] },
+      })
+      .select("platform instagramBusinessAccountId facebookPageId")
+      .lean()) as Array<{
+      platform?: string;
+      instagramBusinessAccountId?: string | null;
+      facebookPageId?: string | null;
+    }>;
+    const connected = new Set<"instagram" | "facebook">();
+    for (const row of rows || []) {
+      // Instagram data needs the linked Instagram Business account, not just a token.
+      if (row.platform === "instagram" && row.instagramBusinessAccountId) {
+        connected.add("instagram");
+      }
+      if (row.platform === "facebook") connected.add("facebook");
+    }
+    return connected;
+  }
+
+  /**
    * Reuses the creator's existing Meta OAuth connection (token stays in
    * social_oauth_connections, select:false). The connection is per profile +
    * platform, so the observed account is only accepted when it is EXACTLY the

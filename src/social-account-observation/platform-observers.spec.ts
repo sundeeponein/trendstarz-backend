@@ -483,3 +483,45 @@ describe("MetaObserver", () => {
     expect(connectionModel.findOne).not.toHaveBeenCalled();
   });
 });
+
+describe("MetaObserver.connectedPlatforms", () => {
+  function setup(rows: any[]) {
+    const select = jest.fn(() => ({ lean: jest.fn().mockResolvedValue(rows) }));
+    const connectionModel = { find: jest.fn(() => ({ select })) };
+    const observer = new MetaObserver(
+      connectionModel as any,
+      { isConfigured: () => true } as any,
+    );
+    return { observer, connectionModel, select };
+  }
+
+  it("only counts live connections with a token, for this exact profile — without selecting the token", async () => {
+    const { observer, connectionModel, select } = setup([]);
+    await observer.connectedPlatforms("Brand", "b-1");
+    expect(connectionModel.find).toHaveBeenCalledWith({
+      userId: "b-1",
+      userType: "Brand",
+      platform: { $in: ["instagram", "facebook"] },
+      revokedAt: null,
+      accessToken: { $exists: true, $nin: [null, ""] },
+    });
+    const [fields] = select.mock.calls[0] as unknown as [string];
+    expect(fields).not.toContain("accessToken");
+  });
+
+  it("Instagram counts only with a linked Instagram Business account", async () => {
+    expect([
+      ...(await setup([
+        { platform: "instagram", instagramBusinessAccountId: null },
+      ]).observer.connectedPlatforms("Influencer", "i")),
+    ]).toEqual([]);
+    expect(
+      [
+        ...(await setup([
+          { platform: "instagram", instagramBusinessAccountId: "178" },
+          { platform: "facebook", facebookPageId: "1" },
+        ]).observer.connectedPlatforms("Influencer", "i")),
+      ].sort(),
+    ).toEqual(["facebook", "instagram"]);
+  });
+});

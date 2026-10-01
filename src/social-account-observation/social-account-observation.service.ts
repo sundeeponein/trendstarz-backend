@@ -41,6 +41,10 @@ export interface SocialAccountObservationView {
   platformKey: string;
   /** Whether this platform can be observed at all. */
   observable: boolean;
+  /** Instagram/Facebook: Meta only shares data once the creator connects the account. */
+  requiresConnection: boolean;
+  /** For requiresConnection platforms: whether the creator has connected it. null otherwise. */
+  connected: boolean | null;
   observation: {
     status: ObservationStatus;
     lastError: ObservationFailureReason | null;
@@ -59,6 +63,7 @@ export interface SocialAccountObservationView {
 }
 
 const OBSERVABLE_PLATFORMS = ["youtube", "instagram", "facebook"] as const;
+const CONNECTION_PLATFORMS: readonly string[] = ["instagram", "facebook"];
 
 function plain(entry: unknown): Record<string, any> {
   if (!entry || typeof entry !== "object") return {};
@@ -196,12 +201,19 @@ export class SocialAccountObservationService {
       .find({ profileType, profileId })
       .lean();
     const byId = new Map(docs.map((d) => [String(d.socialAccountId), d]));
+    const needsMeta = entries.some((e) =>
+      CONNECTION_PLATFORMS.includes(platformKeyOf(e)),
+    );
+    const connected = needsMeta
+      ? await this.meta.connectedPlatforms(profileType, profileId)
+      : new Set<string>();
     return entries.map((entry) =>
       this.view(
         entry,
         isSocialAccountId(entry.socialAccountId)
           ? byId.get(entry.socialAccountId)
           : null,
+        connected,
       ),
     );
   }
@@ -227,8 +239,10 @@ export class SocialAccountObservationService {
   private view(
     entry: Record<string, any>,
     doc: any,
+    connectedPlatforms?: Set<string>,
   ): SocialAccountObservationView {
     const platformKey = platformKeyOf(entry);
+    const requiresConnection = CONNECTION_PLATFORMS.includes(platformKey);
     return {
       socialAccountId: isSocialAccountId(entry.socialAccountId)
         ? entry.socialAccountId
@@ -238,6 +252,12 @@ export class SocialAccountObservationService {
       observable: (OBSERVABLE_PLATFORMS as readonly string[]).includes(
         platformKey,
       ),
+      requiresConnection,
+      // Unknown (null) when the caller didn't look it up, e.g. right after a Fetch.
+      connected:
+        requiresConnection && connectedPlatforms
+          ? connectedPlatforms.has(platformKey)
+          : null,
       observation: doc
         ? {
             status: doc.status,
