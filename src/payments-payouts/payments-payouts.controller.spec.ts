@@ -1,3 +1,4 @@
+import { getConnectionToken } from "@nestjs/mongoose";
 import { Test, TestingModule } from "@nestjs/testing";
 import { PaymentsPayoutsController } from "./payments-payouts.controller";
 import { PaymentsPayoutsService } from "./payments-payouts.service";
@@ -26,6 +27,8 @@ describe("PaymentsPayoutsController", () => {
     const module: TestingModule = await Test.createTestingModule({
       controllers: [PaymentsPayoutsController],
       providers: [
+        // JwtAuthGuard reads account status through Nest's Mongoose connection.
+        { provide: getConnectionToken(), useValue: { models: {} } },
         {
           provide: PaymentsPayoutsService,
           useValue: serviceMock,

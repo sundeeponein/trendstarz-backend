@@ -1,5 +1,5 @@
 import { BadRequestException } from "@nestjs/common";
-import { getModelToken } from "@nestjs/mongoose";
+import { getModelToken, getConnectionToken } from "@nestjs/mongoose";
 import { PlansService } from "../plans/plans.service";
 import { PhotographersService } from "../photographers/photographers.service";
 import { Test, TestingModule } from "@nestjs/testing";
@@ -22,6 +22,8 @@ describe("UsersController profile update routes", () => {
     const module: TestingModule = await Test.createTestingModule({
       controllers: [UsersController],
       providers: [
+        // JwtAuthGuard reads account status through Nest's Mongoose connection.
+        { provide: getConnectionToken(), useValue: { models: {} } },
         { provide: UsersService, useValue: usersService },
         // Also required by the controller's constructor and its DailyUsageGuard.
         { provide: PlansService, useValue: { getUserPlanCapabilities: jest.fn().mockResolvedValue({ limits: [], features: [] }) } },

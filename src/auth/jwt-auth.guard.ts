@@ -5,8 +5,9 @@ import {
   UnauthorizedException,
 } from "@nestjs/common";
 import { Reflector } from "@nestjs/core";
+import { InjectConnection } from "@nestjs/mongoose";
 import * as jwt from "jsonwebtoken";
-import * as mongoose from "mongoose";
+import { Connection } from "mongoose";
 import { getJwtSecret } from "./jwt-secret";
 import { ALLOW_PENDING_DELETION_KEY } from "./allow-pending-deletion.decorator";
 
@@ -27,10 +28,13 @@ interface AccountStatusGuardMetrics {
 // Deliberately NOT injected via @InjectModel: JwtAuthGuard is applied via
 // bare `@UseGuards(JwtAuthGuard)` across dozens of controllers/modules with
 // no single owning module, so constructor-injected Mongoose models would
-// fail to resolve in any module that doesn't itself register them. Reading
-// straight off the global Mongoose model registry (this app uses a single
-// default connection — see MongooseModule.forRoot in app.module.ts) avoids
-// that entirely.
+// fail to resolve in any module that doesn't itself register them.
+// Instead the guard injects Nest's (global) Mongoose CONNECTION and reads the
+// model off it. It must NOT use the global `mongoose.models` registry: Nest
+// opens its own connection (mongoose.createConnection), and the models in the
+// global registry (profile.schemas.ts `model("Influencer", …)`) are bound to
+// mongoose's default connection, which is never opened — every lookup there
+// buffered until the timeout below, so this check never once succeeded.
 const ACCOUNT_STATUS_CACHE_TTL_MS = 60 * 1000;
 const ACCOUNT_STATUS_STALE_GRACE_MS = 10 * 60 * 1000;
 const accountStatusCache = new Map<string, AccountStatusEntry>();
@@ -77,6 +81,7 @@ function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
 }
 
 async function getAccountStatus(
+  connection: Connection,
   userId: string,
   role: string,
 ): Promise<AccountStatusEntry | null> {
@@ -85,7 +90,7 @@ async function getAccountStatus(
 
   const modelName = ROLE_MODEL_NAME[String(role || "").toLowerCase()];
   if (!modelName) return null;
-  const model = mongoose.models[modelName];
+  const model = connection?.models?.[modelName];
   if (!model) return null;
 
   const doc: any = await withTimeout(
@@ -151,7 +156,10 @@ export function getJwtAuthGuardAccountStatusMetrics(): AccountStatusGuardMetrics
 
 @Injectable()
 export class JwtAuthGuard implements CanActivate {
-  constructor(private readonly reflector: Reflector) {}
+  constructor(
+    private readonly reflector: Reflector,
+    @InjectConnection() private readonly connection: Connection,
+  ) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
     const req = context.switchToHttp().getRequest();
@@ -175,7 +183,11 @@ export class JwtAuthGuard implements CanActivate {
 
     let account: AccountStatusEntry | null = null;
     try {
-      account = await getAccountStatus(String(decoded.userId), role);
+      account = await getAccountStatus(
+        this.connection,
+        String(decoded.userId),
+        role,
+      );
     } catch (err) {
       // Fail OPEN on a transient DB hiccup — a status-check outage must
       // never turn into an app-wide authentication outage.
