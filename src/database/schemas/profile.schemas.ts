@@ -1384,6 +1384,10 @@ export const CampaignSchema = new Schema(
     targetState: { type: String },
     targetDistrict: { type: String },
     targetCities: [{ type: String }],
+    // Stage 3B-1: optional creator-language requirement (names from the
+    // `languages` master list). Stored for future matching only — nothing
+    // filters on it yet, and campaigns without it remain fully valid.
+    languages: { type: [String], default: undefined },
     platformPreference: { type: String },
     specialInstructions: { type: String },
     // photographer collaboration location fields

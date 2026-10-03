@@ -126,3 +126,87 @@ describe("profile-eligibility shared discovery policy", () => {
     expect(getLocationPriorityTier(differentCountry, viewer)).toBe(1);
   });
 });
+
+describe("approved active account rule (Stage 3B-1, shared by discovery and campaign alerts)", () => {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const util = require("./profile-eligibility.util");
+  const approved = {
+    status: "accepted",
+    isDeleted: false,
+    isEmailVerified: true,
+    isMobileVerified: true,
+    verificationStatus: "approved",
+  };
+
+  it.each([
+    ["approved & active", approved, true],
+    [
+      "approved via verifiedByTrendStarz",
+      {
+        ...approved,
+        verificationStatus: "pending",
+        verifiedByTrendStarz: true,
+      },
+      true,
+    ],
+    ["pending review", { ...approved, verificationStatus: "pending" }, false],
+    ["rejected", { ...approved, verificationStatus: "rejected" }, false],
+    ["not accepted", { ...approved, status: "pending" }, false],
+    ["deleted", { ...approved, isDeleted: true }, false],
+    ["suspended (blocked)", { ...approved, accountStatus: "SUSPENDED" }, false],
+    ["email unverified", { ...approved, isEmailVerified: false }, false],
+    ["mobile unverified", { ...approved, isMobileVerified: false }, false],
+  ])("%s → %s", (_label, profile, expected) => {
+    expect(util.isApprovedActiveAccount(profile)).toBe(expected);
+  });
+
+  it("the DB filter expresses the same rule and keeps existing conditions", () => {
+    const f = util.applyApprovedActiveAccountFilter({
+      email: { $ne: "" },
+      $and: [{ x: 1 }],
+    });
+    expect(f).toMatchObject({
+      email: { $ne: "" },
+      status: "accepted",
+      isDeleted: { $ne: true },
+      isEmailVerified: true,
+      isMobileVerified: true,
+    });
+    expect(f.$and).toEqual([
+      { x: 1 },
+      {
+        $or: [
+          { verificationStatus: "approved" },
+          { verifiedByTrendStarz: true },
+        ],
+      },
+      {
+        $or: [
+          { accountStatus: { $exists: false } },
+          { accountStatus: { $nin: ["suspended", "SUSPENDED"] } },
+        ],
+      },
+    ]);
+  });
+
+  it("discoverability still requires the approval rule plus its own conditions", () => {
+    const f = util.applyDiscoverableProfileFilter(
+      {},
+      { viewerIsAuthenticated: true },
+    );
+    expect(f.status).toBe("accepted");
+    expect(JSON.stringify(f.$and)).toContain("verifiedByTrendStarz");
+    expect(JSON.stringify(f.$and)).toContain("profileImages.0");
+    expect(JSON.stringify(f.$and)).toContain("location.state");
+    expect(
+      util.isDiscoverableProfile({
+        ...{
+          status: "accepted",
+          isEmailVerified: true,
+          isMobileVerified: true,
+          verificationStatus: "rejected",
+        },
+      }),
+    ).toBe(false);
+  });
+});

@@ -646,7 +646,7 @@ export const CAMPAIGN_REQUIREMENTS: CampaignRequirementDefinition[] = [
     usedInInvitations: false,
     usedInCampaignAlerts: false,
     notes:
-      "Schema fields only — no code reads or writes them. Creator follower counts are also unreliable (all 0).",
+      "Nothing reads or enforces them (only an unused photographer collaboration form ever wrote minFollowerCount). Creator follower counts are also unreliable (all 0).",
     coverageField: "followerRange",
     priority: "optional",
   },
@@ -666,7 +666,7 @@ export const CAMPAIGN_REQUIREMENTS: CampaignRequirementDefinition[] = [
     usedInInvitations: false,
     usedInCampaignAlerts: true,
     notes:
-      "State/district: case-insensitive equality in eligibility (tier_filtered_open), exact equality in alerts. targetCities is stored but unused.",
+      "State/district: case-insensitive equality in eligibility (tier_filtered_open), exact equality in alerts. Since Stage 3B-1 the form saves the district to targetDistrict (validated against the districts master list); before that it went only to targetCities[0], which eligibility and alerts ignore. targetCities now mirrors the district for legacy readers.",
     coverageField: "targetState",
     priority: "important",
   },
@@ -856,7 +856,7 @@ export const FUTURE_MATCHING_CONTRACT = {
     },
     followerRange: {
       status: "future",
-      from: "campaigns.min/maxFollowerCount exist in schema but are unused",
+      from: "campaigns.min/maxFollowerCount exist in schema but nothing reads or enforces them",
     },
     location: {
       status: "existing",

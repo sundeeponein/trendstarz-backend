@@ -69,6 +69,45 @@ export function profileVisibilityAllowsDiscovery(
   return true;
 }
 
+/**
+ * The ACCOUNT half of discoverability: an active, admin-approved account with
+ * verified email and mobile. No visibility/photo/location/social conditions.
+ * Shared by discovery (below) and the open-campaign alert matcher, so the
+ * approval rule lives in one place.
+ */
+export function isApprovedActiveAccount(profile: any): boolean {
+  if (String(profile?.status || "").toLowerCase() !== "accepted") return false;
+  if (profile?.isDeleted === true) return false;
+  if (String(profile?.accountStatus || "").toLowerCase() === "suspended")
+    return false;
+  if (profile?.isEmailVerified !== true) return false;
+  if (profile?.isMobileVerified !== true) return false;
+  return isAdminApproved(profile);
+}
+
+/** DB-filter twin of isApprovedActiveAccount. Mutates and returns `filter`. */
+export function applyApprovedActiveAccountFilter(
+  filter: Record<string, any> = {},
+): Record<string, any> {
+  filter.status = "accepted";
+  filter.isDeleted = { $ne: true };
+  filter.isEmailVerified = true;
+  filter.isMobileVerified = true;
+  filter.$and = [
+    ...(Array.isArray(filter.$and) ? filter.$and : []),
+    {
+      $or: [{ verificationStatus: "approved" }, { verifiedByTrendStarz: true }],
+    },
+    {
+      $or: [
+        { accountStatus: { $exists: false } },
+        { accountStatus: { $nin: ["suspended", "SUSPENDED"] } },
+      ],
+    },
+  ];
+  return filter;
+}
+
 export function isDiscoverableProfile(
   profile: any,
   options: DiscoverabilityOptions = {},
@@ -77,13 +116,7 @@ export function isDiscoverableProfile(
   const viewerIsAuthenticated = !!options.viewerIsAuthenticated;
   const requireSocialTier = options.requireSocialTier !== false;
 
-  if (String(profile?.status || "").toLowerCase() !== "accepted") return false;
-  if (profile?.isDeleted === true) return false;
-  if (String(profile?.accountStatus || "").toLowerCase() === "suspended")
-    return false;
-  if (profile?.isEmailVerified !== true) return false;
-  if (profile?.isMobileVerified !== true) return false;
-  if (!isAdminApproved(profile)) return false;
+  if (!isApprovedActiveAccount(profile)) return false;
   if (
     !profileVisibilityAllowsDiscovery(
       profile?.profileVisibility,
@@ -116,10 +149,7 @@ export function applyDiscoverableProfileFilter(
   options: DiscoverabilityOptions = {},
 ): Record<string, any> {
   const photoField = options.photoField || "profileImages";
-  filter.status = "accepted";
-  filter.isDeleted = { $ne: true };
-  filter.isEmailVerified = true;
-  filter.isMobileVerified = true;
+  applyApprovedActiveAccountFilter(filter);
   filter.profileVisibility = {
     $nin: options.viewerIsAuthenticated
       ? ["PRIVATE"]
@@ -128,20 +158,8 @@ export function applyDiscoverableProfileFilter(
 
   const andConditions: any[] = [
     ...(Array.isArray(filter.$and) ? filter.$and : []),
-    {
-      $or: [
-        { verificationStatus: "approved" },
-        { verifiedByTrendStarz: true },
-      ],
-    },
     { [`${photoField}.0`]: { $exists: true } },
     { "location.state": { $exists: true, $nin: ["", null] } },
-    {
-      $or: [
-        { accountStatus: { $exists: false } },
-        { accountStatus: { $nin: ["suspended", "SUSPENDED"] } },
-      ],
-    },
   ];
 
   if (options.requireSocialTier !== false) {

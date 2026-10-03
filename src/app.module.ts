@@ -81,6 +81,7 @@ import { SocialAccountVerificationModule } from "./social-account-verification/s
 import { SocialAccountObservationModule } from "./social-account-observation/social-account-observation.module";
 import { SocialAccountComparisonModule } from "./social-account-comparison/social-account-comparison.module";
 import { MarketplaceIntelligenceModule } from "./marketplace-intelligence/marketplace-intelligence.module";
+import { MatchingInputsModule } from "./matching-inputs/matching-inputs.module";
 import { PlatformDataQualityModule } from "./platform-data-quality/platform-data-quality.module";
 import { PlatformMetricsModule } from "./platform-metrics/platform-metrics.module";
 
@@ -194,6 +195,7 @@ import { PlatformMetricsModule } from "./platform-metrics/platform-metrics.modul
     SocialAccountObservationModule,
     SocialAccountComparisonModule,
     MarketplaceIntelligenceModule,
+    MatchingInputsModule,
   ],
   controllers: [
     AppController,

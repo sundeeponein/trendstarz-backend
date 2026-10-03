@@ -3,6 +3,9 @@ import {
   BadRequestException,
   NotFoundException,
 } from "@nestjs/common";
+import { CANONICAL_TIERS, resolveTier } from "../utils/tier-ranges.util";
+import { canonicalPlatformKey } from "../utils/social-account.util";
+import { applyApprovedActiveAccountFilter } from "../utils/profile-eligibility.util";
 import { InjectModel } from "@nestjs/mongoose";
 import { Cron, CronExpression } from "@nestjs/schedule";
 import { Model, Types } from "mongoose";
@@ -473,10 +476,57 @@ export class CampaignsService {
       );
     }
 
+    // Stage 3B-1: tier requirements are stored as canonical tier labels
+    // (utils/tier-ranges.util). Unknown values are rejected rather than
+    // stored; "" / null clears the minimum tier.
+    if (data.minInfluencerTier !== undefined) {
+      if (data.minInfluencerTier === null || data.minInfluencerTier === "") {
+        normalized.minInfluencerTier = undefined;
+      } else {
+        const tier = resolveTier(data.minInfluencerTier);
+        if (!tier) {
+          throw new BadRequestException(
+            `minInfluencerTier must be one of: ${CANONICAL_TIERS.map((t) => t.label).join(", ")}`,
+          );
+        }
+        normalized.minInfluencerTier = tier.label;
+      }
+    }
+    // targetTiers: tier values are stored as canonical labels. Other values
+    // are kept as-is — photographer-created campaigns reuse this array to
+    // store target influencer CATEGORIES (campaign-form hydrate/submit), so
+    // rejecting non-tiers here would break those saves.
     if (Array.isArray(data.targetTiers)) {
-      normalized.targetTiers = data.targetTiers
-        .map((t: any) => String(t))
-        .filter(Boolean);
+      const values: string[] = [];
+      for (const raw of data.targetTiers) {
+        const v = String(raw ?? "").trim();
+        if (!v) continue;
+        const stored = resolveTier(v)?.label ?? v;
+        if (!values.includes(stored)) values.push(stored);
+      }
+      normalized.targetTiers = values;
+    }
+    // Stage 3B-1: optional languages — shape here, master-list check in
+    // assertCampaignLanguages() (needs the database).
+    if (data.languages !== undefined) {
+      if (data.languages === null) {
+        normalized.languages = [];
+      } else if (!Array.isArray(data.languages)) {
+        throw new BadRequestException("languages must be a list");
+      } else {
+        const seen = new Set<string>();
+        normalized.languages = data.languages
+          .map((l: unknown) => (typeof l === "string" ? l.trim() : ""))
+          .filter((l: string) => {
+            const key = l.toLowerCase();
+            if (!l || seen.has(key)) return false;
+            seen.add(key);
+            return true;
+          });
+        if (normalized.languages.length > 20) {
+          throw new BadRequestException("Too many languages");
+        }
+      }
     }
     if (data.targetState !== undefined) {
       normalized.targetState = data.targetState
@@ -586,6 +636,90 @@ export class CampaignsService {
     }
 
     return normalized;
+  }
+
+  /**
+   * Stage 3B-1: campaign languages must come from the existing `languages`
+   * master list; stored with the master's spelling. Read-only lookup.
+   */
+  private async assertCampaignLanguages(normalized: any): Promise<void> {
+    const requested: string[] = Array.isArray(normalized?.languages)
+      ? normalized.languages
+      : [];
+    if (!requested.length) return;
+    const master = (
+      await this.campaignModel.db.collection("languages").distinct("name")
+    ).filter((v): v is string => typeof v === "string" && v.trim() !== "");
+    const byLower = new Map(master.map((m) => [m.trim().toLowerCase(), m]));
+    const unknown = requested.filter((l) => !byLower.has(l.toLowerCase()));
+    if (unknown.length) {
+      throw new BadRequestException(
+        `Unknown language(s): ${unknown.join(", ")}`,
+      );
+    }
+    normalized.languages = requested.map((l) => byLower.get(l.toLowerCase()));
+  }
+
+  /**
+   * Stage 3B-1 (T1): target state/district must come from the existing
+   * `states` / `districts` master lists (districts reference their state by
+   * name) and are stored with the master spelling. A district needs a state;
+   * clearing the state clears the district. Only fields present in the
+   * payload are checked, so saves that don't touch location are unaffected
+   * and existing campaigns are never rewritten. Read-only lookups.
+   */
+  private async assertCampaignTargetLocation(
+    normalized: any,
+    existing?: any,
+  ): Promise<void> {
+    const has = (k: string) =>
+      Object.prototype.hasOwnProperty.call(normalized, k);
+    const db = this.campaignModel.db;
+    const lower = (v: unknown) =>
+      typeof v === "string" ? v.trim().toLowerCase() : "";
+
+    if (has("targetState") && !normalized.targetState) {
+      normalized.targetDistrict = undefined;
+      normalized.targetCities = [];
+      return;
+    }
+    if (has("targetState") && normalized.targetState) {
+      const states = (await db.collection("states").distinct("name")).filter(
+        (v): v is string => typeof v === "string",
+      );
+      const match = states.find(
+        (n) => lower(n) === lower(normalized.targetState),
+      );
+      if (!match) {
+        throw new BadRequestException(
+          `Unknown targetState: ${normalized.targetState}`,
+        );
+      }
+      normalized.targetState = match;
+    }
+    if (has("targetDistrict") && normalized.targetDistrict) {
+      const state = has("targetState")
+        ? normalized.targetState
+        : existing?.targetState;
+      if (!state) {
+        throw new BadRequestException("targetDistrict requires targetState");
+      }
+      const rows = (await db
+        .collection("districts")
+        .find({}, { projection: { name: 1, state: 1 } })
+        .toArray()) as Array<{ name?: unknown; state?: unknown }>;
+      const match = rows.find(
+        (r) =>
+          lower(r.state) === lower(state) &&
+          lower(r.name) === lower(normalized.targetDistrict),
+      );
+      if (!match || typeof match.name !== "string") {
+        throw new BadRequestException(
+          `Unknown targetDistrict for ${String(state)}: ${normalized.targetDistrict}`,
+        );
+      }
+      normalized.targetDistrict = match.name;
+    }
   }
 
   private containsContactInfo(text: string): boolean {
@@ -940,6 +1074,8 @@ export class CampaignsService {
       settings,
     );
     const normalized = this.normalizeCampaignPayload(data, settings);
+    await this.assertCampaignLanguages(normalized);
+    await this.assertCampaignTargetLocation(normalized);
     if (
       !Number.isFinite(Number(normalized.maxInfluencers)) ||
       Number(normalized.maxInfluencers) <= 0
@@ -1491,6 +1627,8 @@ export class CampaignsService {
         ? "photographer"
         : "brand";
     const normalized = this.normalizeCampaignPayload(data, settings);
+    await this.assertCampaignLanguages(normalized);
+    await this.assertCampaignTargetLocation(normalized, campaign);
     const inviteRecipientRole = this.normalizeInviteRecipientRole(
       data?.inviteRecipientRole ?? campaign.inviteRecipientRole,
       campaignOwnerType,
@@ -1684,14 +1822,9 @@ export class CampaignsService {
   }
 
   private async notifyMatchingInfluencers(campaign: any): Promise<void> {
-    const TIER_ORDER = [
-      "Starter",
-      "Nano",
-      "Micro",
-      "Mid-Tier",
-      "Macro",
-      "Mega / Celebrity",
-    ];
+    // Stage 3B-1: tiers compare by canonical key (utils/tier-ranges.util),
+    // platforms by canonical platformKey — never by display spelling.
+    const TIER_ORDER = CANONICAL_TIERS.map((t) => t.key);
 
     const {
       _id: campaignId,
@@ -1719,6 +1852,13 @@ export class CampaignsService {
     const allowedTiers: string[] = Array.isArray(targetTiers)
       ? targetTiers
       : [];
+    const campaignPlatformKeys = [
+      ...new Set(
+        campaignPlatforms
+          .map((p) => canonicalPlatformKey(p))
+          .filter((k): k is string => !!k),
+      ),
+    ];
 
     // Photographer campaigns use shoot venue location; influencer campaigns use targetState/District
     const locationState: string = isPhotographer
@@ -1754,12 +1894,13 @@ export class CampaignsService {
           .filter(Boolean),
       ),
     ];
-    const baseQuery: Record<string, any> = {
-      isDeleted: { $ne: true },
-      isEmailVerified: true,
-      isMobileVerified: true,
+    // Stage 3B-1: only active, admin-approved accounts (the shared approval
+    // rule from profile-eligibility.util — accepted, not deleted/suspended,
+    // email + mobile verified, approved). Previously unapproved or pending
+    // profiles with verified contacts could be alerted.
+    const baseQuery: Record<string, any> = applyApprovedActiveAccountFilter({
       email: { $exists: true, $ne: "" },
-    };
+    });
     if (blockedIds.length) baseQuery._id = { $nin: blockedIds };
 
     // Location filters (both optional)
@@ -1776,9 +1917,16 @@ export class CampaignsService {
       if (campaignCategories.length) {
         baseQuery.categories = { $in: campaignCategories };
       }
-      if (campaignPlatforms.length) {
+      if (campaignPlatformKeys.length) {
+        // platformKey is set on every account since Stage 3A-0; the display
+        // name is kept as a fallback for any entry saved without one.
         baseQuery.socialMedia = {
-          $elemMatch: { platform: { $in: campaignPlatforms } },
+          $elemMatch: {
+            $or: [
+              { platformKey: { $in: campaignPlatformKeys } },
+              { platform: { $in: campaignPlatforms } },
+            ],
+          },
         };
       }
     }
@@ -1800,10 +1948,12 @@ export class CampaignsService {
     if (!candidates.length) return;
 
     // ── 3. In-memory tier filter ─────────────────────────────────────────────
-    const minTierIdx = minInfluencerTier
-      ? TIER_ORDER.indexOf(String(minInfluencerTier))
-      : -1;
-    const hasTierFilter = allowedTiers.length > 0 || minTierIdx >= 0;
+    const minTierKey = resolveTier(minInfluencerTier)?.key;
+    const minTierIdx = minTierKey ? TIER_ORDER.indexOf(minTierKey) : -1;
+    const allowedTierKeys = allowedTiers
+      .map((t) => resolveTier(t)?.key)
+      .filter((k): k is string => !!k);
+    const hasTierFilter = allowedTierKeys.length > 0 || minTierIdx >= 0;
 
     const matched = hasTierFilter
       ? candidates.filter((c) => {
@@ -1811,13 +1961,20 @@ export class CampaignsService {
           // For influencers: only check tiers on campaign-targeted platforms
           // For photographers: check any social account (they're not platform-specific)
           const relevant =
-            !isPhotographer && campaignPlatforms.length
-              ? sm.filter((s) => campaignPlatforms.includes(s.platform))
+            !isPhotographer && campaignPlatformKeys.length
+              ? sm.filter((s) => {
+                  const key = canonicalPlatformKey(s.platformKey || s.platform);
+                  return !!key && campaignPlatformKeys.includes(key);
+                })
               : sm;
 
           return relevant.some((s) => {
-            const tierIdx = TIER_ORDER.indexOf(s.tier);
-            if (allowedTiers.length && !allowedTiers.includes(s.tier))
+            const tierKey = resolveTier(s.tier)?.key;
+            const tierIdx = tierKey ? TIER_ORDER.indexOf(tierKey) : -1;
+            if (
+              allowedTierKeys.length &&
+              !(tierKey && allowedTierKeys.includes(tierKey))
+            )
               return false;
             if (minTierIdx >= 0 && tierIdx < minTierIdx) return false;
             return true;

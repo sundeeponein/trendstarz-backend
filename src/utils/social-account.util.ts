@@ -69,6 +69,17 @@ export function isKnownPlatformKey(key: string): boolean {
 }
 
 /**
+ * Stage 3B-1: the canonical platform for MATCHING — a known platformKey, or
+ * null. Unlike derivePlatformKey (which slugs unknown names so identity still
+ * works), unknown or empty values are never guessed. The stored display value
+ * is left untouched by callers.
+ */
+export function canonicalPlatformKey(platform: unknown): string | null {
+  const key = derivePlatformKey(platform);
+  return key && isKnownPlatformKey(key) ? key : null;
+}
+
+/**
  * Server-generated account id: a 24-hex ObjectId string — the id convention
  * used throughout this codebase. Random + time-based, never derived from array
  * position, tier or handle, so it survives reorders and edits.
