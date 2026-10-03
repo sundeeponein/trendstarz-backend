@@ -34,5 +34,7 @@ import { PlatformMetricsService } from "./platform-metrics.service";
   ],
   controllers: [PlatformMetricsController],
   providers: [PlatformMetricsService],
+  // Stage 3B-0 reuses attributeCoverage() for the readiness audit.
+  exports: [PlatformMetricsService],
 })
 export class PlatformMetricsModule {}
