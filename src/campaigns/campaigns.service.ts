@@ -347,7 +347,7 @@ export class CampaignsService {
     return count > 0;
   }
 
-  private normalizeCampaignPayload(data: any, settings?: any) {
+  private normalizeCampaignPayload(data: any, settings?: any, existing?: any) {
     const normalized: any = { ...data };
     const minStartDays = Number(settings?.minCampaignStartDays ?? 3);
     const maxDurationDays = Number(settings?.maxCampaignDurationDays ?? 15);
@@ -383,7 +383,27 @@ export class CampaignsService {
       normalized.timelineEnd = normalized.endDate;
     }
 
-    if (normalized.startDate) {
+    // The minimum lead time applies to a NEW or CHANGED start date only. An
+    // existing campaign re-sending its unchanged start date (every edit of a
+    // running campaign does) must not be rejected just because that date is
+    // now in the past.
+    const sameDay = (a: unknown, b: unknown) => {
+      if (!a || !b) return false;
+      const da = new Date(a as string);
+      const db = new Date(b as string);
+      return (
+        !Number.isNaN(da.getTime()) &&
+        !Number.isNaN(db.getTime()) &&
+        da.toISOString().slice(0, 10) === db.toISOString().slice(0, 10)
+      );
+    };
+    const startUnchanged =
+      !!existing &&
+      sameDay(
+        normalized.startDate,
+        existing.startDate || existing.timelineStart,
+      );
+    if (normalized.startDate && !startUnchanged) {
       const today = new Date();
       today.setUTCHours(0, 0, 0, 0);
       const minStart = new Date(today.getTime() + minStartDays * 24 * 60 * 60 * 1000);
@@ -1626,7 +1646,7 @@ export class CampaignsService {
       "photographer"
         ? "photographer"
         : "brand";
-    const normalized = this.normalizeCampaignPayload(data, settings);
+    const normalized = this.normalizeCampaignPayload(data, settings, campaign);
     await this.assertCampaignLanguages(normalized);
     await this.assertCampaignTargetLocation(normalized, campaign);
     const inviteRecipientRole = this.normalizeInviteRecipientRole(

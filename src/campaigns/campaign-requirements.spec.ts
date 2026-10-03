@@ -376,3 +376,55 @@ describe("alert matcher excludes every non-approved status (query evaluated, not
     expect(matches(creator, approvalQuery)).toBe(expected);
   });
 });
+
+describe("editing a running campaign keeps its past start date (start-date lead time)", () => {
+  const normalize = (data: any, existing?: any) =>
+    makeService().service.normalizeCampaignPayload(
+      data,
+      { minCampaignStartDays: 3, maxCampaignDurationDays: 15 },
+      existing,
+    );
+  const iso = (daysFromToday: number) => {
+    const d = new Date();
+    d.setUTCHours(0, 0, 0, 0);
+    return new Date(d.getTime() + daysFromToday * 864e5)
+      .toISOString()
+      .slice(0, 10);
+  };
+
+  it("an existing campaign re-sending its unchanged (past) start date is accepted", () => {
+    const existing = {
+      startDate: new Date(`${iso(-2)}T00:00:00.000Z`),
+      timelineStart: new Date(`${iso(-2)}T00:00:00.000Z`),
+    };
+    expect(() =>
+      normalize(
+        { timelineStart: iso(-2), timelineEnd: iso(2), hashtags: "#new" },
+        existing,
+      ),
+    ).not.toThrow();
+  });
+
+  it("changing the start date on an existing campaign still needs the lead time", () => {
+    const existing = { startDate: new Date(`${iso(-2)}T00:00:00.000Z`) };
+    expect(() =>
+      normalize({ timelineStart: iso(1), timelineEnd: iso(3) }, existing),
+    ).toThrow("Start date must be at least 3 days from today");
+    expect(() =>
+      normalize({ timelineStart: iso(4), timelineEnd: iso(6) }, existing),
+    ).not.toThrow();
+  });
+
+  it("new campaigns keep the lead-time rule, and date-range/duration rules still apply to everyone", () => {
+    expect(() =>
+      normalize({ timelineStart: iso(1), timelineEnd: iso(3) }),
+    ).toThrow("Start date must be at least 3 days from today");
+    const existing = { startDate: new Date(`${iso(-2)}T00:00:00.000Z`) };
+    expect(() =>
+      normalize({ timelineStart: iso(-2), timelineEnd: iso(-3) }, existing),
+    ).toThrow("End date must be on or after start date");
+    expect(() =>
+      normalize({ timelineStart: iso(-2), timelineEnd: iso(20) }, existing),
+    ).toThrow("Campaign duration cannot exceed 15 days");
+  });
+});
