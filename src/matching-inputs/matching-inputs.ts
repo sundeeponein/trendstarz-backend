@@ -119,6 +119,9 @@ export interface NormalizedCreatorMatchInput {
     verificationStatus: string;
     accountStatus: string;
     isDeleted: boolean;
+    isEmailVerified: boolean;
+    isMobileVerified: boolean;
+    verifiedByTrendStarz: boolean;
   };
   accounts: NormalizedCreatorAccount[];
   platforms: string[];
@@ -194,6 +197,9 @@ export function normalizeCreatorMatchInput(
       verificationStatus: text(profile?.verificationStatus),
       accountStatus: text(profile?.accountStatus),
       isDeleted: profile?.isDeleted === true,
+      isEmailVerified: profile?.isEmailVerified === true,
+      isMobileVerified: profile?.isMobileVerified === true,
+      verifiedByTrendStarz: profile?.verifiedByTrendStarz === true,
     },
     accounts,
     platforms: [
@@ -224,6 +230,8 @@ export interface NormalizedCampaignMatchInput {
   status: string;
   campaignMode: string;
   campaignType: string;
+  /** "brand" or "photographer" — photographer-owned campaigns reuse some fields (see targetCreatorCategories). */
+  ownerType: "brand" | "photographer";
   recipientRole: "influencer" | "photographer";
   platforms: { platformKey: string | null; original: string }[];
   categories: string[];
@@ -320,6 +328,7 @@ export function normalizeCampaignMatchInput(
     status: text(campaign?.status),
     campaignMode: text(campaign?.campaignMode),
     campaignType: text(campaign?.campaignType),
+    ownerType: photographerOwned ? "photographer" : "brand",
     recipientRole,
     platforms: uniqueStrings(campaign?.platforms).map((p) => ({
       platformKey: canonicalPlatformKey(p),
