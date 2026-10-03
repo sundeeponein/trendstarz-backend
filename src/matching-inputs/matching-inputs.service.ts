@@ -93,10 +93,50 @@ export class MatchingInputsService {
   }
 
   async forCampaign(id: string): Promise<NormalizedCampaignMatchInput> {
+    return (await this.forCampaignWithTitle(id)).input;
+  }
+
+  async forCampaignWithTitle(
+    id: string,
+  ): Promise<{ input: NormalizedCampaignMatchInput; title: string }> {
     if (!Types.ObjectId.isValid(id))
       throw new BadRequestException("Invalid id");
     const campaign: any = await this.campaignModel.findById(id).lean();
     if (!campaign) throw new NotFoundException("Campaign not found");
-    return normalizeCampaignMatchInput(campaign);
+    return {
+      input: normalizeCampaignMatchInput(campaign),
+      title: String(campaign.title || campaign.campaignTitle || "").trim(),
+    };
+  }
+
+  /**
+   * Stage 3B-3 — every non-deleted creator of one type, normalized in one
+   * read. Per-account verification/observation evidence is NOT loaded: it never
+   * affects eligibility, and loading it per creator would be N extra queries
+   * (the single-creator endpoint still returns it).
+   */
+  async forAllCreators(profileType: "Influencer" | "Photographer"): Promise<
+    Array<{
+      input: NormalizedCreatorMatchInput;
+      display: { name: string; username: string; publicId: string };
+    }>
+  > {
+    const model =
+      profileType === "Photographer"
+        ? this.photographerModel
+        : this.influencerModel;
+    const profiles: any[] = await model
+      .find({ isDeleted: { $ne: true } })
+      .select("-password")
+      .lean();
+    const str = (v: unknown) => (typeof v === "string" ? v.trim() : "");
+    return profiles.map((profile) => ({
+      input: normalizeCreatorMatchInput(profile, profileType),
+      display: {
+        name: str(profile.name),
+        username: str(profile.username),
+        publicId: str(profile.publicId),
+      },
+    }));
   }
 }

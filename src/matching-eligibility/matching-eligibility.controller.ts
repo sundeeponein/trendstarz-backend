@@ -1,4 +1,4 @@
-import { Controller, Get, Param, UseGuards } from "@nestjs/common";
+import { Controller, Get, Param, Query, UseGuards } from "@nestjs/common";
 import { JwtAuthGuard } from "../auth/jwt-auth.guard";
 import { RolesGuard } from "../auth/roles.guard";
 import { MatchingEligibilityService } from "./matching-eligibility.service";
@@ -8,6 +8,15 @@ import { MatchingEligibilityService } from "./matching-eligibility.service";
 @UseGuards(JwtAuthGuard, RolesGuard)
 export class MatchingEligibilityController {
   constructor(private readonly service: MatchingEligibilityService) {}
+
+  /** Stage 3B-3 — every creator of the campaign's recipient type, grouped by status. */
+  @Get("eligibility/:campaignId")
+  campaignEligibility(
+    @Param("campaignId") campaignId: string,
+    @Query() query: Record<string, unknown>,
+  ) {
+    return this.service.evaluateCampaign(campaignId, query);
+  }
 
   @Get("eligibility/:campaignId/:creatorType/:creatorId")
   eligibility(
