@@ -4,6 +4,7 @@ import {
   NotFoundException,
   Logger,
 } from "@nestjs/common";
+import { meetsMinimumTier, resolveTier } from "../utils/tier-ranges.util";
 import { Cron, CronExpression } from "@nestjs/schedule";
 import { InjectModel } from "@nestjs/mongoose";
 import { Model, Types } from "mongoose";
@@ -2482,14 +2483,6 @@ export class CampaignInvitesService {
         isTierFilteredOpen &&
         effectivePlatform
       ) {
-        const TIER_ORDER = [
-          "Starter",
-          "Nano",
-          "Micro",
-          "Mid-Tier",
-          "Macro",
-          "Mega / Celebrity",
-        ];
         const campaignPlatforms: string[] = Array.isArray(campaign?.platforms)
           ? campaign.platforms
           : [];
@@ -2521,17 +2514,15 @@ export class CampaignInvitesService {
           );
         }
 
-        const requiredTier = String(campaign?.minInfluencerTier || "").trim();
-        const requiredTierIndex = TIER_ORDER.indexOf(requiredTier);
-        if (requiredTier && requiredTierIndex !== -1) {
-          const influencerTierIndex = TIER_ORDER.indexOf(
-            String(matchingProfile?.tier || "").trim(),
+        // Minimum tier: the creator's tier on this platform must be AT LEAST it.
+        const requiredTier = resolveTier(campaign?.minInfluencerTier);
+        if (
+          requiredTier &&
+          !meetsMinimumTier(matchingProfile?.tier, requiredTier.label)
+        ) {
+          throw new BadRequestException(
+            `This campaign requires ${requiredTier.label} tier or above on ${effectivePlatform}.`,
           );
-          if (influencerTierIndex !== requiredTierIndex) {
-            throw new BadRequestException(
-              `This campaign requires exactly ${requiredTier} tier influencers on ${effectivePlatform}.`,
-            );
-          }
         }
       }
 
@@ -3113,15 +3104,6 @@ export class CampaignInvitesService {
     campaignId: string,
     selectedPlatform?: string,
   ) {
-    const TIER_ORDER = [
-      "Starter",
-      "Nano",
-      "Micro",
-      "Mid-Tier",
-      "Macro",
-      "Mega / Celebrity",
-    ];
-
     const campaign = (await this.campaignModel
       .findById(campaignId)
       .lean()) as any;
@@ -3188,8 +3170,8 @@ export class CampaignInvitesService {
       }
     }
 
-    if (campaign.minInfluencerTier) {
-      const minIdx = TIER_ORDER.indexOf(campaign.minInfluencerTier);
+    const minimumTier = resolveTier(campaign.minInfluencerTier);
+    if (minimumTier) {
       // For explicit platform selection, validate tier on that platform.
       // Otherwise validate tier across campaign-targeted platforms (or all socials if no platform restriction).
       const scope = chosenPlatform
@@ -3204,15 +3186,14 @@ export class CampaignInvitesService {
               ),
             )
           : sm;
-      const hasExactTier =
-        minIdx !== -1 &&
-        scope.some(
-          (entry: any) => TIER_ORDER.indexOf(entry.tier ?? "") === minIdx,
-        );
-      if (minIdx !== -1 && !hasExactTier) {
+      // Minimum tier: at least one relevant account AT LEAST the minimum.
+      const hasTier = scope.some((entry: any) =>
+        meetsMinimumTier(entry?.tier, minimumTier.label),
+      );
+      if (!hasTier) {
         const platformLabel = chosenPlatform ? ` on ${chosenPlatform}` : "";
         throw new BadRequestException(
-          `This campaign requires exactly ${campaign.minInfluencerTier} tier influencers${platformLabel}.`,
+          `This campaign requires ${minimumTier.label} tier or above${platformLabel}.`,
         );
       }
     }

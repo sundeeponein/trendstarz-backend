@@ -71,3 +71,29 @@ describe("canonical follower tiers (Stage 3A-0)", () => {
     expect(resolveTier("")).toBeNull();
   });
 });
+
+describe("meetsMinimumTier (open-campaign rule: this tier or above)", () => {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const { meetsMinimumTier } = require("./tier-ranges.util");
+  it.each([
+    ["Micro", "Micro", true],
+    ["Mid-Tier", "Micro", true],
+    ["Macro", "Micro", true],
+    ["Mega / Celebrity", "Micro", true],
+    ["Nano", "Micro", false],
+    ["Starter", "Micro", false],
+    ["mid tier", "Micro", true], // spelling variant
+    ["Micro (1,001-10,000)", "Micro", true], // label with range
+    ["Micro", "Mid-Tier", false],
+  ])("%p vs minimum %p → %p", (tier, min, expected) => {
+    expect(meetsMinimumTier(tier, min)).toBe(expected);
+  });
+
+  it("no or unrecognised minimum → no restriction; unreadable creator tier → never qualifies", () => {
+    expect(meetsMinimumTier("Nano", "")).toBe(true);
+    expect(meetsMinimumTier("Nano", undefined)).toBe(true);
+    expect(meetsMinimumTier("Nano", "Gold")).toBe(true);
+    expect(meetsMinimumTier("", "Micro")).toBe(false);
+    expect(meetsMinimumTier("Gold", "Micro")).toBe(false);
+  });
+});

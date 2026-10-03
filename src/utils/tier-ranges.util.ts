@@ -81,3 +81,22 @@ export function tierForFollowers(followers: unknown): TierDefinition | null {
     ) || null
   );
 }
+
+/**
+ * Open-campaign tier rule: the creator's declared tier is AT LEAST the
+ * campaign's minimum, by canonical order (Starter < Nano < Micro < Mid-Tier <
+ * Macro < Mega). No minimum, or a minimum that isn't a canonical tier, means
+ * no restriction (unchanged legacy behaviour); an unreadable creator tier
+ * never qualifies.
+ */
+export function meetsMinimumTier(
+  creatorTier: unknown,
+  minimumTier: unknown,
+): boolean {
+  const min = resolveTier(minimumTier);
+  if (!min) return true;
+  const tier = resolveTier(creatorTier);
+  if (!tier) return false;
+  const rank = (key: string) => CANONICAL_TIERS.findIndex((t) => t.key === key);
+  return rank(tier.key) >= rank(min.key);
+}

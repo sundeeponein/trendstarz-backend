@@ -3,7 +3,11 @@ import {
   BadRequestException,
   NotFoundException,
 } from "@nestjs/common";
-import { CANONICAL_TIERS, resolveTier } from "../utils/tier-ranges.util";
+import {
+  CANONICAL_TIERS,
+  meetsMinimumTier,
+  resolveTier,
+} from "../utils/tier-ranges.util";
 import { canonicalPlatformKey } from "../utils/social-account.util";
 import { applyApprovedActiveAccountFilter } from "../utils/profile-eligibility.util";
 import { InjectModel } from "@nestjs/mongoose";
@@ -1266,14 +1270,6 @@ export class CampaignsService {
     influencerId?: string,
     scope?: string,
   ) {
-    const TIER_ORDER = [
-      "Starter",
-      "Nano",
-      "Micro",
-      "Mid-Tier",
-      "Macro",
-      "Mega / Celebrity",
-    ];
     const allowedStatuses = new Set(["active", "completed"]);
     const query: any = {};
     if (status && allowedStatuses.has(status)) {
@@ -1297,19 +1293,20 @@ export class CampaignsService {
         .lean();
     }
 
-    // Helper: whether influencer has at least one exact-tier match on campaign target platform(s).
-    const hasExactTierForCampaign = (
+    // Helper: whether the influencer has at least one account on the campaign's
+    // target platform(s) whose tier is AT LEAST the campaign's minimum tier.
+    // (Previously an exact-tier match — product rule is "minimum", Stage 3B fix.)
+    const hasMinimumTierForCampaign = (
       inf: any,
       campaignPlatforms: string[],
       requiredTier: string,
     ): boolean => {
       const sm: any[] = inf?.socialMedia || [];
-      const requiredIdx = TIER_ORDER.indexOf(requiredTier || "");
-      if (requiredIdx === -1) return true;
+      if (!resolveTier(requiredTier)) return true;
       const normalized = (s: string) => (s || "").toLowerCase().trim();
       if (!campaignPlatforms || campaignPlatforms.length === 0) {
-        return sm.some(
-          (entry: any) => TIER_ORDER.indexOf(entry.tier ?? "") === requiredIdx,
+        return sm.some((entry: any) =>
+          meetsMinimumTier(entry?.tier, requiredTier),
         );
       }
       const matching = sm.filter((entry: any) =>
@@ -1318,8 +1315,8 @@ export class CampaignsService {
         ),
       );
       if (matching.length === 0) return false;
-      return matching.some(
-        (entry: any) => TIER_ORDER.indexOf(entry.tier ?? "") === requiredIdx,
+      return matching.some((entry: any) =>
+        meetsMinimumTier(entry?.tier, requiredTier),
       );
     };
 
@@ -1364,12 +1361,12 @@ export class CampaignsService {
 
       // Tier check — compare against the influencer's tier on the campaign's target platform(s)
       if (c.minInfluencerTier) {
-        const hasExactTier = hasExactTierForCampaign(
+        const hasTier = hasMinimumTierForCampaign(
           influencer,
           c.platforms || [],
           c.minInfluencerTier,
         );
-        if (!hasExactTier) return false;
+        if (!hasTier) return false;
       }
 
       // State check (case-insensitive)
