@@ -1,0 +1,177 @@
+import { Injectable, BadRequestException } from "@nestjs/common";
+import * as admin from "firebase-admin";
+
+@Injectable()
+export class FirebaseAdminService {
+  private app: admin.app.App | null = null;
+
+  isConfigured(): boolean {
+    return !!(
+      (process.env.FIREBASE_PROJECT_ID &&
+        process.env.FIREBASE_CLIENT_EMAIL &&
+        process.env.FIREBASE_PRIVATE_KEY) ||
+      process.env.GOOGLE_APPLICATION_CREDENTIALS
+    );
+  }
+
+  private getApp(): admin.app.App {
+    if (this.app) return this.app;
+    if (admin.apps.length) {
+      this.app = admin.apps[0] || null;
+      if (this.app) return this.app;
+    }
+
+    const projectId = process.env.FIREBASE_PROJECT_ID;
+    const clientEmail = process.env.FIREBASE_CLIENT_EMAIL;
+    const privateKey = process.env.FIREBASE_PRIVATE_KEY?.replace(/\\n/g, "\n");
+
+    if (projectId && clientEmail && privateKey) {
+      this.app = admin.initializeApp({
+        credential: admin.credential.cert({
+          projectId,
+          clientEmail,
+          privateKey,
+        }),
+      });
+      return this.app;
+    }
+
+    if (process.env.GOOGLE_APPLICATION_CREDENTIALS) {
+      this.app = admin.initializeApp({
+        credential: admin.credential.applicationDefault(),
+      });
+      return this.app;
+    }
+
+    throw new BadRequestException("Firebase Admin is not configured.");
+  }
+
+  async verifyIdToken(idToken: string): Promise<admin.auth.DecodedIdToken> {
+    if (!idToken) {
+      throw new BadRequestException("Firebase ID token is required.");
+    }
+    try {
+      return await this.getApp().auth().verifyIdToken(idToken);
+    } catch {
+      throw new BadRequestException("Invalid Firebase ID token.");
+    }
+  }
+
+  async ensureEmailUser(email: string): Promise<admin.auth.UserRecord> {
+    const auth = this.getApp().auth();
+    try {
+      return await auth.getUserByEmail(email);
+    } catch (error: any) {
+      if (error?.code !== "auth/user-not-found") throw error;
+      return auth.createUser({ email });
+    }
+  }
+
+  async setEmailUserPassword(
+    email: string,
+    password: string,
+    emailVerified = true,
+  ): Promise<admin.auth.UserRecord> {
+    const auth = this.getApp().auth();
+    try {
+      const user = await auth.getUserByEmail(email);
+      return auth.updateUser(user.uid, { password, emailVerified });
+    } catch (error: any) {
+      if (error?.code !== "auth/user-not-found") throw error;
+      return auth.createUser({ email, password, emailVerified });
+    }
+  }
+
+  async getUserByEmail(email: string): Promise<admin.auth.UserRecord> {
+    return this.getApp().auth().getUserByEmail(email);
+  }
+
+  async setEmailVerified(
+    email: string,
+    emailVerified = true,
+  ): Promise<admin.auth.UserRecord | null> {
+    const cleanEmail = String(email || "").trim().toLowerCase();
+    if (!cleanEmail) return null;
+    const auth = this.getApp().auth();
+    try {
+      const user = await auth.getUserByEmail(cleanEmail);
+      return auth.updateUser(user.uid, { emailVerified });
+    } catch (error: any) {
+      if (error?.code !== "auth/user-not-found") throw error;
+      if (!emailVerified) return null;
+      return auth.createUser({ email: cleanEmail, emailVerified: true });
+    }
+  }
+
+  async deleteUserByUid(uid: string): Promise<boolean> {
+    const cleanUid = String(uid || "").trim();
+    if (!cleanUid) return false;
+    try {
+      await this.getApp().auth().deleteUser(cleanUid);
+      return true;
+    } catch (error: any) {
+      if (error?.code === "auth/user-not-found") return false;
+      throw error;
+    }
+  }
+
+  async deleteUserByEmail(email: string): Promise<boolean> {
+    const cleanEmail = String(email || "").trim().toLowerCase();
+    if (!cleanEmail) return false;
+    try {
+      const user = await this.getApp().auth().getUserByEmail(cleanEmail);
+      await this.getApp().auth().deleteUser(user.uid);
+      return true;
+    } catch (error: any) {
+      if (error?.code === "auth/user-not-found") return false;
+      throw error;
+    }
+  }
+
+  async generateEmailVerificationLink(email: string): Promise<string> {
+    await this.ensureEmailUser(email);
+    const frontendBase = (
+      process.env.FRONTEND_URL || "https://www.trendstarz.in"
+    ).replace(/\/$/, "");
+    return this.getApp()
+      .auth()
+      .generateEmailVerificationLink(email, {
+        url: `${frontendBase}/verify-email?firebaseEmail=${encodeURIComponent(email)}`,
+        handleCodeInApp: false,
+      });
+  }
+
+  async setUserRoleClaim(email: string, role: string): Promise<void> {
+    const user = await this.ensureEmailUser(email);
+    await this.getApp().auth().setCustomUserClaims(user.uid, {
+      ...(user.customClaims || {}),
+      role,
+      trendstarzRole: role,
+    });
+  }
+
+  async isFirebaseEmailVerified(email: string): Promise<boolean> {
+    try {
+      const user = await this.getApp().auth().getUserByEmail(email);
+      return !!user.emailVerified;
+    } catch {
+      return false;
+    }
+  }
+
+  async listEmailUsers(maxResults = 1000): Promise<admin.auth.UserRecord[]> {
+    const auth = this.getApp().auth();
+    const users: admin.auth.UserRecord[] = [];
+    let nextPageToken: string | undefined;
+
+    do {
+      const remaining = Math.max(maxResults - users.length, 0);
+      if (remaining <= 0) break;
+      const result = await auth.listUsers(Math.min(1000, remaining), nextPageToken);
+      users.push(...result.users.filter((user) => !!user.email));
+      nextPageToken = result.pageToken;
+    } while (nextPageToken);
+
+    return users;
+  }
+}

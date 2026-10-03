@@ -22,9 +22,8 @@ export async function sendAppEmail(to: string, subject: string, text: string) {
     console.warn(
       "[Email:FALLBACK] Missing SMTP credentials; skipping SMTP send in non-production.",
     );
-    console.log("[Email:FALLBACK] To:", to);
-    console.log("[Email:FALLBACK] Subject:", subject);
-    console.log("[Email:FALLBACK] Text:", text);
+    // FIX #32: Don't log sensitive user info (email, subject, message body)
+    console.warn("[Email:FALLBACK] Email send skipped (check SMTP configuration).");
     return;
   }
 

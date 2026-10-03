@@ -70,8 +70,12 @@ export class CloudinaryService {
       throw new Error("Unsupported file format for local upload");
     }
 
-    // Generate unique filename
-    const filename = `${folder}_${Date.now()}_${Math.random().toString(36).substring(2, 8)}${ext}`;
+    // Generate unique filename. Sanitize the folder for use as a filename
+    // prefix — local storage is flat, but `folder` may contain slashes for
+    // nested Cloudinary paths (e.g. "influencers/_pending/profile"), which
+    // would otherwise make fs.writeFileSync target a non-existent subdirectory.
+    const safeFolder = folder.replace(/\//g, "_");
+    const filename = `${safeFolder}_${Date.now()}_${Math.random().toString(36).substring(2, 8)}${ext}`;
     const localDir = getLocalImagesDir();
     if (!fs.existsSync(localDir)) {
       fs.mkdirSync(localDir, { recursive: true });
@@ -92,7 +96,100 @@ export class CloudinaryService {
     return this.uploadFile(file, folder, "image");
   }
 
-  async deleteImage(publicId: string) {
+  // Moves an already-uploaded asset into its final entity-scoped folder once
+  // the owning document's _id becomes known (registration / campaign creation
+  // upload before the entity exists in Mongo). No-ops for local-dev assets,
+  // since local storage has no real folder concept. Fails safe: if the
+  // Cloudinary rename errors out, the original asset reference is returned
+  // unchanged rather than losing the reference to the uploaded file.
+  async relocateAsset(
+    asset: { url: string; public_id: string },
+    newFolder: string,
+    resourceType: "image" | "raw" | "video" = "image",
+  ): Promise<{ url: string; public_id: string }> {
+    if (
+      !asset?.public_id ||
+      !isCloudinaryEnabled() ||
+      asset.public_id.startsWith("/assets/local-images/")
+    ) {
+      return asset;
+    }
+
+    const basename = asset.public_id.split("/").pop();
+    const newPublicId = `${newFolder}/${basename}`;
+    if (newPublicId === asset.public_id) {
+      return asset;
+    }
+
+    setCloudinaryConfig();
+    try {
+      const result = await cloudinary.uploader.rename(
+        asset.public_id,
+        newPublicId,
+        { overwrite: true, resource_type: resourceType },
+      );
+
+      // On accounts using Cloudinary's Dynamic Folder Mode, `rename` only
+      // changes the public_id/URL — it does NOT move the separate
+      // `asset_folder` attribute the Console's folder browser actually
+      // reads. Left alone, the asset is fully accessible at its new path
+      // but stays visually filed under the old `_pending/...` folder
+      // forever. Sync it explicitly; this is cosmetic only (nothing in the
+      // app reads asset_folder), so a failure here shouldn't undo the
+      // already-successful rename above.
+      await this.syncAssetFolder(newPublicId, newFolder, resourceType);
+
+      return { url: result.secure_url, public_id: result.public_id };
+    } catch (err) {
+      console.error(
+        "[Cloudinary] relocateAsset failed:",
+        asset.public_id,
+        "->",
+        newPublicId,
+        err,
+      );
+      return asset;
+    }
+  }
+
+  isEnabled(): boolean {
+    return isCloudinaryEnabled();
+  }
+
+  // Sets the Console-visible `asset_folder` for an asset whose public_id
+  // already lives at `folder/...`. Safe to call repeatedly — writing the
+  // same value again is a harmless no-op — which is what makes the backfill
+  // job idempotent. Failures are logged and swallowed rather than thrown:
+  // this attribute is cosmetic only, nothing in the app reads it.
+  async syncAssetFolder(
+    publicId: string,
+    folder: string,
+    resourceType: "image" | "raw" | "video" = "image",
+  ): Promise<boolean> {
+    if (!isCloudinaryEnabled() || !hasCloudinaryCredentials()) return false;
+    setCloudinaryConfig();
+    try {
+      await cloudinary.api.update(publicId, {
+        resource_type: resourceType,
+        asset_folder: folder,
+      });
+      return true;
+    } catch (err) {
+      console.warn(
+        "[Cloudinary] syncAssetFolder failed:",
+        publicId,
+        "->",
+        folder,
+        err,
+      );
+      return false;
+    }
+  }
+
+  async deleteImage(
+    publicId: string,
+    resourceType: "image" | "raw" | "video" = "image",
+  ) {
     if (!publicId) {
       return { result: "not_found", reason: "empty_public_id" };
     }
@@ -129,7 +226,9 @@ export class CloudinaryService {
     for (const id of variants) {
       try {
         console.log("[Cloudinary] Attempting to delete public_id:", id);
-        const result = await cloudinary.uploader.destroy(id);
+        const result = await cloudinary.uploader.destroy(id, {
+          resource_type: resourceType,
+        });
         console.log("[Cloudinary] destroy result for", id, ":", result);
         if (result.result === "ok") {
           console.log("[Cloudinary] Successfully deleted:", id);
@@ -146,5 +245,41 @@ export class CloudinaryService {
       publicId,
     );
     return lastResult;
+  }
+
+  // Lists assets under a folder prefix that were uploaded before `cutoff`.
+  // Used to find `_pending/*` staging uploads that were never relocated —
+  // i.e. abandoned/failed registrations — so they can be purged instead of
+  // accumulating in Cloudinary storage forever.
+  async listResourcesOlderThan(
+    prefix: string,
+    cutoff: Date,
+    resourceType: "image" | "raw" = "image",
+  ): Promise<Array<{ public_id: string; created_at: string }>> {
+    if (!isCloudinaryEnabled() || !hasCloudinaryCredentials()) return [];
+    setCloudinaryConfig();
+
+    const stale: Array<{ public_id: string; created_at: string }> = [];
+    let nextCursor: string | undefined;
+    do {
+      const resp: any = await cloudinary.api.resources({
+        type: "upload",
+        resource_type: resourceType,
+        prefix,
+        max_results: 500,
+        next_cursor: nextCursor,
+      });
+      for (const resource of resp.resources || []) {
+        if (new Date(resource.created_at) <= cutoff) {
+          stale.push({
+            public_id: resource.public_id,
+            created_at: resource.created_at,
+          });
+        }
+      }
+      nextCursor = resp.next_cursor;
+    } while (nextCursor);
+
+    return stale;
   }
 }

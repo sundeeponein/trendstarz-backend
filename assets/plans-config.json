@@ -1,8 +1,8 @@
 {
   "plans": [
     {
-      "name": "Influencer Free",
-      "code": "influencer-free",
+      "name": "Influencer Starter",
+      "code": "influencer-starter",
       "userType": "INFLUENCER",
       "price": {
         "monthly": 0,
@@ -18,7 +18,7 @@
         {
           "key": "socialMediaVisibility",
           "label": "Show social media links",
-          "value": true
+          "value": false
         },
         {
           "key": "contactVisibility",
@@ -44,9 +44,29 @@
           "key": "canReadReviews",
           "label": "View influencer & brand reviews",
           "value": false
+        },
+        {
+          "key": "canInviteUsers",
+          "label": "Can invite users",
+          "value": false
+        },
+        {
+          "key": "canViewAnalytics",
+          "label": "Can view analytics",
+          "value": false
         }
       ],
       "limits": [
+        {
+          "key": "dailyProfileViewLimit",
+          "label": "Daily profile views",
+          "value": 25
+        },
+        {
+          "key": "dailySearchLimit",
+          "label": "Daily searches",
+          "value": 10
+        },
         {
           "key": "maxProductImages",
           "label": "Images",
@@ -66,6 +86,11 @@
           "key": "maxInviteOptions",
           "label": "Invite options",
           "value": 5
+        },
+        {
+          "key": "maxCampaignPosts",
+          "label": "Max campaign posts",
+          "value": 1
         }
       ],
       "policies": {
@@ -119,28 +144,53 @@
           "key": "canReadReviews",
           "label": "View influencer & brand reviews",
           "value": true
+        },
+        {
+          "key": "canInviteUsers",
+          "label": "Can invite users",
+          "value": true
+        },
+        {
+          "key": "canViewAnalytics",
+          "label": "Can view analytics",
+          "value": true
         }
       ],
       "limits": [
         {
+          "key": "dailyProfileViewLimit",
+          "label": "Daily profile views",
+          "value": 50
+        },
+        {
+          "key": "dailySearchLimit",
+          "label": "Daily searches",
+          "value": 50
+        },
+        {
           "key": "maxProductImages",
           "label": "Images",
-          "value": 10
+          "value": 7
         },
         {
           "key": "maxActiveCampaigns",
           "label": "Active campaigns",
-          "value": 10
+          "value": 3
         },
         {
           "key": "maxInvitesPerCampaign",
           "label": "Invites received / month",
-          "value": 10
+          "value": 3
         },
         {
           "key": "maxInviteOptions",
           "label": "Invite options",
-          "value": 10
+          "value": 5
+        },
+        {
+          "key": "maxCampaignPosts",
+          "label": "Max campaign posts",
+          "value": 5
         }
       ],
       "offers": [
@@ -150,9 +200,19 @@
           "value": 7
         },
         {
-          "key": "discountOnInfluencerPro",
-          "label": "Discount on Influencer Pro plan (%)",
-          "value": 25
+          "key": "discountMonthly",
+          "label": "Monthly Discount (%)",
+          "value": 0
+        },
+        {
+          "key": "discountQuarterly",
+          "label": "Quarterly Discount (%)",
+          "value": 0
+        },
+        {
+          "key": "discountYearly",
+          "label": "Yearly Discount (%)",
+          "value": 0
         }
       ],
       "discountLabel": "Limited Time Offer",
@@ -164,8 +224,8 @@
       "sortOrder": 1
     },
     {
-      "name": "Brand Free",
-      "code": "brand-free",
+      "name": "Brand Starter",
+      "code": "brand-starter",
       "userType": "BRAND",
       "price": {
         "monthly": 0,
@@ -181,12 +241,12 @@
         {
           "key": "viewSocialLinks",
           "label": "View public social links",
-          "value": true
+          "value": false
         },
         {
           "key": "viewContactDetails",
           "label": "View contact details",
-          "value": true
+          "value": false
         },
         {
           "key": "advancedSearchFilters",
@@ -212,9 +272,34 @@
           "key": "canReadReviews",
           "label": "View influencer & brand reviews",
           "value": false
+        },
+        {
+          "key": "canInviteUsers",
+          "label": "Can invite users",
+          "value": false
+        },
+        {
+          "key": "canViewAnalytics",
+          "label": "Can view analytics",
+          "value": false
+        },
+        {
+          "key": "featuredBadge",
+          "label": "Featured badge",
+          "value": false
         }
       ],
       "limits": [
+        {
+          "key": "dailyProfileViewLimit",
+          "label": "Daily profile views",
+          "value": 40
+        },
+        {
+          "key": "dailySearchLimit",
+          "label": "Daily searches",
+          "value": 20
+        },
         {
           "key": "maxActiveCampaigns",
           "label": "Active campaign",
@@ -234,6 +319,11 @@
           "key": "analytics",
           "label": "Analytics",
           "value": 0
+        },
+        {
+          "key": "maxCampaignPosts",
+          "label": "Max campaign posts",
+          "value": 2
         }
       ],
       "policies": {
@@ -292,18 +382,43 @@
           "key": "canReadReviews",
           "label": "View influencer & brand reviews",
           "value": true
+        },
+        {
+          "key": "canInviteUsers",
+          "label": "Can invite users",
+          "value": true
+        },
+        {
+          "key": "canViewAnalytics",
+          "label": "Can view analytics",
+          "value": true
+        },
+        {
+          "key": "featuredBadge",
+          "label": "Featured badge",
+          "value": true
         }
       ],
       "limits": [
         {
+          "key": "dailyProfileViewLimit",
+          "label": "Daily profile views",
+          "value": 50
+        },
+        {
+          "key": "dailySearchLimit",
+          "label": "Daily searches",
+          "value": 50
+        },
+        {
           "key": "maxActiveCampaigns",
           "label": "Active campaigns",
-          "value": 10
+          "value": 3
         },
         {
           "key": "maxInvitesPerCampaign",
           "label": "Invites / campaign",
-          "value": 10
+          "value": 9
         },
         {
           "key": "maxTeamSeats",
@@ -314,6 +429,11 @@
           "key": "analytics",
           "label": "Analytics",
           "value": 0
+        },
+        {
+          "key": "maxCampaignPosts",
+          "label": "Max campaign posts",
+          "value": 5
         }
       ],
       "offers": [
@@ -323,9 +443,19 @@
           "value": 7
         },
         {
-          "key": "discountOnBrandPro",
-          "label": "Discount on Brand Pro plan (%)",
-          "value": 25
+          "key": "discountMonthly",
+          "label": "Monthly Discount (%)",
+          "value": 0
+        },
+        {
+          "key": "discountQuarterly",
+          "label": "Quarterly Discount (%)",
+          "value": 0
+        },
+        {
+          "key": "discountYearly",
+          "label": "Yearly Discount (%)",
+          "value": 0
         }
       ],
       "discountLabel": "Limited Time Offer",
@@ -337,8 +467,8 @@
       "sortOrder": 1
     },
     {
-      "name": "Photographer Free",
-      "code": "photographer-free",
+      "name": "Photographer Starter",
+      "code": "photographer-starter",
       "userType": "PHOTOGRAPHER",
       "price": {
         "monthly": 0,
@@ -354,7 +484,7 @@
         {
           "key": "socialMediaVisibility",
           "label": "Show social media links",
-          "value": true
+          "value": false
         },
         {
           "key": "contactVisibility",
@@ -380,13 +510,33 @@
           "key": "canReadReviews",
           "label": "View influencer & brand reviews",
           "value": false
+        },
+        {
+          "key": "canInviteUsers",
+          "label": "Can invite users",
+          "value": false
+        },
+        {
+          "key": "canViewAnalytics",
+          "label": "Can view analytics",
+          "value": false
         }
       ],
       "limits": [
         {
+          "key": "dailyProfileViewLimit",
+          "label": "Daily profile views",
+          "value": 10
+        },
+        {
+          "key": "dailySearchLimit",
+          "label": "Daily searches",
+          "value": 10
+        },
+        {
           "key": "maxPortfolioImages",
           "label": "Portfolio images",
-          "value": 3
+          "value": 2
         },
         {
           "key": "maxActiveCampaigns",
@@ -396,12 +546,17 @@
         {
           "key": "maxInvitesPerCampaign",
           "label": "Invites / campaign",
-          "value": 2
+          "value": 1
         },
         {
           "key": "analytics",
           "label": "Analytics",
           "value": 0
+        },
+        {
+          "key": "maxCampaignPosts",
+          "label": "Max campaign posts",
+          "value": 1
         }
       ],
       "policies": {
@@ -455,18 +610,38 @@
           "key": "canReadReviews",
           "label": "View influencer & brand reviews",
           "value": true
+        },
+        {
+          "key": "canInviteUsers",
+          "label": "Can invite users",
+          "value": true
+        },
+        {
+          "key": "canViewAnalytics",
+          "label": "Can view analytics",
+          "value": true
         }
       ],
       "limits": [
         {
+          "key": "dailyProfileViewLimit",
+          "label": "Daily profile views",
+          "value": 50
+        },
+        {
+          "key": "dailySearchLimit",
+          "label": "Daily searches",
+          "value": 50
+        },
+        {
           "key": "maxPortfolioImages",
           "label": "Portfolio images",
-          "value": 10
+          "value": 7
         },
         {
           "key": "maxActiveCampaigns",
           "label": "Active campaigns",
-          "value": 10
+          "value": 3
         },
         {
           "key": "maxInvitesPerCampaign",
@@ -477,6 +652,11 @@
           "key": "analytics",
           "label": "Analytics",
           "value": 0
+        },
+        {
+          "key": "maxCampaignPosts",
+          "label": "Max campaign posts",
+          "value": 5
         }
       ],
       "offers": [
@@ -486,9 +666,19 @@
           "value": 7
         },
         {
-          "key": "discountOnPhotographerPro",
-          "label": "Discount on Photographer Pro plan (%)",
-          "value": 25
+          "key": "discountMonthly",
+          "label": "Monthly Discount (%)",
+          "value": 0
+        },
+        {
+          "key": "discountQuarterly",
+          "label": "Quarterly Discount (%)",
+          "value": 0
+        },
+        {
+          "key": "discountYearly",
+          "label": "Yearly Discount (%)",
+          "value": 0
         }
       ],
       "discountLabel": "Limited Time Offer",

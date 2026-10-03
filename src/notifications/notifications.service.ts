@@ -36,9 +36,12 @@ export class NotificationsService {
   }
 
   async unreadCount(userId: string) {
+    // Legacy notifications may predate the `read` field, so they have no
+    // stored value at all — an exact `read: false` match silently excludes
+    // them. `$ne: true` treats "false or missing" as unread.
     const count = await this.notificationModel.countDocuments({
       userId: String(userId),
-      read: false,
+      read: { $ne: true },
     });
     return { count };
   }
@@ -55,7 +58,7 @@ export class NotificationsService {
 
   async markAllRead(userId: string) {
     await this.notificationModel.updateMany(
-      { userId: String(userId), read: false },
+      { userId: String(userId), read: { $ne: true } },
       { $set: { read: true } },
     );
     return { success: true };

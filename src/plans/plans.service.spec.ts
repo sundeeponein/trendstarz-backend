@@ -49,11 +49,20 @@ describe("PlansService", () => {
       findById: jest
         .fn()
         .mockReturnValue({ lean: jest.fn().mockResolvedValue(mockPlan) }),
-      findOne: jest.fn().mockReturnValue({
-        sort: jest
-          .fn()
-          .mockReturnValue({ lean: jest.fn().mockResolvedValue(mockPlan) }),
-      }),
+      findOne: jest.fn().mockImplementation((query: any) => ({
+        sort: jest.fn().mockReturnValue({
+          lean: jest.fn().mockResolvedValue(
+            query?.code === "influencer-free" ||
+            query?.code === "brand-free" ||
+            query?.code === "photographer-free" ||
+            (query?.["price.monthly"] === 0 &&
+              query?.["price.quarterly"] === 0 &&
+              query?.["price.yearly"] === 0)
+              ? null
+              : mockPlan,
+          ),
+        }),
+      })),
       findByIdAndUpdate: jest
         .fn()
         .mockReturnValue({ lean: jest.fn().mockResolvedValue(mockPlan) }),
@@ -63,6 +72,7 @@ describe("PlansService", () => {
         .mockResolvedValue({ ...mockPlan, toObject: () => mockPlan }),
       deleteMany: jest.fn().mockResolvedValue({ deletedCount: 1 }),
       insertMany: jest.fn().mockResolvedValue([mockPlan]),
+      countDocuments: jest.fn().mockResolvedValue(0),
     };
 
     const mockSubscriptionModel: any = {
@@ -82,14 +92,32 @@ describe("PlansService", () => {
 
     const mockInfluencerModel = {
       exists: jest.fn().mockResolvedValue({ _id: "user1" }),
+      countDocuments: jest.fn().mockResolvedValue(0),
+      findById: jest.fn().mockReturnValue({
+        select: jest.fn().mockReturnValue({
+          lean: jest.fn().mockResolvedValue(null),
+        }),
+      }),
     };
 
     const mockBrandModel = {
       exists: jest.fn().mockResolvedValue(null),
+      countDocuments: jest.fn().mockResolvedValue(0),
+      findById: jest.fn().mockReturnValue({
+        select: jest.fn().mockReturnValue({
+          lean: jest.fn().mockResolvedValue(null),
+        }),
+      }),
     };
 
     const mockPhotographerModel = {
       exists: jest.fn().mockResolvedValue(null),
+      countDocuments: jest.fn().mockResolvedValue(0),
+      findById: jest.fn().mockReturnValue({
+        select: jest.fn().mockReturnValue({
+          lean: jest.fn().mockResolvedValue(null),
+        }),
+      }),
     };
 
     const module: TestingModule = await Test.createTestingModule({
@@ -202,6 +230,36 @@ describe("PlansService", () => {
       );
     });
 
+    it("should not apply offer bonuses for admin-granted subscriptions", async () => {
+      const planWithOfferBonus = {
+        ...mockPlan,
+        offers: [{ key: "bonusMonthsMonthly", value: 1 }],
+      };
+      planModel.findById.mockReturnValue({
+        lean: jest.fn().mockResolvedValue(planWithOfferBonus),
+      });
+
+      const before = new Date();
+      await service.activateSubscription(
+        VALID_USER_ID,
+        "Influencer",
+        VALID_PLAN_ID,
+        "1m",
+        "admin",
+      );
+
+      const createdSubscription = subscriptionModel.create.mock.calls[0][0];
+      const expectedEnd = new Date(before);
+      expectedEnd.setMonth(expectedEnd.getMonth() + 1);
+
+      expect(createdSubscription.endDate.getFullYear()).toBe(
+        expectedEnd.getFullYear(),
+      );
+      expect(createdSubscription.endDate.getMonth()).toBe(
+        expectedEnd.getMonth(),
+      );
+    });
+
     it("should throw if plan not found", async () => {
       planModel.findById.mockReturnValue({
         lean: jest.fn().mockResolvedValue(null),
@@ -238,6 +296,12 @@ describe("PlansService", () => {
     it("should return free plan defaults when no subscription", async () => {
       subscriptionModel.findOne.mockReturnValue({
         lean: jest.fn().mockResolvedValue(null),
+      });
+      const influencerModel = service["influencerModel"] as any;
+      influencerModel.findById.mockReturnValue({
+        select: jest.fn().mockReturnValue({
+          lean: jest.fn().mockResolvedValue({ isPremium: false, premiumEnd: null }),
+        }),
       });
       const result = await service.getUserPlanCapabilities(VALID_USER_ID);
       expect(result.hasPremium).toBe(false);

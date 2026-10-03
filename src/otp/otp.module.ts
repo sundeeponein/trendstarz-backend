@@ -1,10 +1,14 @@
 import { Module } from "@nestjs/common";
 import { OtpController } from "./otp.controller";
-import { DevEmailService } from "../utils/dev-email.service";
-import { SesEmailService } from "../utils/ses-email.service";
+import { DummySmsProvider } from "../services/smsProvider.service";
 
 @Module({
   controllers: [OtpController],
-  providers: [DevEmailService, SesEmailService],
+  providers: [
+    {
+      provide: "SMS_PROVIDER",
+      useClass: DummySmsProvider,
+    },
+  ],
 })
 export class OtpModule {}

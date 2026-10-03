@@ -1,4 +1,9 @@
 {
+  "campaignWorkflowTiming": {
+    "submissionApprovalWaitHours": 24,
+    "submissionAutoCompleteGraceHours": 48,
+    "payoutReleaseWaitHours": 24
+  },
   "socialMediaPlatforms": [
     {
       "name": "YouTube",
@@ -8,8 +13,14 @@
       "handleLabel": "Handle",
       "followersLabel": "Subscribers",
       "contentTypes": [
-        { "name": "Video", "visible": true },
-        { "name": "Shorts", "visible": true }
+        {
+          "name": "Video",
+          "visible": true
+        },
+        {
+          "name": "Shorts",
+          "visible": true
+        }
       ]
     },
     {
@@ -20,9 +31,18 @@
       "handleLabel": "Handle",
       "followersLabel": "Followers",
       "contentTypes": [
-        { "name": "Photo post", "visible": true },
-        { "name": "Reel", "visible": true },
-        { "name": "Story (24h)", "visible": true }
+        {
+          "name": "Photo post",
+          "visible": true
+        },
+        {
+          "name": "Reel",
+          "visible": true
+        },
+        {
+          "name": "Story (24h)",
+          "visible": true
+        }
       ]
     },
     {
@@ -33,8 +53,14 @@
       "handleLabel": "Page name",
       "followersLabel": "Followers",
       "contentTypes": [
-        { "name": "Post", "visible": true },
-        { "name": "Reel", "visible": true }
+        {
+          "name": "Post",
+          "visible": true
+        },
+        {
+          "name": "Reel",
+          "visible": true
+        }
       ]
     },
     {
@@ -45,8 +71,14 @@
       "handleLabel": "Handle",
       "followersLabel": "Followers",
       "contentTypes": [
-        { "name": "Video", "visible": true },
-        { "name": "Live", "visible": true }
+        {
+          "name": "Video",
+          "visible": true
+        },
+        {
+          "name": "Live",
+          "visible": true
+        }
       ]
     },
     {
@@ -57,7 +89,10 @@
       "handleLabel": "Handle",
       "followersLabel": "Followers",
       "contentTypes": [
-        { "name": "Tweet / post", "visible": true }
+        {
+          "name": "Tweet / post",
+          "visible": true
+        }
       ]
     },
     {
@@ -68,397 +103,646 @@
       "handleLabel": "Profile URL",
       "followersLabel": "Followers",
       "contentTypes": [
-        { "name": "Post", "visible": true },
-        { "name": "Video", "visible": true }
+        {
+          "name": "Post",
+          "visible": true
+        },
+        {
+          "name": "Video",
+          "visible": true
+        }
       ]
     }
   ],
   "userTags": {
     "influencer": [
-      { "name": "Founder", "visible": true },
-      { "name": "Internal Creator", "visible": true },
-      { "name": "Verified Creator", "visible": true },
-      { "name": "Featured Creator", "visible": true }
+      {
+        "name": "Founder",
+        "visible": true
+      },
+      {
+        "name": "Internal Creator",
+        "visible": true
+      },
+      {
+        "name": "Verified Creator",
+        "visible": true
+      },
+      {
+        "name": "Featured Creator",
+        "visible": true
+      }
     ],
     "brand": [
-      { "name": "Founder-owned", "visible": true },
-      { "name": "Partner Brand", "visible": true },
-      { "name": "Early Access Brand", "visible": true },
-      { "name": "Verified Brand", "visible": true }
+      {
+        "name": "Founder-owned",
+        "visible": true
+      },
+      {
+        "name": "Partner Brand",
+        "visible": true
+      },
+      {
+        "name": "Early Access Brand",
+        "visible": true
+      },
+      {
+        "name": "Verified Brand",
+        "visible": true
+      }
     ],
     "photographer": [
-      { "name": "Founder", "visible": true },
-      { "name": "Internal Creator", "visible": true },
-      { "name": "Verified Creator", "visible": true },
-      { "name": "Featured Creator", "visible": true }
+      {
+        "name": "Founder",
+        "visible": true
+      },
+      {
+        "name": "Internal Creator",
+        "visible": true
+      },
+      {
+        "name": "Verified Creator",
+        "visible": true
+      },
+      {
+        "name": "Featured Creator",
+        "visible": true
+      }
     ],
     "commission": [
-      { "name": "Early Access", "visible": true },
-      { "name": "Partner", "visible": true },
-      { "name": "Internal/Test", "visible": true }
+      {
+        "name": "Early Access",
+        "visible": true
+      },
+      {
+        "name": "Partner",
+        "visible": true
+      },
+      {
+        "name": "Internal/Test",
+        "visible": true
+      }
     ]
   },
   "categories": [
-    { "name": "Fashion", "role": "influencer", "visible": true },
-    { "name": "Tech", "role": "influencer", "visible": true },
-    { "name": "Travel", "role": "influencer", "visible": true },
-    { "name": "Food", "role": "influencer", "visible": true },
-    { "name": "Fitness", "role": "influencer", "visible": true },
-    { "name": "Beauty", "role": "influencer", "visible": true },
-    { "name": "Education", "role": "influencer", "visible": true },
-    { "name": "Finance", "role": "influencer", "visible": true },
-    { "name": "Automobile", "role": "influencer", "visible": true },
-    { "name": "Gaming", "role": "influencer", "visible": true },
-    { "name": "Parenting", "role": "influencer", "visible": true },
-    { "name": "Health", "role": "influencer", "visible": true },
-    { "name": "Sports", "role": "influencer", "visible": true },
-    { "name": "Art", "role": "influencer", "visible": true },
-    { "name": "Music", "role": "influencer", "visible": true },
-    { "name": "Lifestyle", "role": "influencer", "visible": true },
-    { "name": "Comedy", "role": "influencer", "visible": true },
-    { "name": "Business", "role": "influencer", "visible": true },
-    { "name": "Entertainment", "role": "influencer", "visible": true },
-
-    { "name": "Fashion Brand", "role": "brand", "visible": true },
-    { "name": "Beauty Brand", "role": "brand", "visible": true },
-    { "name": "Restaurant/Cafe", "role": "brand", "visible": true },
-    { "name": "Jewelry", "role": "brand", "visible": true },
-    { "name": "Fitness/Gym", "role": "brand", "visible": true },
-    { "name": "Tech Company", "role": "brand", "visible": true },
-    { "name": "Education/EdTech", "role": "brand", "visible": true },
-    { "name": "Real Estate", "role": "brand", "visible": true },
-    { "name": "Automobile", "role": "brand", "visible": true },
-    { "name": "Healthcare", "role": "brand", "visible": true },
-    { "name": "Finance/FinTech", "role": "brand", "visible": true },
-    { "name": "Travel Company", "role": "brand", "visible": true },
-    { "name": "Event Management", "role": "brand", "visible": true },
-    { "name": "Makeup Artist", "role": "brand", "visible": true },
-    { "name": "Salon/Spa", "role": "brand", "visible": true },
-    { "name": "Photography Studio", "role": "brand", "visible": true },
-    { "name": "E-commerce", "role": "brand", "visible": true },
-    { "name": "Startup", "role": "brand", "visible": true },
-
-    { "name": "Fashion Photography", "role": "photographer", "visible": true },
-    { "name": "Product Photography", "role": "photographer", "visible": true },
-    { "name": "Wedding", "role": "photographer", "visible": true },
-    { "name": "Reels", "role": "photographer", "visible": true },
-    { "name": "Drone", "role": "photographer", "visible": true },
-    { "name": "YouTube", "role": "photographer", "visible": true },
-    { "name": "Food Photography", "role": "photographer", "visible": true },
-    { "name": "Editing", "role": "photographer", "visible": true },
-    { "name": "Cinematic Videos", "role": "photographer", "visible": true }
+    {
+      "name": "Fashion",
+      "role": "influencer",
+      "visible": true
+    },
+    {
+      "name": "Tech",
+      "role": "influencer",
+      "visible": true
+    },
+    {
+      "name": "Travel",
+      "role": "influencer",
+      "visible": true
+    },
+    {
+      "name": "Food",
+      "role": "influencer",
+      "visible": true
+    },
+    {
+      "name": "Fitness",
+      "role": "influencer",
+      "visible": true
+    },
+    {
+      "name": "Beauty",
+      "role": "influencer",
+      "visible": true
+    },
+    {
+      "name": "Education",
+      "role": "influencer",
+      "visible": true
+    },
+    {
+      "name": "Finance",
+      "role": "influencer",
+      "visible": true
+    },
+    {
+      "name": "Automobile",
+      "role": "influencer",
+      "visible": true
+    },
+    {
+      "name": "Gaming",
+      "role": "influencer",
+      "visible": true
+    },
+    {
+      "name": "Parenting",
+      "role": "influencer",
+      "visible": true
+    },
+    {
+      "name": "Health",
+      "role": "influencer",
+      "visible": true
+    },
+    {
+      "name": "Sports",
+      "role": "influencer",
+      "visible": true
+    },
+    {
+      "name": "Art",
+      "role": "influencer",
+      "visible": true
+    },
+    {
+      "name": "Music",
+      "role": "influencer",
+      "visible": true
+    },
+    {
+      "name": "Lifestyle",
+      "role": "influencer",
+      "visible": true
+    },
+    {
+      "name": "Comedy",
+      "role": "influencer",
+      "visible": true
+    },
+    {
+      "name": "Business",
+      "role": "influencer",
+      "visible": true
+    },
+    {
+      "name": "Entertainment",
+      "role": "influencer",
+      "visible": true
+    },
+    {
+      "name": "Fashion Brand",
+      "role": "brand",
+      "visible": true
+    },
+    {
+      "name": "Beauty Brand",
+      "role": "brand",
+      "visible": true
+    },
+    {
+      "name": "Restaurant/Cafe",
+      "role": "brand",
+      "visible": true
+    },
+    {
+      "name": "Jewelry",
+      "role": "brand",
+      "visible": true
+    },
+    {
+      "name": "Fitness/Gym",
+      "role": "brand",
+      "visible": true
+    },
+    {
+      "name": "Tech Company",
+      "role": "brand",
+      "visible": true
+    },
+    {
+      "name": "Education/EdTech",
+      "role": "brand",
+      "visible": true
+    },
+    {
+      "name": "Real Estate",
+      "role": "brand",
+      "visible": true
+    },
+    {
+      "name": "Automobile",
+      "role": "brand",
+      "visible": true
+    },
+    {
+      "name": "Healthcare",
+      "role": "brand",
+      "visible": true
+    },
+    {
+      "name": "Finance/FinTech",
+      "role": "brand",
+      "visible": true
+    },
+    {
+      "name": "Travel Company",
+      "role": "brand",
+      "visible": true
+    },
+    {
+      "name": "Event Management",
+      "role": "brand",
+      "visible": true
+    },
+    {
+      "name": "Makeup Artist",
+      "role": "brand",
+      "visible": true
+    },
+    {
+      "name": "Salon/Spa",
+      "role": "brand",
+      "visible": true
+    },
+    {
+      "name": "Photography Studio",
+      "role": "brand",
+      "visible": true
+    },
+    {
+      "name": "E-commerce",
+      "role": "brand",
+      "visible": true
+    },
+    {
+      "name": "Startup",
+      "role": "brand",
+      "visible": true
+    },
+    {
+      "name": "Fashion Photography",
+      "role": "photographer",
+      "visible": true
+    },
+    {
+      "name": "Product Photography",
+      "role": "photographer",
+      "visible": true
+    },
+    {
+      "name": "Wedding",
+      "role": "photographer",
+      "visible": true
+    },
+    {
+      "name": "Reels",
+      "role": "photographer",
+      "visible": true
+    },
+    {
+      "name": "Drone",
+      "role": "photographer",
+      "visible": true
+    },
+    {
+      "name": "YouTube",
+      "role": "photographer",
+      "visible": true
+    },
+    {
+      "name": "Food Photography",
+      "role": "photographer",
+      "visible": true
+    },
+    {
+      "name": "Editing",
+      "role": "photographer",
+      "visible": true
+    },
+    {
+      "name": "Cinematic Videos",
+      "role": "photographer",
+      "visible": true
+    }
+  ],
+  "collaborationAvailability": {
+    "influencer": {
+      "collaborationTypes": [
+        {
+          "name": "Photoshoots",
+          "visible": true
+        },
+        {
+          "name": "Video Shoots",
+          "visible": true
+        },
+        {
+          "name": "Travel Shoots",
+          "visible": true
+        },
+        {
+          "name": "Brand Campaign Shoots",
+          "visible": true
+        },
+        {
+          "name": "Portfolio Collaborations",
+          "visible": true
+        }
+      ],
+      "preferences": [
+        {
+          "name": "Paid Only",
+          "visible": true
+        },
+        {
+          "name": "Paid + Selective TFP",
+          "visible": true
+        },
+        {
+          "name": "Open to TFP/Portfolio",
+          "visible": true
+        }
+      ],
+      "availableFor": [
+        {
+          "name": "Photo/Videographers",
+          "visible": true
+        },
+        {
+          "name": "Brands",
+          "visible": true
+        },
+        {
+          "name": "Agencies",
+          "visible": true
+        }
+      ]
+    },
+    "photographer": {
+      "preferences": [
+        {
+          "name": "Paid Only",
+          "visible": true
+        },
+        {
+          "name": "Paid + Selective TFP",
+          "visible": true
+        },
+        {
+          "name": "Open to TFP/Portfolio",
+          "visible": true
+        }
+      ],
+      "availableFor": [
+        {
+          "name": "Influencers",
+          "visible": true
+        },
+        {
+          "name": "Brands",
+          "visible": true
+        },
+        {
+          "name": "Agencies",
+          "visible": true
+        }
+      ]
+    }
+  },
+  "creatorTypeOptions": [
+    {
+      "name": "UGC Creator",
+      "visible": true
+    },
+    {
+      "name": "Model",
+      "visible": true
+    },
+    {
+      "name": "Actor",
+      "visible": true
+    },
+    {
+      "name": "Host/Presenter",
+      "visible": true
+    },
+    {
+      "name": "Content Creator",
+      "visible": true
+    },
+    {
+      "name": "Lifestyle Creator",
+      "visible": true
+    },
+    {
+      "name": "Fashion Creator",
+      "visible": true
+    }
   ],
   "languages": [
-    { "name": "English", "visible": true },
-    { "name": "Hindi", "visible": true },
-    { "name": "Marathi", "visible": true },
-    { "name": "Kannada", "visible": true },
-    { "name": "Tamil", "visible": true },
-    { "name": "Telugu", "visible": true },
-    { "name": "Gujarati", "visible": true },
-    { "name": "Bengali", "visible": true },
-    { "name": "Punjabi", "visible": true },
-    { "name": "Malayalam", "visible": true },
-    { "name": "Odia", "visible": true },
-    { "name": "Urdu", "visible": true },
-    { "name": "Assamese", "visible": true },
-    { "name": "Konkani", "visible": true }
+    {
+      "name": "English",
+      "visible": true
+    },
+    {
+      "name": "Hindi",
+      "visible": true
+    },
+    {
+      "name": "Marathi",
+      "visible": true
+    },
+    {
+      "name": "Kannada",
+      "visible": true
+    },
+    {
+      "name": "Tamil",
+      "visible": true
+    },
+    {
+      "name": "Telugu",
+      "visible": true
+    },
+    {
+      "name": "Gujarati",
+      "visible": true
+    },
+    {
+      "name": "Bengali",
+      "visible": true
+    },
+    {
+      "name": "Punjabi",
+      "visible": true
+    },
+    {
+      "name": "Malayalam",
+      "visible": true
+    },
+    {
+      "name": "Odia",
+      "visible": true
+    },
+    {
+      "name": "Urdu",
+      "visible": true
+    },
+    {
+      "name": "Assamese",
+      "visible": true
+    },
+    {
+      "name": "Konkani",
+      "visible": true
+    }
   ],
   "tiers": [
-    { "name": "Starter", "visible": true, "icon": "⭐", "desc": "1-100" },
-    { "name": "Nano", "visible": true, "icon": "🌱", "desc": "101-1,000" },
-    { "name": "Micro", "visible": true, "icon": "🔬", "desc": "1,001-10,000" },
-    { "name": "Mid-Tier", "visible": true, "icon": "🎯", "desc": "10,001-100,000" },
-    { "name": "Macro", "visible": true, "icon": "🚀", "desc": "100,001-1,000,000 " },
-    { "name": "Mega / Celebrity", "visible": true, "icon": "👑", "desc": "1,000,001+" }
+    {
+      "name": "Starter",
+      "visible": true,
+      "icon": "⭐",
+      "desc": "1-100"
+    },
+    {
+      "name": "Nano",
+      "visible": true,
+      "icon": "🌱",
+      "desc": "101-1,000"
+    },
+    {
+      "name": "Micro",
+      "visible": true,
+      "icon": "🔬",
+      "desc": "1,001-10,000"
+    },
+    {
+      "name": "Mid-Tier",
+      "visible": true,
+      "icon": "🎯",
+      "desc": "10,001-100,000"
+    },
+    {
+      "name": "Macro",
+      "visible": true,
+      "icon": "🚀",
+      "desc": "100,001-1,000,000 "
+    },
+    {
+      "name": "Mega / Celebrity",
+      "visible": true,
+      "icon": "👑",
+      "desc": "1,000,001+"
+    }
   ],
-  "locations": [
-    { "state": "Andhra Pradesh", "visible": true,
-      "districts": [
-        { "name": "Anantapur", "visible": true },
-        { "name": "Chittoor", "visible": true },
-        { "name": "East Godavari", "visible": true },
-        { "name": "Guntur", "visible": true },
-        { "name": "Krishna", "visible": true },
-        { "name": "Kurnool", "visible": true },
-        { "name": "Nellore", "visible": true },
-        { "name": "Prakasam", "visible": true },
-        { "name": "Srikakulam", "visible": true },
-        { "name": "Visakhapatnam", "visible": true },
-        { "name": "Vizianagaram", "visible": true },
-        { "name": "West Godavari", "visible": true },
-        { "name": "YSR Kadapa", "visible": true }
-      ]
+  "campaignTypeConfigs": [
+    {
+      "key": "paid_collab",
+      "label": "Paid Collab",
+      "ownerType": "brand",
+      "enabled": true,
+      "premiumOnly": false,
+      "sortOrder": 10
     },
-    { "state": "Arunachal Pradesh", "visible": true,
-      "districts": [
-        { "name": "Tawang", "visible": true },
-        { "name": "West Kameng", "visible": true },
-        { "name": "East Kameng", "visible": true },
-        { "name": "Papum Pare", "visible": true },
-        { "name": "Itanagar Capital Complex", "visible": true }
-      ]
+    {
+      "key": "product",
+      "label": "Product Collab",
+      "ownerType": "brand",
+      "enabled": true,
+      "premiumOnly": true,
+      "sortOrder": 20
     },
-    { "state": "Assam", "visible": true,
-      "districts": [
-        { "name": "Kamrup Metropolitan", "visible": true },
-        { "name": "Kamrup", "visible": true },
-        { "name": "Nagaon", "visible": true },
-        { "name": "Dibrugarh", "visible": true },
-        { "name": "Jorhat", "visible": true },
-        { "name": "Sivasagar", "visible": true },
-        { "name": "Tinsukia", "visible": true }
-      ]
+    {
+      "key": "invite_location",
+      "label": "Invite to Location",
+      "ownerType": "brand",
+      "enabled": true,
+      "premiumOnly": true,
+      "sortOrder": 30
     },
-    { "state": "Bihar", "visible": true,
-      "districts": [
-        { "name": "Patna", "visible": true },
-        { "name": "Gaya", "visible": true },
-        { "name": "Muzaffarpur", "visible": true },
-        { "name": "Bhagalpur", "visible": true },
-        { "name": "Purnia", "visible": true },
-        { "name": "Darbhanga", "visible": true }
-      ]
+    {
+      "key": "paid_collab",
+      "label": "Paid Shoot",
+      "ownerType": "photographer",
+      "enabled": true,
+      "premiumOnly": false,
+      "sortOrder": 10
     },
-    { "state": "Chhattisgarh", "visible": true,
-      "districts": [
-        { "name": "Raipur", "visible": true },
-        { "name": "Bilaspur", "visible": true },
-        { "name": "Durg", "visible": true },
-        { "name": "Rajnandgaon", "visible": true },
-        { "name": "Korba", "visible": true }
-      ]
+    {
+      "key": "product",
+      "label": "Barter / Product Shoot",
+      "ownerType": "photographer",
+      "enabled": true,
+      "premiumOnly": true,
+      "sortOrder": 20
     },
-    { "state": "Goa", "visible": true,
-      "districts": [
-        { "name": "North Goa", "visible": true },
-        { "name": "South Goa", "visible": true }
-      ]
+    {
+      "key": "invite_location",
+      "label": "Event Coverage",
+      "ownerType": "photographer",
+      "enabled": true,
+      "premiumOnly": true,
+      "sortOrder": 30
     },
-    { "state": "Gujarat", "visible": true,
-      "districts": [
-        { "name": "Ahmedabad", "visible": true },
-        { "name": "Surat", "visible": true },
-        { "name": "Vadodara", "visible": true },
-        { "name": "Rajkot", "visible": true },
-        { "name": "Bhavnagar", "visible": true },
-        { "name": "Junagadh", "visible": true },
-        { "name": "Gandhinagar", "visible": true },
-        { "name": "Kutch", "visible": true }
-      ]
+    {
+      "key": "portfolio_collab",
+      "label": "Portfolio Collaboration",
+      "ownerType": "photographer",
+      "enabled": true,
+      "premiumOnly": false,
+      "sortOrder": 40
     },
-    { "state": "Haryana", "visible": true,
-      "districts": [
-        { "name": "Gurugram", "visible": true },
-        { "name": "Faridabad", "visible": true },
-        { "name": "Panipat", "visible": true },
-        { "name": "Ambala", "visible": true },
-        { "name": "Hisar", "visible": true },
-        { "name": "Karnal", "visible": true },
-        { "name": "Rohtak", "visible": true }
-      ]
+    {
+      "key": "reel_collab",
+      "label": "Reel Collaboration",
+      "ownerType": "photographer",
+      "enabled": true,
+      "premiumOnly": false,
+      "sortOrder": 50
     },
-    { "state": "Himachal Pradesh", "visible": true,
-      "districts": [
-        { "name": "Shimla", "visible": true },
-        { "name": "Kangra", "visible": true },
-        { "name": "Mandi", "visible": true },
-        { "name": "Kullu", "visible": true },
-        { "name": "Solan", "visible": true }
-      ]
-    },
-    { "state": "Jharkhand", "visible": true,
-      "districts": [
-        { "name": "Ranchi", "visible": true },
-        { "name": "Jamshedpur", "visible": true },
-        { "name": "Dhanbad", "visible": true },
-        { "name": "Bokaro", "visible": true },
-        { "name": "Hazaribagh", "visible": true }
-      ]
-    },
-    { "state": "Karnataka", "visible": true,
-      "districts": [
-        { "name": "Bengaluru Urban", "visible": true },
-        { "name": "Bengaluru Rural", "visible": true },
-        { "name": "Mysuru", "visible": true },
-        { "name": "Mangaluru (Dakshina Kannada)", "visible": true },
-        { "name": "Hubli-Dharwad", "visible": true },
-        { "name": "Belagavi", "visible": true },
-        { "name": "Udupi", "visible": true },
-        { "name": "Tumakuru", "visible": true }
-      ]
-    },
-    { "state": "Kerala", "visible": true,
-      "districts": [
-        { "name": "Thiruvananthapuram", "visible": true },
-        { "name": "Ernakulam", "visible": true },
-        { "name": "Kozhikode", "visible": true },
-        { "name": "Thrissur", "visible": true },
-        { "name": "Kollam", "visible": true },
-        { "name": "Malappuram", "visible": true },
-        { "name": "Palakkad", "visible": true }
-      ]
-    },
-    { "state": "Madhya Pradesh", "visible": true,
-      "districts": [
-        { "name": "Bhopal", "visible": true },
-        { "name": "Indore", "visible": true },
-        { "name": "Jabalpur", "visible": true },
-        { "name": "Gwalior", "visible": true },
-        { "name": "Ujjain", "visible": true },
-        { "name": "Sagar", "visible": true }
-      ]
-    },
-    { "state": "Maharashtra", "visible": true,
-      "districts": [
-        { "name": "Mumbai", "visible": true },
-        { "name": "Pune", "visible": true },
-        { "name": "Nagpur", "visible": true },
-        { "name": "Thane", "visible": true },
-        { "name": "Nashik", "visible": true },
-        { "name": "Aurangabad", "visible": true },
-        { "name": "Solapur", "visible": true },
-        { "name": "Kolhapur", "visible": true },
-        { "name": "Ratnagiri", "visible": true },
-        { "name": "Satara", "visible": true }
-      ]
-    },
-    { "state": "Manipur", "visible": true,
-      "districts": [
-        { "name": "Imphal East", "visible": true },
-        { "name": "Imphal West", "visible": true },
-        { "name": "Bishnupur", "visible": true }
-      ]
-    },
-    { "state": "Meghalaya", "visible": true,
-      "districts": [
-        { "name": "East Khasi Hills", "visible": true },
-        { "name": "West Garo Hills", "visible": true },
-        { "name": "Ri Bhoi", "visible": true }
-      ]
-    },
-    { "state": "Mizoram", "visible": true,
-      "districts": [
-        { "name": "Aizawl", "visible": true },
-        { "name": "Lunglei", "visible": true }
-      ]
-    },
-    { "state": "Nagaland", "visible": true,
-      "districts": [
-        { "name": "Kohima", "visible": true },
-        { "name": "Dimapur", "visible": true },
-        { "name": "Mokokchung", "visible": true }
-      ]
-    },
-    { "state": "Odisha", "visible": true,
-      "districts": [
-        { "name": "Khordha", "visible": true },
-        { "name": "Cuttack", "visible": true },
-        { "name": "Ganjam", "visible": true },
-        { "name": "Balasore", "visible": true },
-        { "name": "Sambalpur", "visible": true }
-      ]
-    },
-    { "state": "Punjab", "visible": true,
-      "districts": [
-        { "name": "Ludhiana", "visible": true },
-        { "name": "Amritsar", "visible": true },
-        { "name": "Jalandhar", "visible": true },
-        { "name": "Patiala", "visible": true },
-        { "name": "Bathinda", "visible": true },
-        { "name": "Mohali (SAS Nagar)", "visible": true }
-      ]
-    },
-    { "state": "Rajasthan", "visible": true,
-      "districts": [
-        { "name": "Jaipur", "visible": true },
-        { "name": "Jodhpur", "visible": true },
-        { "name": "Udaipur", "visible": true },
-        { "name": "Kota", "visible": true },
-        { "name": "Ajmer", "visible": true },
-        { "name": "Bikaner", "visible": true },
-        { "name": "Alwar", "visible": true }
-      ]
-    },
-    { "state": "Sikkim", "visible": true,
-      "districts": [
-        { "name": "Gangtok", "visible": true },
-        { "name": "Namchi", "visible": true }
-      ]
-    },
-    { "state": "Tamil Nadu", "visible": true,
-      "districts": [
-        { "name": "Chennai", "visible": true },
-        { "name": "Coimbatore", "visible": true },
-        { "name": "Madurai", "visible": true },
-        { "name": "Tiruchirappalli", "visible": true },
-        { "name": "Salem", "visible": true },
-        { "name": "Tirunelveli", "visible": true },
-        { "name": "Erode", "visible": true },
-        { "name": "Vellore", "visible": true }
-      ]
-    },
-    { "state": "Telangana", "visible": true,
-      "districts": [
-        { "name": "Hyderabad", "visible": true },
-        { "name": "Rangareddy", "visible": true },
-        { "name": "Warangal", "visible": true },
-        { "name": "Karimnagar", "visible": true },
-        { "name": "Nizamabad", "visible": true },
-        { "name": "Khammam", "visible": true },
-        { "name": "Medchal-Malkajgiri", "visible": true }
-      ]
-    },
-    { "state": "Tripura", "visible": true,
-      "districts": [
-        { "name": "Agartala (West Tripura)", "visible": true },
-        { "name": "Sepahijala", "visible": true }
-      ]
-    },
-    { "state": "Uttar Pradesh", "visible": true,
-      "districts": [
-        { "name": "Lucknow", "visible": true },
-        { "name": "Noida (Gautam Buddh Nagar)", "visible": true },
-        { "name": "Ghaziabad", "visible": true },
-        { "name": "Kanpur", "visible": true },
-        { "name": "Agra", "visible": true },
-        { "name": "Varanasi", "visible": true },
-        { "name": "Prayagraj", "visible": true },
-        { "name": "Meerut", "visible": true }
-      ]
-    },
-    { "state": "Uttarakhand", "visible": true,
-      "districts": [
-        { "name": "Dehradun", "visible": true },
-        { "name": "Haridwar", "visible": true },
-        { "name": "Nainital", "visible": true },
-        { "name": "Udham Singh Nagar", "visible": true }
-      ]
-    },
-    { "state": "West Bengal", "visible": true,
-      "districts": [
-        { "name": "Kolkata", "visible": true },
-        { "name": "Howrah", "visible": true },
-        { "name": "North 24 Parganas", "visible": true },
-        { "name": "South 24 Parganas", "visible": true },
-        { "name": "Hooghly", "visible": true },
-        { "name": "Darjeeling", "visible": true },
-        { "name": "Bardhaman", "visible": true },
-        { "name": "Nadia", "visible": true }
-      ]
+    {
+      "key": "creative_project",
+      "label": "Creative Project",
+      "ownerType": "photographer",
+      "enabled": true,
+      "premiumOnly": false,
+      "sortOrder": 60
     }
   ],
   "equipmentOptions": [
-    { "name": "Sony", "visible": true },
-    { "name": "Canon", "visible": true },
-    { "name": "DJI", "visible": true },
-    { "name": "iPhone Creator", "visible": true }
+    {
+      "name": "Sony",
+      "visible": true
+    },
+    {
+      "name": "Canon",
+      "visible": true
+    },
+    {
+      "name": "DJI",
+      "visible": true
+    },
+    {
+      "name": "iPhone Creator",
+      "visible": true
+    }
   ],
   "pricingOptions": [
-    { "key": "Starting Price", "label": "Starting Price", "visible": true },
-    { "key": "Per Reel", "label": "Per Reel", "visible": true },
-    { "key": "Per Shoot", "label": "Per Shoot", "visible": true },
-    { "key": "Hourly", "label": "Hourly", "visible": true },
-    { "key": "Equipment", "label": "Equipment Rental", "visible": true }
+    {
+      "key": "Starting Price",
+      "label": "Starting Price",
+      "visible": false
+    },
+    {
+      "key": "Per Reel",
+      "label": "Per Reel",
+      "visible": true
+    },
+    {
+      "key": "Per Shoot",
+      "label": "Per Shoot",
+      "visible": true
+    },
+    {
+      "key": "Hourly",
+      "label": "Hourly",
+      "visible": true
+    },
+    {
+      "key": "Equipment",
+      "label": "Equipment Rental",
+      "visible": true
+    }
   ]
 }

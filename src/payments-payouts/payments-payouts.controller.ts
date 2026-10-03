@@ -2,6 +2,7 @@ import {
   Body,
   Controller,
   Get,
+  Headers,
   Param,
   Post,
   Query,
@@ -18,6 +19,20 @@ export class PaymentsPayoutsController {
   constructor(
     private readonly paymentsPayoutsService: PaymentsPayoutsService,
   ) {}
+
+  @Post("webhooks/razorpayx")
+  async handleRazorpayXWebhook(
+    @Req() req: any,
+    @Headers("x-razorpay-signature") signature: string,
+  ) {
+    const rawBody: Buffer = Buffer.isBuffer(req.body)
+      ? req.body
+      : Buffer.from(JSON.stringify(req.body || {}));
+    return this.paymentsPayoutsService.handleRazorpayXWebhook(
+      rawBody,
+      String(signature || ""),
+    );
+  }
 
   @UseGuards(JwtAuthGuard)
   @Post(":campaignId/calculate")
@@ -42,16 +57,59 @@ export class PaymentsPayoutsController {
     );
   }
 
+  @UseGuards(JwtAuthGuard)
+  @Post(":campaignId/razorpay/order")
+  async createRazorpayOrder(
+    @Param("campaignId") campaignId: string,
+    @Req() req: any,
+  ) {
+    const payerId = req.user?.userId;
+    return this.paymentsPayoutsService.createRazorpayOrderForCampaign(
+      campaignId,
+      payerId,
+    );
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Post(":campaignId/razorpay/verify")
+  async verifyRazorpayPayment(
+    @Param("campaignId") campaignId: string,
+    @Req() req: any,
+    @Body() body: { orderId: string; paymentId: string; signature: string },
+  ) {
+    const payerId = req.user?.userId;
+    return this.paymentsPayoutsService.verifyRazorpayCampaignPayment(
+      campaignId,
+      payerId,
+      body,
+    );
+  }
+
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Get()
   async list(@Query("status") status?: string) {
     return this.paymentsPayoutsService.listForAdmin(status);
   }
 
+  /**
+   * GET /campaign-transactions/summary
+   * GET /campaign-transactions/summary?days=7 — restrict to the last N days (e.g. dashboard widgets)
+   */
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Get("summary")
-  async summary() {
-    return this.paymentsPayoutsService.getAdminSummary();
+  async summary(@Query("days") days?: string) {
+    const parsedDays = Number(days);
+    const since =
+      Number.isFinite(parsedDays) && parsedDays > 0
+        ? new Date(Date.now() - parsedDays * 24 * 60 * 60 * 1000)
+        : undefined;
+    return this.paymentsPayoutsService.getAdminSummary(since);
+  }
+
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Get("admin/gateway-readiness")
+  async gatewayReadiness() {
+    return this.paymentsPayoutsService.getGatewayReadiness();
   }
 
   @UseGuards(JwtAuthGuard, RolesGuard)
@@ -79,6 +137,12 @@ export class PaymentsPayoutsController {
     },
   ) {
     return this.paymentsPayoutsService.markPayoutPaid(id, body);
+  }
+
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Post("admin/auto-payout/run")
+  async runAutoPayout(@Req() req: any) {
+    return this.paymentsPayoutsService.runAutoPayoutSweep(req.user?.userId);
   }
 
   @UseGuards(JwtAuthGuard)
@@ -115,7 +179,13 @@ export class PaymentsPayoutsController {
     @Req() req: any,
   ) {
     const userId = req.user?.userId;
-    const role = req.user?.role === "brand" ? "brand" : "influencer";
+    const normalizedRole = String(req.user?.role || "").toLowerCase();
+    const role =
+      normalizedRole === "brand"
+        ? "brand"
+        : normalizedRole === "photographer"
+          ? "photographer"
+          : "influencer";
     return this.paymentsPayoutsService.raiseDispute(id, userId, role, body.reason);
   }
 

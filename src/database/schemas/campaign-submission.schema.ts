@@ -24,7 +24,7 @@ export const CampaignSubmissionSchema = new Schema(
 
     postScreenshotUrl: {
       type: String,
-      required: process.env.NODE_ENV === "production",
+      default: "",
     },
     insightsScreenshotUrl: { type: String },
 
@@ -37,6 +37,9 @@ export const CampaignSubmissionSchema = new Schema(
 
     submittedAt: { type: Date },
     reviewedAt: { type: Date },
+    autoCompletedAt: { type: Date },
+    hostAutoCompleteEnabled: { type: Boolean, default: false },
+    hostAutoCompleteEnabledAt: { type: Date },
 
     status: {
       type: String,
@@ -44,7 +47,14 @@ export const CampaignSubmissionSchema = new Schema(
       default: "submitted",
     },
     brandFeedback: { type: String },
+    disputeIssueReason: { type: String },
     disputeReason: { type: String },
+    disputeEvidenceUrl: { type: String },
+    // Number of times the influencer has resubmitted after a dispute. Capped at 1 to avoid endless revision cycles.
+    resubmissionCount: { type: Number, default: 0 },
+    // Set when submittedAt is past the invite's selectedPostDate (+ any grace period).
+    isLate: { type: Boolean, default: false },
+    daysLate: { type: Number, default: 0 },
   },
   { timestamps: true },
 );
@@ -67,8 +77,16 @@ export interface CampaignSubmission extends Document {
   engagementRate?: number;
   submittedAt?: Date;
   reviewedAt?: Date;
+  autoCompletedAt?: Date;
+  hostAutoCompleteEnabled?: boolean;
+  hostAutoCompleteEnabledAt?: Date;
   status: "draft" | "submitted" | "approved" | "rejected" | "disputed";
   brandFeedback?: string;
+  disputeIssueReason?: string;
   disputeReason?: string;
+  disputeEvidenceUrl?: string;
+  resubmissionCount?: number;
+  isLate?: boolean;
+  daysLate?: number;
   createdAt: Date;
 }
