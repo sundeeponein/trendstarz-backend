@@ -166,7 +166,11 @@ describe("Stage 3B-3 campaign eligibility list", () => {
 
   it("counts every evaluated creator, unaffected by filters", () => {
     const l = list({ status: "PASS" });
-    expect(l.scope).toEqual({ creatorType: "Influencer", evaluated: 5 });
+    expect(l.scope).toEqual({
+      creatorType: "Influencer",
+      evaluated: 5,
+      alreadyInvited: 0,
+    });
     expect(l.counts).toEqual({ PASS: 2, UNKNOWN: 1, FAIL: 2 });
     expect(l.requirementCounts.language).toEqual({
       PASS: 3,
@@ -232,6 +236,9 @@ describe("Stage 3B-3 campaign eligibility list", () => {
 });
 
 describe("Stage 3B-3 service / controller", () => {
+  const invites = {
+    invitedRecipientIds: jest.fn().mockResolvedValue(new Set(["f1"])),
+  };
   it("evaluates every creator of the recipient type through the 3B-2 evaluator", async () => {
     const inputs = {
       forCampaignWithTitle: jest
@@ -256,10 +263,18 @@ describe("Stage 3B-3 service / controller", () => {
     };
     const l = await new MatchingEligibilityService(
       inputs as any,
+      invites as any,
     ).evaluateCampaign("camp-1", { status: "all" });
     expect(inputs.forCampaignWithTitle).toHaveBeenCalledWith("camp-1");
     expect(inputs.forAllCreators).toHaveBeenCalledWith("Influencer");
     expect(l.counts).toEqual({ PASS: 1, UNKNOWN: 0, FAIL: 1 });
+    // Stage 3B-4: rows say whether the creator already holds an invite.
+    expect(invites.invitedRecipientIds).toHaveBeenCalledWith("camp-1");
+    expect(l.rows.map((r) => [r.creatorId, r.invited])).toEqual([
+      ["a", false],
+      ["f1", true],
+    ]);
+    expect(l.scope.alreadyInvited).toBe(1);
   });
 
   it("photographer-recipient campaigns evaluate photographers", async () => {
@@ -274,9 +289,14 @@ describe("Stage 3B-3 service / controller", () => {
     };
     const l = await new MatchingEligibilityService(
       inputs as any,
+      invites as any,
     ).evaluateCampaign("camp-1");
     expect(inputs.forAllCreators).toHaveBeenCalledWith("Photographer");
-    expect(l.scope).toEqual({ creatorType: "Photographer", evaluated: 0 });
+    expect(l.scope).toEqual({
+      creatorType: "Photographer",
+      evaluated: 0,
+      alreadyInvited: 0,
+    });
   });
 
   it("is GET admin/matching/eligibility/:campaignId", () => {

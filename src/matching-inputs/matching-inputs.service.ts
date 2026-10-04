@@ -96,9 +96,11 @@ export class MatchingInputsService {
     return (await this.forCampaignWithTitle(id)).input;
   }
 
-  async forCampaignWithTitle(
-    id: string,
-  ): Promise<{ input: NormalizedCampaignMatchInput; title: string }> {
+  async forCampaignWithTitle(id: string): Promise<{
+    input: NormalizedCampaignMatchInput;
+    title: string;
+    ownerId: string;
+  }> {
     if (!Types.ObjectId.isValid(id))
       throw new BadRequestException("Invalid id");
     const campaign: any = await this.campaignModel.findById(id).lean();
@@ -106,6 +108,7 @@ export class MatchingInputsService {
     return {
       input: normalizeCampaignMatchInput(campaign),
       title: String(campaign.title || campaign.campaignTitle || "").trim(),
+      ownerId: campaign.brandId ? String(campaign.brandId) : "",
     };
   }
 

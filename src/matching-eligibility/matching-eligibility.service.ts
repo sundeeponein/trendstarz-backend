@@ -1,4 +1,5 @@
 import { Injectable } from "@nestjs/common";
+import { CampaignInvitesService } from "../campaigns/campaign-invites.service";
 import { MatchingInputsService } from "../matching-inputs/matching-inputs.service";
 import {
   CampaignEligibilityList,
@@ -19,7 +20,10 @@ import {
  */
 @Injectable()
 export class MatchingEligibilityService {
-  constructor(private readonly inputs: MatchingInputsService) {}
+  constructor(
+    private readonly inputs: MatchingInputsService,
+    private readonly invites: CampaignInvitesService,
+  ) {}
 
   async evaluate(
     campaignId: string,
@@ -47,9 +51,16 @@ export class MatchingEligibilityService {
       await this.inputs.forCampaignWithTitle(campaignId);
     const creatorType =
       campaign.recipientRole === "photographer" ? "Photographer" : "Influencer";
-    const creators = await this.inputs.forAllCreators(creatorType);
+    const [creators, invited] = await Promise.all([
+      this.inputs.forAllCreators(creatorType),
+      this.invites.invitedRecipientIds(campaignId),
+    ]);
     const rows = creators.map(({ input, display }) =>
-      toEligibilityRow(evaluateEligibility(campaign, input), display),
+      toEligibilityRow(
+        evaluateEligibility(campaign, input),
+        display,
+        invited.has(input.creatorId),
+      ),
     );
     return buildCampaignEligibilityList(
       campaign,

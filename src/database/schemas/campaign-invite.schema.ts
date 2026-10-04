@@ -119,6 +119,10 @@ export const CampaignInviteSchema = new Schema({
   postingReminder24hSentAt: { type: Date },
   withdrawnAt: { type: Date },
   withdrawnReason: { type: String },
+  // Stage 3B-4: set when an admin sent this invite on the owner's behalf from
+  // the campaign eligibility list (brandId is still the campaign owner).
+  invitedByAdminId: { type: String },
+  invitedByAdminAt: { type: Date },
   reportedIssue: {
     reason: { type: String },
     reportedAt: { type: Date },

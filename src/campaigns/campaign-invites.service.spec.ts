@@ -1687,6 +1687,58 @@ describe("CampaignInvitesService – platform events", () => {
       expect(event.timestamp).toEqual(new Date("2026-06-10T10:00:00Z"));
     });
 
+    it("Stage 3B-4: admin attribution comes only from options, never the request body", async () => {
+      campaignModel.findById.mockReturnValue(queryOf(activeCampaign));
+
+      await service.create("brand1", {
+        campaignId: "camp1",
+        influencerId: "inf1",
+        invitedByAdminId: "spoofed",
+        invitedByAdminAt: new Date("2020-01-01"),
+      });
+      expect(inviteModel.mock.calls[0][0]).toMatchObject({
+        invitedByAdminId: undefined,
+        invitedByAdminAt: undefined,
+      });
+      expect(eventsOfType("creator_invited")[0].metadata).toMatchObject({
+        invitedByAdmin: false,
+      });
+
+      await service.create(
+        "brand1",
+        { campaignId: "camp1", influencerId: "inf1" },
+        { invitedByAdminId: "admin-1" },
+      );
+      expect(inviteModel.mock.calls[1][0]).toMatchObject({
+        brandId: "brand1",
+        invitedByAdminId: "admin-1",
+        invitedByAdminAt: expect.any(Date),
+      });
+      expect(eventsOfType("creator_invited")[1].metadata).toMatchObject({
+        invitedByAdmin: true,
+      });
+    });
+
+    it("Stage 3B-4: invitedRecipientIds matches both campaignId forms", async () => {
+      inviteModel.distinct = jest
+        .fn()
+        .mockResolvedValue(["64b0000000000000000000a1"]);
+      const ids = await service.invitedRecipientIds(
+        "64b0000000000000000000c1",
+        ["64b0000000000000000000a1", "not-an-id"],
+      );
+      expect([...ids]).toEqual(["64b0000000000000000000a1"]);
+      const [field, filter] = inviteModel.distinct.mock.calls[0];
+      expect(field).toBe("influencerId");
+      expect(filter.campaignId.$in.map(String)).toEqual([
+        "64b0000000000000000000c1",
+        "64b0000000000000000000c1",
+      ]);
+      expect(filter.influencerId.$in.map(String)).toEqual([
+        "64b0000000000000000000a1",
+      ]);
+    });
+
     it("records nothing when the invite is rejected", async () => {
       campaignModel.findById.mockReturnValue(
         queryOf({

@@ -49,6 +49,8 @@ export interface CampaignEligibilityRow extends CreatorDisplay {
     RequirementKey,
     { status: RequirementStatus; reason: string; configured: boolean }
   >;
+  /** Already holds an invite for this campaign (any status). Display only. */
+  invited: boolean;
 }
 
 export interface CampaignEligibilityQuery {
@@ -82,7 +84,11 @@ export interface CampaignEligibilityList {
     };
   };
   /** Which creators were evaluated (the campaign's recipient type, not deleted). */
-  scope: { creatorType: EligibilityResult["creatorType"]; evaluated: number };
+  scope: {
+    creatorType: EligibilityResult["creatorType"];
+    evaluated: number;
+    alreadyInvited: number;
+  };
   /** Overall counts across every evaluated creator (unfiltered). */
   counts: Counts;
   /** Per-requirement counts across every evaluated creator (unfiltered). */
@@ -134,6 +140,7 @@ export function parseCampaignEligibilityQuery(
 export function toEligibilityRow(
   result: EligibilityResult,
   display: CreatorDisplay,
+  invited = false,
 ): CampaignEligibilityRow {
   const requirements = {} as CampaignEligibilityRow["requirements"];
   for (const key of REQUIREMENT_KEYS) {
@@ -151,6 +158,7 @@ export function toEligibilityRow(
     // Re-derived so the row can never disagree with its own requirements.
     overall: aggregateOverall(Object.values(requirements)),
     requirements,
+    invited,
   };
 }
 
@@ -226,7 +234,11 @@ export function buildCampaignEligibilityList(
         languages: campaign.languages,
       },
     },
-    scope: { creatorType, evaluated: rows.length },
+    scope: {
+      creatorType,
+      evaluated: rows.length,
+      alreadyInvited: rows.filter((r) => r.invited).length,
+    },
     counts,
     requirementCounts,
     query,

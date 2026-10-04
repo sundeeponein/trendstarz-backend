@@ -538,11 +538,11 @@ describe("MatchingEligibilityService / Controller", () => {
           normalizeCreatorMatchInput(rawCreator(), "Influencer"),
         ),
     };
-    const result = await new MatchingEligibilityService(inputs as any).evaluate(
-      "camp-1",
-      "influencer",
-      "inf-1",
-    );
+    const invites = { invitedRecipientIds: jest.fn() };
+    const result = await new MatchingEligibilityService(
+      inputs as any,
+      invites as any,
+    ).evaluate("camp-1", "influencer", "inf-1");
     expect(inputs.forCampaign).toHaveBeenCalledWith("camp-1");
     expect(inputs.forCreator).toHaveBeenCalledWith("influencer", "inf-1");
     expect(result.overall).toBe("PASS");

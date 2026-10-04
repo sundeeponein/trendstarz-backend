@@ -907,7 +907,37 @@ export class CampaignInvitesService {
     return invite?.campaignId ? String(invite.campaignId) : null;
   }
 
-  async create(brandId: string, data: any) {
+  /**
+   * Stage 3B-4 — recipients that already hold an invite for this campaign (any
+   * status). Optionally limited to `recipientIds`.
+   */
+  async invitedRecipientIds(
+    campaignId: string,
+    recipientIds?: string[],
+  ): Promise<Set<string>> {
+    const campaignForms: any[] = [campaignId];
+    if (Types.ObjectId.isValid(campaignId))
+      campaignForms.push(new Types.ObjectId(campaignId));
+    const filter: Record<string, any> = { campaignId: { $in: campaignForms } };
+    if (recipientIds) {
+      filter.influencerId = {
+        $in: recipientIds
+          .filter((id) => Types.ObjectId.isValid(id))
+          .map((id) => new Types.ObjectId(id)),
+      };
+    }
+    const ids: unknown[] = await this.inviteModel.distinct(
+      "influencerId",
+      filter,
+    );
+    return new Set(ids.map((id) => String(id)));
+  }
+
+  async create(
+    brandId: string,
+    data: any,
+    options: { invitedByAdminId?: string } = {},
+  ) {
     const campaign: any = await this.campaignModel
       .findById(data.campaignId)
       .lean();
@@ -1114,6 +1144,9 @@ export class CampaignInvitesService {
       influencerId: recipientId,
       recipientRole,
       dueDate: normalizedDueDate,
+      // Set only by the admin eligibility flow (Stage 3B-4), never from the request body.
+      invitedByAdminId: options.invitedByAdminId ?? undefined,
+      invitedByAdminAt: options.invitedByAdminId ? new Date() : undefined,
     });
     const saved = await invite.save();
 
@@ -1134,6 +1167,7 @@ export class CampaignInvitesService {
         // Invites can be queued while a collaboration is still pending review;
         // the recipient only sees it once the campaign is live.
         campaignLiveAtInvite: this.isCampaignLiveForRecipient(campaign),
+        invitedByAdmin: !!options.invitedByAdminId,
       },
       dedupeKey: `creator_invited:${String(saved._id)}`,
     });
