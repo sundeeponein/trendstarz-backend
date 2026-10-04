@@ -933,6 +933,21 @@ export class CampaignInvitesService {
     return new Set(ids.map((id) => String(id)));
   }
 
+  /**
+   * Stage 3B-4 — same owner rule as create(): the requester is the campaign
+   * owner by id, or by one of the owner's usernames.
+   */
+  async isCampaignOwner(
+    campaignOwnerId: string,
+    requesterId: string,
+  ): Promise<boolean> {
+    const owner = String(campaignOwnerId || "").trim();
+    const requester = String(requesterId || "").trim();
+    if (!owner || !requester) return false;
+    if (owner === requester) return true;
+    return (await this.resolveOwnerIdentifiers(requester)).includes(owner);
+  }
+
   async create(
     brandId: string,
     data: any,

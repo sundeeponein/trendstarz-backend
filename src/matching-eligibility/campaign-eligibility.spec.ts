@@ -7,6 +7,7 @@ import {
   DEFAULT_PAGE_SIZE,
   MAX_PAGE_SIZE,
   buildCampaignEligibilityList,
+  campaignInviteWindow,
   parseCampaignEligibilityQuery,
   toEligibilityRow,
 } from "./campaign-eligibility";
@@ -220,6 +221,8 @@ describe("Stage 3B-3 campaign eligibility list", () => {
       campaignId: "camp-1",
       title: "Diwali Reels",
       status: "active",
+      invitesOpen: true,
+      invitesClosedReason: null,
       recipientRole: "influencer",
       ownerType: "brand",
       requirements: {
@@ -335,5 +338,99 @@ describe("Stage 3B-3 service / controller", () => {
       publicId: "TSZ-a",
     });
     expect(out[0].input.eligibility.approvedActiveAccount).toBe(true);
+  });
+});
+
+describe("Stage 3B-3 hardening — invited vs eligible vs invitable (decided on the server)", () => {
+  const invitedRow = (id: string, over: Record<string, any> = {}) => {
+    const raw = rawCreator(id, over);
+    return toEligibilityRow(
+      evaluateEligibility(
+        campaign,
+        normalizeCreatorMatchInput(raw, "Influencer"),
+      ),
+      { name: raw.name, username: raw.username, publicId: raw.publicId },
+      true,
+    );
+  };
+  const build = (
+    evaluated: ReturnType<typeof row>[],
+    c = campaign,
+    now?: Date,
+  ) =>
+    buildCampaignEligibilityList(
+      c,
+      "T",
+      "Influencer",
+      evaluated,
+      parseCampaignEligibilityQuery({ status: "all" }),
+      NOT_EVALUATED,
+      now,
+    );
+
+  it("Invited is shown for eligible, not eligible and unknown creators alike", () => {
+    const l = build([
+      invitedRow("ip"),
+      invitedRow("if", { categories: ["Food"] }),
+      invitedRow("iu", { languages: [] }),
+    ]);
+    expect(
+      l.rows.map((r) => [r.creatorId, r.overall, r.invited, r.invitable]),
+    ).toEqual([
+      ["ip", "PASS", true, false],
+      ["iu", "UNKNOWN", true, false],
+      ["if", "FAIL", true, false],
+    ]);
+    expect(
+      l.rows.every((r) => r.inviteBlockedReason?.includes("Already invited")),
+    ).toBe(true);
+    expect(l.scope.alreadyInvited).toBe(3);
+  });
+
+  it("only PASS + not invited + live campaign is invitable; UNKNOWN is never invitable", () => {
+    const l = build([
+      row("p"),
+      row("f", { categories: ["Food"] }),
+      row("u", { languages: [] }),
+    ]);
+    const by = Object.fromEntries(l.rows.map((r) => [r.creatorId, r]));
+    expect(by.p).toMatchObject({ invitable: true, inviteBlockedReason: null });
+    expect(by.f).toMatchObject({
+      invitable: false,
+      inviteBlockedReason: "Not eligible.",
+    });
+    expect(by.u.invitable).toBe(false);
+    expect(by.u.inviteBlockedReason).toMatch(/unknown/i);
+  });
+
+  it("campaign not live or past its acceptance deadline → nothing invitable, reason shown", () => {
+    const pending = normalizeCampaignMatchInput(
+      rawCampaign({ status: "pending_review" }),
+    );
+    let l = build([row("p")], pending);
+    expect(l.campaign).toMatchObject({
+      invitesOpen: false,
+      invitesClosedReason:
+        "Invites can only be sent for live (approved) campaigns.",
+    });
+    expect(l.rows[0]).toMatchObject({ overall: "PASS", invitable: false });
+
+    const deadline = normalizeCampaignMatchInput(
+      rawCampaign({ acceptanceDeadline: new Date("2026-10-01T00:00:00Z") }),
+    );
+    l = build([row("p")], deadline, new Date("2026-10-04T00:00:00Z"));
+    expect(l.campaign.invitesClosedReason).toBe(
+      "Campaign acceptance is closed by deadline.",
+    );
+    expect(l.rows[0].invitable).toBe(false);
+    expect(
+      campaignInviteWindow(deadline, new Date("2026-09-30T00:00:00Z")),
+    ).toEqual({ open: true, reason: null });
+  });
+
+  it("a browser-supplied invitable/overall on input rows is overwritten", () => {
+    const forged = { ...row("f", { categories: ["Food"] }), invitable: true };
+    const l = build([forged]);
+    expect(l.rows[0]).toMatchObject({ overall: "FAIL", invitable: false });
   });
 });

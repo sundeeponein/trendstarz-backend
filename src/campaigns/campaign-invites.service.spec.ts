@@ -1719,6 +1719,52 @@ describe("CampaignInvitesService – platform events", () => {
       });
     });
 
+    it("Stage 3B-3/4: the creator is notified only after the invite is saved", async () => {
+      campaignModel.findById.mockReturnValue(queryOf(activeCampaign));
+      const push = (service as any).pushService.sendToUser as jest.Mock;
+      const inbox = (service as any).notificationsService
+        .createForUser as jest.Mock;
+
+      inviteModel.mockImplementationOnce((data: any) => ({
+        ...data,
+        save: jest.fn().mockRejectedValue(new Error("write failed")),
+      }));
+      await expect(
+        service.create(
+          "brand1",
+          { campaignId: "camp1", influencerId: "inf1" },
+          { invitedByAdminId: "admin-1" },
+        ),
+      ).rejects.toThrow("write failed");
+      expect(push).not.toHaveBeenCalled();
+      expect(inbox).not.toHaveBeenCalled();
+      expect(eventsOfType("creator_invited")).toHaveLength(0);
+
+      await service.create(
+        "brand1",
+        { campaignId: "camp1", influencerId: "inf1" },
+        { invitedByAdminId: "admin-1" },
+      );
+      expect(push).toHaveBeenCalledTimes(1);
+      expect(inbox).toHaveBeenCalledTimes(1);
+    });
+
+    it("Stage 3B-4: isCampaignOwner matches the owner id or an owner username", async () => {
+      expect(await service.isCampaignOwner("brand1", "brand1")).toBe(true);
+      expect(await service.isCampaignOwner("", "brand1")).toBe(false);
+      expect(await service.isCampaignOwner("brand1", "")).toBe(false);
+      const resolve = jest
+        .spyOn(service as any, "resolveOwnerIdentifiers")
+        .mockResolvedValue(["64b0000000000000000000b1", "acme"]);
+      expect(
+        await service.isCampaignOwner("acme", "64b0000000000000000000b1"),
+      ).toBe(true);
+      expect(
+        await service.isCampaignOwner("other", "64b0000000000000000000b1"),
+      ).toBe(false);
+      resolve.mockRestore();
+    });
+
     it("Stage 3B-4: invitedRecipientIds matches both campaignId forms", async () => {
       inviteModel.distinct = jest
         .fn()

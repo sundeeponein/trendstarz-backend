@@ -49,8 +49,51 @@ export interface CampaignEligibilityRow extends CreatorDisplay {
     RequirementKey,
     { status: RequirementStatus; reason: string; configured: boolean }
   >;
-  /** Already holds an invite for this campaign (any status). Display only. */
+  /** Already holds an invite for this campaign (any status). Separate from eligibility. */
   invited: boolean;
+  /**
+   * Decided here, not in the browser: campaign accepts invites AND overall
+   * PASS AND not already invited. Re-checked again at send time.
+   */
+  invitable: boolean;
+  inviteBlockedReason: string | null;
+}
+
+export interface CampaignInviteWindow {
+  open: boolean;
+  reason: string | null;
+}
+
+/** Whether the campaign can take new admin invites right now (status + acceptance deadline). */
+export function campaignInviteWindow(
+  campaign: NormalizedCampaignMatchInput,
+  now: Date = new Date(),
+): CampaignInviteWindow {
+  if (campaign.status.toLowerCase() !== "active")
+    return {
+      open: false,
+      reason: "Invites can only be sent for live (approved) campaigns.",
+    };
+  const deadline = campaign.dates.acceptanceDeadline;
+  if (deadline && deadline.getTime() < now.getTime())
+    return {
+      open: false,
+      reason: "Campaign acceptance is closed by deadline.",
+    };
+  return { open: true, reason: null };
+}
+
+/** Why a row can't be invited (null = it can). */
+export function inviteBlockedReason(
+  row: Pick<CampaignEligibilityRow, "overall" | "invited">,
+  window: CampaignInviteWindow,
+): string | null {
+  if (row.invited) return "Already invited to this campaign.";
+  if (!window.open) return window.reason;
+  if (row.overall === "FAIL") return "Not eligible.";
+  if (row.overall === "UNKNOWN")
+    return "Eligibility unknown — some requirements can't be checked.";
+  return null;
 }
 
 export interface CampaignEligibilityQuery {
@@ -70,6 +113,9 @@ export interface CampaignEligibilityList {
     campaignId: string;
     title: string;
     status: string;
+    /** Campaign-level invite window (status + acceptance deadline). */
+    invitesOpen: boolean;
+    invitesClosedReason: string | null;
     recipientRole: NormalizedCampaignMatchInput["recipientRole"];
     ownerType: NormalizedCampaignMatchInput["ownerType"];
     /** The campaign's configured requirements, as normalized in Stage 3B-1 (for display). */
@@ -159,6 +205,9 @@ export function toEligibilityRow(
     overall: aggregateOverall(Object.values(requirements)),
     requirements,
     invited,
+    // Filled in by buildCampaignEligibilityList, which knows the campaign window.
+    invitable: false,
+    inviteBlockedReason: null,
   };
 }
 
@@ -184,10 +233,20 @@ export function buildCampaignEligibilityList(
   campaign: NormalizedCampaignMatchInput,
   campaignTitle: string,
   creatorType: EligibilityResult["creatorType"],
-  rows: CampaignEligibilityRow[],
+  evaluatedRows: CampaignEligibilityRow[],
   query: CampaignEligibilityQuery,
   notEvaluated: EligibilityResult["notEvaluated"],
+  now: Date = new Date(),
 ): CampaignEligibilityList {
+  const window = campaignInviteWindow(campaign, now);
+  const rows = evaluatedRows.map((row) => {
+    const blocked = inviteBlockedReason(row, window);
+    return {
+      ...row,
+      invitable: blocked === null,
+      inviteBlockedReason: blocked,
+    };
+  });
   const counts = zero();
   const requirementCounts = {} as CampaignEligibilityList["requirementCounts"];
   for (const key of REQUIREMENT_KEYS)
@@ -217,6 +276,8 @@ export function buildCampaignEligibilityList(
       campaignId: campaign.campaignId,
       title: campaignTitle,
       status: campaign.status,
+      invitesOpen: window.open,
+      invitesClosedReason: window.reason,
       recipientRole: campaign.recipientRole,
       ownerType: campaign.ownerType,
       requirements: {

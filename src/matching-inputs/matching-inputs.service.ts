@@ -113,6 +113,33 @@ export class MatchingInputsService {
   }
 
   /**
+   * Stage 3B-3 hardening — specific creators in ONE read (deleted ones
+   * included, so callers can tell "unavailable" apart from "not found").
+   * Same no-evidence normalization as forAllCreators.
+   */
+  async forCreatorsByIds(
+    profileType: "Influencer" | "Photographer",
+    ids: string[],
+  ): Promise<Map<string, NormalizedCreatorMatchInput>> {
+    const valid = ids.filter((id) => Types.ObjectId.isValid(id));
+    if (!valid.length) return new Map();
+    const model =
+      profileType === "Photographer"
+        ? this.photographerModel
+        : this.influencerModel;
+    const profiles: any[] = await model
+      .find({ _id: { $in: valid.map((id) => new Types.ObjectId(id)) } })
+      .select("-password")
+      .lean();
+    return new Map(
+      profiles.map((profile) => [
+        String(profile._id),
+        normalizeCreatorMatchInput(profile, profileType),
+      ]),
+    );
+  }
+
+  /**
    * Stage 3B-3 — every non-deleted creator of one type, normalized in one
    * read. Per-account verification/observation evidence is NOT loaded: it never
    * affects eligibility, and loading it per creator would be N extra queries

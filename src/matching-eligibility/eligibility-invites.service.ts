@@ -2,28 +2,33 @@ import { BadRequestException, Injectable } from "@nestjs/common";
 import { Types } from "mongoose";
 import { CampaignInvitesService } from "../campaigns/campaign-invites.service";
 import { MatchingInputsService } from "../matching-inputs/matching-inputs.service";
-import { REQUIREMENT_KEYS } from "./campaign-eligibility";
+import { REQUIREMENT_KEYS, campaignInviteWindow } from "./campaign-eligibility";
 import { evaluateEligibility } from "./eligibility";
 
 export const MAX_INVITES_PER_REQUEST = 50;
 
+/**
+ * Per-creator result. `needs_review` codes mean the admin's selection is out of
+ * date (eligibility or invite state changed since the list was loaded).
+ */
+export type EligibilityInviteSkipCode =
+  | "invalid_id"
+  | "unavailable"
+  | "already_invited"
+  | "not_eligible"
+  | "eligibility_unknown"
+  | "invite_rejected";
+
 export interface EligibilityInviteOutcome {
   requested: number;
   invited: Array<{ creatorId: string; inviteId: string }>;
-  skipped: Array<{ creatorId: string; reason: string }>;
+  skipped: Array<{
+    creatorId: string;
+    code: EligibilityInviteSkipCode;
+    reason: string;
+  }>;
 }
 
-/**
- * Stage 3B-4 — admin sends invites to creators picked from the campaign
- * eligibility list. Each invite goes through the existing invite flow
- * (CampaignInvitesService.create) as the campaign OWNER, so the owner's plan
- * limits, deadline and slot caps, recipient caps and notifications all apply
- * exactly as when the host invites. Adds two guards on top: the creator must
- * be PASS right now (re-evaluated, never trusted from the client), and must
- * not already hold an invite for this campaign.
- *
- * Nothing automatic: only the creators the admin selected, one request.
- */
 @Injectable()
 export class EligibilityInvitesService {
   constructor(
@@ -51,20 +56,21 @@ export class EligibilityInvitesService {
       );
     if (!adminId) throw new BadRequestException("Admin not identified.");
 
+    // Everything below is re-derived on the server; the browser only supplies
+    // which creator ids the admin ticked.
     const { input: campaign, ownerId } =
       await this.inputs.forCampaignWithTitle(campaignId);
-    if (campaign.status.toLowerCase() !== "active")
-      throw new BadRequestException(
-        "Invites can only be sent for live (approved) campaigns.",
-      );
+    const window = campaignInviteWindow(campaign);
+    if (!window.open) throw new BadRequestException(window.reason);
     if (!ownerId) throw new BadRequestException("Campaign has no owner.");
 
     const creatorType =
       campaign.recipientRole === "photographer" ? "Photographer" : "Influencer";
-    const alreadyInvited = await this.invites.invitedRecipientIds(
-      campaignId,
-      ids,
-    );
+    // Two batch reads for the whole selection (no per-creator profile queries).
+    const [alreadyInvited, creators] = await Promise.all([
+      this.invites.invitedRecipientIds(campaignId, ids),
+      this.inputs.forCreatorsByIds(creatorType, ids),
+    ]);
 
     const outcome: EligibilityInviteOutcome = {
       requested: ids.length,
@@ -74,24 +80,39 @@ export class EligibilityInvitesService {
     // Sequential on purpose: each create() counts existing invites for the
     // owner's plan limits, so parallel calls could overshoot them.
     for (const creatorId of ids) {
-      const skip = (reason: string) =>
-        outcome.skipped.push({ creatorId, reason });
+      const skip = (code: EligibilityInviteSkipCode, reason: string) =>
+        outcome.skipped.push({ creatorId, code, reason });
       if (!Types.ObjectId.isValid(creatorId)) {
-        skip("Invalid creator id.");
+        skip("invalid_id", "Invalid creator id.");
         continue;
       }
       if (alreadyInvited.has(creatorId)) {
-        skip("Already invited to this campaign.");
+        skip("already_invited", "Already invited to this campaign.");
+        continue;
+      }
+      const creator = creators.get(creatorId);
+      if (!creator || creator.eligibility.isDeleted) {
+        skip("unavailable", "Creator unavailable (not found or deleted).");
+        continue;
+      }
+      const result = evaluateEligibility(campaign, creator);
+      if (result.overall !== "PASS") {
+        const blocking = REQUIREMENT_KEYS.map(
+          (k) => result.requirements[k],
+        ).find((r) => r.status === result.overall);
+        skip(
+          result.overall === "FAIL" ? "not_eligible" : "eligibility_unknown",
+          `${result.overall === "FAIL" ? "No longer eligible" : "Eligibility unknown"}: ${blocking?.reason ?? result.overall}`,
+        );
         continue;
       }
       try {
-        const creator = await this.inputs.forCreator(creatorType, creatorId);
-        const result = evaluateEligibility(campaign, creator);
-        if (result.overall !== "PASS") {
-          const blocking = REQUIREMENT_KEYS.map(
-            (k) => result.requirements[k],
-          ).find((r) => r.status !== "PASS");
-          skip(`Not eligible: ${blocking?.reason ?? result.overall}`);
+        // Last-moment duplicate check: the host (or another admin) may have
+        // invited this creator since the batch check above.
+        if (
+          (await this.invites.invitedRecipientIds(campaignId, [creatorId])).size
+        ) {
+          skip("already_invited", "Already invited to this campaign.");
           continue;
         }
         const invite: any = await this.invites.create(
@@ -111,6 +132,7 @@ export class EligibilityInvitesService {
       } catch (err: any) {
         const message = err?.response?.message ?? err?.message;
         skip(
+          "invite_rejected",
           Array.isArray(message)
             ? message.join(", ")
             : String(message || "Failed to send invite."),

@@ -1,4 +1,4 @@
-import { Injectable } from "@nestjs/common";
+import { ForbiddenException, Injectable } from "@nestjs/common";
 import { CampaignInvitesService } from "../campaigns/campaign-invites.service";
 import { MatchingInputsService } from "../matching-inputs/matching-inputs.service";
 import {
@@ -7,6 +7,10 @@ import {
   parseCampaignEligibilityQuery,
   toEligibilityRow,
 } from "./campaign-eligibility";
+import {
+  HostEligibilityView,
+  buildHostEligibilityView,
+} from "./host-eligibility";
 import {
   EligibilityResult,
   NOT_EVALUATED,
@@ -69,6 +73,35 @@ export class MatchingEligibilityService {
       rows,
       query,
       NOT_EVALUATED.map((n) => ({ ...n })),
+    );
+  }
+
+  /**
+   * Stage 3B-4 — host view for the campaign owner (or an admin): which
+   * approved creators meet the campaign's requirements, as labels only.
+   */
+  async forHost(
+    campaignId: string,
+    requester: { userId?: string; role?: string },
+  ): Promise<HostEligibilityView> {
+    const { input: campaign, ownerId } =
+      await this.inputs.forCampaignWithTitle(campaignId);
+    const role = String(requester?.role || "").toLowerCase();
+    const isAdmin = role === "admin" || role === "subadmin";
+    if (
+      !isAdmin &&
+      !(await this.invites.isCampaignOwner(
+        ownerId,
+        String(requester?.userId || ""),
+      ))
+    )
+      throw new ForbiddenException("Not your campaign");
+    if (campaign.recipientRole === "photographer")
+      return buildHostEligibilityView(campaign, []);
+    const creators = await this.inputs.forAllCreators("Influencer");
+    return buildHostEligibilityView(
+      campaign,
+      creators.map(({ input }) => evaluateEligibility(campaign, input)),
     );
   }
 }
