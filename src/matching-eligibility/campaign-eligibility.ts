@@ -4,6 +4,7 @@ import {
   RequirementStatus,
   aggregateOverall,
 } from "./eligibility";
+import { RankedCreator } from "./match-ranking";
 
 /**
  * Stage 3B-3 — campaign → creator eligibility list (pure).
@@ -11,8 +12,11 @@ import {
  * Takes per-creator Stage 3B-2 results for one campaign and groups them by
  * overall status with per-requirement counts, filters and pagination.
  *
- * Grouping, not ranking: rows are ordered PASS → UNKNOWN → FAIL, then by name
- * and id. No scores, no weights, no TrendScore, no AI, nothing written.
+ * Grouping: rows are ordered PASS → UNKNOWN → FAIL, then by name and id.
+ * Stage 3C-1 adds an informational rank to PASS rows only (see
+ * match-ranking.ts) without changing that row order, so paging and
+ * "select all on page" behave exactly as before. No scores, no weights, no
+ * TrendScore, no AI, nothing written.
  */
 
 export const REQUIREMENT_KEYS = [
@@ -57,6 +61,15 @@ export interface CampaignEligibilityRow extends CreatorDisplay {
    */
   invitable: boolean;
   inviteBlockedReason: string | null;
+  /** Stage 3C-1 — position among PASS creators (1 = strongest); null unless PASS. Informational only. */
+  rank: number | null;
+  /** Plain-language reasons for the rank; empty unless PASS. */
+  rankingReasons: string[];
+  /** The ranking keys behind `rank` (coverage + activity); null unless PASS. */
+  rankingEvidence: Pick<
+    RankedCreator,
+    "platformContent" | "category" | "activity"
+  > | null;
 }
 
 export interface CampaignInviteWindow {
@@ -139,6 +152,12 @@ export interface CampaignEligibilityList {
   counts: Counts;
   /** Per-requirement counts across every evaluated creator (unfiltered). */
   requirementCounts: Record<RequirementKey, Counts & { configured: boolean }>;
+  /** Stage 3C-1 — how PASS rows were ranked, and the single clock used for this request. */
+  ranking: {
+    asOf: string;
+    rankedCount: number;
+    order: string[];
+  };
   query: CampaignEligibilityQuery;
   total: number;
   rows: CampaignEligibilityRow[];
@@ -187,6 +206,7 @@ export function toEligibilityRow(
   result: EligibilityResult,
   display: CreatorDisplay,
   invited = false,
+  ranked: RankedCreator | null = null,
 ): CampaignEligibilityRow {
   const requirements = {} as CampaignEligibilityRow["requirements"];
   for (const key of REQUIREMENT_KEYS) {
@@ -197,19 +217,42 @@ export function toEligibilityRow(
       configured: r.configured,
     };
   }
+  // Re-derived so the row can never disagree with its own requirements.
+  const overall = aggregateOverall(Object.values(requirements));
+  // A rank only ever attaches to a PASS row for the same creator.
+  const rank =
+    overall === "PASS" && ranked?.creatorId === result.creatorId
+      ? ranked
+      : null;
   return {
     creatorId: result.creatorId,
     creatorType: result.creatorType,
     ...display,
-    // Re-derived so the row can never disagree with its own requirements.
-    overall: aggregateOverall(Object.values(requirements)),
+    overall,
     requirements,
     invited,
     // Filled in by buildCampaignEligibilityList, which knows the campaign window.
     invitable: false,
     inviteBlockedReason: null,
+    rank: rank?.rank ?? null,
+    rankingReasons: rank ? [...rank.rankingReasons] : [],
+    rankingEvidence: rank
+      ? {
+          platformContent: rank.platformContent,
+          category: rank.category,
+          activity: rank.activity,
+        }
+      : null,
   };
 }
+
+/** Stage 3C-1 lexicographic rules, in order (documentation returned with the list). */
+export const RANKING_ORDER = [
+  "platform/content coverage (matched campaign pairs / campaign pairs)",
+  "category coverage (matched campaign categories / campaign categories)",
+  "recent activity bucket (unknown is neutral)",
+  "creator id",
+] as const;
 
 const statusOrder = (s: RequirementStatus) => OVERALL_STATUSES.indexOf(s);
 
@@ -302,6 +345,11 @@ export function buildCampaignEligibilityList(
     },
     counts,
     requirementCounts,
+    ranking: {
+      asOf: now.toISOString(),
+      rankedCount: rows.filter((r) => r.rank !== null).length,
+      order: [...RANKING_ORDER],
+    },
     query,
     total: filtered.length,
     rows: filtered.slice(start, start + query.pageSize),

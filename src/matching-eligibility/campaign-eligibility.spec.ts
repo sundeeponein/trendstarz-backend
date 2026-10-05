@@ -162,7 +162,12 @@ describe("Stage 3B-3 campaign eligibility list", () => {
       status: "PASS",
       configured: true,
     });
-    expect(JSON.stringify(r)).not.toMatch(/score|rank|weight/i);
+    // Stage 3C-1 adds an informational rank (only when the service ranks);
+    // there is still no score and no weight anywhere on a row.
+    expect(JSON.stringify(r)).not.toMatch(/score|weight/i);
+    expect(r.rank).toBeNull();
+    expect(r.rankingReasons).toEqual([]);
+    expect(r.rankingEvidence).toBeNull();
   });
 
   it("counts every evaluated creator, unaffected by filters", () => {

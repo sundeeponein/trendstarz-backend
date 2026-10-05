@@ -16,11 +16,12 @@ import {
   NOT_EVALUATED,
   evaluateEligibility,
 } from "./eligibility";
+import { rankEligibleCreators } from "./match-ranking";
 
 /**
  * Stage 3B-2 — loads the Stage 3B-1 normalized inputs (read-only) and runs
  * the pure deterministic evaluator. Informational only: it never invites,
- * notifies, writes, ranks or changes any existing campaign behaviour.
+ * notifies, writes or changes any existing campaign behaviour.
  */
 @Injectable()
 export class MatchingEligibilityService {
@@ -43,8 +44,9 @@ export class MatchingEligibilityService {
 
   /**
    * Stage 3B-3 — the same evaluation for every non-deleted creator of the
-   * campaign's recipient type, grouped PASS / UNKNOWN / FAIL. Read-only; no
-   * scores or ranking.
+   * campaign's recipient type, grouped PASS / UNKNOWN / FAIL. Read-only.
+   * Stage 3C-1: PASS rows also carry an informational deterministic rank
+   * (no score, no weights) — invited/invitable and row order are unchanged.
    */
   async evaluateCampaign(
     campaignId: string,
@@ -59,11 +61,26 @@ export class MatchingEligibilityService {
       this.inputs.forAllCreators(creatorType),
       this.invites.invitedRecipientIds(campaignId),
     ]);
-    const rows = creators.map(({ input, display }) =>
+    // Stage 3C-1: one clock per request — the invite window and every
+    // creator's activity bucket are judged against the same instant.
+    const asOf = new Date();
+    const evaluated = creators.map(({ input, display }) => ({
+      creator: input,
+      display,
+      result: evaluateEligibility(campaign, input),
+    }));
+    const ranked = new Map(
+      rankEligibleCreators(campaign, evaluated, asOf).map((r) => [
+        r.creatorId,
+        r,
+      ]),
+    );
+    const rows = evaluated.map(({ creator, display, result }) =>
       toEligibilityRow(
-        evaluateEligibility(campaign, input),
+        result,
         display,
-        invited.has(input.creatorId),
+        invited.has(creator.creatorId),
+        ranked.get(creator.creatorId) ?? null,
       ),
     );
     return buildCampaignEligibilityList(
@@ -73,6 +90,7 @@ export class MatchingEligibilityService {
       rows,
       query,
       NOT_EVALUATED.map((n) => ({ ...n })),
+      asOf,
     );
   }
 

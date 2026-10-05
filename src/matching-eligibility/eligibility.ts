@@ -96,7 +96,8 @@ const notConfigured = (reason: string): RequirementResult => ({
 });
 
 const lower = (v: string | null | undefined) => (v ?? "").trim().toLowerCase();
-const intersect = (a: string[], b: string[]) => {
+/** Items of `a` also in `b` (trimmed, case-insensitive). Shared with Stage 3C-1 ranking. */
+export const intersect = (a: string[], b: string[]) => {
   const set = new Set(b.map(lower));
   return a.filter((x) => set.has(lower(x)));
 };
@@ -256,16 +257,21 @@ export function evaluatePlatformContent(
  * Photographer-owned campaigns: `categories` are the OWNER's services; the
  * target influencer categories are the normalized targetCreatorCategories.
  */
+export function requiredCreatorCategories(
+  campaign: NormalizedCampaignMatchInput,
+): string[] {
+  return campaign.ownerType === "photographer"
+    ? campaign.targetCreatorCategories
+    : campaign.categories;
+}
+
 export function evaluateCategory(
   creator: NormalizedCreatorMatchInput,
   campaign: NormalizedCampaignMatchInput,
 ): RequirementResult {
   if (isPhotographerRecipient(campaign))
     return unknown(PHOTOGRAPHER_UNSUPPORTED);
-  const required =
-    campaign.ownerType === "photographer"
-      ? campaign.targetCreatorCategories
-      : campaign.categories;
+  const required = requiredCreatorCategories(campaign);
   if (!required.length)
     return notConfigured("No category requirement is configured.");
   if (!creator.categories.length) {
