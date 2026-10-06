@@ -4741,42 +4741,75 @@ export class CampaignInvitesService {
    * Brand: counts of invites that need brand attention.
    *  - disputed: status='disputed' (and unresolved)
    *  - overdue: dueDate < now, status not terminal/disputed
-   *  - awaitingFulfillment: product invite, productFulfillment.status='pending' and status='accepted'
+   *  - awaitingReview: status='submitted' — creator content waiting for the
+   *    brand's approval
+   *  - awaitingFulfillment: accepted invites on PRODUCT campaigns whose product
+   *    is not shipped yet. (productFulfillment.status defaults to 'pending' on
+   *    every invite, so it is only meaningful for product campaigns.)
+   * The last two only count invites of campaigns that still exist and belong
+   * to this brand — an invite left behind by a deleted campaign can never be
+   * acted on, so it must not show up as something to do.
    */
   async getBrandAttentionCounts(brandId: string): Promise<{
     disputed: number;
     overdue: number;
+    awaitingReview: number;
     awaitingFulfillment: number;
   }> {
     const cacheKey = `brand:attention:${brandId}`;
     const cached = this.getCachedAttention<{
       disputed: number;
       overdue: number;
+      awaitingReview: number;
       awaitingFulfillment: number;
     }>(cacheKey);
     if (cached) return cached;
     const now = new Date();
     const brandFilter = { brandId: String(brandId) };
-    const [disputed, overdue, awaitingFulfillment] = await Promise.all([
-      this.inviteModel.countDocuments({
-        ...brandFilter,
-        ...this.openReportFilter(),
-      }),
-      this.inviteModel.countDocuments({
-        ...brandFilter,
-        dueDate: { $lt: now, $ne: null },
-        status: { $nin: ["completed", "withdrawn", "disputed", "rejected"] },
-        // Keep mutually exclusive with the "disputed" count above — a reported invite
-        // no longer necessarily has status:'disputed', so exclude it explicitly.
-        $nor: [this.openReportFilter()],
-      }),
-      this.inviteModel.countDocuments({
-        ...brandFilter,
-        status: "accepted",
-        "productFulfillment.status": "pending",
-      }),
-    ]);
-    const result = { disputed, overdue, awaitingFulfillment };
+    const ownerForms: unknown[] = [String(brandId)];
+    if (Types.ObjectId.isValid(String(brandId)))
+      ownerForms.push(new Types.ObjectId(String(brandId)));
+    const campaigns: any[] = await this.campaignModel
+      .find({ brandId: { $in: ownerForms } })
+      .select("_id campaignType")
+      .lean();
+    const idForms = (list: any[]) =>
+      list.flatMap((c) => [c._id, String(c._id)]);
+    const existing = idForms(campaigns);
+    const productCampaigns = idForms(
+      campaigns.filter((c) => c.campaignType === "product"),
+    );
+    const [disputed, overdue, awaitingReview, awaitingFulfillment] =
+      await Promise.all([
+        this.inviteModel.countDocuments({
+          ...brandFilter,
+          ...this.openReportFilter(),
+        }),
+        this.inviteModel.countDocuments({
+          ...brandFilter,
+          dueDate: { $lt: now, $ne: null },
+          status: { $nin: ["completed", "withdrawn", "disputed", "rejected"] },
+          // Keep mutually exclusive with the "disputed" count above — a reported invite
+          // no longer necessarily has status:'disputed', so exclude it explicitly.
+          $nor: [this.openReportFilter()],
+        }),
+        existing.length
+          ? this.inviteModel.countDocuments({
+              ...brandFilter,
+              campaignId: { $in: existing },
+              status: "submitted",
+            })
+          : Promise.resolve(0),
+        productCampaigns.length
+          ? this.inviteModel.countDocuments({
+              ...brandFilter,
+              campaignId: { $in: productCampaigns },
+              status: "accepted",
+              "productFulfillment.status": "pending",
+            })
+          : Promise.resolve(0),
+      ]);
+    const result = { disputed, overdue, awaitingReview, awaitingFulfillment };
     this.setCachedAttention(cacheKey, result);
     return result;
   }

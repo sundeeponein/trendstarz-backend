@@ -2870,3 +2870,68 @@ describe("latestOpenPostingDeadline (auto-close guard)", () => {
     });
   });
 });
+
+describe("getBrandAttentionCounts (brand dashboard banner)", () => {
+  const BRAND = "6a1ad8999dadc0c4f6ccbbca";
+  const make = (campaigns: any[]) => {
+    const service: any = Object.create(CampaignInvitesService.prototype);
+    service.attentionCache = new Map();
+    service.ATTENTION_CACHE_TTL_MS = 60000;
+    service.campaignModel = {
+      find: jest.fn().mockReturnValue({
+        select: jest
+          .fn()
+          .mockReturnValue({ lean: jest.fn().mockResolvedValue(campaigns) }),
+      }),
+    };
+    service.inviteModel = { countDocuments: jest.fn().mockResolvedValue(3) };
+    return service;
+  };
+  const queries = (service: any) =>
+    service.inviteModel.countDocuments.mock.calls.map((c: any[]) => c[0]);
+
+  it("awaitingReview counts submitted invites of this brand's existing campaigns only", async () => {
+    const service = make([
+      { _id: "camp-paid", campaignType: "paid_collab" },
+      { _id: "camp-prod", campaignType: "product" },
+    ]);
+    const r = await service.getBrandAttentionCounts(BRAND);
+    expect(r).toEqual({
+      disputed: 3,
+      overdue: 3,
+      awaitingReview: 3,
+      awaitingFulfillment: 3,
+    });
+    // Campaigns looked up by both id forms of the owner (brandId is Mixed).
+    const owner = service.campaignModel.find.mock.calls[0][0].brandId.$in;
+    expect(owner.map(String)).toEqual([BRAND, BRAND]);
+    const [, , review, fulfil] = queries(service);
+    expect(review).toEqual({
+      brandId: BRAND,
+      campaignId: { $in: ["camp-paid", "camp-paid", "camp-prod", "camp-prod"] },
+      status: "submitted",
+    });
+    // Product shipping: product campaigns only (the 'pending' default is on every invite).
+    expect(fulfil).toEqual({
+      brandId: BRAND,
+      campaignId: { $in: ["camp-prod", "camp-prod"] },
+      status: "accepted",
+      "productFulfillment.status": "pending",
+    });
+  });
+
+  it("an invite whose campaign no longer exists is never counted (no campaigns → 0, no query)", async () => {
+    const service = make([]);
+    const r = await service.getBrandAttentionCounts(BRAND);
+    expect(r.awaitingReview).toBe(0);
+    expect(r.awaitingFulfillment).toBe(0);
+    expect(queries(service)).toHaveLength(2); // only disputed + overdue
+  });
+
+  it("no product campaigns → awaitingFulfillment is 0 even with accepted invites", async () => {
+    const service = make([{ _id: "camp-paid", campaignType: "paid_collab" }]);
+    const r = await service.getBrandAttentionCounts(BRAND);
+    expect(r.awaitingFulfillment).toBe(0);
+    expect(queries(service)).toHaveLength(3);
+  });
+});
