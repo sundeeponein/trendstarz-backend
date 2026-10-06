@@ -204,12 +204,29 @@ export class PlansService {
       }),
     );
 
-    await this.planModel.deleteMany({});
-    const insertedPlans = await this.planModel.insertMany(normalizedPlans);
-
-    return insertedPlans.map((plan: any) =>
-      this.normalizePlanDocument(plan.toObject()),
+    // Update each plan in place by its code (insert only if new). Plans are
+    // never deleted and re-created: subscriptions reference them by _id, and a
+    // delete-and-recreate (as this did until 2026-10-06) orphaned every
+    // subscription — admin-granted Premium then stopped following plan edits.
+    const codes: string[] = [];
+    for (const plan of normalizedPlans) {
+      codes.push(plan.code);
+      await this.planModel.findOneAndUpdate(
+        { code: plan.code },
+        { $set: plan },
+        { upsert: true, new: true, setDefaultsOnInsert: true },
+      );
+    }
+    // Plans no longer in the config are hidden, not deleted (same reason).
+    await this.planModel.updateMany(
+      { code: { $nin: codes } },
+      { $set: { isActive: false } },
     );
+    const plans = await this.planModel
+      .find({ code: { $in: codes } })
+      .sort({ sortOrder: 1 })
+      .lean();
+    return plans.map((plan: any) => this.normalizePlanDocument(plan));
   }
 
   async update(id: string, dto: any) {

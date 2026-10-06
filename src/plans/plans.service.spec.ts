@@ -368,4 +368,63 @@ describe("PlansService", () => {
       });
     });
   });
+
+  describe("replaceAllFromConfig (seeder / admin Load from config)", () => {
+    it("updates each plan in place by code, never deletes, and hides plans dropped from the config", async () => {
+      planModel.deleteMany = jest.fn();
+      planModel.insertMany = jest.fn();
+      planModel.findOneAndUpdate = jest.fn().mockResolvedValue({});
+      planModel.updateMany = jest.fn().mockResolvedValue({});
+      planModel.find = jest.fn().mockReturnValue({
+        sort: jest.fn().mockReturnValue({
+          lean: jest
+            .fn()
+            .mockResolvedValue([
+              {
+                _id: "p1",
+                code: "photographer-starter",
+                userType: "PHOTOGRAPHER",
+                limits: [],
+              },
+            ]),
+        }),
+      });
+
+      const out = await service.replaceAllFromConfig([
+        {
+          name: "Photographer Starter",
+          code: "photographer-starter",
+          userType: "PHOTOGRAPHER",
+          price: { monthly: 0, quarterly: 0, yearly: 0 },
+          limits: [
+            {
+              key: "maxInvitesReceivedPerMonth",
+              label: "Invites received / month",
+              value: 2,
+            },
+          ],
+        },
+      ]);
+
+      expect(planModel.deleteMany).not.toHaveBeenCalled();
+      expect(planModel.insertMany).not.toHaveBeenCalled();
+      const [filter, update, options] =
+        planModel.findOneAndUpdate.mock.calls[0];
+      expect(filter).toEqual({ code: "photographer-starter" });
+      expect(update.$set.limits).toEqual([
+        {
+          key: "maxInvitesReceivedPerMonth",
+          label: "Invites received / month",
+          value: 2,
+        },
+      ]);
+      expect(update.$set._id).toBeUndefined();
+      expect(options).toEqual(expect.objectContaining({ upsert: true }));
+      expect(planModel.updateMany).toHaveBeenCalledWith(
+        { code: { $nin: ["photographer-starter"] } },
+        { $set: { isActive: false } },
+      );
+      expect(out).toHaveLength(1);
+    });
+  });
 });

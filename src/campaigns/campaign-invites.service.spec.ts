@@ -549,6 +549,37 @@ describe("CampaignInvitesService – create() gating", () => {
     );
   });
 
+  it("recipient cap uses the creator plan's receive limit, not its per-campaign value", async () => {
+    mockCampaignLean({});
+    plansService.getUserPlanCapabilities.mockImplementation((userId: string) =>
+      Promise.resolve(
+        userId === "inf1"
+          ? {
+              limits: [
+                { key: "maxInvitesPerCampaign", value: 1 },
+                { key: "maxInvitesReceivedPerMonth", value: 2 },
+              ],
+            }
+          : {
+              features: [{ key: "canInviteUsers", value: true }],
+              limits: [{ key: "maxInvitesPerCampaign", value: -1 }],
+            },
+      ),
+    );
+    // Already holds 1 invite this month: allowed (limit 2); at 2 it is refused.
+    let held = 1;
+    inviteModel.countDocuments.mockImplementation((query: any) =>
+      Promise.resolve(query?.influencerId === "inf1" ? held : 0),
+    );
+    await expect(
+      service.create("brand1", { campaignId: "camp1", influencerId: "inf1" }),
+    ).resolves.toBeDefined();
+    held = 2;
+    await expect(
+      service.create("brand1", { campaignId: "camp1", influencerId: "inf1" }),
+    ).rejects.toThrow("has reached their monthly invite limit (2)");
+  });
+
   it("enforces recipient cap based on accepted + active pending only", async () => {
     mockCampaignLean({ acceptanceDeadline: new Date(Date.now() + 60 * 60 * 1000) });
     plansService.getUserPlanCapabilities.mockImplementation(async (userId: string) => {

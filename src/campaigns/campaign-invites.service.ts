@@ -8,6 +8,7 @@ import { meetsMinimumTier, resolveTier } from "../utils/tier-ranges.util";
 import { Cron, CronExpression } from "@nestjs/schedule";
 import { InjectModel } from "@nestjs/mongoose";
 import { Model, Types } from "mongoose";
+import { receivedInvitesPerMonthFrom } from "../plans/invite-limits.util";
 import { sendAppEmail } from "../utils/app-email.service";
 import { inviteReminderTemplate } from "../email/templates/campaign.templates";
 import { PlansService } from "../plans/plans.service";
@@ -1099,9 +1100,9 @@ export class CampaignInvitesService {
       ? recipientCaps.limits
       : [];
     if (recipientDoc) {
+      // Own key when the plan sets it; else the shared per-campaign value (old behaviour).
       const recipientMonthlyCap =
-        recipientLimits.find((l: any) => l.key === "maxInvitesPerCampaign")
-          ?.value ?? -1;
+        receivedInvitesPerMonthFrom(recipientLimits) ?? -1;
       if (recipientMonthlyCap !== -1) {
         const recipientCycleStart = this.computePlanCycleStart(recipientDoc);
         const now = new Date();

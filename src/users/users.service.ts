@@ -18,6 +18,7 @@ import {
   normalizeSelectionList,
 } from "../utils/profile-selection-limits.util";
 import { normalizeSocialMediaList } from "../utils/social-handle.util";
+import { receivedInvitesPerMonthFrom } from "../plans/invite-limits.util";
 import {
   mergeSocialMediaEntries,
   restrictedSocialSummary,
@@ -2086,23 +2087,22 @@ export class UsersService implements OnModuleInit {
       return { data, total, page, limit, ...smartLocationMeta };
     }
 
-    // Plan caps for monthly invite reception (key reused: maxInvitesPerCampaign)
-    const capByCode: Record<string, number> = {
-      "influencer-free": 1,
-      "influencer-pro": 10,
-    };
+    // Monthly invite reception caps for free/pro influencers — plans looked up by
+    // type (the free plan's code changed from influencer-free to
+    // influencer-starter), own key first, else the shared per-campaign value.
+    let freeReceiveCap = 1;
+    let proReceiveCap = 10;
     try {
-      const { plans } = await this.plansService.listActive("INFLUENCER");
-      for (const p of plans || []) {
-        const lim = p?.limits?.find(
-          (l: any) => l.key === "maxInvitesPerCampaign",
-        )?.value;
-        if (typeof lim === "number" && p?.code) {
-          capByCode[p.code] = lim;
-        }
-      }
+      const [freePlan, proPlan] = await Promise.all([
+        this.plansService.findFreePlanForUserType("Influencer"),
+        this.plansService.findProPlanForUserType("Influencer"),
+      ]);
+      freeReceiveCap =
+        receivedInvitesPerMonthFrom(freePlan?.limits) ?? freeReceiveCap;
+      proReceiveCap =
+        receivedInvitesPerMonthFrom(proPlan?.limits) ?? proReceiveCap;
     } catch {
-      // fall back to defaults above
+      // fall back to the defaults above
     }
 
     const all = await this.influencerModel.find(baseFilter).lean();
@@ -2129,9 +2129,7 @@ export class UsersService implements OnModuleInit {
 
     const eligible = all.filter((inf: any, idx: number) => {
       const isPremium = this.isCurrentlyPremium(inf);
-      const cap = isPremium
-        ? capByCode["influencer-pro"]
-        : capByCode["influencer-free"];
+      const cap = isPremium ? proReceiveCap : freeReceiveCap;
       if (cap === -1) return true;
       return inviteCounts[idx] < cap;
     });
