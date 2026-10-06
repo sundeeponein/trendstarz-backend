@@ -9,6 +9,8 @@ import {
   ObservationFailureReason,
   ObservationSource,
   ObservationStatus,
+  YOUTUBE_STATISTICS_PURGE_OPTION,
+  YOUTUBE_STATISTICS_RETENTION_DAYS,
 } from "../database/schemas/social-account-observation.schema";
 import { SocialProfileType } from "../database/schemas/social-account-verification.schema";
 import {
@@ -124,6 +126,75 @@ export class SocialAccountObservationService {
     if (!ADMIN_ROLES.includes(role)) {
       throw new ForbiddenException("Admin access only");
     }
+    return this.record(params, {
+      id: scalarText(a.userId) || scalarText(a.id),
+      role,
+    });
+  }
+
+  /**
+   * Stage 3D-1a — the same observation, requested by the YouTube schedule.
+   * Recorded in history as requestedByRole "system" (no admin user involved).
+   * Identical rules otherwise: exact identifier only, observed fields only.
+   */
+  async observeScheduled(params: {
+    profileType: SocialProfileType;
+    profileId: string;
+    entry: unknown;
+  }): Promise<SocialAccountObservationView> {
+    return this.record(params, { id: "", role: "system" });
+  }
+
+  /**
+   * Stage 3D-1a — YouTube statistics retention (Developer Policies III.E.4).
+   * Clears follower counts captured more than 30 days before `now` from the
+   * current records and from history (the one permitted history update).
+   * Identity, status and timestamps are kept; nothing is deleted.
+   */
+  async purgeExpiredYoutubeStatistics(
+    now: Date,
+  ): Promise<{ current: number; history: number; cutoff: Date }> {
+    const cutoff = new Date(
+      now.getTime() - YOUTUBE_STATISTICS_RETENTION_DAYS * 24 * 60 * 60 * 1000,
+    );
+    const filter = {
+      source: "youtube",
+      capturedAt: { $lt: cutoff },
+      observedFollowersCount: { $ne: null },
+    };
+    const update = {
+      $set: { observedFollowersCount: null, statisticsPurgedAt: now },
+    };
+    const current = await this.currentModel.updateMany(filter, update);
+    // Custom query option read by the history append-only hook (mongoose
+    // passes unknown options through to getOptions()).
+    // timestamps:false — the purge must not add timestamp fields (and the
+    // append-only hook accepts exactly the two $set fields, nothing else).
+    const purgeOption = {
+      retentionPurge: YOUTUBE_STATISTICS_PURGE_OPTION,
+      timestamps: false,
+    } as Record<string, unknown>;
+    const history = await this.historyModel.updateMany(
+      filter,
+      update,
+      purgeOption,
+    );
+    return {
+      current: Number(current?.modifiedCount ?? 0),
+      history: Number(history?.modifiedCount ?? 0),
+      cutoff,
+    };
+  }
+
+  private async record(
+    params: {
+      profileType: SocialProfileType;
+      profileId: string;
+      entry: unknown;
+    },
+    requester: { id: string; role: string },
+  ): Promise<SocialAccountObservationView> {
+    const role = requester.role;
     const { profileType, profileId } = params;
     const entry = plain(params.entry);
     const socialAccountId: unknown = entry.socialAccountId;
@@ -142,7 +213,7 @@ export class SocialAccountObservationService {
     // Server time only — never a browser or platform timestamp.
     const now = new Date();
     const filter = { profileType, profileId, socialAccountId };
-    const requestedById = scalarText(a.userId) || scalarText(a.id);
+    const requestedById = requester.id;
 
     if (outcome.ok) {
       await this.currentModel.findOneAndUpdate(

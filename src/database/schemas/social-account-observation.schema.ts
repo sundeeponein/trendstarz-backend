@@ -32,6 +32,16 @@ export const OBSERVATION_FAILURE_REASONS = [
 export type ObservationFailureReason =
   (typeof OBSERVATION_FAILURE_REASONS)[number];
 
+/**
+ * Stage 3D-1a — YouTube API Services Developer Policies (III.E.4): statistics
+ * retrieved as Non-Authorized Data (our API-key lookups) must not be stored for
+ * more than 30 days. Follower counts older than this are cleared (set to null,
+ * stamped with statisticsPurgedAt) in both the current record and history.
+ */
+export const YOUTUBE_STATISTICS_RETENTION_DAYS = 30;
+/** Query option that marks the ONE permitted history update (see the append-only hook). */
+export const YOUTUBE_STATISTICS_PURGE_OPTION = "youtubeStatisticsRetention";
+
 const observedFields = {
   source: { type: String, enum: OBSERVATION_SOURCES },
   externalAccountId: { type: String },
@@ -57,6 +67,8 @@ export const SocialAccountObservationSchema = new Schema(
     platformKey: { type: String, default: "" },
     ...observedFields,
     capturedAt: { type: Date, default: null },
+    // Stage 3D-1a: when an expired YouTube follower count was cleared (retention).
+    statisticsPurgedAt: { type: Date, default: null },
     status: { type: String, enum: OBSERVATION_STATUSES, required: true },
     lastError: {
       type: String,
@@ -90,7 +102,10 @@ export const SocialAccountObservationHistorySchema = new Schema(
     // Server time of the attempt (successful or not).
     capturedAt: { type: Date, required: true },
     requestedById: { type: String, default: "" },
+    // "admin"/"subadmin" for a manual Fetch, "system" for the Stage 3D-1a schedule.
     requestedByRole: { type: String, default: "" },
+    // Stage 3D-1a: when this row's YouTube follower count was cleared (retention).
+    statisticsPurgedAt: { type: Date, default: null },
   },
   {
     collection: "social_account_observation_history",
@@ -105,6 +120,33 @@ SocialAccountObservationHistorySchema.index({
   capturedAt: -1,
 });
 
+/**
+ * The single exception to append-only: the YouTube statistics retention purge.
+ * Allowed only as updateMany with the explicit purge option, on YouTube rows,
+ * setting exactly observedFollowersCount=null and statisticsPurgedAt (callers
+ * pass timestamps:false so mongoose adds no $setOnInsert). Identity, status and
+ * timing are never touched; nothing is ever deleted.
+ */
+export function isYoutubeStatisticsPurge(query: {
+  getOptions: () => Record<string, unknown>;
+  getFilter: () => Record<string, unknown>;
+  getUpdate: () => unknown;
+}): boolean {
+  if (query.getOptions()?.retentionPurge !== YOUTUBE_STATISTICS_PURGE_OPTION)
+    return false;
+  if (query.getFilter()?.source !== "youtube") return false;
+  const update = query.getUpdate() as Record<string, any> | null;
+  if (!update || Object.keys(update).join() !== "$set") return false;
+  const set = update.$set as Record<string, unknown>;
+  return (
+    !!set &&
+    Object.keys(set).sort().join() ===
+      "observedFollowersCount,statisticsPurgedAt" &&
+    set.observedFollowersCount === null &&
+    set.statisticsPurgedAt instanceof Date
+  );
+}
+
 // Append-only: refuse any update/replace/delete issued through the model.
 const HISTORY_MUTATIONS = [
   "updateOne",
@@ -118,6 +160,7 @@ const HISTORY_MUTATIONS = [
 ] as const;
 for (const op of HISTORY_MUTATIONS) {
   SocialAccountObservationHistorySchema.pre(op, function () {
+    if (op === "updateMany" && isYoutubeStatisticsPurge(this as any)) return;
     throw new Error("social_account_observation_history is append-only");
   });
 }

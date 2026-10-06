@@ -8,11 +8,15 @@ import { SocialOAuthConnectionSchema } from "../database/schemas/social-oauth-co
 import { MetaOAuthModule } from "../meta-oauth/meta-oauth.module";
 import { MetaObserver, YoutubeObserver } from "./platform-observers";
 import { SocialAccountObservationService } from "./social-account-observation.service";
+import { YoutubeObservationScheduleController } from "./youtube-observation-schedule.controller";
+import { YoutubeObservationSchedulerService } from "./youtube-observation-scheduler.service";
 
 /**
- * Stage 3A-2: platform data observation. Internal-only — the admin endpoints
- * live on AdminUserTableController. Reuses the existing Meta OAuth client and
- * token storage (social_oauth_connections); adds no OAuth flow of its own.
+ * Stage 3A-2: platform data observation. The per-account admin endpoints live
+ * on AdminUserTableController. Reuses the existing Meta OAuth client and token
+ * storage (social_oauth_connections); adds no OAuth flow of its own.
+ * Stage 3D-1a: scheduled YouTube observation + statistics retention, with a
+ * read-only admin status endpoint.
  */
 @Module({
   imports: [
@@ -35,7 +39,13 @@ import { SocialAccountObservationService } from "./social-account-observation.se
       },
     ]),
   ],
-  providers: [SocialAccountObservationService, YoutubeObserver, MetaObserver],
+  controllers: [YoutubeObservationScheduleController],
+  providers: [
+    SocialAccountObservationService,
+    YoutubeObserver,
+    MetaObserver,
+    YoutubeObservationSchedulerService,
+  ],
   exports: [SocialAccountObservationService],
 })
 export class SocialAccountObservationModule {}
