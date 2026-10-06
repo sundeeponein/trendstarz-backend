@@ -179,6 +179,19 @@ export class CampaignsService {
 
       if (hasActiveWork && !pastGrace) continue;
 
+      // The campaign-level grace can end before a creator's own posting window
+      // (post date + grace) — e.g. a post date on the campaign's last day. Never
+      // withdraw them early: keep the campaign open (submission stays possible)
+      // until the latest window has closed; the hourly per-invite expiry closes
+      // each invite at its own deadline.
+      if (hasActiveWork) {
+        const openUntil =
+          await this.campaignInvitesService.latestOpenPostingDeadline(
+            campaignId,
+          );
+        if (openUntil && openUntil.getTime() > now.getTime()) continue;
+      }
+
       // Always run the close-out sweep once we're past grace (or there's nothing blocking
       // to wait on) — it also closes out invites that were never accepted, which don't
       // count as "active work" but would otherwise sit as 'pending' forever once the

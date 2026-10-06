@@ -142,6 +142,7 @@ describe("CampaignsService", () => {
           provide: CampaignInvitesService,
           useValue: {
             expireUnsubmittedInvitesForCampaign: jest.fn().mockResolvedValue(undefined),
+            latestOpenPostingDeadline: jest.fn().mockResolvedValue(null),
           },
         },
       ],
@@ -519,6 +520,76 @@ describe("CampaignsService", () => {
 
       await service.autoCompleteExpiredCampaigns();
       expect(eventsOfType("campaign_completed")).toHaveLength(0);
+    });
+  });
+
+  describe("auto-close waits for creators' own posting windows (CMP-24)", () => {
+    let invites: any;
+    const pastCampaign = () =>
+      (campaignModel.find = jest.fn().mockReturnValue({
+        select: jest.fn().mockReturnValue({
+          lean: jest
+            .fn()
+            .mockResolvedValue([
+              { _id: "c24", endDate: new Date("2026-06-01T00:00:00Z") },
+            ]),
+        }),
+      }));
+    const findOneReturns = (...values: any[]) => {
+      const fn = jest.fn();
+      for (const v of values)
+        fn.mockReturnValueOnce({
+          select: jest
+            .fn()
+            .mockReturnValue({ lean: jest.fn().mockResolvedValue(v) }),
+        });
+      campaignInviteModel.findOne = fn;
+    };
+
+    beforeEach(() => {
+      invites = (service as any).campaignInvitesService;
+      invites.expireUnsubmittedInvitesForCampaign.mockClear();
+      campaignModel.updateOne = jest
+        .fn()
+        .mockResolvedValue({ modifiedCount: 0 });
+    });
+
+    it("past the campaign grace, but a creator's window is still open → no withdrawal, not completed", async () => {
+      pastCampaign();
+      findOneReturns({ _id: "inv-accepted" });
+      invites.latestOpenPostingDeadline.mockResolvedValueOnce(
+        new Date(Date.now() + 60 * 60 * 1000),
+      );
+      await service.autoCompleteExpiredCampaigns();
+      expect(invites.latestOpenPostingDeadline).toHaveBeenCalledWith("c24");
+      expect(
+        invites.expireUnsubmittedInvitesForCampaign,
+      ).not.toHaveBeenCalled();
+      expect(campaignModel.updateOne).not.toHaveBeenCalled();
+    });
+
+    it("once every window has closed → existing close-out runs and the campaign completes", async () => {
+      pastCampaign();
+      // 1st findOne: active work exists; 2nd (after close-out): nothing still blocking.
+      findOneReturns({ _id: "inv-accepted" }, null);
+      invites.latestOpenPostingDeadline.mockResolvedValueOnce(
+        new Date(Date.now() - 60 * 1000),
+      );
+      await service.autoCompleteExpiredCampaigns();
+      expect(invites.expireUnsubmittedInvitesForCampaign).toHaveBeenCalledWith(
+        "c24",
+        "Campaign's grace period ended with no submission.",
+      );
+      expect(campaignModel.updateOne).toHaveBeenCalled();
+    });
+
+    it("no active work → the window check is skipped (behaviour unchanged)", async () => {
+      pastCampaign();
+      findOneReturns(null);
+      invites.latestOpenPostingDeadline.mockClear();
+      await service.autoCompleteExpiredCampaigns();
+      expect(invites.latestOpenPostingDeadline).not.toHaveBeenCalled();
+      expect(invites.expireUnsubmittedInvitesForCampaign).toHaveBeenCalled();
     });
   });
 });

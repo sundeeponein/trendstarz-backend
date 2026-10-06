@@ -2803,3 +2803,70 @@ describe("CampaignInvitesService – invite_viewed with real PlatformEventsServi
     expect(rows).toHaveLength(0);
   });
 });
+
+describe("latestOpenPostingDeadline (auto-close guard)", () => {
+  const make = (mode: string | undefined, posts: Array<string | null>) => {
+    const service: any = Object.create(CampaignInvitesService.prototype);
+    const chain = (v: any) => ({
+      select: jest
+        .fn()
+        .mockReturnValue({ lean: jest.fn().mockResolvedValue(v) }),
+    });
+    service.campaignModel = {
+      findById: jest
+        .fn()
+        .mockReturnValue(
+          chain(mode === undefined ? null : { postingDeadlineMode: mode }),
+        ),
+    };
+    service.inviteModel = {
+      find: jest
+        .fn()
+        .mockReturnValue(
+          chain(
+            posts
+              .filter(Boolean)
+              .map((p) => ({ selectedPostDate: new Date(p as string) })),
+          ),
+        ),
+    };
+    return service as CampaignInvitesService;
+  };
+
+  it("grace_24h: CMP-24 post date 5 Oct → window closes 7 Oct 00:00 UTC (not 6 Oct)", async () => {
+    const s = make("grace_24h", ["2026-10-05T00:00:00.000Z"]);
+    expect((await s.latestOpenPostingDeadline("c24"))?.toISOString()).toBe(
+      "2026-10-07T00:00:00.000Z",
+    );
+  });
+
+  it("strict: no grace — closes at the end of the post date", async () => {
+    const s = make("strict", ["2026-10-05T00:00:00.000Z"]);
+    expect((await s.latestOpenPostingDeadline("c24"))?.toISOString()).toBe(
+      "2026-10-06T00:00:00.000Z",
+    );
+  });
+
+  it("takes the latest window across creators; null when nobody has a post date", async () => {
+    const s = make("grace_24h", [
+      "2026-10-03T00:00:00.000Z",
+      "2026-10-05T00:00:00.000Z",
+    ]);
+    expect((await s.latestOpenPostingDeadline("c24"))?.toISOString()).toBe(
+      "2026-10-07T00:00:00.000Z",
+    );
+    expect(
+      await make("grace_24h", []).latestOpenPostingDeadline("c24"),
+    ).toBeNull();
+  });
+
+  it("only looks at accepted-but-unsubmitted invites with a post date", async () => {
+    const s = make("grace_24h", []);
+    await s.latestOpenPostingDeadline("c24");
+    expect((s as any).inviteModel.find).toHaveBeenCalledWith({
+      campaignId: { $in: ["c24", "c24"] },
+      status: { $in: ["accepted", "payment_confirmed", "working"] },
+      selectedPostDate: { $ne: null },
+    });
+  });
+});

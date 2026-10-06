@@ -1355,6 +1355,36 @@ export class CampaignInvitesService {
     return { isLate, daysLate, closesAt };
   }
 
+  /**
+   * Latest posting-window close (selectedPostDate + grace, per the campaign's
+   * postingDeadlineMode — computeGraceDeadline) among the campaign's accepted
+   * but not-yet-submitted invites; null when none has a post date. The campaign
+   * auto-close waits for this, so a post date on (or near) the campaign's last
+   * day still gets its full window instead of being cut off by the campaign-level
+   * grace (CMP-24, 2026-10-06).
+   */
+  async latestOpenPostingDeadline(campaignId: unknown): Promise<Date | null> {
+    const id = String(campaignId);
+    const [campaign, invites] = await Promise.all([
+      this.campaignModel.findById(id).select("postingDeadlineMode").lean(),
+      this.inviteModel
+        .find({
+          campaignId: { $in: [campaignId, id] },
+          status: { $in: ["accepted", "payment_confirmed", "working"] },
+          selectedPostDate: { $ne: null },
+        })
+        .select("selectedPostDate")
+        .lean(),
+    ]);
+    let latest: number | null = null;
+    for (const invite of (invites as any[]) || []) {
+      const closesAt = this.computeGraceDeadline(invite, campaign).closesAt;
+      const t = closesAt.getTime();
+      if (Number.isFinite(t) && (latest === null || t > latest)) latest = t;
+    }
+    return latest === null ? null : new Date(latest);
+  }
+
   private toPaiseFromMaybeRupees(value: any): number {
     const n = Number(value || 0);
     if (!Number.isFinite(n) || n <= 0) return 0;
