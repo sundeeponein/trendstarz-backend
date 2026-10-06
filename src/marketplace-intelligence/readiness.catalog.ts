@@ -646,7 +646,7 @@ export const CAMPAIGN_REQUIREMENTS: CampaignRequirementDefinition[] = [
     usedInInvitations: false,
     usedInCampaignAlerts: false,
     notes:
-      "Nothing reads or enforces them (only an unused photographer collaboration form ever wrote minFollowerCount). Creator follower counts are also unreliable (all 0).",
+      "Nothing reads or enforces them (only a photographer collaboration form, since removed, ever wrote minFollowerCount). Creator follower counts are also unreliable (all 0).",
     coverageField: "followerRange",
     priority: "optional",
   },

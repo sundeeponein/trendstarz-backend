@@ -1,4 +1,5 @@
 import { ForbiddenException, Injectable } from "@nestjs/common";
+import { normalizeCampaignMatchInput } from "../matching-inputs/matching-inputs";
 import { CampaignInvitesService } from "../campaigns/campaign-invites.service";
 import { MatchingInputsService } from "../matching-inputs/matching-inputs.service";
 import {
@@ -17,6 +18,32 @@ import {
   evaluateEligibility,
 } from "./eligibility";
 import { rankEligibleCreators } from "./match-ranking";
+
+/** Who may preview requirements: anyone who can create a campaign/collaboration. */
+const PREVIEW_ROLES = new Set([
+  "brand",
+  "photographer",
+  "influencer",
+  "admin",
+  "subadmin",
+]);
+/** The campaign fields the matching inputs read — nothing else is taken from the body. */
+const PREVIEW_FIELDS = [
+  "inviteRecipientRole",
+  "campaignMode",
+  "campaignType",
+  "platforms",
+  "categories",
+  "targetTiers",
+  "socialMedia",
+  "minInfluencerTier",
+  "targetState",
+  "targetDistrict",
+  "targetCities",
+  "venueState",
+  "venueDistrict",
+  "languages",
+] as const;
 
 /**
  * Stage 3B-2 — loads the Stage 3B-1 normalized inputs (read-only) and runs
@@ -91,6 +118,37 @@ export class MatchingEligibilityService {
       query,
       NOT_EVALUATED.map((n) => ({ ...n })),
       asOf,
+    );
+  }
+
+  /**
+   * Requirements preview for a campaign that is still being written (the
+   * campaign form's invite step, before anything is saved): the same host
+   * labels as forHost, computed from the form's unsaved requirements. Only the
+   * fields that affect matching are read; the owner type comes from the
+   * requester's role, never the body. Nothing is stored.
+   */
+  async previewForHost(
+    draft: Record<string, unknown>,
+    requester: { role?: string },
+  ): Promise<HostEligibilityView> {
+    const role = String(requester?.role || "").toLowerCase();
+    if (!PREVIEW_ROLES.has(role))
+      throw new ForbiddenException(
+        "Not allowed to preview creator eligibility",
+      );
+    const body: Record<string, unknown> =
+      draft && typeof draft === "object" ? draft : {};
+    const picked: Record<string, unknown> = { _id: "", status: "draft" };
+    for (const key of PREVIEW_FIELDS) if (key in body) picked[key] = body[key];
+    picked.ownerType = role === "photographer" ? "photographer" : "brand";
+    const campaign = normalizeCampaignMatchInput(picked);
+    if (campaign.recipientRole === "photographer")
+      return buildHostEligibilityView(campaign, []);
+    const creators = await this.inputs.forAllCreators("Influencer");
+    return buildHostEligibilityView(
+      campaign,
+      creators.map(({ input }) => evaluateEligibility(campaign, input)),
     );
   }
 

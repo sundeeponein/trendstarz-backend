@@ -241,3 +241,121 @@ describe("Stage 3B-4 forHost access", () => {
     });
   });
 });
+
+describe("Campaign form preview (requirements not saved yet)", () => {
+  const setup = () => {
+    const inputs = {
+      forAllCreators: jest.fn().mockResolvedValue(
+        [
+          rawCreator("ok"),
+          rawCreator("far", {
+            location: { state: "Kerala", district: "Kochi" },
+          }),
+          rawCreator("nolang", { languages: [] }),
+          rawCreator("pending", { verificationStatus: "pending" }),
+        ].map((r) => ({
+          input: normalizeCreatorMatchInput(r, "Influencer"),
+        })),
+      ),
+    };
+    return {
+      inputs,
+      service: new MatchingEligibilityService(inputs as any, {} as any),
+    };
+  };
+  const draft = (over: Record<string, any> = {}) => {
+    const { _id, status, ownerType, ...rest } = rawCampaign(over);
+    void _id;
+    void status;
+    void ownerType;
+    return rest;
+  };
+
+  it("labels creators against the unsaved requirements, exactly like the saved-campaign view", async () => {
+    const { service } = setup();
+    const view = await service.previewForHost(draft(), { role: "brand" });
+    expect(view.supported).toBe(true);
+    expect(view.campaignId).toBe("");
+    expect(view.creators.ok.status).toBe("meets");
+    expect(view.creators.far).toEqual({
+      status: "not_met",
+      notMet: ["Location"],
+      needsInfo: [],
+    });
+    expect(view.creators.nolang.status).toBe("needs_info");
+    // Unapproved creators are never described to hosts.
+    expect(view.creators.pending).toBeUndefined();
+    expect(view.configured).toEqual(
+      expect.arrayContaining([
+        "Platform / content",
+        "Category",
+        "Tier",
+        "Location",
+        "Language",
+      ]),
+    );
+  });
+
+  it("only reads matching fields; the owner type comes from the requester's role", async () => {
+    const { service } = setup();
+    // A photographer's target categories live in targetTiers; a brand's in categories.
+    const body = {
+      ...draft({ categories: ["Wedding"], targetTiers: ["Fashion"] }),
+      ownerType: "brand",
+      brandId: "x",
+      status: "active",
+    };
+    const asPhotographer = await service.previewForHost(body, {
+      role: "photographer",
+    });
+    expect(asPhotographer.creators.ok.notMet).not.toContain("Category");
+    const asBrand = await service.previewForHost(body, { role: "brand" });
+    expect(asBrand.creators.ok.notMet).toContain("Category");
+  });
+
+  it("photographer recipients are not checkable yet (nothing shown, no creator read)", async () => {
+    const { service, inputs } = setup();
+    const view = await service.previewForHost(
+      draft({ inviteRecipientRole: "photographer" }),
+      { role: "brand" },
+    );
+    expect(view).toEqual({
+      campaignId: "",
+      supported: false,
+      configured: [],
+      creators: {},
+    });
+    expect(inputs.forAllCreators).not.toHaveBeenCalled();
+  });
+
+  it.each(["", "user", undefined])("refuses role %p", async (role) => {
+    const { service } = setup();
+    await expect(
+      service.previewForHost(draft(), { role: role as any }),
+    ).rejects.toThrow(ForbiddenException);
+  });
+
+  it("is routed as POST campaigns/creator-eligibility/preview behind the JWT guard", async () => {
+    const handler = Object.getOwnPropertyDescriptor(
+      HostCampaignEligibilityController.prototype,
+      "previewCreatorEligibility",
+    )?.value;
+    expect(Reflect.getMetadata("path", handler)).toBe(
+      "creator-eligibility/preview",
+    );
+    expect(
+      Reflect.getMetadata("__guards__", HostCampaignEligibilityController),
+    ).toContain(JwtAuthGuard);
+    const service = { previewForHost: jest.fn().mockResolvedValue("ok") };
+    await new HostCampaignEligibilityController(
+      service as any,
+    ).previewCreatorEligibility(
+      { targetState: "Telangana" },
+      { user: { userId: "b", role: "brand" } },
+    );
+    expect(service.previewForHost).toHaveBeenCalledWith(
+      { targetState: "Telangana" },
+      { role: "brand" },
+    );
+  });
+});

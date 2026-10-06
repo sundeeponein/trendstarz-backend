@@ -276,8 +276,8 @@ export interface NormalizedCampaignMatchInput {
     acceptanceDeadline: Date | null;
   };
   /**
-   * Schema fields that nothing reads or enforces (only an unused photographer
-   * collaboration form ever wrote minFollowerCount). Reported, never used.
+   * Schema fields that nothing reads or enforces (only a photographer collaboration
+   * form, since removed, ever wrote minFollowerCount). Reported, never used.
    */
   followerRange: { min: number | null; max: number | null; enforced: false };
 }

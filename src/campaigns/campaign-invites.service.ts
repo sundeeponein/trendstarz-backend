@@ -966,10 +966,12 @@ export class CampaignInvitesService {
     }
     const ownerProfile = await this.loadOwnerVerificationProfile(brandId);
     this.assertVerifiedForCampaignAccess(ownerProfile, "Campaign owner");
-    // Collaboration invites can be queued by the owner even while pending_review.
-    // Recipients will not be able to accept until the collaboration goes live.
-    // Block only truly terminal/unknown states (rejected, completed, draft).
-    if (this.isCollaborationCampaign(campaign)) {
+    // Invites can be queued by the owner while the campaign is pending review;
+    // recipients cannot accept until it goes live. Draft, rejected, completed
+    // and cancelled campaigns take no invites — for collaborations AND brand
+    // campaigns (brand campaigns used to skip this check, so an API call could
+    // invite into a finished campaign and use up plan/creator invite limits).
+    {
       const campStatus = String(campaign?.status || "")
         .trim()
         .toLowerCase();
@@ -981,7 +983,9 @@ export class CampaignInvitesService {
       ]);
       if (!allowedForOwner.has(campStatus)) {
         throw new BadRequestException(
-          "Invites can only be sent for active or pending-review collaborations.",
+          this.isCollaborationCampaign(campaign)
+            ? "Invites can only be sent for active or pending-review collaborations."
+            : "Invites can only be sent for active or pending-review campaigns.",
         );
       }
     }
@@ -1082,7 +1086,8 @@ export class CampaignInvitesService {
       });
       if (monthInviteCount >= maxInvitesPerMonthEntry.value) {
         throw new BadRequestException(
-          `Plan limit: Only ${maxInvitesPerMonthEntry.value} campaign(s) with invites per month allowed. Upgrade for more.`,
+          // Counts every invite this owner sent since their plan month started.
+          `Plan limit: Only ${maxInvitesPerMonthEntry.value} invites per month allowed. Upgrade for more.`,
         );
       }
     }

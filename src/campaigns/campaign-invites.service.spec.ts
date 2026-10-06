@@ -438,6 +438,9 @@ describe("CampaignInvitesService – create() gating", () => {
       _id: "camp1",
       brandId: "brand1",
       title: "Test Campaign",
+      // Real campaigns always have a status (schema default "draft"); invites
+      // need a live or in-review one.
+      status: "active",
       ...overrides,
     };
     // create() calls campaignModel.findById(id).lean()
@@ -445,6 +448,38 @@ describe("CampaignInvitesService – create() gating", () => {
       lean: jest.fn().mockResolvedValue(data),
     });
   }
+
+  it.each(["draft", "rejected", "completed", "cancelled", ""])(
+    "refuses invites for a brand campaign that is %s (not live or in review)",
+    async (status) => {
+      mockCampaignLean({ status, ownerType: "brand" });
+      await expect(
+        service.create("brand1", { campaignId: "camp1", influencerId: "inf1" }),
+      ).rejects.toThrow(
+        "Invites can only be sent for active or pending-review campaigns.",
+      );
+    },
+  );
+
+  it.each(["active", "pending", "pending_review", "needs_changes"])(
+    "accepts invites for a brand campaign that is %s",
+    async (status) => {
+      mockCampaignLean({ status, ownerType: "brand" });
+      inviteModel.countDocuments.mockResolvedValue(0);
+      await expect(
+        service.create("brand1", { campaignId: "camp1", influencerId: "inf1" }),
+      ).resolves.toBeDefined();
+    },
+  );
+
+  it("collaborations keep their own wording", async () => {
+    mockCampaignLean({ status: "completed", ownerType: "photographer" });
+    await expect(
+      service.create("brand1", { campaignId: "camp1", influencerId: "inf1" }),
+    ).rejects.toThrow(
+      "Invites can only be sent for active or pending-review collaborations.",
+    );
+  });
 
   it("throws BadRequest when acceptanceDeadline has passed", async () => {
     mockCampaignLean({ acceptanceDeadline: new Date(Date.now() - 60_000) });
@@ -490,6 +525,28 @@ describe("CampaignInvitesService – create() gating", () => {
     await expect(
       service.create("brand1", { campaignId: "camp1", influencerId: "inf1" }),
     ).resolves.toBeDefined();
+  });
+
+  it("monthly owner cap: says invites per month (it counts invites, not campaigns)", async () => {
+    mockCampaignLean({});
+    const ownerCaps = {
+      features: [{ key: "canInviteUsers", value: true }],
+      limits: [
+        { key: "maxInvitesPerCampaign", value: -1 },
+        { key: "maxInvitesPerMonth", value: 5 },
+      ],
+    };
+    plansService.getUserPlanCapabilities.mockImplementation((userId: string) =>
+      Promise.resolve(userId === "inf1" ? { limits: [] } : ownerCaps),
+    );
+    inviteModel.countDocuments.mockImplementation((query: any) =>
+      Promise.resolve(query?.brandId === "brand1" && query?.createdAt ? 5 : 0),
+    );
+    await expect(
+      service.create("brand1", { campaignId: "camp1", influencerId: "inf1" }),
+    ).rejects.toThrow(
+      "Plan limit: Only 5 invites per month allowed. Upgrade for more.",
+    );
   });
 
   it("enforces recipient cap based on accepted + active pending only", async () => {
