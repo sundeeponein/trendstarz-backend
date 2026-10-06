@@ -3,6 +3,7 @@ import {
   isSocialAccountId,
   mergeSocialMediaEntries,
   newSocialAccountId,
+  restrictedSocialSummary,
   socialIdentityChanges,
 } from "./social-account.util";
 import { normalizeSocialMediaList } from "./social-handle.util";
@@ -336,5 +337,52 @@ describe("social account identity + server-side merge (Stage 3A-0)", () => {
         },
       ]);
     });
+  });
+});
+
+describe("restrictedSocialSummary (Search, viewers without social-link access)", () => {
+  const full = [
+    {
+      _id: "x",
+      socialAccountId: ID_A,
+      platformKey: "instagram",
+      platform: "Instagram",
+      handle: "secret_handle",
+      tier: " Micro ",
+      followersCount: 12000,
+      contentTypes: [{ name: "Reel", enabled: true, price: 1500 }],
+      selfReportedStats: { avgLikes: 10 },
+    },
+    { platform: "YouTube", handle: "@chan", tier: "Nano" },
+  ];
+
+  it("keeps only platform, platformKey and tier — never handle, id, followers, rates or stats", () => {
+    const out = restrictedSocialSummary(full);
+    expect(out).toEqual([
+      { platform: "Instagram", platformKey: "instagram", tier: "Micro" },
+      { platform: "YouTube", platformKey: "youtube", tier: "Nano" },
+    ]);
+    const text = JSON.stringify(out);
+    for (const secret of [
+      "secret_handle",
+      "@chan",
+      ID_A,
+      "12000",
+      "1500",
+      "avgLikes",
+      "contentTypes",
+    ])
+      expect(text).not.toContain(secret);
+  });
+
+  it("is safe on missing or malformed input", () => {
+    expect(restrictedSocialSummary(undefined)).toEqual([]);
+    expect(restrictedSocialSummary("x")).toEqual([]);
+    expect(restrictedSocialSummary([null, {}, { tier: 5 }])).toEqual([]);
+  });
+
+  it("keeps the first entry first, so the primary tier stays the same", () => {
+    const out = restrictedSocialSummary([...full].reverse());
+    expect(out[0].tier).toBe("Nano");
   });
 });

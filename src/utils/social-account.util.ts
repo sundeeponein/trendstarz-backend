@@ -217,3 +217,22 @@ export function socialIdentityChanges(
   }
   return changes;
 }
+
+/**
+ * What a viewer WITHOUT social-link access may see of a creator's accounts in
+ * Search: which platform and the declared follower tier only. Never the
+ * handle, link, account id, follower count, rates or self-reported stats —
+ * those stay behind canViewSocialLinks. Lets the public "Follower Tier"
+ * filter work for every viewer without exposing the gated details.
+ */
+export function restrictedSocialSummary(
+  socialMedia: unknown,
+): Array<{ platform: string; platformKey: string; tier: string }> {
+  return (Array.isArray(socialMedia) ? socialMedia : [])
+    .map((sm: any) => ({
+      platform: typeof sm?.platform === "string" ? sm.platform : "",
+      platformKey: derivePlatformKey(sm?.platformKey || sm?.platform),
+      tier: typeof sm?.tier === "string" ? sm.tier.trim() : "",
+    }))
+    .filter((sm) => sm.platform || sm.tier);
+}

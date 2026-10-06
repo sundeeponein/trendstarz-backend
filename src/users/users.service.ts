@@ -20,6 +20,7 @@ import {
 import { normalizeSocialMediaList } from "../utils/social-handle.util";
 import {
   mergeSocialMediaEntries,
+  restrictedSocialSummary,
   socialIdentityChanges,
 } from "../utils/social-account.util";
 import { SocialAccountVerificationService } from "../social-account-verification/social-account-verification.service";
@@ -2065,7 +2066,11 @@ export class UsersService implements OnModuleInit {
             profileImage: visibleProfileImages[0]?.url || null,
             isPremium: this.isCurrentlyPremium(inf),
             ageRange: this.computeAgeRangeFromDob(inf?.dateOfBirth),
-            socialMedia: allowSocialLinks ? inf?.socialMedia || [] : [],
+            // Restricted viewers get platform + tier only (the Follower Tier
+            // filter needs it); handles/links/rates stay gated.
+            socialMedia: allowSocialLinks
+              ? inf?.socialMedia || []
+              : restrictedSocialSummary(inf?.socialMedia),
             socialMediaRestricted: !allowSocialLinks,
             dateOfBirth: undefined,
             gender: undefined,
@@ -2155,7 +2160,11 @@ export class UsersService implements OnModuleInit {
           // and goes stale the moment profileImages[0] changes (re-upload/recrop).
           profileImage: visibleProfileImages[0]?.url || null,
           isPremium,
-          socialMedia: allowSocialLinks ? inf?.socialMedia || [] : [],
+          // Restricted viewers get platform + tier only (the Follower Tier
+          // filter needs it); handles/links/rates stay gated.
+          socialMedia: allowSocialLinks
+            ? inf?.socialMedia || []
+            : restrictedSocialSummary(inf?.socialMedia),
           socialMediaRestricted: !allowSocialLinks,
           ageRange,
           gender: undefined,
