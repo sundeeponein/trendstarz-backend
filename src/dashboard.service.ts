@@ -1,3 +1,8 @@
+import {
+  PROFILE_TRAFFIC_DAILY_COLLECTION,
+  TrafficProfileType,
+  profileTrafficForLastDays,
+} from "./utils/profile-traffic-daily.util";
 import { Injectable, NotFoundException } from "@nestjs/common";
 import { InjectModel } from "@nestjs/mongoose";
 import { Model, Types } from "mongoose";
@@ -10,6 +15,27 @@ export class DashboardService {
     @InjectModel("Brand") private readonly brandModel: Model<any>,
     @InjectModel("Influencer") private readonly influencerModel: Model<any>,
   ) {}
+
+  /** Last 30 India days of profile traffic; zeros (never an error) when history is unavailable. */
+  private async last30DaysTraffic(
+    profileType: TrafficProfileType,
+    profileId: unknown,
+  ): Promise<{ impressions: number; clicks: number }> {
+    try {
+      const collection = (this.influencerModel as any)?.db?.collection?.(
+        PROFILE_TRAFFIC_DAILY_COLLECTION,
+      );
+      if (!collection || !profileId) return { impressions: 0, clicks: 0 };
+      return await profileTrafficForLastDays(
+        collection,
+        profileType,
+        profileId,
+        30,
+      );
+    } catch {
+      return { impressions: 0, clicks: 0 };
+    }
+  }
 
   async getInfluencerDashboard(userId: string) {
     const user = (await this.influencerModel.findById(userId).lean()) as any;
@@ -112,6 +138,8 @@ export class DashboardService {
           clicks: user?.profileTraffic?.clicks ?? 0,
           lastImpressionAt: user?.profileTraffic?.lastImpressionAt ?? null,
           lastClickAt: user?.profileTraffic?.lastClickAt ?? null,
+          // From the daily history (profile_traffic_daily) — the dashboard card's "Last 30 days".
+          last30Days: await this.last30DaysTraffic("Influencer", user?._id),
         },
       },
       invites: { ...stats, newInvites, statusDebug },
@@ -207,6 +235,7 @@ export class DashboardService {
           clicks: brand?.profileTraffic?.clicks ?? 0,
           lastImpressionAt: brand?.profileTraffic?.lastImpressionAt ?? null,
           lastClickAt: brand?.profileTraffic?.lastClickAt ?? null,
+          last30Days: await this.last30DaysTraffic("Brand", brand?._id),
         },
       },
       totalCampaigns: campaigns.length, // All campaigns, regardless of status

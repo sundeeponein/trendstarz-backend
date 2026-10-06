@@ -1,3 +1,9 @@
+import {
+  PROFILE_TRAFFIC_DAILY_COLLECTION,
+  TrafficKind,
+  profileTrafficForLastDays,
+  recordDailyProfileTraffic,
+} from "../utils/profile-traffic-daily.util";
 import { publicScoreFields } from "../utils/public-score-fields.util";
 import {
   Injectable,
@@ -415,7 +421,25 @@ export class PhotographersService {
       resetTokenExpires: _rte,
       ...safe
     } = doc;
-    return safe;
+    // Read-only, computed: last 30 India days from the daily history (dashboard
+    // "Profile Traffic"). Top-level and not a schema field, so a profile save
+    // can never write it back.
+    let profileTrafficLast30Days = { impressions: 0, clicks: 0 };
+    try {
+      const collection = (this.photographerModel as any)?.db?.collection?.(
+        PROFILE_TRAFFIC_DAILY_COLLECTION,
+      );
+      if (collection)
+        profileTrafficLast30Days = await profileTrafficForLastDays(
+          collection,
+          "Photographer",
+          doc._id,
+          30,
+        );
+    } catch {
+      /* history is best-effort */
+    }
+    return { ...safe, profileTrafficLast30Days };
   }
 
   async updateProfile(userId: string, data: any, localAuthBypass = false) {
@@ -808,6 +832,55 @@ export class PhotographersService {
       socialMedia: allowSocial ? doc.socialMedia || [] : [],
       socialMediaRestricted: !allowSocial,
     };
+  }
+
+  /**
+   * Profile traffic for photographers, like influencers: "impression" when
+   * their profile page loads, "click" when their card is clicked in
+   * Search/Welcome. Updates the running totals (profileTraffic) and adds to
+   * the daily history (profile_traffic_daily, best-effort).
+   */
+  async trackPhotographerProfileImpression(username: string) {
+    return this.trackPhotographerTraffic(username, "impression");
+  }
+
+  async trackPhotographerProfileClick(username: string) {
+    return this.trackPhotographerTraffic(username, "click");
+  }
+
+  private async trackPhotographerTraffic(username: string, kind: TrafficKind) {
+    if (!username) return { tracked: false };
+    const now = new Date();
+    const updated: any = await this.photographerModel
+      .findOneAndUpdate(
+        { username, isDeleted: { $ne: true } },
+        kind === "impression"
+          ? {
+              $inc: { "profileTraffic.impressions": 1 },
+              $set: { "profileTraffic.lastImpressionAt": now },
+            }
+          : {
+              $inc: { "profileTraffic.clicks": 1 },
+              $set: { "profileTraffic.lastClickAt": now },
+            },
+        { projection: { _id: 1 } },
+      )
+      .lean();
+    if (!updated?._id) return { tracked: false };
+    const collection = (this.photographerModel as any)?.db?.collection?.(
+      PROFILE_TRAFFIC_DAILY_COLLECTION,
+    );
+    if (collection)
+      recordDailyProfileTraffic(
+        collection,
+        "Photographer",
+        updated._id,
+        kind,
+        now,
+      ).catch(() => {
+        /* history is best-effort */
+      });
+    return { tracked: true };
   }
 
   async getPhotographerByUsername(username: string, viewerId?: string | null) {

@@ -20,6 +20,12 @@ import {
 import { normalizeSocialMediaList } from "../utils/social-handle.util";
 import { receivedInvitesPerMonthFrom } from "../plans/invite-limits.util";
 import {
+  PROFILE_TRAFFIC_DAILY_COLLECTION,
+  TrafficKind,
+  TrafficProfileType,
+  recordDailyProfileTraffic,
+} from "../utils/profile-traffic-daily.util";
+import {
   mergeSocialMediaEntries,
   restrictedSocialSummary,
   socialIdentityChanges,
@@ -205,30 +211,62 @@ export class UsersService implements OnModuleInit {
     return this.brandModel.findOne({ brandName: slugRegex }).lean();
   }
 
+  /** Best-effort daily history row (profile_traffic_daily); never blocks or fails the request. */
+  private recordDailyTraffic(
+    profileType: TrafficProfileType,
+    profileId: unknown,
+    kind: TrafficKind,
+    now: Date,
+  ): void {
+    const collection = (this.influencerModel as any)?.db?.collection?.(
+      PROFILE_TRAFFIC_DAILY_COLLECTION,
+    );
+    if (!collection) return;
+    recordDailyProfileTraffic(
+      collection,
+      profileType,
+      profileId,
+      kind,
+      now,
+    ).catch(() => {
+      /* history is best-effort */
+    });
+  }
+
   async trackInfluencerProfileImpression(username: string) {
     if (!username) return { tracked: false };
     const now = new Date();
-    const updated = await this.influencerModel.updateOne(
-      { username },
-      {
-        $inc: { "profileTraffic.impressions": 1 },
-        $set: { "profileTraffic.lastImpressionAt": now },
-      },
-    );
-    return { tracked: (updated.modifiedCount || 0) > 0 };
+    const updated: any = await this.influencerModel
+      .findOneAndUpdate(
+        { username },
+        {
+          $inc: { "profileTraffic.impressions": 1 },
+          $set: { "profileTraffic.lastImpressionAt": now },
+        },
+        { projection: { _id: 1 } },
+      )
+      .lean();
+    if (updated?._id)
+      this.recordDailyTraffic("Influencer", updated._id, "impression", now);
+    return { tracked: !!updated?._id };
   }
 
   async trackInfluencerProfileClick(username: string) {
     if (!username) return { tracked: false };
     const now = new Date();
-    const updated = await this.influencerModel.updateOne(
-      { username },
-      {
-        $inc: { "profileTraffic.clicks": 1 },
-        $set: { "profileTraffic.lastClickAt": now },
-      },
-    );
-    return { tracked: (updated.modifiedCount || 0) > 0 };
+    const updated: any = await this.influencerModel
+      .findOneAndUpdate(
+        { username },
+        {
+          $inc: { "profileTraffic.clicks": 1 },
+          $set: { "profileTraffic.lastClickAt": now },
+        },
+        { projection: { _id: 1 } },
+      )
+      .lean();
+    if (updated?._id)
+      this.recordDailyTraffic("Influencer", updated._id, "click", now);
+    return { tracked: !!updated?._id };
   }
 
   async trackBrandProfileImpression(brandName: string) {
@@ -242,6 +280,7 @@ export class UsersService implements OnModuleInit {
         $set: { "profileTraffic.lastImpressionAt": now },
       },
     );
+    this.recordDailyTraffic("Brand", brand._id, "impression", now);
     return { tracked: (updated.modifiedCount || 0) > 0 };
   }
 
@@ -256,6 +295,7 @@ export class UsersService implements OnModuleInit {
         $set: { "profileTraffic.lastClickAt": now },
       },
     );
+    this.recordDailyTraffic("Brand", brand._id, "click", now);
     return { tracked: (updated.modifiedCount || 0) > 0 };
   }
 

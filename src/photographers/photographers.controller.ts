@@ -3,6 +3,7 @@ import {
   ForbiddenException,
   Get,
   Patch,
+  Post,
   Body,
   Req,
   Query,
@@ -246,6 +247,22 @@ export class PhotographersController {
 
     if (!usage) return data;
     return { data, usage: { search: usage } };
+  }
+
+  /** Public: count a profile view (profile page loaded). Same as the influencer endpoint. */
+  @Post("username/:username/track-impression")
+  async trackPhotographerProfileImpression(
+    @Param("username") username: string,
+  ) {
+    return this.photographersService.trackPhotographerProfileImpression(
+      username,
+    );
+  }
+
+  /** Public: count a profile card click (Search / Welcome). */
+  @Post("username/:username/track-click")
+  async trackPhotographerProfileClick(@Param("username") username: string) {
+    return this.photographersService.trackPhotographerProfileClick(username);
   }
 
   /** Public: get single photographer by ID */
