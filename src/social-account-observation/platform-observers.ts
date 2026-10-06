@@ -193,6 +193,28 @@ export class YoutubeObserver {
 
 // ── Meta (Instagram / Facebook) ────────────────────────────────────────────
 
+/**
+ * Which Meta platforms a profile's usable connection rows cover (rows already
+ * filtered to not revoked + token present). Instagram data needs the linked
+ * Instagram Business account, not just a token. Pure — shared with the Stage
+ * 3D-1m evidence measurement so both use exactly this rule.
+ */
+export function connectedPlatformsFrom(
+  rows: Array<{
+    platform?: string;
+    instagramBusinessAccountId?: string | null;
+  }>,
+): Set<"instagram" | "facebook"> {
+  const connected = new Set<"instagram" | "facebook">();
+  for (const row of rows) {
+    if (row.platform === "instagram" && row.instagramBusinessAccountId) {
+      connected.add("instagram");
+    }
+    if (row.platform === "facebook") connected.add("facebook");
+  }
+  return connected;
+}
+
 const IG_HOSTS = /^((www|m)\.)?instagram\.com$/i;
 const IG_USERNAME_RE = /^[a-z0-9._]{1,30}$/;
 const FB_HOSTS = /^((www|m|web)\.)?(facebook|fb)\.com$/i;
@@ -296,15 +318,7 @@ export class MetaObserver {
       instagramBusinessAccountId?: string | null;
       facebookPageId?: string | null;
     }>;
-    const connected = new Set<"instagram" | "facebook">();
-    for (const row of rows || []) {
-      // Instagram data needs the linked Instagram Business account, not just a token.
-      if (row.platform === "instagram" && row.instagramBusinessAccountId) {
-        connected.add("instagram");
-      }
-      if (row.platform === "facebook") connected.add("facebook");
-    }
-    return connected;
+    return connectedPlatformsFrom(rows || []);
   }
 
   /**

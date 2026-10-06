@@ -241,41 +241,53 @@ export class SocialAccountObservationService {
     doc: any,
     connectedPlatforms?: Set<string>,
   ): SocialAccountObservationView {
-    const platformKey = platformKeyOf(entry);
-    const requiresConnection = CONNECTION_PLATFORMS.includes(platformKey);
-    return {
-      socialAccountId: isSocialAccountId(entry.socialAccountId)
-        ? entry.socialAccountId
-        : null,
-      platform: String(entry.platform ?? ""),
-      platformKey,
-      observable: (OBSERVABLE_PLATFORMS as readonly string[]).includes(
-        platformKey,
-      ),
-      requiresConnection,
-      // Unknown (null) when the caller didn't look it up, e.g. right after a Fetch.
-      connected:
-        requiresConnection && connectedPlatforms
-          ? connectedPlatforms.has(platformKey)
-          : null,
-      observation: doc
-        ? {
-            status: doc.status,
-            lastError: doc.lastError ?? null,
-            lastAttemptAt: doc.lastAttemptAt ?? null,
-            latest: doc.capturedAt
-              ? {
-                  source: doc.source,
-                  externalAccountId: String(doc.externalAccountId ?? ""),
-                  observedHandle: String(doc.observedHandle ?? ""),
-                  observedFollowersCount: doc.observedFollowersCount ?? null,
-                  externalUrl: String(doc.externalUrl ?? ""),
-                  rawPlatformUpdatedAt: doc.rawPlatformUpdatedAt ?? null,
-                  capturedAt: doc.capturedAt,
-                }
-              : null,
-          }
-        : null,
-    };
+    return observationView(entry, doc, connectedPlatforms);
   }
+}
+
+/**
+ * The admin view of one social account's observation, from its stored doc. Pure
+ * — shared with the Stage 3D-1m evidence measurement (bulk-loaded docs).
+ */
+export function observationView(
+  entry: Record<string, any>,
+  doc: any,
+  connectedPlatforms?: Set<string>,
+): SocialAccountObservationView {
+  const platformKey = platformKeyOf(entry);
+  const requiresConnection = CONNECTION_PLATFORMS.includes(platformKey);
+  return {
+    socialAccountId: isSocialAccountId(entry.socialAccountId)
+      ? entry.socialAccountId
+      : null,
+    platform: String(entry.platform ?? ""),
+    platformKey,
+    observable: (OBSERVABLE_PLATFORMS as readonly string[]).includes(
+      platformKey,
+    ),
+    requiresConnection,
+    // Unknown (null) when the caller didn't look it up, e.g. right after a Fetch.
+    connected:
+      requiresConnection && connectedPlatforms
+        ? connectedPlatforms.has(platformKey)
+        : null,
+    observation: doc
+      ? {
+          status: doc.status,
+          lastError: doc.lastError ?? null,
+          lastAttemptAt: doc.lastAttemptAt ?? null,
+          latest: doc.capturedAt
+            ? {
+                source: doc.source,
+                externalAccountId: String(doc.externalAccountId ?? ""),
+                observedHandle: String(doc.observedHandle ?? ""),
+                observedFollowersCount: doc.observedFollowersCount ?? null,
+                externalUrl: String(doc.externalUrl ?? ""),
+                rawPlatformUpdatedAt: doc.rawPlatformUpdatedAt ?? null,
+                capturedAt: doc.capturedAt,
+              }
+            : null,
+        }
+      : null,
+  };
 }
