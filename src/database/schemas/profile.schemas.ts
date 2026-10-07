@@ -1101,7 +1101,7 @@ export const AppSettingsSchema = new Schema({
   submissionAutoCompleteGraceHours: { type: Number, default: 48 },
   payoutReleaseWaitHours: { type: Number, default: 24 },
   disputeResponseWaitHours: { type: Number, default: 12 },
-  campaignAutoCloseGraceHours: { type: Number, default: 24 },
+  campaignAutoCloseGraceHours: { type: Number, default: 48 },
   earlyAccessCommissionPercent: { type: Number, default: 0 },
   partnerCommissionPercent: { type: Number, default: 2 },
   internalTestCommissionPercent: { type: Number, default: 0 },
@@ -1345,7 +1345,7 @@ export const CampaignSchema = new Schema(
     // live/active campaigns, not the approve/reject review workflow.
     adminOverrideAction: {
       type: String,
-      enum: ["force_complete", "cancel_participation"],
+      enum: ["force_complete", "cancel_participation", "extend_end_date"],
       default: null,
     },
     adminOverrideReason: { type: String, default: "" },

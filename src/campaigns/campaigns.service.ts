@@ -3,6 +3,7 @@ import {
   BadRequestException,
   NotFoundException,
 } from "@nestjs/common";
+import { campaignEndsAt } from "./campaign-deadlines.util";
 import {
   CANONICAL_TIERS,
   meetsMinimumTier,
@@ -128,8 +129,8 @@ export class CampaignsService {
 
   private async getCampaignAutoCloseGraceHours(): Promise<number> {
     const settings: any = await this.appSettingsModel.findOne({}).lean();
-    const hours = Number(settings?.campaignAutoCloseGraceHours ?? 24);
-    return Number.isFinite(hours) && hours >= 0 ? hours : 24;
+    const hours = Number(settings?.campaignAutoCloseGraceHours ?? 48);
+    return Number.isFinite(hours) && hours >= 0 ? hours : 48;
   }
 
   async autoCompleteExpiredCampaigns() {
@@ -160,13 +161,11 @@ export class CampaignsService {
     let completedCount = 0;
     for (const candidate of candidates) {
       const campaignId = candidate._id;
-      // Math.max (not ||) across whichever end-date fields exist — a campaign can match the
-      // query above via timelineEnd alone while endDate is still in the future (legacy rows/
-      // partial updates); picking the wrong one would silently defeat the backstop.
-      const endTimes = [candidate.endDate, candidate.timelineEnd]
-        .filter(Boolean)
-        .map((d: any) => new Date(d).getTime());
-      const referenceEnd = endTimes.length ? Math.max(...endTimes) : now.getTime();
+      // The later of endDate/timelineEnd (a campaign can match the query above via one while
+      // the other is still in the future — legacy rows/partial updates). The end date is a
+      // calendar day: the campaign runs to the end of that day in India time.
+      const referenceEnd =
+        campaignEndsAt(candidate as any)?.getTime() ?? now.getTime();
       const pastGrace = referenceEnd <= graceCutoff.getTime();
 
       const hasActiveWork = await this.campaignInviteModel

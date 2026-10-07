@@ -4,6 +4,7 @@ import {
   NotFoundException,
   Logger,
 } from "@nestjs/common";
+import { submissionWindow } from "./campaign-deadlines.util";
 import { meetsMinimumTier, resolveTier } from "../utils/tier-ranges.util";
 import { Cron, CronExpression } from "@nestjs/schedule";
 import { InjectModel } from "@nestjs/mongoose";
@@ -1336,23 +1337,22 @@ export class CampaignInvitesService {
   }
 
   /**
-   * Single source of truth for the late-submission grace window. Follows the same pure
-   * duration-arithmetic convention already used for `insightsUnlocksAt` (selectedPostDate +
-   * 24h) rather than any calendar-day/timezone logic — selectedPostDate is a UTC-midnight
-   * instant of the chosen date, so a fixed millisecond offset never crosses into the wrong day.
+   * Single source of truth for the late-submission grace window — see
+   * submissionWindow (campaign-deadlines.util): post date + 24h (+24h grace unless
+   * strict), never less than 48h after payment, plus any admin extension. Callers
+   * only call this when the invite has a selectedPostDate.
    */
-  private computeGraceDeadline(
+  computeGraceDeadline(
     invite: any,
     campaign: any,
   ): { isLate: boolean; daysLate: number; closesAt: Date } {
     const ONE_DAY_MS = 24 * 60 * 60 * 1000;
-    const strictDeadline = new Date(
-      new Date(invite.selectedPostDate).getTime() + ONE_DAY_MS,
-    );
-    const closesAt =
-      campaign?.postingDeadlineMode === "strict"
-        ? strictDeadline
-        : new Date(strictDeadline.getTime() + ONE_DAY_MS);
+    const window = submissionWindow(invite, campaign?.postingDeadlineMode);
+    if (!window) {
+      // No post date → no deadline (callers check selectedPostDate first).
+      return { isLate: false, daysLate: 0, closesAt: new Date(8.64e15) };
+    }
+    const { strictDeadline, closesAt } = window;
     const now = Date.now();
     const isLate = now > strictDeadline.getTime();
     const daysLate = isLate
@@ -1379,7 +1379,9 @@ export class CampaignInvitesService {
           status: { $in: ["accepted", "payment_confirmed", "working"] },
           selectedPostDate: { $ne: null },
         })
-        .select("selectedPostDate")
+        .select(
+          "selectedPostDate paymentConfirmedAt submissionDeadlineExtendedTo",
+        )
         .lean(),
     ]);
     let latest: number | null = null;
@@ -1728,8 +1730,10 @@ export class CampaignInvitesService {
       .findOne({
         $or: brandQueries,
         $and: [{ $or: influencerQueries }],
-        status: "completed",
+        // Finished work: "approved" (post approved, payout released) or "completed".
+        status: { $in: ["completed", "approved"] },
       })
+      .sort({ updatedAt: -1 })
       .lean();
     return invite ?? null;
   }
@@ -4512,7 +4516,14 @@ export class CampaignInvitesService {
    * `finalizeDisputeOutcome`'s refund_host outcome, but for invites that were never disputed
    * (source status is accepted/payment_confirmed/working, not disputed).
    */
-  async expireUnsubmittedInvite(inviteId: string, reason: string) {
+  async expireUnsubmittedInvite(
+    inviteId: string,
+    reason: string,
+    opts: {
+      withdrawnReason?: InviteWithdrawnReason;
+      actor?: { userId?: unknown; userRole: PlatformEventActorRole };
+    } = {},
+  ) {
     const invite = await this.inviteModel.findById(inviteId);
     if (!invite) return { success: true, skipped: true };
     // Race guard: someone may have just submitted, disputed, or otherwise moved this invite
@@ -4535,8 +4546,8 @@ export class CampaignInvitesService {
     await invite.save();
     await this.recordInviteWithdrawn(
       invite,
-      "expired_unsubmitted",
-      { userRole: "system" },
+      opts.withdrawnReason ?? "expired_unsubmitted",
+      opts.actor ?? { userRole: "system" },
       previousStatus,
       invite.withdrawnAt,
     );

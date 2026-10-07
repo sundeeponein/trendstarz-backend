@@ -20,6 +20,8 @@ import { CampaignsController } from "./campaigns.controller";
 import { CampaignsService } from "./campaigns.service";
 import { CampaignInvitesController } from "./campaign-invites.controller";
 import { CampaignInvitesService } from "./campaign-invites.service";
+import { CampaignCorrectionsController } from "./campaign-corrections.controller";
+import { CampaignCorrectionsService } from "./campaign-corrections.service";
 import { AnalyticsEventsController } from "./analytics-events.controller";
 import { AnalyticsEventsService } from "./analytics-events.service";
 import { TrackingLinksController } from "./tracking-links.controller";
@@ -104,12 +106,14 @@ import { PlatformEventsModule } from "../platform-events/platform-events.module"
   controllers: [
     CampaignsController,
     CampaignInvitesController,
+    CampaignCorrectionsController,
     AnalyticsEventsController,
     TrackingLinksController,
   ],
   providers: [
     CampaignsService,
     CampaignInvitesService,
+    CampaignCorrectionsService,
     AnalyticsEventsService,
     TrackingLinksService,
     CloudinaryService,

@@ -119,6 +119,23 @@ export const CampaignInviteSchema = new Schema({
   postingReminder24hSentAt: { type: Date },
   withdrawnAt: { type: Date },
   withdrawnReason: { type: String },
+  // Admin correction: this creator may submit until at least this time (see submissionWindow).
+  submissionDeadlineExtendedTo: { type: Date },
+  // Admin corrections log (append-only, admin-only — hidden from every query unless
+  // selected with "+adminCorrections"): restore / extend / submit-on-behalf / cancel.
+  adminCorrections: {
+    type: [
+      {
+        _id: false,
+        action: { type: String },
+        reason: { type: String },
+        by: { type: String },
+        at: { type: Date },
+        details: { type: Schema.Types.Mixed },
+      },
+    ],
+    select: false,
+  },
   // Stage 3B-4: set when an admin sent this invite on the owner's behalf from
   // the campaign eligibility list (brandId is still the campaign owner).
   invitedByAdminId: { type: String },

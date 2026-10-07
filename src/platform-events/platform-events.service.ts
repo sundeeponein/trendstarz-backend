@@ -161,6 +161,20 @@ export class PlatformEventsService implements OnModuleInit {
     return doc;
   }
 
+  /**
+   * Read-only: the invite_withdrawn event for an invite (reason + previousStatus),
+   * or null. One per invite (dedupeKey), so this is the first withdrawal.
+   */
+  async findInviteWithdrawn(
+    inviteId: string | { toString(): string },
+  ): Promise<any> {
+    const id = inviteId ? inviteId.toString() : "";
+    if (!id) return null;
+    return this.platformEventModel
+      .findOne({ dedupeKey: `invite_withdrawn:${id}` })
+      .lean();
+  }
+
   /** Records one event. Resolves true if written, false if rejected/duplicate/failed. Never rejects. */
   async record(input: RecordPlatformEventInput): Promise<boolean> {
     let doc: Record<string, any>;
