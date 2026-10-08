@@ -8,18 +8,20 @@ import {
   Query,
   UseGuards,
   Req,
+  BadRequestException,
 } from "@nestjs/common";
 import { JwtAuthGuard } from "../auth/jwt-auth.guard";
 import { RolesGuard } from "../auth/roles.guard";
 import { CampaignInvitesService } from "./campaign-invites.service";
 
-import { UseInterceptors, UploadedFile } from '@nestjs/common';
-import { FileInterceptor } from '@nestjs/platform-express';
-import { diskStorage } from 'multer';
-import * as path from 'path';
-import * as fs from 'fs';
-import { randomUUID } from 'crypto';
-import { CloudinaryService } from '../cloudinary.service';
+import { UseInterceptors, UploadedFile } from "@nestjs/common";
+import { FileInterceptor } from "@nestjs/platform-express";
+import { diskStorage } from "multer";
+import * as path from "path";
+import * as fs from "fs";
+import { randomUUID } from "crypto";
+import { CloudinaryService } from "../cloudinary.service";
+import { CloudinaryFolders } from "../cloudinary-folders";
 
 @Controller("campaign-invites")
 export class CampaignInvitesController {
@@ -28,31 +30,62 @@ export class CampaignInvitesController {
     private readonly cloudinaryService: CloudinaryService,
   ) {}
 
+  private requesterId(req: any): string {
+    return String(
+      req?.user?.userId ||
+        req?.user?.sub ||
+        req?.user?._id ||
+        req?.user?.id ||
+        "",
+    ).trim();
+  }
+
   @UseGuards(JwtAuthGuard)
   @Post(":id/upload-image")
-  @UseInterceptors(FileInterceptor('file', {
-    storage: diskStorage({
-      destination: (req: any, file: any, cb: any) => {
-        const dest = path.resolve(process.cwd(), 'assets/local-images/campaign_proofs');
-        if (!fs.existsSync(dest)) {
-          fs.mkdirSync(dest, { recursive: true });
+  @UseInterceptors(
+    FileInterceptor("file", {
+      storage: diskStorage({
+        destination: (req: any, file: any, cb: any) => {
+          const dest = path.resolve(
+            process.cwd(),
+            "assets/local-images/campaign_proofs",
+          );
+          if (!fs.existsSync(dest)) {
+            fs.mkdirSync(dest, { recursive: true });
+          }
+          cb(null, dest);
+        },
+        filename: (req: any, file: any, cb: any) => {
+          const ext = path.extname(file.originalname);
+          cb(null, randomUUID() + ext);
+        },
+      }),
+      fileFilter: (req, file, cb) => {
+        const allowed = ["image/jpeg", "image/jpg", "image/png", "image/webp"];
+        if (!allowed.includes(file.mimetype)) {
+          return cb(
+            new BadRequestException("Only JPG, PNG, or WebP images are allowed"),
+            false,
+          );
         }
-        cb(null, dest);
+        cb(null, true);
       },
-      filename: (req: any, file: any, cb: any) => {
-        const ext = path.extname(file.originalname);
-        cb(null, randomUUID() + ext);
-      },
+      limits: { fileSize: 10 * 1024 * 1024 },
     }),
-  }))
+  )
   async uploadCampaignProof(
-    @Param('id') id: string,
+    @Param("id") id: string,
     @UploadedFile() file: Express.Multer.File,
-    @Req() req: any
+    @Req() req: any,
   ) {
+    const submitterId = this.requesterId(req);
+    const campaignId = await this.invitesService.getCampaignIdForInvite(id);
+    const folder = campaignId
+      ? CloudinaryFolders.campaign.proofs(campaignId, submitterId)
+      : "campaign_proofs";
     const uploaded = await this.cloudinaryService.uploadImage(
       file.path,
-      'campaign_proofs',
+      folder,
     );
 
     if (file?.path && fs.existsSync(file.path)) {
@@ -68,16 +101,19 @@ export class CampaignInvitesController {
   @UseGuards(JwtAuthGuard)
   @Post()
   async create(@Req() req: any, @Body() body: any) {
-    const brandId = req.user?.userId;
+    const brandId = this.requesterId(req);
     return this.invitesService.create(brandId, body);
   }
 
   @UseGuards(JwtAuthGuard)
   @Get("campaign/:campaignId")
-  async findByCampaign(@Param("campaignId") campaignId: string, @Req() req: any) {
+  async findByCampaign(
+    @Param("campaignId") campaignId: string,
+    @Req() req: any,
+  ) {
     return this.invitesService.findByCampaign(
       campaignId,
-      req.user?.userId,
+      this.requesterId(req),
       req.user?.role,
     );
   }
@@ -85,22 +121,30 @@ export class CampaignInvitesController {
   @UseGuards(JwtAuthGuard)
   @Get("influencer")
   async findByInfluencer(@Req() req: any, @Query("scope") scope?: string) {
-    const influencerId = req.user?.userId;
+    const influencerId = this.requesterId(req);
     return this.invitesService.findByInfluencer(influencerId, scope);
   }
 
   @UseGuards(JwtAuthGuard)
   @Get("photographer")
   async findByPhotographer(@Req() req: any) {
-    const photographerId = req.user?.userId;
+    const photographerId = this.requesterId(req);
     return this.invitesService.findByPhotographer(photographerId);
   }
 
   @UseGuards(JwtAuthGuard)
   @Post("campaign/:campaignId/apply")
-  async applyToCampaign(@Param("campaignId") campaignId: string, @Req() req: any, @Body() body: any) {
-    const influencerId = req.user?.userId;
-    return this.invitesService.applyToCampaign(influencerId, campaignId, body?.selectedPlatform);
+  async applyToCampaign(
+    @Param("campaignId") campaignId: string,
+    @Req() req: any,
+    @Body() body: any,
+  ) {
+    const influencerId = this.requesterId(req);
+    return this.invitesService.applyToCampaign(
+      influencerId,
+      campaignId,
+      body?.selectedPlatform,
+    );
   }
 
   /** GET /campaign-invites/:id — get a single invite with campaign platform/deliverable info */
@@ -121,7 +165,7 @@ export class CampaignInvitesController {
     @Param("influencerId") influencerId: string,
     @Req() req: any,
   ) {
-    const brandId = req.user?.userId;
+    const brandId = this.requesterId(req);
     const invite = await this.invitesService.findCompletedByBrandAndInfluencer(
       brandId,
       influencerId,
@@ -133,7 +177,7 @@ export class CampaignInvitesController {
   @UseGuards(JwtAuthGuard)
   @Get("brand/attention-counts")
   async brandAttentionCounts(@Req() req: any) {
-    const brandId = req.user?.userId;
+    const brandId = this.requesterId(req);
     return this.invitesService.getBrandAttentionCounts(brandId);
   }
 
@@ -141,7 +185,7 @@ export class CampaignInvitesController {
   @UseGuards(JwtAuthGuard)
   @Get("influencer/attention-counts")
   async influencerAttentionCounts(@Req() req: any) {
-    const influencerId = req.user?.userId;
+    const influencerId = this.requesterId(req);
     return this.invitesService.getInfluencerAttentionCounts(influencerId);
   }
 
@@ -152,18 +196,30 @@ export class CampaignInvitesController {
     @Req() req: any,
     @Body()
     body: {
-      status: "accepted" | "declined";
+      status: "accepted" | "declined" | "counter_sent";
       selectedPostDate?: string;
       selectedPlatform?: string;
       selectedContentType?: string;
+      counterAmount?: number;
+      counterMessage?: string;
       payout?: {
         upiId?: string;
         mobile?: string;
         accountHolderName?: string;
       };
+      shippingAddress?: {
+        contactName?: string;
+        contactMobile?: string;
+        line1?: string;
+        line2?: string;
+        city?: string;
+        state?: string;
+        pincode?: string;
+        landmark?: string;
+      };
     },
   ) {
-    const influencerId = req.user?.userId;
+    const influencerId = this.requesterId(req);
     return this.invitesService.respond(
       id,
       influencerId,
@@ -171,14 +227,38 @@ export class CampaignInvitesController {
       body.selectedPostDate,
       body.selectedPlatform,
       body.selectedContentType,
+      body.counterAmount,
+      body.counterMessage,
       body.payout,
+      body.shippingAddress,
+    );
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Patch(":id/counter/respond")
+  async respondToCounter(
+    @Param("id") id: string,
+    @Req() req: any,
+    @Body()
+    body: {
+      action: "accept" | "decline" | "counter";
+      note?: string;
+      counterAmount?: number;
+    },
+  ) {
+    return this.invitesService.respondToCounter(
+      id,
+      this.requesterId(req),
+      body?.action,
+      body?.note,
+      body?.counterAmount,
     );
   }
 
   @UseGuards(JwtAuthGuard)
   @Post(":id/unlock")
   async unlockContact(@Param("id") id: string, @Req() req: any) {
-    const brandId = req.user?.userId;
+    const brandId = this.requesterId(req);
     return this.invitesService.unlockContact(id, brandId);
   }
 
@@ -202,7 +282,7 @@ export class CampaignInvitesController {
   ) {
     return this.invitesService.updateProductFulfillment(
       id,
-      req.user?.userId,
+      this.requesterId(req),
       body,
     );
   }
@@ -222,7 +302,7 @@ export class CampaignInvitesController {
   ) {
     return this.invitesService.updateLocationCheckIn(
       id,
-      req.user?.userId,
+      this.requesterId(req),
       body,
     );
   }
@@ -236,7 +316,7 @@ export class CampaignInvitesController {
   ) {
     return this.invitesService.setInviteDueDate(
       id,
-      req.user?.userId,
+      this.requesterId(req),
       body?.dueDate ?? null,
     );
   }
@@ -244,7 +324,7 @@ export class CampaignInvitesController {
   @UseGuards(JwtAuthGuard)
   @Post(":id/remind")
   async remindInvite(@Param("id") id: string, @Req() req: any) {
-    return this.invitesService.remindInvite(id, req.user?.userId);
+    return this.invitesService.remindInvite(id, this.requesterId(req));
   }
 
   @UseGuards(JwtAuthGuard)
@@ -256,7 +336,7 @@ export class CampaignInvitesController {
   ) {
     return this.invitesService.withdrawInvite(
       id,
-      req.user?.userId,
+      this.requesterId(req),
       body?.reason,
     );
   }
@@ -270,9 +350,21 @@ export class CampaignInvitesController {
   ) {
     return this.invitesService.reportInviteIssue(
       id,
-      req.user?.userId,
+      this.requesterId(req),
       body?.reason,
     );
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Post(":id/withdraw-dispute")
+  async withdrawFromDispute(@Param("id") id: string, @Req() req: any) {
+    return this.invitesService.withdrawFromDispute(id, this.requesterId(req));
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Post(":id/request-admin-review")
+  async requestAdminReviewForDispute(@Param("id") id: string, @Req() req: any) {
+    return this.invitesService.requestAdminReviewForDispute(id, this.requesterId(req));
   }
 
   @UseGuards(JwtAuthGuard)
@@ -282,11 +374,18 @@ export class CampaignInvitesController {
     @Req() req: any,
     @Body() body: { reach?: number; engagement?: number; clicks?: number },
   ) {
-    const influencerId = req.user?.userId;
+    const influencerId = this.requesterId(req);
     return this.invitesService.submitAnalytics(id, influencerId, body);
   }
 
   // ── Submission endpoints ───────────────────────────────────────
+  @UseGuards(JwtAuthGuard)
+  @Patch(":id/start-work")
+  async startWork(@Param("id") id: string, @Req() req: any) {
+    const influencerId = req.user?.userId;
+    return this.invitesService.startWork(id, influencerId);
+  }
+
   @UseGuards(JwtAuthGuard)
   @Post(":id/submit")
   async submitPost(
@@ -324,8 +423,23 @@ export class CampaignInvitesController {
     @Param("campaignId") campaignId: string,
     @Req() req: any,
   ) {
-    const brandId = req.user?.userId;
+    const brandId = this.requesterId(req);
     return this.invitesService.getSubmissionsByCampaign(campaignId, brandId);
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Patch(":id/auto-complete")
+  async setSubmissionAutoComplete(
+    @Param("id") id: string,
+    @Req() req: any,
+    @Body() body: { enabled?: boolean },
+  ) {
+    const brandId = this.requesterId(req);
+    return this.invitesService.setSubmissionAutoComplete(
+      id,
+      brandId,
+      body.enabled === true,
+    );
   }
 
   @UseGuards(JwtAuthGuard)
@@ -337,16 +451,20 @@ export class CampaignInvitesController {
     body: {
       action: "approve" | "dispute";
       feedback?: string;
+      disputeIssueReason?: string;
       disputeReason?: string;
+      disputeEvidenceUrl?: string;
     },
   ) {
-    const brandId = req.user?.userId;
+    const brandId = this.requesterId(req);
     return this.invitesService.reviewSubmission(
       id,
       brandId,
       body.action,
       body.feedback,
       body.disputeReason,
+      body.disputeIssueReason,
+      body.disputeEvidenceUrl,
     );
   }
 
@@ -365,7 +483,7 @@ export class CampaignInvitesController {
       insightsScreenshotUrl?: string;
     },
   ) {
-    const influencerId = req.user?.userId;
+    const influencerId = this.requesterId(req);
     return this.invitesService.updateSubmissionStats(id, influencerId, body);
   }
 
@@ -373,6 +491,12 @@ export class CampaignInvitesController {
   @Post("admin/auto-approve-stale")
   async autoApproveStale() {
     return this.invitesService.autoApproveStaleSubmissions();
+  }
+
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Post("admin/auto-cancel-disputes")
+  async autoCancelExpiredDisputes() {
+    return this.invitesService.autoCancelExpiredDisputes();
   }
 
   @UseGuards(JwtAuthGuard, RolesGuard)
@@ -413,9 +537,9 @@ export class CampaignInvitesController {
       note?: string;
     },
   ) {
-    return this.invitesService.adminBulkResolveDisputes(
-      body?.inviteIds || [],
-      { outcome: body?.outcome, note: body?.note },
-    );
+    return this.invitesService.adminBulkResolveDisputes(body?.inviteIds || [], {
+      outcome: body?.outcome,
+      note: body?.note,
+    });
   }
 }

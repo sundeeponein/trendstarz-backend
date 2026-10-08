@@ -8,6 +8,17 @@ import { InjectModel } from "@nestjs/mongoose";
 import { Model } from "mongoose";
 import { PlansService } from "../plans/plans.service";
 
+/** Work is finished: the post was approved (payout released → "approved") or the collaboration completed. */
+export const HOST_REVIEWABLE_INVITE_STATUSES = ["completed", "approved"];
+/** A creator can review the host once paid, through to the end of the collaboration. */
+export const CREATOR_REVIEWABLE_INVITE_STATUSES = [
+  "payment_confirmed",
+  "working",
+  "submitted",
+  "completed",
+  "approved",
+];
+
 @Injectable()
 export class ReviewsService {
   constructor(
@@ -47,7 +58,7 @@ export class ReviewsService {
       if (String(invite.brandId) !== reviewerId) {
         throw new BadRequestException("This invite does not belong to you");
       }
-      if (invite.status !== "completed") {
+      if (!HOST_REVIEWABLE_INVITE_STATUSES.includes(invite.status)) {
         throw new BadRequestException(
           "Reviews can only be written after the campaign is completed",
         );
@@ -56,7 +67,7 @@ export class ReviewsService {
       if (String(invite.influencerId) !== reviewerId) {
         throw new BadRequestException("This invite does not belong to you");
       }
-      if (!["completed", "payment_confirmed"].includes(invite.status)) {
+      if (!CREATOR_REVIEWABLE_INVITE_STATUSES.includes(invite.status)) {
         throw new BadRequestException(
           "Reviews can only be written after payment is confirmed or campaign is completed",
         );
@@ -105,11 +116,10 @@ export class ReviewsService {
   }
 
   async getReviewsForTarget(targetId: string, requesterId: string) {
-    // Only premium influencers (canReadReviews) or the target itself can see reviews
-    const canRead = await this.plansService.checkFeature(
-      requesterId,
-      "canReadReviews",
-    );
+    // Premium (canReadReviews) or the target itself can see reviews
+    const canRead =
+      String(requesterId) === String(targetId) ||
+      (await this.plansService.checkFeature(requesterId, "canReadReviews"));
     if (!canRead) {
       throw new ForbiddenException(
         "Upgrade to a premium plan to view reviews.",

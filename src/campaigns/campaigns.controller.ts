@@ -145,9 +145,12 @@ export class CampaignsController {
         failures: [{ photographerId: "", reason: "Campaign not found" }],
       };
     }
-    const ownerType = String(campaign?.ownerType || campaign?.createdByRole || "brand");
+      const ownerType = String(campaign?.ownerType || campaign?.createdByRole || "brand");
     const expectedRole = String(campaign?.inviteRecipientRole || "influencer");
-    if (ownerType !== "brand" || expectedRole !== "photographer") {
+      if (
+        !["brand", "influencer"].includes(ownerType) ||
+        expectedRole !== "photographer"
+      ) {
       return {
         success: false,
         invites: [],
@@ -156,7 +159,7 @@ export class CampaignsController {
           {
             photographerId: "",
             reason:
-              "Only brand creative requirements can invite photographers.",
+              "Only campaigns configured for photographer invites can use this endpoint.",
           },
         ],
       };

@@ -7,6 +7,8 @@ import * as bcrypt from "bcryptjs";
 import * as fs from "fs";
 import * as path from "path";
 import { PlansService } from "./plans/plans.service";
+import { seedMissingLocationsFromConfig } from "./utils/location-seed.util";
+import { seedMissingWhatsAppCommunitiesFromConfig } from "./utils/whatsapp-community-config.util";
 
 export async function seedDatabase(section?: string) {
   // Load admin-config.json for visibility data
@@ -29,6 +31,9 @@ export async function seedDatabase(section?: string) {
   const SocialMediaModel = app.get<Model<any>>(getModelToken("SocialMedia"));
   const StateModel = app.get<Model<any>>(getModelToken("State"));
   const DistrictModel = app.get<Model<any>>(getModelToken("District"));
+  const WhatsAppCommunityModel = app.get<Model<any>>(
+    getModelToken("WhatsAppCommunity"),
+  );
   const UserModel = app.get<Model<any>>(getModelToken("User"));
   const InfluencerModel = app.get<Model<any>>(getModelToken("Influencer"));
   const BrandModel = app.get<Model<any>>(getModelToken("Brand"));
@@ -118,63 +123,17 @@ export async function seedDatabase(section?: string) {
     }
   }
   if (!section || section === "locations") {
-    // Seed all Indian states
-    if (adminConfig?.locations) {
-      for (const loc of adminConfig.locations) {
-        try {
-          let stateDoc = await StateModel.findOne({ name: loc.state });
-          if (!stateDoc) {
-            stateDoc = await StateModel.create({
-              name: loc.state,
-              showInFrontend: loc.visible,
-            });
-            console.log(`Inserted state: ${loc.state}`);
-          } else {
-            await StateModel.updateOne(
-              { name: loc.state },
-              { $set: { showInFrontend: loc.visible } },
-            );
-            console.log(`Updated state: ${loc.state}`);
-          }
-        } catch (err) {
-          console.error(`Error inserting/updating state ${loc.state}:`, err);
-        }
-      }
-    }
-    // Seed districts nested under states
-    if (adminConfig?.locations) {
-      for (const loc of adminConfig.locations) {
-        if (loc.districts) {
-          for (const dist of loc.districts) {
-            try {
-              let distDoc = await DistrictModel.findOne({
-                name: dist.name,
-                state: loc.state,
-              });
-              if (!distDoc) {
-                distDoc = await DistrictModel.create({
-                  name: dist.name,
-                  state: loc.state,
-                  showInFrontend: dist.visible,
-                });
-                console.log(`Inserted district: ${dist.name} (${loc.state})`);
-              } else {
-                await DistrictModel.updateOne(
-                  { name: dist.name, state: loc.state },
-                  { $set: { showInFrontend: dist.visible } },
-                );
-                console.log(`Updated district: ${dist.name} (${loc.state})`);
-              }
-            } catch (err) {
-              console.error(
-                `Error inserting/updating district ${dist.name}:`,
-                err,
-              );
-            }
-          }
-        }
-      }
-    }
+    const result = await seedMissingLocationsFromConfig(
+      StateModel,
+      DistrictModel,
+    );
+    console.log(
+      `Seeded missing locations: states=${result.statesCreated}, districts=${result.districtsCreated}`,
+    );
+  }
+  if (!section || section === "whatsappCommunities") {
+    await seedMissingWhatsAppCommunitiesFromConfig(WhatsAppCommunityModel);
+    console.log("Seeded missing WhatsApp communities from config");
   }
   if (!section || section === "tiers") {
     // Seed tiers with icon and count
