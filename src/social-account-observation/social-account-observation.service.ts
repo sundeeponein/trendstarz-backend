@@ -60,6 +60,8 @@ export interface SocialAccountObservationView {
       externalUrl: string;
       rawPlatformUpdatedAt: Date | null;
       capturedAt: Date;
+      /** 3D-1a: set when the follower count was cleared by the retention purge (not hidden by the platform). */
+      statisticsPurgedAt: Date | null;
     } | null;
   } | null;
 }
@@ -356,6 +358,7 @@ export function observationView(
                 externalUrl: String(doc.externalUrl ?? ""),
                 rawPlatformUpdatedAt: doc.rawPlatformUpdatedAt ?? null,
                 capturedAt: doc.capturedAt,
+                statisticsPurgedAt: doc.statisticsPurgedAt ?? null,
               }
             : null,
         }

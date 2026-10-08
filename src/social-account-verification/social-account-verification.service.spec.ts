@@ -287,6 +287,44 @@ describe("SocialAccountVerificationService (Stage 3A-1)", () => {
       });
     });
 
+    it("records the evidence basis on the decision and in the history (3D-1b)", async () => {
+      const { service, reviews } = setup();
+      const account = await service.decide(admin, {
+        ...base,
+        entry: instagram(),
+        reviewType: "tier",
+        body: { status: "verified", evidenceBasis: "manual_check" },
+      });
+      expect(account.tierVerification.evidenceBasis).toBe("manual_check");
+      expect(reviews[0].evidenceBasis).toBe("manual_check");
+    });
+
+    it("leaves the evidence basis unset when none is given (older callers)", async () => {
+      const { service, reviews } = setup();
+      const account = await service.decide(admin, {
+        ...base,
+        entry: instagram(),
+        reviewType: "tier",
+        body: { status: "verified" },
+      });
+      expect(account.tierVerification.evidenceBasis).toBeUndefined();
+      expect(reviews[0].evidenceBasis).toBeUndefined();
+    });
+
+    it("refuses an unknown evidence basis and writes nothing", async () => {
+      const { service, reviews, states } = setup();
+      await expect(
+        service.decide(admin, {
+          ...base,
+          entry: instagram(),
+          reviewType: "tier",
+          body: { status: "verified", evidenceBasis: "gut_feeling" },
+        }),
+      ).rejects.toThrow(/evidenceBasis must be/);
+      expect(reviews).toHaveLength(0);
+      expect(states).toHaveLength(0);
+    });
+
     it("keeps ownership and tier independent on the same account", async () => {
       const { service } = setup();
       await service.decide(admin, {

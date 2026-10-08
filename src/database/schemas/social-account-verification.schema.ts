@@ -35,6 +35,14 @@ export type SocialProfileType = (typeof SOCIAL_PROFILE_TYPES)[number];
 /** "manual" = explicit admin decision; "invalidated" = system reset after a handle/tier change. */
 export const SOCIAL_REVIEW_METHODS = ["manual", "invalidated"] as const;
 
+/**
+ * Stage 3D-1b — what an admin decision rested on: a usable platform observation
+ * (observed follower count) or a manual check (e.g. the admin opened the profile).
+ * Optional: decisions made before 3D-1b have none.
+ */
+export const SOCIAL_EVIDENCE_BASES = ["observed", "manual_check"] as const;
+export type SocialEvidenceBasis = (typeof SOCIAL_EVIDENCE_BASES)[number];
+
 const DecisionFields = {
   status: {
     type: String,
@@ -42,6 +50,7 @@ const DecisionFields = {
     default: "pending",
   },
   method: { type: String, enum: SOCIAL_REVIEW_METHODS },
+  evidenceBasis: { type: String, enum: SOCIAL_EVIDENCE_BASES },
   // Snapshot of what was actually reviewed (only one is used per review type).
   decidedHandle: { type: String },
   decidedTier: { type: String },
@@ -100,6 +109,7 @@ export const SocialAccountReviewSchema = new Schema(
       required: true,
     },
     method: { type: String, enum: SOCIAL_REVIEW_METHODS, required: true },
+    evidenceBasis: { type: String, enum: SOCIAL_EVIDENCE_BASES },
     decidedAt: { type: Date, required: true },
     decidedById: { type: String, default: "" },
     decidedByName: { type: String, default: "" },

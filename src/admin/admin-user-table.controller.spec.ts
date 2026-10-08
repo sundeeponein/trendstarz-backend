@@ -4,8 +4,15 @@ import { RolesGuard } from "../auth/roles.guard";
 
 // The deleted/active status filter used by the admin user tables (moved here
 // from AdminListsController). It doesn't touch `this`, so it's called directly.
-const applyAdminUserStatusFilter = (filter: Record<string, any>, status?: string) =>
-  (AdminUserTableController.prototype as any).applyAdminUserStatusFilter.call({}, filter, status);
+const applyAdminUserStatusFilter = (
+  filter: Record<string, any>,
+  status?: string,
+) =>
+  (AdminUserTableController.prototype as any).applyAdminUserStatusFilter.call(
+    {},
+    filter,
+    status,
+  );
 
 describe("AdminUserTableController status filter", () => {
   it("treats status=deleted as either soft-delete flag or deleted status", () => {
@@ -16,10 +23,7 @@ describe("AdminUserTableController status filter", () => {
     expect(filter).toEqual({
       $and: [
         {
-          $or: [
-            { isDeleted: { $in: [true, "true"] } },
-            { status: "deleted" },
-          ],
+          $or: [{ isDeleted: { $in: [true, "true"] } }, { status: "deleted" }],
         },
       ],
     });
@@ -925,5 +929,89 @@ describe("AdminUserTableController 'updated since review' filters", () => {
         Reflect.getMetadata("__guards__", AdminUserTableController),
       ).toEqual([JwtAuthGuard, RolesGuard]);
     });
+  });
+});
+
+describe("AdminUserTableController tier decision evidence basis (Stage 3D-1b)", () => {
+  const ID_A = "64b0000000000000000000a1";
+  const adminReq = { user: { role: "admin", userId: "admin-1" } };
+  const DAY = 24 * 60 * 60 * 1000;
+  // Constructor: influencer(0) … socialAccountVerification(9), socialAccountObservation(10), socialAccountComparison(11).
+  function setup(latest: any) {
+    const model = {
+      findById: jest.fn(() => ({
+        select: jest.fn(() => ({
+          lean: jest.fn().mockResolvedValue({
+            socialMedia: [
+              {
+                socialAccountId: ID_A,
+                platform: "YouTube",
+                handle: "yt",
+                tier: "Micro",
+              },
+            ],
+          }),
+        })),
+      })),
+    };
+    const verification = {
+      decide: jest.fn((_a: any, params: any) =>
+        Promise.resolve({ socialAccountId: params.entry.socialAccountId }),
+      ),
+    };
+    const comparison = {
+      compareAccount: jest.fn().mockResolvedValue({ observed: { latest } }),
+    };
+    const args: any[] = Array.from({ length: 12 }, () => ({}));
+    args[0] = model;
+    args[9] = verification;
+    args[11] = comparison;
+    const controller = new (AdminUserTableController as any)(...args);
+    return { controller, verification, comparison };
+  }
+  const decide = (controller: any, evidenceBasis: string) =>
+    controller.decideSocialTier(
+      "influencer",
+      "u1",
+      ID_A,
+      { status: "verified", evidenceBasis },
+      adminReq,
+    );
+
+  it("accepts 'observed' when a fresh observation has a follower count", async () => {
+    const { controller, verification } = setup({
+      observedFollowersCount: 5000,
+      capturedAt: new Date(Date.now() - 2 * DAY),
+    });
+    await decide(controller, "observed");
+    expect(verification.decide).toHaveBeenCalled();
+  });
+
+  it.each([
+    ["no observation", null],
+    [
+      "a hidden follower count",
+      { observedFollowersCount: null, capturedAt: new Date() },
+    ],
+    [
+      "an expired observation",
+      {
+        observedFollowersCount: 5000,
+        capturedAt: new Date(Date.now() - 120 * DAY),
+      },
+    ],
+  ])("refuses 'observed' with %s and decides nothing", async (_l, latest) => {
+    const { controller, verification } = setup(latest);
+    await expect(decide(controller, "observed")).rejects.toMatchObject({
+      status: 400,
+    });
+    expect(verification.decide).not.toHaveBeenCalled();
+  });
+
+  it("'manual_check' never needs an observation", async () => {
+    const { controller, verification, comparison } = setup(null);
+    await decide(controller, "manual_check");
+    expect(comparison.compareAccount).not.toHaveBeenCalled();
+    expect(verification.decide).toHaveBeenCalled();
   });
 });

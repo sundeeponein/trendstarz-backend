@@ -146,7 +146,7 @@ export type VerificationState =
   | "never_reviewed"
   | "changed_since_review";
 
-function verificationState(
+export function verificationState(
   view: ReturnType<typeof effectiveDecision>,
 ): VerificationState {
   if (view.status === "verified") return "verified";

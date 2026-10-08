@@ -8,6 +8,7 @@ import {
 import { InjectModel } from "@nestjs/mongoose";
 import { Model } from "mongoose";
 import {
+  SOCIAL_EVIDENCE_BASES,
   SocialProfileType,
   SocialReviewType,
   SocialVerificationStatus,
@@ -43,11 +44,14 @@ export interface SocialDecisionBody {
   /** Precondition only: the handle/tier the admin was looking at. Never stored. */
   expectedHandle?: unknown;
   expectedTier?: unknown;
+  /** Stage 3D-1b: "observed" | "manual_check" (optional). */
+  evidenceBasis?: unknown;
 }
 
 export interface SocialDecisionView {
   status: SocialVerificationStatus;
   method?: string;
+  evidenceBasis?: string;
   decidedHandle?: string;
   decidedTier?: string;
   decidedAt?: Date;
@@ -98,6 +102,7 @@ function decisionSnapshot(decision: any): Record<string, any> {
   for (const key of [
     "status",
     "method",
+    "evidenceBasis",
     "decidedHandle",
     "decidedTier",
     "decidedAt",
@@ -193,6 +198,15 @@ export class SocialAccountVerificationService {
       throw new BadRequestException("note must be text");
     }
     const note = typeof body.note === "string" ? body.note.trim() : "";
+    const evidenceBasis = body.evidenceBasis ?? undefined;
+    if (
+      evidenceBasis !== undefined &&
+      !(SOCIAL_EVIDENCE_BASES as readonly unknown[]).includes(evidenceBasis)
+    ) {
+      throw new BadRequestException(
+        'evidenceBasis must be "observed" or "manual_check"',
+      );
+    }
     if (note.length > NOTE_MAX_LENGTH) {
       throw new BadRequestException(
         `note must be at most ${NOTE_MAX_LENGTH} characters`,
@@ -233,6 +247,7 @@ export class SocialAccountVerificationService {
     const decision: Record<string, any> = {
       status,
       method: "manual",
+      ...(evidenceBasis ? { evidenceBasis } : {}),
       decidedAt: now,
       decidedById,
       decidedByName,
@@ -266,6 +281,7 @@ export class SocialAccountVerificationService {
       previousStatus,
       newStatus: status,
       method: "manual",
+      ...(evidenceBasis ? { evidenceBasis } : {}),
       decidedAt: now,
       decidedById,
       decidedByName,

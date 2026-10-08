@@ -40,6 +40,7 @@ import {
   applyApprovedEligibilityFilter,
 } from "../utils/profile-eligibility.util";
 import { PROFILE_PHOTO_SAFETY_FLAG_CODES } from "../profile-verification/profile-verification.service";
+import { observationFreshness } from "../matching-evidence/evidence-quality.analysis";
 
 @Controller("admin")
 @UseGuards(JwtAuthGuard, RolesGuard)
@@ -1815,6 +1816,25 @@ export class AdminUserTableController {
       id,
       socialAccountId,
     );
+    // Stage 3D-1b: "observed" is only true when there is a usable observation
+    // (fresh or stale, with a follower count) for this exact account.
+    if (body?.evidenceBasis === "observed") {
+      const cmp = await this.socialAccountComparison.compareAccount(
+        profileType,
+        String(id),
+        entry,
+      );
+      const latest = cmp.observed.latest;
+      const freshness = observationFreshness(latest?.capturedAt, new Date());
+      if (
+        latest?.observedFollowersCount == null ||
+        (freshness !== "fresh" && freshness !== "stale")
+      ) {
+        throw new BadRequestException(
+          'There is no usable observation for this account — use "manual_check".',
+        );
+      }
+    }
     const account = await this.socialAccountVerification.decide(req?.user, {
       profileType,
       profileId: String(id),
