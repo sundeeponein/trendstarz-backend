@@ -2918,6 +2918,11 @@ describe("latestOpenPostingDeadline (auto-close guard)", () => {
           ),
         ),
     };
+    service.appSettingsModel = {
+      findOne: () => ({
+        lean: () => Promise.resolve({ campaignAutoCloseGraceHours: 24 }),
+      }),
+    };
     return service as CampaignInvitesService;
   };
 

@@ -74,6 +74,7 @@ describe("CampaignCorrectionsService", () => {
       photographer: {},
     };
     invitesService = {
+      getPaidSubmitGraceHours: jest.fn().mockResolvedValue(48),
       submitPost: jest.fn().mockResolvedValue({ success: true }),
       expireUnsubmittedInvite: jest
         .fn()

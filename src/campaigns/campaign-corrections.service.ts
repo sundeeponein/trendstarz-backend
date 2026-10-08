@@ -11,7 +11,6 @@ import { PushService } from "../push/push.service";
 import { NotificationsService } from "../notifications/notifications.service";
 import {
   MAX_ADMIN_EXTENSION_DAYS,
-  SUBMIT_HOURS_AFTER_PAYMENT,
   campaignEndsAt,
   endOfIstDay,
   submissionWindow,
@@ -29,6 +28,8 @@ import {
  */
 
 const HOUR_MS = 60 * 60 * 1000;
+/** A restored creator gets the admin grace from now — or this, when the grace is 0/empty. */
+const RESTORE_FALLBACK_HOURS = 24;
 const DAY_MS = 24 * HOUR_MS;
 
 /** Withdrawals an admin may undo: system expiry and admin cancellation. Not the host's or a dispute decision. */
@@ -244,7 +245,7 @@ export class CampaignCorrectionsService {
     return ok();
   }
 
-  checkSubmitOnBehalf(invite: any, campaign: any): ActionCheck {
+  checkSubmitOnBehalf(invite: any, campaign: any, graceHours = 0): ActionCheck {
     if (!OPEN_WORK.includes(invite.status)) {
       return no("Only accepted work that has not been submitted yet.");
     }
@@ -256,7 +257,11 @@ export class CampaignCorrectionsService {
         "The campaign is not active — extend/reopen its end date first.",
       );
     }
-    const window = submissionWindow(invite, campaign?.postingDeadlineMode);
+    const window = submissionWindow(
+      invite,
+      campaign?.postingDeadlineMode,
+      graceHours,
+    );
     if (window && Date.now() > window.closesAt.getTime()) {
       return no(
         "The submission window has closed — extend the deadline first.",
@@ -287,6 +292,7 @@ export class CampaignCorrectionsService {
   async getCorrections(campaignId: string) {
     const campaign: any = await this.campaignModel.findById(campaignId).lean();
     if (!campaign) throw new NotFoundException("Campaign not found");
+    const graceHours = await this.invitesService.getPaidSubmitGraceHours();
 
     const invites: any[] = await this.inviteModel
       .find({
@@ -338,7 +344,11 @@ export class CampaignCorrectionsService {
     for (const invite of invites) {
       const itxs = txByInvite.get(String(invite._id)) || [];
       const tx = itxs[0] || null;
-      const window = submissionWindow(invite, campaign.postingDeadlineMode);
+      const window = submissionWindow(
+        invite,
+        campaign.postingDeadlineMode,
+        graceHours,
+      );
       const withdrawal =
         invite.status === "withdrawn"
           ? await this.withdrawalInfo(invite)
@@ -368,7 +378,11 @@ export class CampaignCorrectionsService {
         actions: {
           restore: await this.checkRestore(invite, campaign, itxs),
           extendDeadline: this.checkExtendDeadline(invite, campaign),
-          submitOnBehalf: this.checkSubmitOnBehalf(invite, campaign),
+          submitOnBehalf: this.checkSubmitOnBehalf(
+            invite,
+            campaign,
+            graceHours,
+          ),
           cancel: this.checkCancel(invite, itxs),
         },
       });
@@ -391,7 +405,7 @@ export class CampaignCorrectionsService {
       },
       actions: { extendEndDate: this.checkExtendEndDate(campaign) },
       rules: {
-        submitHoursAfterPayment: SUBMIT_HOURS_AFTER_PAYMENT,
+        graceHours,
         maxExtensionDays: MAX_ADMIN_EXTENSION_DAYS,
       },
       invites: rows,
@@ -493,9 +507,14 @@ export class CampaignCorrectionsService {
     // A restored creator always gets a real window to submit.
     let extendedTo: Date | null = null;
     if (invite.selectedPostDate) {
-      const window = submissionWindow(invite, campaign.postingDeadlineMode);
+      const graceHours = await this.invitesService.getPaidSubmitGraceHours();
+      const window = submissionWindow(
+        invite,
+        campaign.postingDeadlineMode,
+        graceHours,
+      );
       const minimum = new Date(
-        now.getTime() + SUBMIT_HOURS_AFTER_PAYMENT * HOUR_MS,
+        now.getTime() + (graceHours || RESTORE_FALLBACK_HOURS) * HOUR_MS,
       );
       if (!window || window.closesAt.getTime() < minimum.getTime()) {
         invite.submissionDeadlineExtendedTo = minimum;
@@ -572,7 +591,11 @@ export class CampaignCorrectionsService {
         `A deadline can be extended by at most ${MAX_ADMIN_EXTENSION_DAYS} days from now.`,
       );
     }
-    const current = submissionWindow(invite, campaign.postingDeadlineMode);
+    const current = submissionWindow(
+      invite,
+      campaign.postingDeadlineMode,
+      await this.invitesService.getPaidSubmitGraceHours(),
+    );
     if (current && until.getTime() <= current.closesAt.getTime()) {
       throw new BadRequestException(
         `The new deadline must be later than the current one (${current.closesAt.toISOString()}).`,
@@ -611,7 +634,11 @@ export class CampaignCorrectionsService {
     }
     const invite = await this.loadInvite(inviteId);
     const campaign = await this.loadCampaign(invite.campaignId);
-    const check = this.checkSubmitOnBehalf(invite, campaign);
+    const check = this.checkSubmitOnBehalf(
+      invite,
+      campaign,
+      await this.invitesService.getPaidSubmitGraceHours(),
+    );
     if (!check.allowed) throw new BadRequestException(check.why);
 
     const result = await this.invitesService.submitPost(

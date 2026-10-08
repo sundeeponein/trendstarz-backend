@@ -276,7 +276,7 @@ export class AdminListsController {
       campaignAutoCloseGraceHours:
         typeof timing.campaignAutoCloseGraceHours === "number"
           ? timing.campaignAutoCloseGraceHours
-          : 48,
+          : 24,
     };
   }
 

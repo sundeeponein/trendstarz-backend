@@ -129,8 +129,8 @@ export class CampaignsService {
 
   private async getCampaignAutoCloseGraceHours(): Promise<number> {
     const settings: any = await this.appSettingsModel.findOne({}).lean();
-    const hours = Number(settings?.campaignAutoCloseGraceHours ?? 48);
-    return Number.isFinite(hours) && hours >= 0 ? hours : 48;
+    const hours = Number(settings?.campaignAutoCloseGraceHours ?? 24);
+    return Number.isFinite(hours) && hours >= 0 ? hours : 24;
   }
 
   async autoCompleteExpiredCampaigns() {

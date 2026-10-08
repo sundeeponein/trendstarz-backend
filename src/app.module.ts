@@ -223,7 +223,6 @@ import { PlatformMetricsModule } from "./platform-metrics/platform-metrics.modul
     AdminUserTableController,
     DashboardController,
     SitemapController,
-    // SeedController,
   ],
   providers: [
     AppService,

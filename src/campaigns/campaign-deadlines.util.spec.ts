@@ -2,6 +2,7 @@ import {
   campaignEndsAt,
   endOfIstDay,
   submissionWindow,
+  graceHoursFromSettings,
 } from "./campaign-deadlines.util";
 
 const iso = (d: Date | null | undefined) => d?.toISOString();
@@ -63,7 +64,7 @@ describe("campaign deadlines", () => {
       expect(iso(w.closesAt)).toBe("2026-10-08T00:00:00.000Z");
     });
 
-    it("paid on the last day with an earlier post date: still 48h from payment, not late", () => {
+    it("paid on the last day with an earlier post date: admin grace from payment, not late", () => {
       const paid = "2026-10-06T15:00:00.000Z";
       for (const mode of ["grace_24h", "strict"]) {
         const w = submissionWindow(
@@ -72,10 +73,45 @@ describe("campaign deadlines", () => {
             paymentConfirmedAt: paid,
           },
           mode,
+          48,
         )!;
         expect(iso(w.closesAt)).toBe("2026-10-08T15:00:00.000Z");
         expect(iso(w.strictDeadline)).toBe("2026-10-08T15:00:00.000Z");
       }
+    });
+
+    it("campaign 7–10 Oct, user paid 10 Oct 15:00 IST: the admin grace decides (24h/12h/30h/empty)", () => {
+      const invite = {
+        selectedPostDate: "2026-10-07T00:00:00.000Z",
+        paymentConfirmedAt: "2026-10-10T09:30:00.000Z", // 15:00 IST
+      };
+      const closes = (hours: number) =>
+        iso(submissionWindow(invite, "grace_24h", hours)!.closesAt);
+      expect(closes(24)).toBe("2026-10-11T09:30:00.000Z"); // 11 Oct 15:00 IST
+      expect(closes(12)).toBe("2026-10-10T21:30:00.000Z"); // 11 Oct 03:00 IST
+      expect(closes(30)).toBe("2026-10-11T15:30:00.000Z"); // 11 Oct 21:00 IST
+      // Empty/0: no extra time after payment — the post-date window alone (already over).
+      expect(closes(0)).toBe("2026-10-09T00:00:00.000Z");
+    });
+
+    it("grace from settings: missing → 24, empty/0/null → none", () => {
+      expect(graceHoursFromSettings({})).toBe(24);
+      expect(graceHoursFromSettings(null)).toBe(24);
+      expect(graceHoursFromSettings({ campaignAutoCloseGraceHours: 30 })).toBe(
+        30,
+      );
+      expect(graceHoursFromSettings({ campaignAutoCloseGraceHours: 12 })).toBe(
+        12,
+      );
+      expect(graceHoursFromSettings({ campaignAutoCloseGraceHours: 0 })).toBe(
+        0,
+      );
+      expect(
+        graceHoursFromSettings({ campaignAutoCloseGraceHours: null }),
+      ).toBe(0);
+      expect(graceHoursFromSettings({ campaignAutoCloseGraceHours: "" })).toBe(
+        0,
+      );
     });
 
     it("an admin extension only ever lengthens the window", () => {

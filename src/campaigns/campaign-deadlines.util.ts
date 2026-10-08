@@ -6,16 +6,25 @@
  * - A campaign's end date is a calendar date: it ends at the END of that day in
  *   India time (end dates are stored as midnight UTC of the date, i.e. 05:30 IST).
  * - A creator's submission window runs from their chosen post date (+24h, plus
- *   24h grace unless the campaign is "strict"). It is never shorter than
- *   SUBMIT_HOURS_AFTER_PAYMENT after their payment was confirmed, and an admin
- *   can extend it further (submissionDeadlineExtendedTo).
+ *   24h grace unless the campaign is "strict"). It is never shorter than the
+ *   admin grace period (settings.campaignAutoCloseGraceHours) after their payment
+ *   was confirmed — 0/empty means no such minimum — and an admin can extend it
+ *   further (submissionDeadlineExtendedTo).
  */
 
 const HOUR_MS = 60 * 60 * 1000;
 const IST_OFFSET_MS = (5 * 60 + 30) * 60 * 1000;
 
-/** A creator always gets at least this long to submit after their payment is confirmed. */
-export const SUBMIT_HOURS_AFTER_PAYMENT = 48;
+/** Admin grace setting when it was never saved (same default as the settings page). */
+export const DEFAULT_GRACE_HOURS = 24;
+
+/** The admin grace period in hours from app settings; 0 when set to 0/empty. */
+export function graceHoursFromSettings(settings: any): number {
+  const raw = settings?.campaignAutoCloseGraceHours;
+  if (raw === undefined) return DEFAULT_GRACE_HOURS;
+  const hours = Number(raw ?? 0);
+  return Number.isFinite(hours) && hours > 0 ? hours : 0;
+}
 
 /** Most an admin can extend one creator's submission deadline, from now. */
 export const MAX_ADMIN_EXTENSION_DAYS = 7;
@@ -68,6 +77,8 @@ export function submissionWindow(
     submissionDeadlineExtendedTo?: unknown;
   },
   postingDeadlineMode?: string,
+  /** Admin grace hours: the minimum time to submit after payment (0 = none). */
+  paidGraceHours = 0,
 ): SubmissionWindow | null {
   const postDate = toTime(invite?.selectedPostDate);
   if (postDate === null) return null;
@@ -78,9 +89,11 @@ export function submissionWindow(
 
   const paidAt = toTime(invite?.paymentConfirmedAt);
   const paidCloses =
-    paidAt === null ? null : paidAt + SUBMIT_HOURS_AFTER_PAYMENT * HOUR_MS;
+    paidAt === null || !(paidGraceHours > 0)
+      ? null
+      : paidAt + paidGraceHours * HOUR_MS;
 
-  // Paid late (e.g. on the campaign's last day): the 48h from payment is on time, not late.
+  // Paid late (e.g. on the campaign's last day): the grace from payment is on time, not late.
   const strictDeadline = Math.max(postStrict, paidCloses ?? postStrict);
   let closesAt = Math.max(postCloses, paidCloses ?? postCloses);
 

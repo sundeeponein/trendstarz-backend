@@ -4,7 +4,10 @@ import {
   NotFoundException,
   Logger,
 } from "@nestjs/common";
-import { submissionWindow } from "./campaign-deadlines.util";
+import {
+  graceHoursFromSettings,
+  submissionWindow,
+} from "./campaign-deadlines.util";
 import { meetsMinimumTier, resolveTier } from "../utils/tier-ranges.util";
 import { Cron, CronExpression } from "@nestjs/schedule";
 import { InjectModel } from "@nestjs/mongoose";
@@ -224,6 +227,12 @@ export class CampaignInvitesService {
         `invite_viewed recording failed: ${err?.message || err}`,
       );
     });
+  }
+
+  /** Admin grace period (hours): a creator paid late still gets this long to submit; 0 = none. */
+  async getPaidSubmitGraceHours(): Promise<number> {
+    const settings: any = await this.appSettingsModel.findOne({}).lean();
+    return graceHoursFromSettings(settings);
   }
 
   private async getSubmissionApprovalWaitHours(): Promise<number> {
@@ -1339,15 +1348,20 @@ export class CampaignInvitesService {
   /**
    * Single source of truth for the late-submission grace window — see
    * submissionWindow (campaign-deadlines.util): post date + 24h (+24h grace unless
-   * strict), never less than 48h after payment, plus any admin extension. Callers
-   * only call this when the invite has a selectedPostDate.
+   * strict), never less than the admin grace (paidGraceHours) after payment, plus
+   * any admin extension. Callers only call this when the invite has a selectedPostDate.
    */
   computeGraceDeadline(
     invite: any,
     campaign: any,
+    paidGraceHours = 0,
   ): { isLate: boolean; daysLate: number; closesAt: Date } {
     const ONE_DAY_MS = 24 * 60 * 60 * 1000;
-    const window = submissionWindow(invite, campaign?.postingDeadlineMode);
+    const window = submissionWindow(
+      invite,
+      campaign?.postingDeadlineMode,
+      paidGraceHours,
+    );
     if (!window) {
       // No post date → no deadline (callers check selectedPostDate first).
       return { isLate: false, daysLate: 0, closesAt: new Date(8.64e15) };
@@ -1371,7 +1385,7 @@ export class CampaignInvitesService {
    */
   async latestOpenPostingDeadline(campaignId: unknown): Promise<Date | null> {
     const id = String(campaignId);
-    const [campaign, invites] = await Promise.all([
+    const [campaign, invites, graceHours] = await Promise.all([
       this.campaignModel.findById(id).select("postingDeadlineMode").lean(),
       this.inviteModel
         .find({
@@ -1383,10 +1397,15 @@ export class CampaignInvitesService {
           "selectedPostDate paymentConfirmedAt submissionDeadlineExtendedTo",
         )
         .lean(),
+      this.getPaidSubmitGraceHours(),
     ]);
     let latest: number | null = null;
     for (const invite of (invites as any[]) || []) {
-      const closesAt = this.computeGraceDeadline(invite, campaign).closesAt;
+      const closesAt = this.computeGraceDeadline(
+        invite,
+        campaign,
+        graceHours,
+      ).closesAt;
       const t = closesAt.getTime();
       if (Number.isFinite(t) && (latest === null || t > latest)) latest = t;
     }
@@ -3491,7 +3510,11 @@ export class CampaignInvitesService {
     // blocked entirely once the window (strict or grace) has fully passed.
     let lateInfo = { isLate: false, daysLate: 0 };
     if (invite.selectedPostDate) {
-      const deadline = this.computeGraceDeadline(invite, campaign);
+      const deadline = this.computeGraceDeadline(
+        invite,
+        campaign,
+        await this.getPaidSubmitGraceHours(),
+      );
       if (Date.now() > deadline.closesAt.getTime()) {
         throw new BadRequestException("Submission window has closed.");
       }
@@ -4702,6 +4725,9 @@ export class CampaignInvitesService {
       })
       .select("_id campaignId")
       .lean();
+    const graceHours = candidates.length
+      ? await this.getPaidSubmitGraceHours()
+      : 0;
 
     let autoExpiredCount = 0;
     for (const candidate of candidates) {
@@ -4719,7 +4745,7 @@ export class CampaignInvitesService {
         .select("postingDeadlineMode")
         .lean();
       if (!campaign) continue;
-      const deadline = this.computeGraceDeadline(invite, campaign);
+      const deadline = this.computeGraceDeadline(invite, campaign, graceHours);
       if (Date.now() <= deadline.closesAt.getTime()) continue;
 
       await this.expireUnsubmittedInvite(

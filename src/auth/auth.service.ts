@@ -1,3 +1,4 @@
+import { graceHoursFromSettings } from "../campaigns/campaign-deadlines.util";
 import {
   Injectable,
   UnauthorizedException,
@@ -2440,6 +2441,8 @@ export class AuthService {
       submissionAutoCompleteGraceHours:
         settings?.submissionAutoCompleteGraceHours ?? 48,
       payoutReleaseWaitHours: settings?.payoutReleaseWaitHours ?? 24,
+      // Admin grace: also the minimum time a creator paid late gets to submit (0 = none).
+      campaignAutoCloseGraceHours: graceHoursFromSettings(settings),
       minCampaignStartDays: settings?.minCampaignStartDays ?? 3,
       maxCampaignDurationDays: settings?.maxCampaignDurationDays ?? 15,
       otpVerificationEnabled: !!settings?.otpVerificationEnabled,
