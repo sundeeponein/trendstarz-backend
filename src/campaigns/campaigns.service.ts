@@ -1812,7 +1812,7 @@ export class CampaignsService {
     const ownerName = owner.brandName || owner.name || "there";
     const dashboardPath = isPhotographerOwner
       ? "/photographer-dashboard"
-      : "/campaign-management";
+      : "/campaigns";
     const frontendBase = (
       process.env.FRONTEND_URL || "https://trendstarz.in"
     ).replace(/\/$/, "");
@@ -1967,7 +1967,7 @@ export class CampaignsService {
       : this.influencerModel;
     const dashboardPath = isPhotographer
       ? "/photographer-dashboard"
-      : "/influencer-dashboard/campaigns";
+      : "/campaigns";
 
     const candidates: any[] = await recipientModel
       .find(baseQuery)

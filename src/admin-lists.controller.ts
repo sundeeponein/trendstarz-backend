@@ -1176,7 +1176,7 @@ export class AdminListsController {
         ? renderOwnerApprovedMessage({
             ownerName,
             campaignTitle: fields.campaignTitle,
-            campaignUrl: `${frontendBase}/campaign-management`,
+            campaignUrl: `${frontendBase}/campaigns`,
           })
         : null,
       ownerPhone,
@@ -1238,7 +1238,7 @@ export class AdminListsController {
         (recipient as any)?.name ||
         `A ${isPhotographerRecipient ? "photographer" : "influencer"}`,
       campaignTitle: (campaign as any)?.title || "your campaign",
-      campaignUrl: `${frontendBase}/campaign-management`,
+      campaignUrl: `${frontendBase}/campaigns`,
     };
 
     const status = String((invite as any).status || "");

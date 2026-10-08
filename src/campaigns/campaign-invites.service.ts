@@ -1756,9 +1756,21 @@ export class CampaignInvitesService {
     return invite ?? null;
   }
 
-  async findOneWithCampaign(inviteId: string) {
+  async findOneWithCampaign(
+    inviteId: string,
+    viewer: { id: string; role: string },
+  ) {
     const invite = (await this.inviteModel.findById(inviteId).lean()) as any;
     if (!invite) throw new NotFoundException("Invite not found");
+    // Only the invited creator, the campaign owner or an admin. Anyone else gets the
+    // same "not found" as a missing invite, so ids can't be probed.
+    const role = viewer.role.toLowerCase();
+    const isParty =
+      !!viewer.id &&
+      [String(invite.influencerId), String(invite.brandId)].includes(viewer.id);
+    if (!isParty && role !== "admin" && role !== "subadmin") {
+      throw new NotFoundException("Invite not found");
+    }
     const txQuery: any = {
       $or: [{ inviteId: String(invite._id) }, { inviteId: invite._id }],
     };
@@ -2137,7 +2149,7 @@ export class CampaignInvitesService {
           const dashboardPath =
             recipientRole === "photographer"
               ? "/photographer-dashboard"
-              : "/influencer-dashboard/campaigns";
+              : "/campaigns";
           const postDateLabel = formatCampaignDateLabel(
             (invite as any).selectedPostDate,
           );
@@ -2895,7 +2907,7 @@ export class CampaignInvitesService {
                   ownerName: sender.name,
                   recipientName: recipient?.name || `A ${recipientRole}`,
                   campaignTitle: campaign?.title || "your campaign",
-                  campaignUrl: `${frontendBase}/campaign-management`,
+                  campaignUrl: `${frontendBase}/campaigns`,
                 }),
               },
             )
@@ -2921,7 +2933,7 @@ export class CampaignInvitesService {
             {
               title: "Counter offer received",
               body: `Recipient requested ₹${requested.toLocaleString("en-IN")} for ${selectedLabel}.`,
-              url: "/campaign-management",
+              url: "/campaigns",
             },
             "campaign",
           )
@@ -2934,7 +2946,7 @@ export class CampaignInvitesService {
             userRole: sender.role,
             title: "Counter offer received",
             body: `Recipient requested ₹${requested.toLocaleString("en-IN")} for ${selectedLabel}.`,
-            url: "/campaign-management",
+            url: "/campaigns",
           })
           .catch(() => {
             /* non-critical */
@@ -3028,7 +3040,7 @@ export class CampaignInvitesService {
             body: msg,
             url:
               recipientRole === "photographer"
-                ? "/campaign-management"
+                ? "/campaigns"
                 : "/influencer-dashboard",
           },
           "campaign",
@@ -3044,7 +3056,7 @@ export class CampaignInvitesService {
           body: msg,
           url:
             recipientRole === "photographer"
-              ? "/campaign-management"
+              ? "/campaigns"
               : "/influencer-dashboard",
         })
         .catch(() => {
@@ -3161,7 +3173,7 @@ export class CampaignInvitesService {
           body,
           url:
             recipientRole === "photographer"
-              ? "/campaign-management"
+              ? "/campaigns"
               : "/influencer-dashboard",
         },
         "campaign",
@@ -3177,7 +3189,7 @@ export class CampaignInvitesService {
         body,
         url:
           recipientRole === "photographer"
-            ? "/campaign-management"
+            ? "/campaigns"
             : "/influencer-dashboard",
       })
       .catch(() => {
@@ -3399,7 +3411,7 @@ export class CampaignInvitesService {
         userRole: "brand",
         title: "New Campaign Application",
         body: `${(influencer as any).fullName || "An influencer"} applied to your campaign "${campaign.title}".`,
-        url: "/campaign-management",
+        url: "/campaigns",
       })
       .catch(() => {
         /* non-critical */
@@ -3699,7 +3711,7 @@ export class CampaignInvitesService {
         {
           title: "Post Submitted",
           body: "An influencer submitted content for your review.",
-          url: "/campaign-management",
+          url: "/campaigns",
         },
         "campaign",
       )
@@ -3712,7 +3724,7 @@ export class CampaignInvitesService {
         userRole: submissionOwner.role,
         title: "Post Submitted",
         body: "An influencer submitted content for your review.",
-        url: "/campaign-management",
+        url: "/campaigns",
       })
       .catch(() => {
         /* non-critical */
@@ -3738,7 +3750,7 @@ export class CampaignInvitesService {
                 ownerName: submissionOwner.name,
                 recipientName: recipient?.name || `A ${submitterRole}`,
                 campaignTitle: submittedCampaign?.title || "your campaign",
-                campaignUrl: `${frontendBase}/campaign-management`,
+                campaignUrl: `${frontendBase}/campaigns`,
               }),
             },
           );

@@ -1490,7 +1490,7 @@ export class PaymentsPayoutsService {
         .sendToUser(String(tx.payerId), {
           title: "Payment Verified",
           body: "Your campaign payment is verified and influencers can now start work.",
-          url: "/campaign-management",
+          url: "/campaigns",
         }, 'payment')
         .catch(() => {
           /* non-critical */
@@ -1501,7 +1501,7 @@ export class PaymentsPayoutsService {
           userRole: "brand",
           title: "Payment Verified",
           body: "Your campaign payment is verified and influencers can now start work.",
-          url: "/campaign-management",
+          url: "/campaigns",
         })
         .catch(() => {
           /* non-critical */

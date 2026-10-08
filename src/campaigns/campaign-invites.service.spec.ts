@@ -3028,3 +3028,50 @@ describe("getBrandAttentionCounts (brand dashboard banner)", () => {
     expect(queries(service)).toHaveLength(3);
   });
 });
+describe("findOneWithCampaign — who can read an invite", () => {
+  const make = () => {
+    const service: any = Object.create(CampaignInvitesService.prototype);
+    const lean = (v: any) => ({ lean: () => Promise.resolve(v) });
+    service.inviteModel = {
+      findById: () =>
+        lean({
+          _id: "inv1",
+          influencerId: "creator1",
+          brandId: "host1",
+          campaignId: "c1",
+          status: "working",
+        }),
+    };
+    service.campaignTransactionModel = {
+      findOne: () => ({ select: () => ({ sort: () => lean(null) }) }),
+    };
+    service.campaignModel = {
+      findById: () => ({ select: () => lean({ title: "Camp" }) }),
+    };
+    return service as CampaignInvitesService;
+  };
+
+  it.each([
+    ["the invited creator", { id: "creator1", role: "influencer" }],
+    ["the campaign owner (host)", { id: "host1", role: "brand" }],
+    ["an admin", { id: "someone", role: "admin" }],
+    ["a subadmin", { id: "someone", role: "subadmin" }],
+  ])("%s can read it", async (_label, viewer) => {
+    const res: any = await make().findOneWithCampaign("inv1", viewer);
+    expect(res.invite._id).toBe("inv1");
+    expect(res.campaign.title).toBe("Camp");
+  });
+
+  it.each([
+    ["another creator", { id: "creator2", role: "influencer" }],
+    ["another brand", { id: "host2", role: "brand" }],
+    ["a viewer with no id", { id: "", role: "influencer" }],
+  ])(
+    "%s gets 'not found' (same as a missing invite)",
+    async (_label, viewer) => {
+      await expect(make().findOneWithCampaign("inv1", viewer)).rejects.toThrow(
+        "Invite not found",
+      );
+    },
+  );
+});

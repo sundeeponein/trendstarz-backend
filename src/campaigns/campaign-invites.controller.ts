@@ -147,11 +147,17 @@ export class CampaignInvitesController {
     );
   }
 
-  /** GET /campaign-invites/:id — get a single invite with campaign platform/deliverable info */
+  /**
+   * GET /campaign-invites/:id — a single invite with campaign platform/deliverable info.
+   * Only the invited creator, the campaign owner (host) or an admin can read it.
+   */
   @UseGuards(JwtAuthGuard)
   @Get(":id")
   async findOne(@Param("id") id: string, @Req() req: any) {
-    return this.invitesService.findOneWithCampaign(id);
+    return this.invitesService.findOneWithCampaign(id, {
+      id: this.requesterId(req),
+      role: String(req?.user?.role || ""),
+    });
   }
 
   /**
