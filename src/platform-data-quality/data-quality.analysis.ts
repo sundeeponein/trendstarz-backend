@@ -3,6 +3,7 @@ import {
   PLATFORM_EVENT_COVERAGE,
   TrackingCohort,
   cohortStart,
+  cohortStartOrNull,
 } from "../platform-events/platform-event-coverage";
 import { PLATFORM_EVENT_TYPES } from "../platform-events/platform-event-types";
 import { CollectedData, InviteTimeline } from "./data-quality.types";
@@ -27,6 +28,7 @@ const INVITE_SCOPED_EVENTS = new Set([
   "invite_declined",
   "invite_withdrawn",
   "counter_offer_sent",
+  "counter_offer_declined",
   "work_started",
   "content_submitted",
   "content_approved",
@@ -56,7 +58,7 @@ function describeCohort(cohort: TrackingCohort) {
   return {
     startsAt: cohortStart(cohort).toISOString(),
     deployedAt: iso(cohort.deployedAt),
-    observedFirstEventAt: cohort.observedFirstEventAt.toISOString(),
+    observedFirstEventAt: iso(cohort.observedFirstEventAt),
     cohortConfidence: cohort.confidence,
     evidence: cohort.evidence,
   };
@@ -117,7 +119,8 @@ export function buildDataQualityReport(data: CollectedData) {
     const observed = typeRows.get(eventType);
     return {
       eventType,
-      liveAvailableFrom: cohort ? cohortStart(cohort).toISOString() : null,
+      // null while the cohort is not yet deployed (e.g. a new event before release).
+      liveAvailableFrom: cohort ? iso(cohortStartOrNull(cohort)) : null,
       cohortConfidence: cohort ? cohort.confidence : null,
       backfillable: cov.backfillable,
       backfillSource: cov.backfillSource,
@@ -602,9 +605,13 @@ export function buildDataQualityReport(data: CollectedData) {
     );
   }
   for (const [key, cohort] of Object.entries(PLATFORM_EVENT_COHORTS)) {
-    if (cohort.confidence !== "confirmed_deployment") {
+    if (cohort.confidence === "not_yet_deployed") {
       warnings.push(
-        `${key} boundary is an observed first event (${cohort.observedFirstEventAt.toISOString()}), not a confirmed deployment time.`,
+        `${key} is not live yet — set its deployedAt from the deployment log after release.`,
+      );
+    } else if (cohort.confidence !== "confirmed_deployment") {
+      warnings.push(
+        `${key} boundary is an observed first event (${iso(cohort.observedFirstEventAt)}), not a confirmed deployment time.`,
       );
     }
   }

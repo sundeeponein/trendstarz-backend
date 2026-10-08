@@ -110,7 +110,7 @@ describe("Stage 2A data-quality analysis", () => {
 
     it("never has a deployment later than the first observed event", () => {
       for (const c of Object.values(PLATFORM_EVENT_COHORTS)) {
-        if (c.deployedAt)
+        if (c.deployedAt && c.observedFirstEventAt)
           expect(c.deployedAt.getTime()).toBeLessThanOrEqual(
             c.observedFirstEventAt.getTime(),
           );

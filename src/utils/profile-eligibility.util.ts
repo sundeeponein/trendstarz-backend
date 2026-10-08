@@ -380,6 +380,10 @@ export function buildSearchRankingStages(
   viewer: ViewerLocationContext,
   options: SearchRankingOptions,
 ): any[] {
+  // Response rate = accepted / (accepted + declined), where "accepted" is every status an
+  // invite reaches after the creator accepted it. Counting only the literal "accepted"
+  // status (before Stage 3D-1c) dropped invites that had progressed (paid, working,
+  // submitted, done, disputed), so creators who completed campaigns looked unresponsive.
   const acceptedStatuses = [
     "accepted",
     "payment_confirmed",
@@ -387,8 +391,9 @@ export function buildSearchRankingStages(
     "submitted",
     "completed",
     "approved",
+    "disputed",
   ];
-  const responseStatuses = ["accepted", "declined"];
+  const responseStatuses = [...acceptedStatuses, "declined"];
   const activityDateExpr = {
     $ifNull: [
       "$lastLoginAt",
@@ -441,7 +446,7 @@ export function buildSearchRankingStages(
               total: { $sum: 1 },
               accepted: {
                 $sum: {
-                  $cond: [{ $eq: ["$status", "accepted"] }, 1, 0],
+                  $cond: [{ $in: ["$status", acceptedStatuses] }, 1, 0],
                 },
               },
             },

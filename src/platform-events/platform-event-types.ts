@@ -28,6 +28,9 @@ export const PLATFORM_EVENT_TYPES = [
   "counter_offer_sent",
   "work_started",
   "content_disputed",
+  // Stage 3D-1c — the campaign owner declined the creator's counter-offer (the
+  // invite goes back to pending; before this it left no trace).
+  "counter_offer_declined",
 ] as const;
 
 /**

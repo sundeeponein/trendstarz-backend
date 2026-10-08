@@ -3143,6 +3143,29 @@ export class CampaignInvitesService {
         },
         dedupeKey: `invite_accepted:${String(invite._id)}`,
       });
+    } else {
+      // Stage 3D-1c: the owner declined the creator's counter (invite is back to pending).
+      await this.platformEvents.record({
+        eventType: "counter_offer_declined",
+        timestamp: invite.counterOffer?.resolvedAt || new Date(),
+        userId: requesterId,
+        userRole: await this.ownerRoleFor(requesterId),
+        ...this.inviteEventRefs(invite),
+        platform:
+          invite?.counterOffer?.selectedPlatform ||
+          invite.selectedPlatform ||
+          null,
+        metadata: {
+          by: "owner",
+          selectedContentType:
+            invite?.counterOffer?.selectedContentType || null,
+          offeredAmountPaise: invite.counterOffer?.offeredAmountPaise ?? null,
+          requestedAmountPaise:
+            invite.counterOffer?.requestedAmountPaise ?? null,
+        },
+        // A creator counters at most once per invite, so one decline per invite.
+        dedupeKey: `counter_offer_declined:${String(invite._id)}`,
+      });
     }
 
     if (action === "accept") {

@@ -12,18 +12,24 @@ import { PlatformEventType } from "./platform-event-types";
  * as a cross-check: it must never be earlier than deployedAt. If a boundary ever
  * cannot be confirmed, set deployedAt: null and confidence "observed_first_event".
  */
-export type CohortConfidence = "confirmed_deployment" | "observed_first_event";
+export type CohortConfidence =
+  | "confirmed_deployment"
+  | "observed_first_event"
+  // Shipped in code but not yet confirmed live: set deployedAt from the Railway
+  // deployment log after release (until then nothing counts from this cohort).
+  | "not_yet_deployed";
 
 export interface TrackingCohort {
   /** Set only from confirmed deployment history. */
   deployedAt: Date | null;
-  observedFirstEventAt: Date;
+  /** null only while confidence is "not_yet_deployed". */
+  observedFirstEventAt: Date | null;
   confidence: CohortConfidence;
   evidence: string;
 }
 
 export const PLATFORM_EVENT_COHORTS: Record<
-  "stage1" | "stage15",
+  "stage1" | "stage15" | "stage3d1c",
   TrackingCohort
 > = {
   stage1: {
@@ -40,16 +46,31 @@ export const PLATFORM_EVENT_COHORTS: Record<
     evidence:
       "Railway deployment a5e9818b (commit 1cb95ae, created 2026-09-30T03:50:01Z): 'Nest application successfully started' logged at 2026-09-30T03:52:04Z. First production Stage 1.5 event 04:11:28Z.",
   },
+  // Stage 3D-1c: counter_offer_declined.
+  stage3d1c: {
+    deployedAt: null,
+    observedFirstEventAt: null,
+    confidence: "not_yet_deployed",
+    evidence:
+      "Not deployed yet. After release, set deployedAt from the Railway 'Nest application successfully started' log and confidence to confirmed_deployment.",
+  },
 };
 
-/** The boundary a cohort-limited metric must use. */
-export function cohortStart(cohort: TrackingCohort): Date {
+/** The boundary a cohort-limited metric must use; null while not yet deployed. */
+export function cohortStartOrNull(cohort: TrackingCohort): Date | null {
   return cohort.deployedAt ?? cohort.observedFirstEventAt;
+}
+
+/** The boundary of a live cohort (stage1, stage15) — throws for one not yet deployed. */
+export function cohortStart(cohort: TrackingCohort): Date {
+  const start = cohortStartOrNull(cohort);
+  if (!start) throw new Error("Cohort has no live boundary yet");
+  return start;
 }
 
 export interface EventCoverage {
   /** Tracking capability that records it live (null = no source exists). */
-  liveCohort: "stage1" | "stage15" | null;
+  liveCohort: "stage1" | "stage15" | "stage3d1c" | null;
   backfillable: "yes" | "partial" | "no";
   backfillSource: string | null;
   historicalLimitation: string;
@@ -117,6 +138,13 @@ export const PLATFORM_EVENT_COVERAGE: Record<PlatformEventType, EventCoverage> =
       backfillSource: null,
       historicalLimitation:
         "Only the latest counter's sentAt survives (an owner revision overwrites the creator's).",
+    },
+    counter_offer_declined: {
+      liveCohort: "stage3d1c",
+      backfillable: "no",
+      backfillSource: null,
+      historicalLimitation:
+        "Not backfilled: counterOffer.resolvedAt survives only for the latest counter (a later counter overwrites a declined one), and older declines have no actor.",
     },
     work_started: {
       liveCohort: "stage15",

@@ -398,10 +398,11 @@ export function measureOutcomes(
     live,
     backfilled: events.length - live,
     liveCaptureSince: Object.fromEntries(
-      Object.entries(PLATFORM_EVENT_COHORTS).map(([k, c]) => [
-        k,
-        (c.deployedAt ?? c.observedFirstEventAt).toISOString(),
-      ]),
+      Object.entries(PLATFORM_EVENT_COHORTS).flatMap(([k, c]) => {
+        // A cohort not yet deployed has no capture start to report.
+        const start = c.deployedAt ?? c.observedFirstEventAt;
+        return start ? [[k, start.toISOString()]] : [];
+      }),
     ),
     byType,
     approvedCreatorsWithAnyEvent: creators.size,

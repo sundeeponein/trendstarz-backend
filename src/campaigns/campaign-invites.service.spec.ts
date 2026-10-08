@@ -2030,7 +2030,7 @@ describe("CampaignInvitesService – platform events", () => {
       });
     });
 
-    it("records nothing when the owner declines the counter (invite goes back to pending)", async () => {
+    it("an owner declining the counter is not an accept or a creator decline (invite goes back to pending)", async () => {
       inviteModel.findById.mockResolvedValue(
         doc({
           _id: "inv1",
@@ -2042,7 +2042,10 @@ describe("CampaignInvitesService – platform events", () => {
         }),
       );
       await service.respondToCounter("inv1", "brand1", "decline");
-      expect(platformEvents.record).not.toHaveBeenCalled();
+      // Only Stage 3D-1c's counter_offer_declined is recorded.
+      expect(
+        platformEvents.record.mock.calls.map(([e]: any[]) => e.eventType),
+      ).toEqual(["counter_offer_declined"]);
     });
   });
 
@@ -2604,6 +2607,43 @@ describe("CampaignInvitesService – platform events", () => {
           service.respondToCounter("inv1", "brand1", "counter", "", 500),
         ).rejects.toThrow(BadRequestException);
         expect(platformEvents.record).not.toHaveBeenCalled();
+      });
+
+      it("records counter_offer_declined when the owner declines (3D-1c)", async () => {
+        inviteModel.findById.mockResolvedValue(
+          openInvite({
+            status: "counter_sent",
+            selectedPlatform: "Instagram",
+            counterOffer: {
+              status: "sent",
+              offeredAmountPaise: 50000,
+              requestedAmount: 700,
+              requestedAmountPaise: 70000,
+              selectedContentType: "Reel",
+            },
+          }),
+        );
+
+        await service.respondToCounter("inv1", "brand1", "decline");
+
+        const [declined] = eventsOfType("counter_offer_declined");
+        expect(declined).toMatchObject({
+          userId: "brand1",
+          userRole: "brand",
+          inviteId: "inv1",
+          platform: "Instagram",
+          dedupeKey: "counter_offer_declined:inv1",
+          metadata: {
+            by: "owner",
+            selectedContentType: "Reel",
+            offeredAmountPaise: 50000,
+            requestedAmountPaise: 70000,
+          },
+        });
+        expect(declined.timestamp).toBeInstanceOf(Date);
+        // A decline is not an acceptance or a creator decline.
+        expect(eventsOfType("invite_accepted")).toHaveLength(0);
+        expect(eventsOfType("invite_declined")).toHaveLength(0);
       });
     });
 

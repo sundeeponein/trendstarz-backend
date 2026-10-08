@@ -1,6 +1,7 @@
 import {
   applyApprovedEligibilityFilter,
   applyDiscoverableProfileFilter,
+  buildSearchRankingStages,
   getLocationPriorityTier,
   isDiscoverableProfile,
   profileVisibilityAllowsDiscovery,
@@ -208,5 +209,59 @@ describe("approved active account rule (Stage 3B-1, shared by discovery and camp
         },
       }),
     ).toBe(false);
+  });
+});
+
+describe("buildSearchRankingStages — response rate (Stage 3D-1c)", () => {
+  const stages = buildSearchRankingStages(
+    {},
+    {
+      invitesCollection: "campaigninvites",
+      inviteMatchField: "influencerId",
+      reviewsCollection: "reviews",
+      reviewTargetType: "influencer",
+    },
+  );
+  const lookup = stages.find(
+    (s: any) => s.$lookup?.from === "campaigninvites",
+  ).$lookup;
+  const counted: string[] = lookup.pipeline[0].$match.status.$in;
+  const acceptedCond = lookup.pipeline[1].$group.accepted.$sum.$cond[0];
+
+  /** Same rule as the pipeline: accepted / (accepted + declined) over counted invites. */
+  const rate = (statuses: string[]) => {
+    const inScope = statuses.filter((s) => counted.includes(s));
+    const accepted = inScope.filter((s) =>
+      (acceptedCond.$in[1] as string[]).includes(s),
+    ).length;
+    return inScope.length ? Math.round((100 * accepted) / inScope.length) : 0;
+  };
+
+  it("counts invites that progressed after acceptance as accepted", () => {
+    expect(acceptedCond).toEqual({
+      $in: [
+        "$status",
+        expect.arrayContaining([
+          "accepted",
+          "payment_confirmed",
+          "working",
+          "submitted",
+          "completed",
+          "approved",
+          "disputed",
+        ]),
+      ],
+    });
+  });
+
+  it("a creator who completed 3 campaigns and declined 1 is 75%, not 0%", () => {
+    expect(rate(["completed", "approved", "working", "declined"])).toBe(75);
+  });
+
+  it("unanswered, withdrawn and counter-offer invites are not counted either way", () => {
+    for (const s of ["pending", "invited", "counter_sent", "withdrawn"]) {
+      expect(counted).not.toContain(s);
+    }
+    expect(rate(["pending", "withdrawn"])).toBe(0);
   });
 });
