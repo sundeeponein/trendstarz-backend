@@ -37,6 +37,7 @@ import { mergeSocialMediaEntries } from "../utils/social-account.util";
 import { consumeOtpVerificationToken } from "../otp/otp.controller";
 import { CloudinaryService } from "../cloudinary.service";
 import { CloudinaryFolders } from "../cloudinary-folders";
+import { WORKFLOW_TIMING_DEFAULTS } from "../utils/workflow-timing.util";
 
 type AnyUserDoc = {
   email: string;
@@ -2437,10 +2438,15 @@ export class AuthService {
       inviteUnlockFee: settings?.inviteUnlockFee ?? 499,
       minimumCampaignFee: settings?.minimumCampaignFee ?? 1000,
       gstPercent: settings?.gstPercent ?? 18,
-      submissionApprovalWaitHours: settings?.submissionApprovalWaitHours ?? 24,
+      submissionApprovalWaitHours:
+        settings?.submissionApprovalWaitHours ??
+        WORKFLOW_TIMING_DEFAULTS.submissionApprovalWaitHours,
       submissionAutoCompleteGraceHours:
-        settings?.submissionAutoCompleteGraceHours ?? 48,
-      payoutReleaseWaitHours: settings?.payoutReleaseWaitHours ?? 24,
+        settings?.submissionAutoCompleteGraceHours ??
+        WORKFLOW_TIMING_DEFAULTS.submissionAutoCompleteGraceHours,
+      payoutReleaseWaitHours:
+        settings?.payoutReleaseWaitHours ??
+        WORKFLOW_TIMING_DEFAULTS.payoutReleaseWaitHours,
       // Admin grace: also the minimum time a creator paid late gets to submit (0 = none).
       campaignAutoCloseGraceHours: graceHoursFromSettings(settings),
       minCampaignStartDays: settings?.minCampaignStartDays ?? 3,

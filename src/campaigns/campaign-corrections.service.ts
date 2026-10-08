@@ -15,6 +15,7 @@ import {
   endOfIstDay,
   submissionWindow,
 } from "./campaign-deadlines.util";
+import { idIn } from "../utils/id-match.util";
 
 /**
  * Admin campaign corrections — guided fixes a host asks support for, instead of
@@ -102,9 +103,7 @@ export class CampaignCorrectionsService {
   }
 
   private transactionsFor(invite: any) {
-    return this.transactionModel
-      .find({ inviteId: { $in: [invite._id, String(invite._id)] } })
-      .lean();
+    return this.transactionModel.find({ inviteId: idIn(invite._id) }).lean();
   }
 
   /** Why and from what status this invite was withdrawn (event first, legacy message fallback). */
@@ -533,7 +532,7 @@ export class CampaignCorrectionsService {
 
     const txReset = await this.transactionModel.updateMany(
       {
-        inviteId: { $in: [invite._id, String(invite._id)] },
+        inviteId: idIn(invite._id),
         payoutStatus: { $ne: "paid" },
         $or: [
           { payoutStatus: "skipped" },

@@ -54,6 +54,12 @@ import {
   renderOwnerApprovedMessage,
   renderStartWorkMessage,
 } from "./campaigns/campaign-alert-messages";
+import {
+  WORKFLOW_TIMING_DEFAULTS,
+  WORKFLOW_TIMING_KEYS,
+  WorkflowTimingKey,
+} from "./utils/workflow-timing.util";
+import { idIn } from "./utils/id-match.util";
 
 interface VisibilityItem {
   _id: string;
@@ -253,31 +259,21 @@ export class AdminListsController {
     };
   }
 
-  private getCampaignWorkflowTimingDefaults() {
+  /** admin-config.json campaignWorkflowTiming values, else the built-in defaults. */
+  private getCampaignWorkflowTimingDefaults(): Record<
+    WorkflowTimingKey,
+    number
+  > {
     const config = this.readAdminConfig();
     const timing = config?.campaignWorkflowTiming || {};
-    return {
-      submissionApprovalWaitHours:
-        typeof timing.submissionApprovalWaitHours === "number"
-          ? timing.submissionApprovalWaitHours
-          : 24,
-      submissionAutoCompleteGraceHours:
-        typeof timing.submissionAutoCompleteGraceHours === "number"
-          ? timing.submissionAutoCompleteGraceHours
-          : 48,
-      payoutReleaseWaitHours:
-        typeof timing.payoutReleaseWaitHours === "number"
-          ? timing.payoutReleaseWaitHours
-          : 24,
-      disputeResponseWaitHours:
-        typeof timing.disputeResponseWaitHours === "number"
-          ? timing.disputeResponseWaitHours
-          : 12,
-      campaignAutoCloseGraceHours:
-        typeof timing.campaignAutoCloseGraceHours === "number"
-          ? timing.campaignAutoCloseGraceHours
-          : 24,
-    };
+    const result = { ...WORKFLOW_TIMING_DEFAULTS } as Record<
+      WorkflowTimingKey,
+      number
+    >;
+    for (const key of WORKFLOW_TIMING_KEYS) {
+      if (typeof timing[key] === "number") result[key] = timing[key];
+    }
+    return result;
   }
 
   @Get("settings")
@@ -1103,7 +1099,7 @@ export class AdminListsController {
       ];
       const progressedInvite = await this.campaignInviteModel
         .findOne({
-          campaignId: { $in: [campaign._id, String(campaign._id)] },
+          campaignId: idIn(campaign._id),
           status: { $in: lockStatuses },
         })
         .select("_id")
@@ -1344,7 +1340,7 @@ export class AdminListsController {
       "accepted",
     ];
     const cancelFilter = {
-      campaignId: { $in: [campaign._id, String(campaign._id)] },
+      campaignId: idIn(campaign._id),
       status: { $in: cancellableStatuses },
     };
     // Snapshot (with prior status) so each cancelled invite gets an invite_withdrawn.

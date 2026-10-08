@@ -51,6 +51,8 @@ import {
   ProfileUserType,
 } from "../profile-verification/profile-verification.service";
 import { CampaignInvitesService } from "./campaign-invites.service";
+import { settingHours } from "../utils/workflow-timing.util";
+import { idIn } from "../utils/id-match.util";
 
 const VALID_TRANSITIONS: Record<string, string[]> = {
   draft: ["pending", "pending_review", "active", "needs_changes"],
@@ -129,8 +131,7 @@ export class CampaignsService {
 
   private async getCampaignAutoCloseGraceHours(): Promise<number> {
     const settings: any = await this.appSettingsModel.findOne({}).lean();
-    const hours = Number(settings?.campaignAutoCloseGraceHours ?? 24);
-    return Number.isFinite(hours) && hours >= 0 ? hours : 24;
+    return settingHours(settings, "campaignAutoCloseGraceHours");
   }
 
   async autoCompleteExpiredCampaigns() {
@@ -170,7 +171,7 @@ export class CampaignsService {
 
       const hasActiveWork = await this.campaignInviteModel
         .findOne({
-          campaignId: { $in: [campaignId, String(campaignId)] },
+          campaignId: idIn(campaignId),
           status: { $in: blockingStatuses },
         })
         .select("_id")
@@ -214,7 +215,7 @@ export class CampaignsService {
         // these is still stuck, don't complete yet (would orphan it with no way back).
         const stillBlocking = await this.campaignInviteModel
           .findOne({
-            campaignId: { $in: [campaignId, String(campaignId)] },
+            campaignId: idIn(campaignId),
             status: { $in: neverSubmittedStatuses },
           })
           .select("_id")

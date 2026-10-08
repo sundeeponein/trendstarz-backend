@@ -12,11 +12,14 @@
  *   further (submissionDeadlineExtendedTo).
  */
 
+import { WORKFLOW_TIMING_DEFAULTS } from "../utils/workflow-timing.util";
+
 const HOUR_MS = 60 * 60 * 1000;
 const IST_OFFSET_MS = (5 * 60 + 30) * 60 * 1000;
 
 /** Admin grace setting when it was never saved (same default as the settings page). */
-export const DEFAULT_GRACE_HOURS = 24;
+export const DEFAULT_GRACE_HOURS =
+  WORKFLOW_TIMING_DEFAULTS.campaignAutoCloseGraceHours;
 
 /** The admin grace period in hours from app settings; 0 when set to 0/empty. */
 export function graceHoursFromSettings(settings: any): number {

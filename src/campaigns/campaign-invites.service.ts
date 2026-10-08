@@ -38,6 +38,8 @@ import {
   PlatformEventActorRole,
 } from "../platform-events/platform-event-types";
 import { inviteWithdrawnEvent } from "../platform-events/invite-withdrawn.event";
+import { settingHours } from "../utils/workflow-timing.util";
+import { idIn } from "../utils/id-match.util";
 
 function detectPlatform(url: string): string {
   if (!url) return "other";
@@ -237,20 +239,17 @@ export class CampaignInvitesService {
 
   private async getSubmissionApprovalWaitHours(): Promise<number> {
     const settings: any = await this.appSettingsModel.findOne({}).lean();
-    const hours = Number(settings?.submissionApprovalWaitHours ?? 24);
-    return Number.isFinite(hours) && hours >= 0 ? hours : 24;
+    return settingHours(settings, "submissionApprovalWaitHours");
   }
 
   private async getDisputeResponseWaitHours(): Promise<number> {
     const settings: any = await this.appSettingsModel.findOne({}).lean();
-    const hours = Number(settings?.disputeResponseWaitHours ?? 12);
-    return Number.isFinite(hours) && hours >= 0 ? hours : 12;
+    return settingHours(settings, "disputeResponseWaitHours");
   }
 
   private async getSubmissionAutoCompleteGraceHours(): Promise<number> {
     const settings: any = await this.appSettingsModel.findOne({}).lean();
-    const hours = Number(settings?.submissionAutoCompleteGraceHours ?? 48);
-    return Number.isFinite(hours) && hours >= 0 ? hours : 48;
+    return settingHours(settings, "submissionAutoCompleteGraceHours");
   }
 
   private getHostAutoCompleteAt(submission: any, waitHours = 24): Date | null {
@@ -3461,7 +3460,7 @@ export class CampaignInvitesService {
     });
 
     await this.campaignTransactionModel.updateMany(
-      { inviteId: { $in: [invite._id, String(invite._id)] } },
+      { inviteId: idIn(invite._id) },
       { $set: { workStatus: "working" } },
     );
 
@@ -3684,7 +3683,7 @@ export class CampaignInvitesService {
     });
 
     await this.campaignTransactionModel.updateMany(
-      { inviteId: { $in: [invite._id, String(invite._id)] } },
+      { inviteId: idIn(invite._id) },
       { $set: { workStatus: "submitted" } },
     );
 
@@ -3953,7 +3952,7 @@ export class CampaignInvitesService {
       );
 
       const txs = await this.campaignTransactionModel.find({
-        inviteId: { $in: [invite._id, String(invite._id)] },
+        inviteId: idIn(invite._id),
       });
       for (const tx of txs) {
         tx.workStatus = "approved";
@@ -4079,7 +4078,7 @@ export class CampaignInvitesService {
       // Freeze the payout — admin must resolve before money moves.
       // workStatus: 'disputed' signals the issue; payoutStatus: 'frozen' holds funds.
       await this.campaignTransactionModel.updateMany(
-        { inviteId: { $in: [invite._id, String(invite._id)] } },
+        { inviteId: idIn(invite._id) },
         {
           $set: {
             workStatus: "disputed",
@@ -4324,7 +4323,7 @@ export class CampaignInvitesService {
     // separate payments-payouts dispute-resolution surface.
     await this.campaignTransactionModel.updateMany(
       {
-        inviteId: { $in: [invite._id, String(invite._id)] },
+        inviteId: idIn(invite._id),
         payoutStatus: { $ne: "paid" },
       },
       {
@@ -4577,7 +4576,7 @@ export class CampaignInvitesService {
 
     await this.campaignTransactionModel.updateMany(
       {
-        inviteId: { $in: [invite._id, String(invite._id)] },
+        inviteId: idIn(invite._id),
         payoutStatus: { $ne: "paid" },
       },
       {
@@ -4682,7 +4681,7 @@ export class CampaignInvitesService {
   ) {
     const candidates = await this.inviteModel
       .find({
-        campaignId: { $in: [campaignId, String(campaignId)] },
+        campaignId: idIn(campaignId),
         status: { $in: ["accepted", "payment_confirmed", "working"] },
       })
       .select("_id")
@@ -4693,7 +4692,7 @@ export class CampaignInvitesService {
 
     const neverAcceptedCandidates = await this.inviteModel
       .find({
-        campaignId: { $in: [campaignId, String(campaignId)] },
+        campaignId: idIn(campaignId),
         status: { $in: ["pending", "invited", "counter_sent"] },
       })
       .select("_id")

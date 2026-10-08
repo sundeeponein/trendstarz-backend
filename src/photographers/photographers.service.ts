@@ -39,6 +39,7 @@ import {
   normalizeLocationValue,
   ViewerLocationContext,
 } from "../utils/profile-eligibility.util";
+import { idIn } from "../utils/id-match.util";
 
 const PROFILE_PHOTO_VISIBILITY_BLOCK_FLAG_CODES = [
   "PROFILE_PHOTO_PENDING_REVIEW",
@@ -142,14 +143,14 @@ export class PhotographersService {
         unlockType: "paid_collab_payment",
         $or: [
           {
-            influencerId: { $in: [photographer._id, String(photographer._id)] },
+            influencerId: idIn(photographer._id),
             recipientRole: "photographer",
             brandId: viewerObjectId
               ? { $in: [viewerObjectId, String(viewerId)] }
               : String(viewerId),
           },
           {
-            brandId: { $in: [photographer._id, String(photographer._id)] },
+            brandId: idIn(photographer._id),
             influencerId: viewerObjectId
               ? { $in: [viewerObjectId, String(viewerId)] }
               : String(viewerId),

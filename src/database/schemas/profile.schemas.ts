@@ -1,4 +1,5 @@
 import { Schema, Types, model } from "mongoose";
+import { WORKFLOW_TIMING_DEFAULTS } from "../../utils/workflow-timing.util";
 
 const ProfileVerificationFields = {
   emailVerifiedAt: { type: Date, default: null },
@@ -1097,11 +1098,26 @@ export const AppSettingsSchema = new Schema({
   inviteUnlockFee: { type: Number, default: 499 },
   minimumCampaignFee: { type: Number, default: 1000 },
   gstPercent: { type: Number, default: 0 },
-  submissionApprovalWaitHours: { type: Number, default: 24 },
-  submissionAutoCompleteGraceHours: { type: Number, default: 48 },
-  payoutReleaseWaitHours: { type: Number, default: 24 },
-  disputeResponseWaitHours: { type: Number, default: 12 },
-  campaignAutoCloseGraceHours: { type: Number, default: 24 },
+  submissionApprovalWaitHours: {
+    type: Number,
+    default: WORKFLOW_TIMING_DEFAULTS.submissionApprovalWaitHours,
+  },
+  submissionAutoCompleteGraceHours: {
+    type: Number,
+    default: WORKFLOW_TIMING_DEFAULTS.submissionAutoCompleteGraceHours,
+  },
+  payoutReleaseWaitHours: {
+    type: Number,
+    default: WORKFLOW_TIMING_DEFAULTS.payoutReleaseWaitHours,
+  },
+  disputeResponseWaitHours: {
+    type: Number,
+    default: WORKFLOW_TIMING_DEFAULTS.disputeResponseWaitHours,
+  },
+  campaignAutoCloseGraceHours: {
+    type: Number,
+    default: WORKFLOW_TIMING_DEFAULTS.campaignAutoCloseGraceHours,
+  },
   earlyAccessCommissionPercent: { type: Number, default: 0 },
   partnerCommissionPercent: { type: Number, default: 2 },
   internalTestCommissionPercent: { type: Number, default: 0 },
