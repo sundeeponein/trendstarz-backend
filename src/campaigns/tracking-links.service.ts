@@ -283,7 +283,8 @@ export class TrackingLinksService {
       perCampaign.set(key, row);
     }
 
-    const limit = Math.min(Math.max(Number(filters.limit) || 20, 1), 100);
+    // Rows returned per list (the admin page pages through them); totals are always exact.
+    const limit = Math.min(Math.max(Number(filters.limit) || 20, 1), 1000);
     const topPerformers = [...campaignLinks]
       .sort((a, b) => (b.clickCount || 0) - (a.clickCount || 0))
       .slice(0, limit)
@@ -400,7 +401,9 @@ export class TrackingLinksService {
       },
       perCampaign: [...perCampaign.values()].sort((a, b) => b.clicks - a.clicks),
       topPerformers,
+      topPerformersTotal: campaignLinks.length,
       zeroActivity,
+      zeroActivityTotal: campaignLinks.filter((l) => !l.clickCount).length,
       referralLinks,
     };
   }
