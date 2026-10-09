@@ -85,10 +85,14 @@ export interface TierReviewItem {
     requiresConnection: boolean;
     connected: boolean | null;
     lastAttemptFailed: boolean;
+    /** The exact page the platform resolved the account to (e.g. the YouTube channel). */
+    externalUrl: string | null;
   };
   declaredVsObserved: "match" | "mismatch" | "not_available";
   /** A fresh/stale observation with a follower count: the admin may decide on "observed" evidence. */
   observedUsable: boolean;
+  /** The creator's own profile link (as saved on the account), when it is a web link. */
+  profileUrl: string | null;
 }
 
 export interface TierReviewQuery {
@@ -228,9 +232,11 @@ export function buildTierReviewItems(input: TierReviewInput): TierReviewItem[] {
           requiresConnection: cmp.observed.requiresConnection,
           connected: cmp.observed.connected,
           lastAttemptFailed: cmp.observed.lastAttempt?.status === "failed",
+          externalUrl: webLink(latest?.externalUrl),
         },
         declaredVsObserved,
         observedUsable,
+        profileUrl: webLink(entry?.url),
       });
     }
   }
@@ -246,6 +252,21 @@ export function buildTierReviewItems(input: TierReviewInput): TierReviewItem[] {
 }
 
 /** The queue page for a query, plus counts (before filtering by reason) for the filter chips. */
+/** An http(s) link as given, a bare "instagram.com/x" as https, anything else (javascript:, …) → null. */
+function webLink(value: unknown): string | null {
+  const raw = typeof value === "string" ? value.trim() : "";
+  if (!raw) return null;
+  const url = /^https?:\/\//i.test(raw) ? raw : `https://${raw}`;
+  try {
+    const parsed = new URL(url);
+    return parsed.protocol === "https:" || parsed.protocol === "http:"
+      ? parsed.toString()
+      : null;
+  } catch {
+    return null;
+  }
+}
+
 export function tierReviewQueue(
   input: TierReviewInput,
   query: TierReviewQuery,

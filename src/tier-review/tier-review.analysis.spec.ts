@@ -257,4 +257,44 @@ describe("tier review queue (Stage 3D-1b)", () => {
     expect(tierReviewQueue(i, { q: "user-old" }).total).toBe(2);
     expect(tierReviewQueue(i, { q: "@chan" }).total).toBe(2);
   });
+
+  it("carries links to the account: the observed channel page and the creator's saved profile link", () => {
+    const c = creator("c1");
+    c.socialMedia[0] = {
+      ...c.socialMedia[0],
+      url: "youtube.com/@chan",
+    } as any;
+    const items = buildTierReviewItems(
+      input({
+        creators: [{ profileType: "Influencer", profile: c }],
+        observations: [
+          {
+            ...ytObs("c1", 5000),
+            externalUrl:
+              "https://www.youtube.com/channel/UCabcdefghijklmnopqrstuv",
+          },
+        ],
+      }),
+    );
+    const yt = items.find((i) => i.platformKey === "youtube")!;
+    expect(yt.observed.externalUrl).toBe(
+      "https://www.youtube.com/channel/UCabcdefghijklmnopqrstuv",
+    );
+    expect(yt.profileUrl).toBe("https://youtube.com/@chan"); // bare link made https
+    const ig = items.find((i) => i.platformKey === "instagram")!;
+    expect(ig.profileUrl).toBeNull(); // nothing saved → the page builds it from the handle
+    expect(ig.observed.externalUrl).toBeNull();
+  });
+
+  it("never passes a non-web link through", () => {
+    const c = creator("c1");
+    c.socialMedia[0] = {
+      ...c.socialMedia[0],
+      url: "javascript:alert(1)",
+    } as any;
+    const [yt] = buildTierReviewItems(
+      input({ creators: [{ profileType: "Influencer", profile: c }] }),
+    ).filter((i) => i.platformKey === "youtube");
+    expect(yt.profileUrl).toBeNull();
+  });
 });
