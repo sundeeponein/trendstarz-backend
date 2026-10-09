@@ -5,6 +5,7 @@ import {
   newSocialAccountId,
   restrictedSocialSummary,
   socialIdentityChanges,
+  MINIMUM_RATE_RUPEES,
 } from "./social-account.util";
 import { normalizeSocialMediaList } from "./social-handle.util";
 
@@ -179,7 +180,13 @@ describe("social account identity + server-side merge (Stage 3A-0)", () => {
         expect(merged[key]).toEqual((stored as any)[key]);
       }
       expect(merged.contentTypes).toEqual([
-        { name: "Reel", enabled: true, price: 6000 },
+        // A changed price is stamped as confirmed now (3D-1d).
+        {
+          name: "Reel",
+          enabled: true,
+          price: 6000,
+          priceConfirmedAt: expect.any(Date),
+        },
       ]);
     });
 
@@ -384,5 +391,88 @@ describe("restrictedSocialSummary (Search, viewers without social-link access)",
   it("keeps the first entry first, so the primary tier stays the same", () => {
     const out = restrictedSocialSummary([...full].reverse());
     expect(out[0].tier).toBe("Nano");
+  });
+});
+
+describe("rates (Stage 3D-1d)", () => {
+  const NOW = new Date("2026-10-09T10:00:00.000Z");
+  const EARLIER = new Date("2026-09-01T00:00:00.000Z");
+  const account = (rows: any[]) => [
+    {
+      socialAccountId: "64b0000000000000000000a1",
+      platformKey: "instagram",
+      platform: "Instagram",
+      handle: "h",
+      tier: "Micro",
+      contentTypes: rows,
+    },
+  ];
+  const save = (stored: any[], incoming: any[]) =>
+    mergeSocialMediaEntries(
+      account(stored),
+      [
+        {
+          platform: "Instagram",
+          handle: "h",
+          tier: "Micro",
+          contentTypes: incoming,
+        },
+      ],
+      () => "64b0000000000000000000ff",
+      NOW,
+    )[0].contentTypes;
+
+  it("an unchanged rate keeps its confirmation date (null for rates set before tracking)", () => {
+    const rows = save(
+      [
+        { name: "Reel", enabled: true, price: 5000, priceConfirmedAt: EARLIER },
+        { name: "Story", enabled: true, price: 1000 },
+      ],
+      [
+        { name: "Reel", enabled: true, price: 5000 },
+        { name: "story", enabled: true, price: 1000 },
+      ],
+    );
+    expect(rows[0].priceConfirmedAt).toEqual(EARLIER);
+    expect(rows[1].priceConfirmedAt).toBeNull();
+  });
+
+  it("a new or changed rate is stamped now; a browser-sent date is ignored", () => {
+    const rows = save(
+      [{ name: "Reel", enabled: true, price: 5000, priceConfirmedAt: EARLIER }],
+      [
+        {
+          name: "Reel",
+          enabled: true,
+          price: 5500,
+          priceConfirmedAt: "2020-01-01",
+        },
+        { name: "Post", enabled: true, price: 2000 },
+      ],
+    );
+    expect(rows.map((r: any) => r.priceConfirmedAt)).toEqual([NOW, NOW]);
+  });
+
+  it(`refuses a new or changed rate below ₹${MINIMUM_RATE_RUPEES}`, () => {
+    expect(() =>
+      save([], [{ name: "Reel", enabled: true, price: 49 }]),
+    ).toThrow(/at least ₹50: Instagram Reel ₹49/);
+    expect(() =>
+      save(
+        [{ name: "Reel", enabled: true, price: 500 }],
+        [{ name: "Reel", enabled: true, price: 20 }],
+      ),
+    ).toThrow(/at least ₹50/);
+    expect(
+      save([], [{ name: "Reel", enabled: true, price: 50 }])[0].price,
+    ).toBe(50);
+  });
+
+  it("keeps an existing rate below the minimum when the creator saves without changing it", () => {
+    const rows = save(
+      [{ name: "Story", enabled: true, price: 20 }],
+      [{ name: "Story", enabled: true, price: 20 }],
+    );
+    expect(rows[0]).toMatchObject({ price: 20, priceConfirmedAt: null });
   });
 });

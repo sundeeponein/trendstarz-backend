@@ -69,6 +69,7 @@ describe("normalizeCreatorMatchInput (Stage 3B-1)", () => {
           canonicalContentTypeKey: "reel",
           enabled: true,
           priceRupees: 1500,
+          priceConfirmedAt: null,
         },
         expect.objectContaining({
           originalContentType: "Photo post",

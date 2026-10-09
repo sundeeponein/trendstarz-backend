@@ -11,7 +11,7 @@ import { InjectModel } from "@nestjs/mongoose";
 import { Model, Types } from "mongoose";
 import { PlansService } from "../plans/plans.service";
 import { MetaOAuthService } from "../meta-oauth/meta-oauth.service";
-import { normalizeCollaborationAvailability } from "../utils/collaboration-availability.util";
+import { availabilityUpdate } from "../utils/collaboration-availability.util";
 import { FirebaseAdminService } from "../utils/firebase-admin.service";
 import {
   PROFILE_SELECTION_LIMITS,
@@ -3388,10 +3388,7 @@ export class UsersService implements OnModuleInit {
     const updateData: any = {};
     for (const key of allowedFields) {
       if (key === "collaborationAvailability") {
-        if (update[key] !== undefined) {
-          updateData.collaborationAvailability =
-            normalizeCollaborationAvailability(update[key], "influencer");
-        }
+        // Normalized (with its server-owned date) once the stored profile is loaded below.
         continue;
       }
       if (key === "categories") {
@@ -3430,6 +3427,13 @@ export class UsersService implements OnModuleInit {
     // NOTE: isPremium is intentionally excluded — it is only set via upgradeSelfPremium or admin setPremium
     const userDoc: any = await this.influencerModel.findById(userId);
     if (!userDoc) return { message: "Influencer not found", userId };
+    if (update.collaborationAvailability !== undefined) {
+      updateData.collaborationAvailability = availabilityUpdate(
+        update.collaborationAvailability,
+        "influencer",
+        userDoc.collaborationAvailability,
+      );
+    }
     const socialBefore: any[] = Array.isArray(userDoc.socialMedia)
       ? userDoc.socialMedia.map((e: any) => (e?.toObject ? e.toObject() : e))
       : [];

@@ -22,7 +22,7 @@ import {
 } from "../email/templates/auth.templates";
 import { getJwtSecret } from "./jwt-secret";
 import { SELF_DELETION_GRACE_PERIOD_DAYS } from "../users/users.service";
-import { normalizeCollaborationAvailability } from "../utils/collaboration-availability.util";
+import { availabilityUpdate } from "../utils/collaboration-availability.util";
 import {
   PROFILE_SELECTION_LIMITS,
   normalizeSelectionList,
@@ -1932,9 +1932,11 @@ export class AuthService {
       languages: languageNames,
       // Only creator-editable fields + a server-generated socialAccountId (Stage 3A-0).
       socialMedia: mergeSocialMediaEntries([], socialMediaMapped),
-      collaborationAvailability: normalizeCollaborationAvailability(
+      // Signup: a chosen state is dated now (nothing stored yet).
+      collaborationAvailability: availabilityUpdate(
         data?.collaborationAvailability,
         "influencer",
+        null,
       ),
       profileImages: normalizedProfileImages,
       signupAttribution,
@@ -2358,9 +2360,11 @@ export class AuthService {
         data?.skills,
         PROFILE_SELECTION_LIMITS.photographer.skills,
       ),
-      collaborationAvailability: normalizeCollaborationAvailability(
+      // Signup: a chosen state is dated now (nothing stored yet).
+      collaborationAvailability: availabilityUpdate(
         data?.collaborationAvailability,
         "photographer",
+        null,
       ),
       socialMedia: mergeSocialMediaEntries([], normalizedSocialMedia),
       profileImages: normalizedProfileImages,

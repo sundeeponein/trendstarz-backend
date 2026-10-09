@@ -1,3 +1,4 @@
+import { BadRequestException } from "@nestjs/common";
 import { Types } from "mongoose";
 
 /**
@@ -116,6 +117,56 @@ function sanitizeSelfReportedStats(
   };
 }
 
+/** 3D-1d: the lowest rate (₹) a creator may set; existing lower rates are kept, not rewritten. */
+export const MINIMUM_RATE_RUPEES = 50;
+
+/**
+ * 3D-1d: the merged rate rows for one account. A row the creator left unchanged
+ * keeps its priceConfirmedAt (null for rates set before tracking began); a new
+ * row or a changed price is stamped `now`. priceConfirmedAt is server-owned — a
+ * browser-sent value is ignored.
+ */
+export function mergeRateRows(
+  storedRows: unknown,
+  incomingRows: any[],
+  now: Date,
+): { rows: any[]; belowMinimum: Array<{ name: string; price: number }> } {
+  const byName = new Map<string, Record<string, any>>();
+  for (const raw of Array.isArray(storedRows) ? storedRows : []) {
+    const row = toPlain(raw);
+    const key = String(row?.name ?? "")
+      .trim()
+      .toLowerCase();
+    if (key && !byName.has(key)) byName.set(key, row);
+  }
+  const belowMinimum: Array<{ name: string; price: number }> = [];
+  const rows = incomingRows.map((item: any) => {
+    const name = String(item?.name ?? "").trim();
+    const price = Number(item?.price);
+    const enabled = item?.enabled !== false;
+    const stored = byName.get(name.toLowerCase());
+    const unchanged =
+      !!stored &&
+      Number(stored.price) === price &&
+      (stored.enabled !== false) === enabled;
+    if (
+      !unchanged &&
+      enabled &&
+      Number.isFinite(price) &&
+      price > 0 &&
+      price < MINIMUM_RATE_RUPEES
+    ) {
+      belowMinimum.push({ name, price });
+    }
+    // priceConfirmedAt is server-owned: whatever the browser sent is replaced.
+    return {
+      ...(item || {}),
+      priceConfirmedAt: unchanged ? (stored?.priceConfirmedAt ?? null) : now,
+    };
+  });
+  return { rows, belowMinimum };
+}
+
 /**
  * Merges a browser-submitted socialMedia list (already validated/normalized by
  * normalizeSocialMediaList) into the stored one.
@@ -135,7 +186,9 @@ export function mergeSocialMediaEntries(
   existing: any[] | null | undefined,
   incoming: any[] | null | undefined,
   idFactory: () => string = newSocialAccountId,
+  now: Date = new Date(),
 ): any[] {
+  const belowMinimum: string[] = [];
   const queues = new Map<string, Record<string, any>[]>();
   for (const raw of Array.isArray(existing) ? existing : []) {
     const entry = toPlain(raw);
@@ -145,7 +198,7 @@ export function mergeSocialMediaEntries(
     queues.set(key, queue);
   }
 
-  return (Array.isArray(incoming) ? incoming : []).map((item: any) => {
+  const result = (Array.isArray(incoming) ? incoming : []).map((item: any) => {
     const platformKey = derivePlatformKey(item?.platform);
     const stored = queues.get(platformKey)?.shift();
 
@@ -155,9 +208,14 @@ export function mergeSocialMediaEntries(
     merged.platform = item?.platform ?? stored?.platform ?? "";
     merged.handle = item?.handle ?? stored?.handle ?? "";
     merged.tier = item?.tier !== undefined ? item.tier : (stored?.tier ?? "");
-    merged.contentTypes = Array.isArray(item?.contentTypes)
-      ? item.contentTypes
-      : (stored?.contentTypes ?? []);
+    if (Array.isArray(item?.contentTypes)) {
+      const rates = mergeRateRows(stored?.contentTypes, item.contentTypes, now);
+      merged.contentTypes = rates.rows;
+      for (const r of rates.belowMinimum)
+        belowMinimum.push(`${merged.platform} ${r.name} ₹${r.price}`);
+    } else {
+      merged.contentTypes = stored?.contentTypes ?? [];
+    }
     const stats =
       item && Object.prototype.hasOwnProperty.call(item, "selfReportedStats")
         ? sanitizeSelfReportedStats(item.selfReportedStats)
@@ -172,6 +230,12 @@ export function mergeSocialMediaEntries(
     merged.followersCount = stored ? (stored.followersCount ?? 0) : 0;
     return merged;
   });
+  if (belowMinimum.length) {
+    throw new BadRequestException(
+      `Rates must be at least ₹${MINIMUM_RATE_RUPEES}: ${belowMinimum.join(", ")}.`,
+    );
+  }
+  return result;
 }
 
 /**

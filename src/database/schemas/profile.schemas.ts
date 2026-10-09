@@ -326,6 +326,9 @@ export const InfluencerSchema = new Schema(
             name: { type: String },
             enabled: { type: Boolean, default: false },
             price: { type: Number, default: 0 },
+            // 3D-1d: server-set when the creator last set this rate (new row,
+            // price or on/off changed). Null = never confirmed since tracking began.
+            priceConfirmedAt: { type: Date, default: null },
           },
         ],
         // Additive, optional — used by Collaboration Score for platforms
@@ -370,7 +373,15 @@ export const InfluencerSchema = new Schema(
       },
     ],
     collaborationAvailability: {
+      // Kept in sync with `state` (true only when "available") — existing readers use it.
       enabled: { type: Boolean, default: false },
+      // 3D-1d: explicit choice; null = the creator never set it.
+      state: {
+        type: String,
+        enum: ["available", "not_available", null],
+        default: null,
+      },
+      stateUpdatedAt: { type: Date, default: null },
       collaborationTypes: [{ type: String }],
       preference: { type: String, default: "" },
       availableFor: [{ type: String }],
@@ -504,6 +515,9 @@ export const BrandSchema = new Schema(
             name: { type: String },
             enabled: { type: Boolean, default: false },
             price: { type: Number, default: 0 },
+            // 3D-1d: server-set when the creator last set this rate (new row,
+            // price or on/off changed). Null = never confirmed since tracking began.
+            priceConfirmedAt: { type: Date, default: null },
           },
         ],
         selfReportedStats: {
@@ -853,7 +867,15 @@ export const PhotographerSchema = new Schema(
       },
     ],
     collaborationAvailability: {
+      // Kept in sync with `state` (true only when "available") — existing readers use it.
       enabled: { type: Boolean, default: false },
+      // 3D-1d: explicit choice; null = the creator never set it.
+      state: {
+        type: String,
+        enum: ["available", "not_available", null],
+        default: null,
+      },
+      stateUpdatedAt: { type: Date, default: null },
       availableFor: [{ type: String }],
       preference: { type: String, default: "" },
       openToTravel: { type: Boolean, default: false },
@@ -1389,6 +1411,9 @@ export const CampaignSchema = new Schema(
             name: { type: String },
             enabled: { type: Boolean, default: false },
             price: { type: Number, default: 0 },
+            // 3D-1d: server-set when the creator last set this rate (new row,
+            // price or on/off changed). Null = never confirmed since tracking began.
+            priceConfirmedAt: { type: Date, default: null },
           },
         ],
       },

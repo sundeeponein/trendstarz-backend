@@ -17,6 +17,7 @@ import { observationView } from "../social-account-observation/social-account-ob
 import { buildSocialAccountComparison } from "../social-account-comparison/social-account-comparison";
 import { effectiveDecision } from "../social-account-verification/social-account-verification.service";
 import { PROFILE_SELECTION_LIMITS } from "../utils/profile-selection-limits.util";
+import { MINIMUM_RATE_RUPEES } from "../utils/social-account.util";
 
 /**
  * Stage 3D-1m — matching EVIDENCE QUALITY measurement (pure, read-only).
@@ -46,8 +47,8 @@ export const PROPOSED = {
   observationFreshDays: 30,
   /** …"stale" up to this many; older is "expired" (counted as unknown evidence). */
   observationExpiredAfterDays: 90,
-  /** Creator rates below this (INR per deliverable) are flagged as implausible. */
-  minimumRateRupees: 50,
+  /** Creator rates below this (INR per deliverable) are flagged; new saves are refused (3D-1d). */
+  minimumRateRupees: MINIMUM_RATE_RUPEES,
 } as const;
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -320,8 +321,10 @@ export function measureCreatorData(
   let pricedRows = 0;
   let belowMinimum = 0;
   let multipleOf500 = 0;
-  let availableTrue = 0;
-  let availableFalseOrUnset = 0;
+  let confirmedRows = 0;
+  let available = 0;
+  let notAvailable = 0;
+  let notSet = 0;
   const cap = PROFILE_SELECTION_LIMITS.influencer.categories;
   for (const c of creators) {
     activity[activityBucket(c.lastActiveAt, asOf).bucket]++;
@@ -335,11 +338,12 @@ export function measureCreatorData(
       pricedRows++;
       if (r.priceRupees < PROPOSED.minimumRateRupees) belowMinimum++;
       if (r.priceRupees % 500 === 0) multipleOf500++;
+      if (r.priceConfirmedAt) confirmedRows++;
     }
-    // `false` is also the stored default (and what a missing value is saved as),
-    // so it cannot be read as "unavailable".
-    if (c.availability === true) availableTrue++;
-    else availableFalseOrUnset++;
+    // 3D-1d: an explicit "not available" is now stored; legacy "off" counts as not set.
+    if (c.availability === true) available++;
+    else if (c.availability === false) notAvailable++;
+    else notSet++;
   }
   return {
     creators: creators.length,
@@ -357,14 +361,16 @@ export function measureCreatorData(
       belowProposedMinimum: belowMinimum,
       multipleOf500,
       multipleOf500Pct: pct(multipleOf500, pricedRows),
-      /** No confirmation date exists yet (Stage 3D-1d). */
-      confirmationTracked: false,
+      /** 3D-1d: rates with a confirmation date (set or changed since tracking began). */
+      confirmationTracked: true,
+      confirmedRows,
+      confirmedPct: pct(confirmedRows, pricedRows),
     },
     availability: {
-      availableTrue,
-      falseOrUnset: availableFalseOrUnset,
-      /** No explicit unset/available/unavailable state exists yet (Stage 3D-1d). */
-      explicitStateTracked: false,
+      available,
+      notAvailable,
+      notSet,
+      explicitStateTracked: true,
     },
   };
 }

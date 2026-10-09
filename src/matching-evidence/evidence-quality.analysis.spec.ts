@@ -348,23 +348,70 @@ describe("Stage 3D-1m — creator data shape", () => {
       belowProposedMinimum: 1,
       multipleOf500: 2,
       multipleOf500Pct: 50,
-      confirmationTracked: false,
+      confirmationTracked: true,
+      confirmedRows: 0,
+      confirmedPct: 0,
     });
   });
 
-  it("availability false is never read as 'unavailable'", () => {
+  it("legacy 'off' is never read as 'not available'; only an explicit state is (3D-1d)", () => {
     const r = measureCreatorData(
       [
         norm({}),
         norm({ collaborationAvailability: { enabled: false } }),
         norm({ collaborationAvailability: undefined }),
+        norm({
+          collaborationAvailability: { enabled: false, state: "not_available" },
+        }),
+        norm({
+          collaborationAvailability: { enabled: true, state: "available" },
+        }),
       ],
       AS_OF,
     );
     expect(r.availability).toEqual({
-      availableTrue: 1,
-      falseOrUnset: 2,
-      explicitStateTracked: false,
+      available: 2,
+      notAvailable: 1,
+      notSet: 2,
+      explicitStateTracked: true,
+    });
+  });
+
+  it("counts rates with a confirmation date (3D-1d)", () => {
+    const r = measureCreatorData(
+      [
+        norm({
+          socialMedia: [
+            {
+              socialAccountId: "64b0000000000000000000a9",
+              platformKey: "instagram",
+              platform: "Instagram",
+              handle: "a",
+              tier: "Micro",
+              contentTypes: [
+                {
+                  name: "Reel",
+                  enabled: true,
+                  price: 1000,
+                  priceConfirmedAt: AS_OF,
+                },
+                {
+                  name: "Story (24h)",
+                  enabled: true,
+                  price: 1000,
+                  priceConfirmedAt: null,
+                },
+              ],
+            },
+          ],
+        }),
+      ],
+      AS_OF,
+    );
+    expect(r.rates).toMatchObject({
+      pricedRows: 2,
+      confirmedRows: 1,
+      confirmedPct: 50,
     });
   });
 

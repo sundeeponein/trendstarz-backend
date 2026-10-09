@@ -14,7 +14,7 @@ import { InjectModel } from "@nestjs/mongoose";
 import { Model, Types } from "mongoose";
 import { CloudinaryService } from "../cloudinary.service";
 import { PlansService } from "../plans/plans.service";
-import { normalizeCollaborationAvailability } from "../utils/collaboration-availability.util";
+import { availabilityUpdate } from "../utils/collaboration-availability.util";
 import {
   PROFILE_SELECTION_LIMITS,
   normalizeSelectionList,
@@ -492,12 +492,7 @@ export class PhotographersService {
     for (const key of allowedFields) {
       if (key === "location") continue;
       if (key === "collaborationAvailability") {
-        if (data[key] !== undefined) {
-          update.collaborationAvailability = normalizeCollaborationAvailability(
-            data[key],
-            "photographer",
-          );
-        }
+        // Normalized (with its server-owned date) once the stored profile is loaded below.
         continue;
       }
       if (key === "skills") {
@@ -523,10 +518,17 @@ export class PhotographersService {
     const current: any = await this.photographerModel
       .findById(userId)
       .select(
-        "phoneNumber email isMobileVerified isEmailVerified profileImages socialMedia",
+        "phoneNumber email isMobileVerified isEmailVerified profileImages socialMedia collaborationAvailability",
       )
       .lean();
     if (!current) throw new NotFoundException("Photographer not found");
+    if (data.collaborationAvailability !== undefined) {
+      update.collaborationAvailability = availabilityUpdate(
+        data.collaborationAvailability,
+        "photographer",
+        current.collaborationAvailability,
+      );
+    }
     const socialBefore: any[] = Array.isArray(current.socialMedia)
       ? current.socialMedia
       : [];

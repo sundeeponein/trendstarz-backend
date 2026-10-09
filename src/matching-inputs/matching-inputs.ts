@@ -8,6 +8,7 @@ import {
   isSocialAccountId,
 } from "../utils/social-account.util";
 import { resolveTier } from "../utils/tier-ranges.util";
+import { storedAvailabilityState } from "../utils/collaboration-availability.util";
 
 /**
  * Stage 3B-1 — normalized MATCHING INPUTS (read model only).
@@ -57,6 +58,14 @@ export interface NormalizedDeliverable {
   enabled: boolean;
   /** INR rupees per deliverable; null when unpriced. */
   priceRupees: number | null;
+  /** 3D-1d: when the creator last set this rate; null = never confirmed since tracking began. */
+  priceConfirmedAt: Date | null;
+}
+
+function validDate(value: unknown): Date | null {
+  if (!value) return null;
+  const d = new Date(value as string);
+  return Number.isNaN(d.getTime()) ? null : d;
 }
 
 function deliverablesOf(socialMedia: unknown): NormalizedDeliverable[] {
@@ -70,6 +79,7 @@ function deliverablesOf(socialMedia: unknown): NormalizedDeliverable[] {
         originalPlatform: text(sm?.platform),
         enabled: ct?.enabled === true,
         priceRupees: positiveNumber(ct?.price),
+        priceConfirmedAt: validDate(ct?.priceConfirmedAt),
       });
     }
   }
@@ -133,6 +143,7 @@ export interface NormalizedCreatorMatchInput {
   /** Explicitly stored location only — nothing inferred. No city/country is collected. */
   location: { state: string | null; district: string | null };
   languages: string[];
+  /** true = available, false = explicitly not available, null = never set (3D-1d). */
   availability: boolean | null;
   lastActiveAt: Date | null;
 }
@@ -181,7 +192,9 @@ export function normalizeCreatorMatchInput(
 
   const rates = deliverablesOf(socialMedia);
   const lastActive = profile?.lastLoginAt || profile?.lastOpenedAt || null;
-  const availability = profile?.collaborationAvailability?.enabled;
+  const availabilityState = storedAvailabilityState(
+    profile?.collaborationAvailability,
+  );
 
   return {
     creatorId: String(profile?._id ?? ""),
@@ -218,7 +231,13 @@ export function normalizeCreatorMatchInput(
       district: text(profile?.location?.district) || null,
     },
     languages: uniqueStrings(profile?.languages),
-    availability: typeof availability === "boolean" ? availability : null,
+    // "Off" before 3D-1d was also the untouched default, so it reads as never set.
+    availability:
+      availabilityState === "available"
+        ? true
+        : availabilityState === "not_available"
+          ? false
+          : null,
     lastActiveAt: lastActive ? new Date(lastActive) : null,
   };
 }
