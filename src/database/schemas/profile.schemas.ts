@@ -382,6 +382,8 @@ export const InfluencerSchema = new Schema(
         default: null,
       },
       stateUpdatedAt: { type: Date, default: null },
+      // Option B: "not available" always ends; then back to never set + one reminder.
+      notAvailableUntil: { type: Date, default: null },
       collaborationTypes: [{ type: String }],
       preference: { type: String, default: "" },
       availableFor: [{ type: String }],
@@ -876,6 +878,8 @@ export const PhotographerSchema = new Schema(
         default: null,
       },
       stateUpdatedAt: { type: Date, default: null },
+      // Option B: "not available" always ends; then back to never set + one reminder.
+      notAvailableUntil: { type: Date, default: null },
       availableFor: [{ type: String }],
       preference: { type: String, default: "" },
       openToTravel: { type: Boolean, default: false },

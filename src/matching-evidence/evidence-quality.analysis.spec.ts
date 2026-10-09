@@ -361,7 +361,12 @@ describe("Stage 3D-1m — creator data shape", () => {
         norm({ collaborationAvailability: { enabled: false } }),
         norm({ collaborationAvailability: undefined }),
         norm({
-          collaborationAvailability: { enabled: false, state: "not_available" },
+          collaborationAvailability: {
+            enabled: false,
+            state: "not_available",
+            // A running period (an ended one reads as not set).
+            notAvailableUntil: new Date(Date.now() + 7 * 24 * 3600 * 1000),
+          },
         }),
         norm({
           collaborationAvailability: { enabled: true, state: "available" },

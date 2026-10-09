@@ -85,6 +85,7 @@ import { MatchingInputsModule } from "./matching-inputs/matching-inputs.module";
 import { MatchingEligibilityModule } from "./matching-eligibility/matching-eligibility.module";
 import { MatchingEvidenceModule } from "./matching-evidence/matching-evidence.module";
 import { TierReviewModule } from "./tier-review/tier-review.module";
+import { AvailabilityModule } from "./availability/availability.module";
 import { PlatformDataQualityModule } from "./platform-data-quality/platform-data-quality.module";
 import { PlatformMetricsModule } from "./platform-metrics/platform-metrics.module";
 
@@ -202,6 +203,7 @@ import { PlatformMetricsModule } from "./platform-metrics/platform-metrics.modul
     MatchingEligibilityModule,
     MatchingEvidenceModule,
     TierReviewModule,
+    AvailabilityModule,
   ],
   controllers: [
     AppController,

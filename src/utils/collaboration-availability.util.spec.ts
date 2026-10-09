@@ -8,6 +8,7 @@ import {
 describe("collaboration availability (Stage 3D-1d)", () => {
   const NOW = new Date("2026-10-09T10:00:00.000Z");
   const EARLIER = new Date("2026-09-01T00:00:00.000Z");
+  const LATER = new Date("2026-10-20T00:00:00.000Z"); // a running "not available" period
 
   it("an explicit state wins over enabled", () => {
     expect(availabilityStateFrom({ state: "available" })).toBe("available");
@@ -52,7 +53,11 @@ describe("collaboration availability (Stage 3D-1d)", () => {
     expect(storedAvailabilityState({ enabled: true })).toBe("available");
     expect(storedAvailabilityState({ enabled: false })).toBeNull();
     expect(
-      storedAvailabilityState({ enabled: false, state: "not_available" }),
+      storedAvailabilityState({
+        enabled: false,
+        state: "not_available",
+        notAvailableUntil: LATER,
+      }),
     ).toBe("not_available");
   });
 
@@ -88,7 +93,12 @@ describe("collaboration availability (Stage 3D-1d)", () => {
     const next = availabilityUpdate(
       { enabled: false },
       "influencer",
-      { enabled: false, state: "not_available", stateUpdatedAt: EARLIER },
+      {
+        enabled: false,
+        state: "not_available",
+        stateUpdatedAt: EARLIER,
+        notAvailableUntil: LATER,
+      },
       NOW,
     );
     expect(next).toMatchObject({
@@ -102,6 +112,7 @@ describe("collaboration availability (Stage 3D-1d)", () => {
       enabled: false,
       state: "not_available",
       stateUpdatedAt: EARLIER,
+      notAvailableUntil: LATER,
     };
     const next = availabilityUpdate(
       { state: null, enabled: false },
@@ -113,6 +124,74 @@ describe("collaboration availability (Stage 3D-1d)", () => {
       enabled: false,
       state: "not_available",
       stateUpdatedAt: EARLIER,
+    });
+  });
+
+  describe("time-limited 'not available' (Option B)", () => {
+    const DAY = 24 * 60 * 60 * 1000;
+    const days = (n: number) => new Date(NOW.getTime() + n * DAY);
+
+    it("the creator's choice of 1 week, 2 weeks or 1 month sets the end date", () => {
+      for (const n of [7, 14, 30]) {
+        const next = availabilityUpdate(
+          { state: "not_available", notAvailableForDays: n },
+          "influencer",
+          null,
+          NOW,
+        );
+        expect(next.notAvailableUntil).toEqual(days(n));
+      }
+    });
+
+    it("no choice → the period already running, else 2 weeks; any other length is not accepted as days", () => {
+      expect(
+        availabilityUpdate({ state: "not_available" }, "influencer", null, NOW)
+          .notAvailableUntil,
+      ).toEqual(days(14));
+      expect(
+        availabilityUpdate(
+          { state: "not_available", notAvailableForDays: 365 },
+          "influencer",
+          { state: "not_available", notAvailableUntil: LATER },
+          NOW,
+        ).notAvailableUntil,
+      ).toEqual(LATER);
+    });
+
+    it("a date sent by the browser is kept within 1 to 31 days", () => {
+      const until = (d: Date) =>
+        availabilityUpdate(
+          { state: "not_available", notAvailableUntil: d.toISOString() },
+          "influencer",
+          null,
+          NOW,
+        ).notAvailableUntil;
+      expect(until(days(10))).toEqual(days(10));
+      expect(until(days(400))).toEqual(days(31));
+      expect(until(days(-5))).toEqual(days(1));
+    });
+
+    it("an ended period reads as not set (even before the daily reset runs)", () => {
+      const ended = { state: "not_available", notAvailableUntil: EARLIER };
+      expect(storedAvailabilityState(ended, NOW)).toBeNull();
+      // A period set before durations existed ends 14 days after it was chosen.
+      const legacy = { state: "not_available", stateUpdatedAt: days(-20) };
+      expect(storedAvailabilityState(legacy, NOW)).toBeNull();
+      const recent = { state: "not_available", stateUpdatedAt: days(-3) };
+      expect(storedAvailabilityState(recent, NOW)).toBe("not_available");
+    });
+
+    it("being available clears the end date", () => {
+      const next = availabilityUpdate(
+        { state: "available" },
+        "influencer",
+        { state: "not_available", notAvailableUntil: LATER },
+        NOW,
+      );
+      expect(next).toMatchObject({
+        state: "available",
+        notAvailableUntil: null,
+      });
     });
   });
 });
