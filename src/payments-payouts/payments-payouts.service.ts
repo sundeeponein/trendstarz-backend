@@ -20,6 +20,22 @@ import { NotificationsService } from "../notifications/notifications.service";
 import { RazorpayService } from "../payment/razorpay.service";
 import { PlatformEventsService } from "../platform-events/platform-events.service";
 import { PlatformEventActorRole } from "../platform-events/platform-event-types";
+import {
+  REFUND_DUE_FILTER,
+  RISK_WINDOW_DAYS,
+  SETTLEMENT_OPEN,
+  anyId,
+  formatRupees,
+  historyEntry,
+  isLegacyUnconfirmedRefund,
+  isRefundDue,
+  markRefundsOwed,
+  notifyPayer,
+  refundDueAmount,
+  refundState,
+  riskFlags,
+} from "./campaign-refund.util";
+import { PAID_COLLAB_TERMS_VERSION } from "../campaigns/paid-collab-terms";
 
 type FeeSettings = {
   platformFeeEnabled: boolean;
@@ -804,7 +820,11 @@ export class PaymentsPayoutsService {
   async submitPaymentProof(
     campaignId: string,
     payerId: string,
-    body: { utrNumber: string; paymentProofUrl?: string },
+    body: {
+      utrNumber: string;
+      paymentProofUrl?: string;
+      acceptTerms?: boolean;
+    },
   ) {
     const utrNumber = (body.utrNumber || "").trim();
     if (!utrNumber) {
@@ -819,6 +839,7 @@ export class PaymentsPayoutsService {
     if (!calc.acceptedCount) {
       throw new BadRequestException("No accepted recipients found for payment");
     }
+    await this.recordHostTermsAcceptance(calc, payerId, body?.acceptTerms);
     const paymentBatchId = `batch_${campaignId}_${Date.now()}`;
 
     const saved = await this.upsertCampaignPaymentTransactions(
@@ -862,7 +883,11 @@ export class PaymentsPayoutsService {
     };
   }
 
-  async createRazorpayOrderForCampaign(campaignId: string, payerId: string) {
+  async createRazorpayOrderForCampaign(
+    campaignId: string,
+    payerId: string,
+    acceptTerms?: boolean,
+  ) {
     const campaign: any = await this.campaignModel.findById(campaignId).lean();
     if (!campaign) throw new NotFoundException("Campaign not found");
     await this.assertCampaignOwner(campaign, payerId);
@@ -871,6 +896,7 @@ export class PaymentsPayoutsService {
     if (!calc.acceptedCount) {
       throw new BadRequestException("No accepted recipients found for payment");
     }
+    await this.recordHostTermsAcceptance(calc, payerId, acceptTerms);
 
     const amountPaise = Number(calc.payerTotal || 0);
     if (!Number.isFinite(amountPaise) || amountPaise <= 0) {
@@ -964,6 +990,10 @@ export class PaymentsPayoutsService {
     if (status === "payout_pending")
       filter.payoutStatus = { $in: ["pending", "processing"] };
     if (status === "paid") filter.payoutStatus = "paid";
+    if (status === "refund_due") Object.assign(filter, REFUND_DUE_FILTER);
+    if (status === "refund_on_hold") filter.refundStatus = "on_hold";
+    if (status === "refunded") filter.refundStatus = "sent";
+    if (status === "settlement") filter["settlement.status"] = SETTLEMENT_OPEN;
 
     const rows = await this.transactionModel
       .find(filter)
@@ -1147,34 +1177,48 @@ export class PaymentsPayoutsService {
     const rows = await this.transactionModel
       .find(since ? { createdAt: { $gte: since } } : {})
       .lean();
+    const sum = (list: any[], pick: (r: any) => number) =>
+      list.reduce((total: number, r: any) => total + (pick(r) || 0), 0);
     const verified = rows.filter((r: any) => r.collectionStatus === "verified");
     const paid = rows.filter((r: any) => r.payoutStatus === "paid");
-    const refundedRows = rows.filter(
-      (r: any) => r.resolveOutcome === "refund_to_brand",
-    );
     const pending = rows.filter((r: any) =>
       ["pending", "processing"].includes(String(r.payoutStatus || "")),
     );
+    // Refund money states are kept apart: only "sent" is money that actually left.
+    const onHoldRows = rows.filter((r: any) => r.refundStatus === "on_hold");
+    const refundDueRows = rows.filter((r: any) => isRefundDue(r));
+    const sentRows = rows.filter((r: any) => r.refundStatus === "sent");
+    const legacyRows = rows.filter((r: any) => isLegacyUnconfirmedRefund(r));
+    const settlementRows = rows.filter(
+      (r: any) => r.settlement?.status === SETTLEMENT_OPEN,
+    );
+    const repaidRows = rows.filter(
+      (r: any) => Number(r.settlement?.hostRepaidAmount || 0) > 0,
+    );
+    // Pay-to-join keeps its existing workflow: "refund to brand" still counts as refunded.
+    const payToJoinRefundRows = rows.filter(
+      (r: any) =>
+        r.transactionType === "pay_to_join" &&
+        r.resolveOutcome === "refund_to_brand",
+    );
 
-    const collected = verified.reduce(
-      (sum: number, r: any) => sum + Number(r.payerTotal || 0),
-      0,
+    const collected = sum(verified, (r) => Number(r.payerTotal || 0));
+    const hostRepayments = sum(repaidRows, (r) =>
+      Number(r.settlement?.hostRepaidAmount || 0),
     );
-    const fees = verified.reduce(
-      (sum: number, r: any) => sum + Number(r.platformFee || 0),
-      0,
+    const fees = sum(verified, (r) => Number(r.platformFee || 0));
+    const pendingPayouts = sum(pending, (r) => Number(r.recipientPayout || 0));
+    const paidOut = sum(paid, (r) => Number(r.recipientPayout || 0));
+    const refundSent = sum(sentRows, (r) =>
+      Number(r.refundAmount ?? r.payerTotal ?? 0),
     );
-    const pendingPayouts = pending.reduce(
-      (sum: number, r: any) => sum + Number(r.recipientPayout || 0),
-      0,
-    );
-    const paidOut = paid.reduce(
-      (sum: number, r: any) => sum + Number(r.recipientPayout || 0),
-      0,
-    );
-    const refunded = refundedRows.reduce(
-      (sum: number, r: any) => sum + Number(r.payerTotal || 0),
-      0,
+    const refunded =
+      refundSent + sum(payToJoinRefundRows, (r) => Number(r.payerTotal || 0));
+    const refundDue = sum(refundDueRows, refundDueAmount);
+    const refundOnHold = sum(onHoldRows, refundDueAmount);
+    const legacyUnconfirmed = sum(legacyRows, refundDueAmount);
+    const settlementPending = sum(settlementRows, (r) =>
+      Number(r.settlement?.amount || 0),
     );
 
     return {
@@ -1184,8 +1228,30 @@ export class PaymentsPayoutsService {
         fees,
         pendingPayouts,
         paidOut,
+        /** Money actually transferred back (UTR recorded). */
         refunded,
-        netBalance: collected - paidOut - pendingPayouts - refunded,
+        /** Classified as owed — not yet transferred. */
+        refundDue,
+        refundDueCount: refundDueRows.length,
+        /** Under the 7-day review — not owed yet. */
+        refundOnHold,
+        refundOnHoldCount: onHoldRows.length,
+        /** Old "refund to host" rows whose real payment history is unconfirmed. */
+        legacyUnconfirmed,
+        legacyUnconfirmedCount: legacyRows.length,
+        /** Host repayments still awaited after a refund was sent and the post verified. */
+        settlementPending,
+        settlementPendingCount: settlementRows.length,
+        hostRepayments,
+        netBalance:
+          collected +
+          hostRepayments -
+          paidOut -
+          pendingPayouts -
+          refunded -
+          refundDue -
+          refundOnHold -
+          legacyUnconfirmed,
       },
     };
   }
@@ -1582,6 +1648,26 @@ export class PaymentsPayoutsService {
         "Cannot mark payout as paid while a dispute is open. Resolve the dispute first.",
       );
     }
+    const payoutBlock = this.payoutBlockedReason(tx);
+    if (payoutBlock) throw new BadRequestException(payoutBlock);
+    // Claim the row atomically so two admins (or a retry) can't both pay it.
+    const claimed = await this.transactionModel
+      .findOneAndUpdate(
+        {
+          _id: tx._id,
+          payoutStatus: { $in: ["pending", "processing"] },
+          refundStatus: { $nin: ["on_hold", "owed", "sent"] },
+          "settlement.status": { $ne: SETTLEMENT_OPEN },
+        },
+        { $set: { payoutStatus: "paid", paidOutAt: new Date() } },
+        { new: false },
+      )
+      .lean();
+    if (!claimed) {
+      throw new BadRequestException(
+        "This payout changed meanwhile (already paid or under refund). Reload and try again.",
+      );
+    }
     tx.payoutStatus = "paid";
     tx.paidOutAt = new Date();
     tx.payoutSettledAt = tx.paidOutAt;
@@ -1663,6 +1749,8 @@ export class PaymentsPayoutsService {
         payoutStatus: { $in: ["pending", "processing"] },
         disputeStatus: { $ne: "open" },
         gateway: "razorpay",
+        refundStatus: { $nin: ["on_hold", "owed", "sent"] },
+        "settlement.status": { $ne: SETTLEMENT_OPEN },
       })
       .sort({ createdAt: 1 })
       .limit(200);
@@ -1939,8 +2027,21 @@ export class PaymentsPayoutsService {
         normalizedRole === "influencer" ? r.payerRole : r.recipientRole;
       const otherId =
         normalizedRole === "influencer" ? r.payerId : r.recipientId;
+      const isPayer = String(r.payerId) === String(userId);
+      // Admin-only audit fields never go to the host or creator.
+      const publicRow = { ...r };
+      for (const key of [
+        "refundHistory",
+        "refundOwedBy",
+        "refundSentBy",
+        "settlement",
+        "latePost",
+      ]) {
+        delete publicRow[key];
+      }
       return {
-        ...r,
+        ...publicRow,
+        refundView: this.publicRefundView(r, isPayer),
         campaignTitle: campaign?.title || "",
         campaignType: r.transactionType || campaign?.campaignType || "",
         otherPartyName: getPartyName(otherRole, otherId),
@@ -2099,6 +2200,15 @@ export class PaymentsPayoutsService {
     }
 
     await tx.save();
+    if (outcome === "refund_to_brand") {
+      await markRefundsOwed(
+        this.transactionModel,
+        tx.inviteId,
+        tx.resolvedAt || new Date(),
+        { by: adminId, byRole: "admin" },
+        `Admin resolved the payment dispute for the payer. ${notes || ""}`.trim(),
+      );
+    }
 
     // If releasing to influencer — also mark the invite as completed
     if (outcome === "release_to_influencer" && tx.inviteId) {
@@ -2166,6 +2276,596 @@ export class PaymentsPayoutsService {
     };
   }
 
+  /**
+   * Admin sent the payer's refund by UPI: record the UTR, transfer date and amount (default
+   * the full amount paid, fee included) and tell the payer. Only a row whose refund is
+   * OWED, with no late post waiting and no open report — and the update is guarded on that
+   * state, so a concurrent late-post approval can't also win.
+   */
+  async markRefundSent(
+    transactionId: string,
+    adminId: string,
+    body: {
+      refundUtr?: string;
+      refundAmount?: number;
+      transferDate?: string;
+      notes?: string;
+    },
+  ) {
+    const refundUtr = String(body?.refundUtr || "").trim();
+    if (!refundUtr) {
+      throw new BadRequestException("Enter the refund UTR / reference.");
+    }
+    const tx: any = await this.transactionModel.findById(transactionId).lean();
+    if (!tx) throw new NotFoundException("Transaction not found");
+    if (!isRefundDue(tx)) {
+      throw new BadRequestException(
+        tx.refundStatus === "sent"
+          ? "This refund is already marked as sent."
+          : tx.refundStatus === "on_hold"
+            ? "This refund is still on hold (7-day review). It can be sent once it is owed."
+            : "No refund is owed on this payment.",
+      );
+    }
+    if (tx.latePost?.status === "pending") {
+      throw new BadRequestException(
+        "A late post is waiting for review. Approve or reject it first.",
+      );
+    }
+    if (await this.hasOpenReport(tx.inviteId)) {
+      throw new BadRequestException(
+        "This collaboration has an open report. Resolve it on the Disputes page first.",
+      );
+    }
+    const due = refundDueAmount(tx);
+    const requested = Number(body?.refundAmount);
+    const refundAmount =
+      Number.isFinite(requested) && requested > 0 ? Math.round(requested) : due;
+    if (refundAmount > due) {
+      throw new BadRequestException(
+        `Refund can't be more than the ${formatRupees(due)} the payer paid.`,
+      );
+    }
+    const now = new Date();
+    let transferDate = now;
+    if (body?.transferDate) {
+      transferDate = new Date(body.transferDate);
+      if (Number.isNaN(transferDate.getTime())) {
+        throw new BadRequestException("Invalid transfer date.");
+      }
+      if (transferDate.getTime() > now.getTime() + 60 * 60 * 1000) {
+        throw new BadRequestException(
+          "The transfer date can't be in the future.",
+        );
+      }
+    }
+    const note = String(body?.notes || "").trim();
+
+    const updated: any = await this.transactionModel
+      .findOneAndUpdate(
+        { _id: tx._id, ...REFUND_DUE_FILTER },
+        {
+          $set: {
+            refundStatus: "sent",
+            refundOwedAt: tx.refundOwedAt || tx.resolvedAt || now,
+            refundAmount,
+            refundUtr,
+            refundTransferDate: transferDate,
+            refundSentAt: now,
+            refundSentBy: adminId,
+            ...(note ? { refundNote: note } : {}),
+          },
+          $push: {
+            refundHistory: historyEntry(
+              "refund_sent",
+              { by: adminId, byRole: "admin" },
+              {
+                from: "owed",
+                to: "sent",
+                amount: refundAmount,
+                utr: refundUtr,
+                transferDate,
+                note,
+              },
+              now,
+            ),
+          },
+        },
+        { new: true },
+      )
+      .lean();
+    if (!updated) {
+      throw new BadRequestException(
+        "This refund changed meanwhile (already sent, or a post was approved). Reload and try again.",
+      );
+    }
+    await this.setFinancialCaseOpen(anyId(updated.inviteId), false);
+
+    const campaign: any = await this.campaignModel
+      .findById(updated.campaignId)
+      .select("title")
+      .lean()
+      .catch(() => null);
+    notifyPayer(
+      {
+        pushService: this.pushService,
+        notificationsService: this.notificationsService,
+      },
+      updated,
+      "Refund sent",
+      `${formatRupees(refundAmount)} for "${campaign?.title || "your campaign"}" was refunded to you (UTR ${refundUtr}).`,
+    );
+    return { success: true, transaction: updated };
+  }
+
+  /**
+   * Settlement: the host repaid after a post was verified post-refund. Records the UTR and
+   * puts the creator's payout back in the payout queue.
+   */
+  async recordHostRepayment(
+    transactionId: string,
+    adminId: string,
+    body: { utr?: string; amount?: number; repaidAt?: string; notes?: string },
+  ) {
+    const utr = String(body?.utr || "").trim();
+    if (!utr) throw new BadRequestException("Enter the host's repayment UTR.");
+    const tx: any = await this.transactionModel.findById(transactionId).lean();
+    if (!tx) throw new NotFoundException("Transaction not found");
+    if (tx.settlement?.status !== SETTLEMENT_OPEN) {
+      throw new BadRequestException(
+        "No settlement is waiting on this payment.",
+      );
+    }
+    const amount = Number(body?.amount);
+    const repaid =
+      Number.isFinite(amount) && amount > 0
+        ? Math.round(amount)
+        : Number(tx.settlement?.amount || 0);
+    if (repaid < Number(tx.settlement?.amount || 0)) {
+      throw new BadRequestException(
+        `The host must repay ${formatRupees(Number(tx.settlement?.amount || 0))} before the creator is paid. Record an exception instead if TrendStarZ decided otherwise.`,
+      );
+    }
+    const now = new Date();
+    const repaidAt = body?.repaidAt ? new Date(body.repaidAt) : now;
+    if (Number.isNaN(repaidAt.getTime())) {
+      throw new BadRequestException("Invalid repayment date.");
+    }
+    return this.closeSettlement(tx, adminId, now, {
+      status: "repaid",
+      set: {
+        "settlement.hostRepaymentUtr": utr,
+        "settlement.hostRepaidAmount": repaid,
+        "settlement.hostRepaidAt": repaidAt,
+      },
+      history: { amount: repaid, utr, note: String(body?.notes || "").trim() },
+      creatorBody:
+        "The host's repayment was received. Your payout is being processed.",
+    });
+  }
+
+  /** Settlement exception: TrendStarZ pays the creator without the host's repayment. */
+  async approveSettlementException(
+    transactionId: string,
+    adminId: string,
+    body: { reason?: string },
+  ) {
+    const reason = String(body?.reason || "").trim();
+    if (reason.length < 10) {
+      throw new BadRequestException(
+        "Write why TrendStarZ pays without the host's repayment (at least 10 characters).",
+      );
+    }
+    const tx: any = await this.transactionModel.findById(transactionId).lean();
+    if (!tx) throw new NotFoundException("Transaction not found");
+    if (tx.settlement?.status !== SETTLEMENT_OPEN) {
+      throw new BadRequestException(
+        "No settlement is waiting on this payment.",
+      );
+    }
+    return this.closeSettlement(tx, adminId, new Date(), {
+      status: "exception_approved",
+      set: { "settlement.exceptionReason": reason },
+      history: { note: reason },
+      creatorBody: "TrendStarZ approved your payout. It is being processed.",
+    });
+  }
+
+  private async closeSettlement(
+    tx: any,
+    adminId: string,
+    now: Date,
+    opts: {
+      status: "repaid" | "exception_approved";
+      set: Record<string, unknown>;
+      history: Record<string, unknown>;
+      creatorBody: string;
+    },
+  ) {
+    const updated: any = await this.transactionModel
+      .findOneAndUpdate(
+        {
+          _id: tx._id,
+          "settlement.status": SETTLEMENT_OPEN,
+          payoutStatus: { $ne: "paid" },
+        },
+        {
+          $set: {
+            ...opts.set,
+            "settlement.status": opts.status,
+            "settlement.closedAt": now,
+            "settlement.closedBy": adminId,
+            payoutStatus: "processing",
+            workStatus: "approved",
+          },
+          $push: {
+            refundHistory: historyEntry(
+              opts.status === "repaid"
+                ? "settlement_host_repaid"
+                : "settlement_exception_approved",
+              { by: adminId, byRole: "admin" },
+              opts.history,
+              now,
+            ),
+          },
+        },
+        { new: true },
+      )
+      .lean();
+    if (!updated) {
+      throw new BadRequestException(
+        "This settlement changed meanwhile. Reload and try again.",
+      );
+    }
+    await this.setFinancialCaseOpen(anyId(updated.inviteId), false);
+    const recipientId = String(updated.recipientId || "");
+    if (recipientId) {
+      const role =
+        updated.recipientRole === "photographer"
+          ? "photographer"
+          : "influencer";
+      const url = `/${role}-dashboard`;
+      this.pushService
+        .sendToUser(
+          recipientId,
+          { title: "Payout update", body: opts.creatorBody, url },
+          "payment",
+        )
+        .catch(() => undefined);
+      this.notificationsService
+        .createForUser({
+          userId: recipientId,
+          userRole: role,
+          title: "Payout update",
+          body: opts.creatorBody,
+          url,
+        })
+        .catch(() => undefined);
+    }
+    return { success: true, transaction: updated };
+  }
+
+  /**
+   * Hourly: refunds whose 7-day hold ended move to OWED — unless a late post is waiting or
+   * the collaboration has an open report (those wait for an admin decision).
+   */
+  async expireRefundHolds(now = new Date()) {
+    const due: any[] = await this.transactionModel
+      .find({ refundStatus: "on_hold", refundHoldUntil: { $lte: now } })
+      .select("_id inviteId latePost")
+      .lean();
+    let moved = 0;
+    let waiting = 0;
+    for (const row of due) {
+      if (
+        row.latePost?.status === "pending" ||
+        (await this.hasOpenReport(row.inviteId))
+      ) {
+        waiting += 1;
+        continue;
+      }
+      const updated: any = await this.transactionModel
+        .findOneAndUpdate(
+          {
+            _id: row._id,
+            refundStatus: "on_hold",
+            refundHoldUntil: { $lte: now },
+            "latePost.status": { $ne: "pending" },
+          },
+          {
+            $set: { refundStatus: "owed", refundOwedAt: now },
+            $push: {
+              refundHistory: historyEntry(
+                "hold_expired_refund_owed",
+                { byRole: "system" },
+                { from: "on_hold", to: "owed" },
+                now,
+              ),
+            },
+          },
+          { new: true },
+        )
+        .lean();
+      if (!updated) continue;
+      moved += 1;
+      await this.setFinancialCaseOpen(anyId(updated.inviteId), false);
+    }
+    return { success: true, moved, waiting };
+  }
+
+  @Cron("0 15 * * * *")
+  async expireRefundHoldsCron() {
+    try {
+      const res = await this.expireRefundHolds();
+      if (res.moved || res.waiting) {
+        this.logger.log(
+          `Refund holds: moved to owed=${res.moved}, waiting on review=${res.waiting}`,
+        );
+      }
+    } catch (err: any) {
+      this.logger.error(`expireRefundHolds failed: ${err?.message || err}`);
+    }
+  }
+
+  /**
+   * Admin Refunds queue: on hold / owed / sent / settlement / legacy, with risk flags,
+   * the creator's social handles, any late post and the audit trail.
+   */
+  async listRefunds(state?: string) {
+    const states = [
+      "on_hold",
+      "owed",
+      "sent",
+      "settlement",
+      "legacy_unconfirmed",
+    ];
+    const filter: any = {
+      $or: [
+        { refundStatus: { $in: ["on_hold", "owed", "sent"] } },
+        {
+          "settlement.status": {
+            $in: [SETTLEMENT_OPEN, "repaid", "exception_approved"],
+          },
+        },
+        {
+          transactionType: "paid_collab",
+          collectionStatus: "verified",
+          refundStatus: { $in: [null, "none"] },
+          $or: [
+            { resolveOutcome: "refund_to_brand" },
+            { payoutStatus: "skipped" },
+          ],
+        },
+      ],
+    };
+    const rows: any[] = await this.transactionModel
+      .find(filter)
+      .sort({ updatedAt: -1 })
+      .limit(500)
+      .lean();
+    const view = rows
+      .map((r) => ({ row: r, state: refundState(r) }))
+      .filter((x) => x.state !== "none" && x.state !== "cancelled")
+      .filter((x) => !state || !states.includes(state) || x.state === state);
+
+    // Risk flags: refund rows (any state but cancelled) of the last 90 days.
+    const since = new Date(Date.now() - RISK_WINDOW_DAYS * 24 * 60 * 60 * 1000);
+    const recent: any[] = await this.transactionModel
+      .find({
+        transactionType: "paid_collab",
+        createdAt: { $gte: since },
+        $or: [
+          { refundStatus: { $in: ["on_hold", "owed", "sent"] } },
+          { resolveOutcome: "refund_to_brand" },
+        ],
+      })
+      .select("_id payerId recipientId createdAt")
+      .lean();
+
+    const inviteIds = view.flatMap((x) => [
+      x.row.inviteId,
+      String(x.row.inviteId),
+    ]);
+    const campaignIds = [...new Set(view.map((x) => String(x.row.campaignId)))];
+    const recipients = view.map((x) => String(x.row.recipientId));
+    const payers = view.map((x) => String(x.row.payerId));
+    const [invites, campaigns, influencers, photographers, brands] =
+      await Promise.all([
+        this.inviteModel
+          .find({
+            _id: {
+              $in: inviteIds.filter((id) => /^[a-f0-9]{24}$/i.test(String(id))),
+            },
+          })
+          .select(
+            "status withdrawnAt withdrawnReason selectedPlatform selectedPostDate reportedIssue latePostApproval termsAcceptance",
+          )
+          .lean(),
+        this.campaignModel
+          .find({
+            _id: {
+              $in: campaignIds.filter((id) => /^[a-f0-9]{24}$/i.test(id)),
+            },
+          })
+          .select("title campaignNumber")
+          .lean(),
+        this.influencerModel
+          .find({
+            _id: {
+              $in: [...recipients, ...payers].filter((id) =>
+                /^[a-f0-9]{24}$/i.test(id),
+              ),
+            },
+          })
+          .select(
+            "name username socialMedia.platform socialMedia.platformKey socialMedia.handle",
+          )
+          .lean(),
+        this.photographerModel
+          .find({
+            _id: {
+              $in: [...recipients, ...payers].filter((id) =>
+                /^[a-f0-9]{24}$/i.test(id),
+              ),
+            },
+          })
+          .select(
+            "name username socialMedia.platform socialMedia.platformKey socialMedia.handle",
+          )
+          .lean(),
+        this.brandModel
+          .find({
+            _id: { $in: payers.filter((id) => /^[a-f0-9]{24}$/i.test(id)) },
+          })
+          .select("brandName brandUsername")
+          .lean(),
+      ]);
+    const byId = (list: any[]) =>
+      new Map(list.map((d: any) => [String(d._id), d]));
+    const inviteMap = byId(invites);
+    const campaignMap = byId(campaigns);
+    const peopleMap = new Map([...byId(influencers), ...byId(photographers)]);
+    const brandMap = byId(brands);
+
+    const data = view.map(({ row, state: rowState }) => {
+      const invite: any = inviteMap.get(String(row.inviteId));
+      const creator: any = peopleMap.get(String(row.recipientId));
+      const host: any =
+        brandMap.get(String(row.payerId)) || peopleMap.get(String(row.payerId));
+      const openReport =
+        !!invite?.reportedIssue?.reportedAt &&
+        !invite?.reportedIssue?.resolvedAt;
+      return {
+        _id: row._id,
+        state: rowState,
+        campaignId: row.campaignId,
+        campaignTitle: campaignMap.get(String(row.campaignId))?.title || "",
+        campaignNumber:
+          campaignMap.get(String(row.campaignId))?.campaignNumber || null,
+        inviteId: row.inviteId,
+        inviteStatus: invite?.status || null,
+        withdrawnAt: invite?.withdrawnAt || null,
+        withdrawnReason: invite?.withdrawnReason || null,
+        selectedPlatform: invite?.selectedPlatform || null,
+        hostName: host?.brandName || host?.name || "",
+        hostRole: row.payerRole,
+        creatorName: creator?.name || creator?.username || "",
+        creatorRole: row.recipientRole,
+        creatorSocial: (creator?.socialMedia || [])
+          .filter((s: any) => s?.handle)
+          .map((s: any) => ({
+            platform: s.platform,
+            platformKey: s.platformKey,
+            handle: s.handle,
+          })),
+        agreedAmount: row.agreedAmount,
+        platformFee: row.platformFee,
+        payerTotal: row.payerTotal,
+        refundAmount: row.refundAmount ?? null,
+        refundHoldUntil: row.refundHoldUntil || null,
+        refundOwedAt: row.refundOwedAt || null,
+        refundUtr: row.refundUtr || null,
+        refundTransferDate: row.refundTransferDate || null,
+        refundSentAt: row.refundSentAt || null,
+        latePost: row.latePost?.status ? row.latePost : null,
+        settlement: row.settlement?.status ? row.settlement : null,
+        openReport,
+        reportCategory: invite?.reportedIssue?.category || null,
+        reportReason: openReport ? invite?.reportedIssue?.reason || "" : null,
+        termsAcceptance: invite?.termsAcceptance || null,
+        flags: rowState === "legacy_unconfirmed" ? [] : riskFlags(row, recent),
+        history: row.refundHistory || [],
+      };
+    });
+    return { success: true, data };
+  }
+
+  /** What the payer / recipient may see about a refund (no admin ids, no audit). */
+  private publicRefundView(tx: any, isPayer: boolean) {
+    const state = refundState(tx);
+    if (state === "none") return null;
+    if (state === "legacy_unconfirmed") return { state: "under_review" };
+    if (state === "cancelled") return { state: "cancelled" };
+    if (!isPayer) {
+      return {
+        state: state === "settlement" ? "pending_settlement" : "closed_no_post",
+        latePostStatus: tx.latePost?.status || null,
+      };
+    }
+    return {
+      state,
+      amount:
+        state === "sent"
+          ? Number(tx.refundAmount ?? tx.payerTotal ?? 0)
+          : refundDueAmount(tx),
+      holdUntil: tx.refundHoldUntil || null,
+      utr: state === "sent" ? tx.refundUtr || null : null,
+      transferDate:
+        state === "sent" ? tx.refundTransferDate || tx.refundSentAt : null,
+      settlementAmount:
+        state === "settlement" ? Number(tx.settlement?.amount || 0) : null,
+    };
+  }
+
+  /** A payout must never be released while the payer's refund is in progress or sent. */
+  private payoutBlockedReason(tx: any): string | null {
+    if (!["pending", "processing"].includes(String(tx?.payoutStatus))) {
+      return tx?.payoutStatus === "paid"
+        ? "This payout is already paid."
+        : `This payout can't be paid (status: ${tx?.payoutStatus}).`;
+    }
+    if (["on_hold", "owed", "sent"].includes(String(tx?.refundStatus))) {
+      return "A refund to the host is in progress or was sent for this collaboration. Resolve it in Payments → Refunds first.";
+    }
+    if (tx?.settlement?.status === SETTLEMENT_OPEN) {
+      return "Waiting for the host's repayment (settlement). Record the repayment or an exception first.";
+    }
+    return null;
+  }
+
+  private async hasOpenReport(inviteId: unknown): Promise<boolean> {
+    if (!inviteId) return false;
+    const invite: any = await this.inviteModel
+      .findOne({ _id: anyId(inviteId) })
+      .select("reportedIssue")
+      .lean()
+      .catch(() => null);
+    return (
+      !!invite?.reportedIssue?.reportedAt && !invite?.reportedIssue?.resolvedAt
+    );
+  }
+
+  /**
+   * The host must accept the paid-collaboration terms when paying for a paid collab
+   * (pay-to-join keeps its existing flow). Stored per invite with the terms version.
+   */
+  private async recordHostTermsAcceptance(
+    calc: any,
+    payerId: string,
+    acceptTerms?: boolean,
+  ) {
+    if (calc?.campaignType === "pay_to_join") return;
+    if (acceptTerms !== true) {
+      throw new BadRequestException(
+        "Please accept the paid-collaboration terms before paying.",
+      );
+    }
+    const ids = (calc?.acceptedInviteIds || []).filter(Boolean);
+    if (!ids.length) return;
+    await this.inviteModel.updateMany(
+      { _id: { $in: ids } },
+      {
+        $set: {
+          "termsAcceptance.host": {
+            acceptedAt: new Date(),
+            version: PAID_COLLAB_TERMS_VERSION,
+            userId: String(payerId),
+          },
+        },
+      },
+    );
+  }
+
   /** Admin — list all open disputes (frozen transactions). */
   async listOpenDisputes() {
     const rows = await this.transactionModel
@@ -2173,5 +2873,17 @@ export class PaymentsPayoutsService {
       .sort({ disputedAt: 1 })
       .lean();
     return { success: true, data: rows, total: rows.length };
+  }
+
+  /** Marks whether a refund/late-post/settlement case still needs both sides' contact. */
+  private async setFinancialCaseOpen(inviteId: unknown, open: boolean) {
+    try {
+      await this.inviteModel.updateOne(
+        { _id: inviteId },
+        { $set: { financialCaseOpen: open } },
+      );
+    } catch {
+      /* non-critical: only affects contact visibility */
+    }
   }
 }

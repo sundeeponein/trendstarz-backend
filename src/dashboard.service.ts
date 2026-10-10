@@ -6,6 +6,7 @@ import {
 import { Injectable, NotFoundException } from "@nestjs/common";
 import { InjectModel } from "@nestjs/mongoose";
 import { Model, Types } from "mongoose";
+import { latePostWindowsByInvite } from "./payments-payouts/campaign-refund.util";
 
 @Injectable()
 export class DashboardService {
@@ -14,6 +15,8 @@ export class DashboardService {
     @InjectModel("Campaign") private readonly campaignModel: Model<any>,
     @InjectModel("Brand") private readonly brandModel: Model<any>,
     @InjectModel("Influencer") private readonly influencerModel: Model<any>,
+    @InjectModel("CampaignTransaction")
+    private readonly transactionModel: Model<any>,
   ) {}
 
   /** Last 30 India days of profile traffic; zeros (never an error) when history is unavailable. */
@@ -82,6 +85,10 @@ export class DashboardService {
           ...invite.campaignId,
           inviteId: invite._id,
           inviteStatus: st,
+          creatorTermsAccepted: !!invite.termsAcceptance?.creator?.acceptedAt,
+          openReport:
+            !!invite.reportedIssue?.reportedAt &&
+            !invite.reportedIssue?.resolvedAt,
         });
       }
       if (st === "completed" || st === "disputed" || st === "approved") {
@@ -106,6 +113,21 @@ export class DashboardService {
           withdrawnReason: invite.withdrawnReason,
           autoClosed,
         });
+      }
+    }
+    // Closed without a post: show the late-post window while the refund is on hold.
+    if (withdrawnCampaigns.length) {
+      try {
+        const windows = await latePostWindowsByInvite(
+          this.transactionModel,
+          withdrawnCampaigns.map((c) => c.inviteId),
+        );
+        for (const c of withdrawnCampaigns) {
+          const w = windows.get(String(c.inviteId));
+          if (w) c.latePostWindow = w;
+        }
+      } catch {
+        /* non-critical: the list still renders without it */
       }
     }
     // Debug: log status counts

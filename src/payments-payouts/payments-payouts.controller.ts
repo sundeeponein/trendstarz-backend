@@ -47,7 +47,12 @@ export class PaymentsPayoutsController {
   async submitProof(
     @Param("campaignId") campaignId: string,
     @Req() req: any,
-    @Body() body: { utrNumber: string; paymentProofUrl?: string },
+    @Body()
+    body: {
+      utrNumber: string;
+      paymentProofUrl?: string;
+      acceptTerms?: boolean;
+    },
   ) {
     const payerId = req.user?.userId;
     return this.paymentsPayoutsService.submitPaymentProof(
@@ -62,11 +67,13 @@ export class PaymentsPayoutsController {
   async createRazorpayOrder(
     @Param("campaignId") campaignId: string,
     @Req() req: any,
+    @Body() body: { acceptTerms?: boolean },
   ) {
     const payerId = req.user?.userId;
     return this.paymentsPayoutsService.createRazorpayOrderForCampaign(
       campaignId,
       payerId,
+      body?.acceptTerms,
     );
   }
 
@@ -137,6 +144,62 @@ export class PaymentsPayoutsController {
     },
   ) {
     return this.paymentsPayoutsService.markPayoutPaid(id, body);
+  }
+
+  /** Admin Refunds queue — ?state=on_hold|owed|sent|settlement|legacy_unconfirmed */
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Get("admin/refunds")
+  async listRefunds(@Query("state") state?: string) {
+    return this.paymentsPayoutsService.listRefunds(state);
+  }
+
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Post(":id/mark-refund-sent")
+  async markRefundSent(
+    @Param("id") id: string,
+    @Req() req: any,
+    @Body()
+    body: {
+      refundUtr: string;
+      refundAmount?: number;
+      transferDate?: string;
+      notes?: string;
+    },
+  ) {
+    return this.paymentsPayoutsService.markRefundSent(
+      id,
+      req.user?.userId,
+      body,
+    );
+  }
+
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Post(":id/settlement/host-repaid")
+  async recordHostRepayment(
+    @Param("id") id: string,
+    @Req() req: any,
+    @Body()
+    body: { utr?: string; amount?: number; repaidAt?: string; notes?: string },
+  ) {
+    return this.paymentsPayoutsService.recordHostRepayment(
+      id,
+      req.user?.userId,
+      body || {},
+    );
+  }
+
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Post(":id/settlement/exception")
+  async approveSettlementException(
+    @Param("id") id: string,
+    @Req() req: any,
+    @Body() body: { reason?: string },
+  ) {
+    return this.paymentsPayoutsService.approveSettlementException(
+      id,
+      req.user?.userId,
+      body || {},
+    );
   }
 
   @UseGuards(JwtAuthGuard, RolesGuard)

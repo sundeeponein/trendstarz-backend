@@ -69,9 +69,15 @@ describe("PaymentsPayoutsController", () => {
     service.createRazorpayOrderForCampaign.mockResolvedValue({ success: true } as any);
 
     const req = { user: { userId: "brand1" } };
-    const result = await controller.createRazorpayOrder("camp1", req);
+    const result = await controller.createRazorpayOrder("camp1", req, {
+      acceptTerms: true,
+    });
 
-    expect(service.createRazorpayOrderForCampaign).toHaveBeenCalledWith("camp1", "brand1");
+    expect(service.createRazorpayOrderForCampaign).toHaveBeenCalledWith(
+      "camp1",
+      "brand1",
+      true,
+    );
     expect(result).toEqual({ success: true });
   });
 

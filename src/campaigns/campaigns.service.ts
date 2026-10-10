@@ -1621,6 +1621,16 @@ export class CampaignsService {
       // This update path is the brand/host's own campaign endpoint (ownership
       // is checked above), so any manual completion through here is by the host.
       if (data.status === "completed") {
+        // Ending early would close paid creators and start refunds — only TrendStarZ can.
+        if (
+          await this.campaignInvitesService.paidCreatorsStillPosting(
+            campaign._id,
+          )
+        ) {
+          throw new BadRequestException(
+            "Paid creators are still within their posting window. Contact TrendStarZ to end this campaign.",
+          );
+        }
         data.completedBy = "host";
         data.completedAt = new Date();
       }
@@ -2219,6 +2229,12 @@ export class CampaignsService {
     if (!campaign) throw new NotFoundException("Campaign not found");
     if (String(campaign.brandId) !== brandId) {
       throw new BadRequestException("Not your campaign");
+    }
+    // Deleting would wipe the invites behind paid money records (payouts, refunds).
+    if (await this.campaignInvitesService.hasPaidCollaborationRecords(id)) {
+      throw new BadRequestException(
+        "This campaign has paid collaborations, so it can't be deleted. Contact TrendStarZ if it needs to be closed.",
+      );
     }
     const inviteQueries: any[] = [{ campaignId: id }];
     if (/^[a-fA-F0-9]{24}$/.test(id)) {

@@ -146,7 +146,35 @@ export const CampaignInviteSchema = new Schema({
     resolvedAt: { type: Date },
     // Set when the influencer contests the dispute itself; pauses the auto-cancel timer and flags it for admin.
     adminReviewRequestedAt: { type: Date },
+    // "offplatform" = "Asked to skip posting / deal outside TrendStarZ" (either side).
+    category: { type: String },
+    reportedByRole: { type: String },
   },
+  // Paid-collaboration terms each side accepted (version + time).
+  termsAcceptance: {
+    host: {
+      acceptedAt: { type: Date },
+      version: { type: String },
+      userId: { type: String },
+    },
+    creator: {
+      acceptedAt: { type: Date },
+      version: { type: String },
+      userId: { type: String },
+    },
+  },
+  // Kept when admin approves a late post: the original deadline and closure stay on record.
+  latePostApproval: {
+    approvedAt: { type: Date },
+    approvedBy: { type: String },
+    postUrl: { type: String },
+    note: { type: String },
+    originalDeadline: { type: Date },
+    withdrawnAt: { type: Date },
+    withdrawnReason: { type: String },
+  },
+  // A refund hold, pending late post or settlement still needs both sides' contact.
+  financialCaseOpen: { type: Boolean },
   createdAt: { type: Date, default: Date.now },
   updatedAt: { type: Date, default: Date.now },
 });

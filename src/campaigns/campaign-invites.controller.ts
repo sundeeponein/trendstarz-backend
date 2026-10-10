@@ -64,7 +64,9 @@ export class CampaignInvitesController {
         const allowed = ["image/jpeg", "image/jpg", "image/png", "image/webp"];
         if (!allowed.includes(file.mimetype)) {
           return cb(
-            new BadRequestException("Only JPG, PNG, or WebP images are allowed"),
+            new BadRequestException(
+              "Only JPG, PNG, or WebP images are allowed",
+            ),
             false,
           );
         }
@@ -223,10 +225,12 @@ export class CampaignInvitesController {
         pincode?: string;
         landmark?: string;
       };
+      /** Creator ticked the paid-collaboration terms (recorded with its version). */
+      acceptTerms?: boolean;
     },
   ) {
     const influencerId = this.requesterId(req);
-    return this.invitesService.respond(
+    const result = await this.invitesService.respond(
       id,
       influencerId,
       body.status,
@@ -237,6 +241,47 @@ export class CampaignInvitesController {
       body.counterMessage,
       body.payout,
       body.shippingAddress,
+    );
+    if (body.acceptTerms === true && body.status !== "declined") {
+      await this.invitesService.acceptPaidTerms(id, influencerId);
+    }
+    return result;
+  }
+
+  /** Creator or host accepts the paid-collaboration terms on this invite. */
+  @UseGuards(JwtAuthGuard)
+  @Post(":id/accept-terms")
+  async acceptTerms(@Param("id") id: string, @Req() req: any) {
+    return this.invitesService.acceptPaidTerms(id, this.requesterId(req));
+  }
+
+  /** Creator submits a post link after the deadline, while the refund is on hold. */
+  @UseGuards(JwtAuthGuard)
+  @Post(":id/late-post")
+  async submitLatePost(
+    @Param("id") id: string,
+    @Req() req: any,
+    @Body() body: { postUrl?: string; note?: string },
+  ) {
+    return this.invitesService.submitLatePost(
+      id,
+      this.requesterId(req),
+      body || {},
+    );
+  }
+
+  /** Either side: "Asked to skip posting / deal outside TrendStarZ". */
+  @UseGuards(JwtAuthGuard)
+  @Post(":id/report-offplatform")
+  async reportOffPlatform(
+    @Param("id") id: string,
+    @Req() req: any,
+    @Body() body: { details?: string },
+  ) {
+    return this.invitesService.reportOffPlatform(
+      id,
+      this.requesterId(req),
+      String(body?.details || ""),
     );
   }
 
@@ -370,7 +415,10 @@ export class CampaignInvitesController {
   @UseGuards(JwtAuthGuard)
   @Post(":id/request-admin-review")
   async requestAdminReviewForDispute(@Param("id") id: string, @Req() req: any) {
-    return this.invitesService.requestAdminReviewForDispute(id, this.requesterId(req));
+    return this.invitesService.requestAdminReviewForDispute(
+      id,
+      this.requesterId(req),
+    );
   }
 
   @UseGuards(JwtAuthGuard)
@@ -527,10 +575,31 @@ export class CampaignInvitesController {
   @Post("admin/:id/resolve-dispute")
   async adminResolveDispute(
     @Param("id") id: string,
+    @Req() req: any,
     @Body()
     body: { outcome?: "completed" | "withdrawn" | "disputed"; note?: string },
   ) {
-    return this.invitesService.adminResolveDispute(id, body || {});
+    return this.invitesService.adminResolveDispute(
+      id,
+      body || {},
+      req.user?.userId,
+    );
+  }
+
+  /** Admin verifies a late post (or a post found outside the platform). */
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Post("admin/:id/late-post-review")
+  async adminReviewLatePost(
+    @Param("id") id: string,
+    @Req() req: any,
+    @Body()
+    body: { action?: "approve" | "reject"; note?: string; postUrl?: string },
+  ) {
+    return this.invitesService.adminReviewLatePost(
+      id,
+      String(req.user?.userId || ""),
+      body || {},
+    );
   }
 
   @UseGuards(JwtAuthGuard, RolesGuard)

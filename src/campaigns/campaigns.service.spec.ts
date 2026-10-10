@@ -115,12 +115,24 @@ describe("CampaignsService", () => {
       providers: [
         CampaignsService,
         { provide: getModelToken("Campaign"), useValue: mockCampaignModel },
-        { provide: getModelToken("CampaignInvite"), useValue: mockCampaignInviteModel },
+        {
+          provide: getModelToken("CampaignInvite"),
+          useValue: mockCampaignInviteModel,
+        },
         { provide: getModelToken("Brand"), useValue: mockBrandModel },
         { provide: getModelToken("Influencer"), useValue: mockInfluencerModel },
-        { provide: getModelToken("Photographer"), useValue: mockPhotographerModel },
-        { provide: getModelToken("AppSettings"), useValue: mockAppSettingsModel },
-        { provide: getModelToken("ProfileFlag"), useValue: mockProfileFlagModel },
+        {
+          provide: getModelToken("Photographer"),
+          useValue: mockPhotographerModel,
+        },
+        {
+          provide: getModelToken("AppSettings"),
+          useValue: mockAppSettingsModel,
+        },
+        {
+          provide: getModelToken("ProfileFlag"),
+          useValue: mockProfileFlagModel,
+        },
         { provide: getModelToken("Counter"), useValue: mockCounterModel },
         { provide: PlansService, useValue: mockPlansService },
         { provide: CloudinaryService, useValue: {} },
@@ -141,8 +153,12 @@ describe("CampaignsService", () => {
         {
           provide: CampaignInvitesService,
           useValue: {
-            expireUnsubmittedInvitesForCampaign: jest.fn().mockResolvedValue(undefined),
+            expireUnsubmittedInvitesForCampaign: jest
+              .fn()
+              .mockResolvedValue(undefined),
             latestOpenPostingDeadline: jest.fn().mockResolvedValue(null),
+            paidCreatorsStillPosting: jest.fn().mockResolvedValue(false),
+            hasPaidCollaborationRecords: jest.fn().mockResolvedValue(false),
           },
         },
       ],
@@ -163,7 +179,12 @@ describe("CampaignsService", () => {
 
   describe("create", () => {
     it("should create a campaign within plan limits", async () => {
-      const data = { title: "New Campaign", description: "Test", minInfluencers: 1, maxInfluencers: 1 };
+      const data = {
+        title: "New Campaign",
+        description: "Test",
+        minInfluencers: 1,
+        maxInfluencers: 1,
+      };
       const result = await service.create(mockBrand._id, data);
       expect(result).toBeDefined();
       expect(result._id).toBe("new-id");
@@ -172,7 +193,11 @@ describe("CampaignsService", () => {
     it("should throw when campaign limit exceeded", async () => {
       campaignModel.countDocuments.mockResolvedValue(5);
       await expect(
-        service.create(mockBrand._id, { title: "Over limit", minInfluencers: 1, maxInfluencers: 1 }),
+        service.create(mockBrand._id, {
+          title: "Over limit",
+          minInfluencers: 1,
+          maxInfluencers: 1,
+        }),
       ).rejects.toThrow(BadRequestException);
     });
 
@@ -341,6 +366,21 @@ describe("CampaignsService", () => {
       ).rejects.toThrow(BadRequestException);
     });
 
+    it("blocks a host from ending the campaign while a paid creator can still post", async () => {
+      const campaign = { ...mockCampaign, status: "active", save: jest.fn() };
+      campaignModel.findById.mockResolvedValue(campaign);
+      const invites = (service as any).campaignInvitesService;
+      invites.paidCreatorsStillPosting.mockResolvedValueOnce(true);
+      await expect(
+        service.update(mockCampaign._id, mockBrand._id, {
+          status: "completed",
+        }),
+      ).rejects.toThrow(
+        "Paid creators are still within their posting window. Contact TrendStarZ to end this campaign.",
+      );
+      expect(campaign.save).not.toHaveBeenCalled();
+    });
+
     it("should allow draft -> active transition", async () => {
       const campaign = {
         ...mockCampaign,
@@ -381,6 +421,16 @@ describe("CampaignsService", () => {
       expect(campaignModel.findByIdAndDelete).toHaveBeenCalledWith(
         mockCampaign._id,
       );
+    });
+
+    it("refuses to delete a campaign with paid collaborations", async () => {
+      const invites = (service as any).campaignInvitesService;
+      invites.hasPaidCollaborationRecords.mockResolvedValueOnce(true);
+      campaignInviteModel.deleteMany.mockClear();
+      await expect(
+        service.remove(mockCampaign._id, mockBrand._id),
+      ).rejects.toThrow("This campaign has paid collaborations");
+      expect(campaignInviteModel.deleteMany).not.toHaveBeenCalled();
     });
 
     it("should throw NotFoundException if campaign not found", async () => {

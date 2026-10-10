@@ -27,7 +27,10 @@ describe("PaymentsPayoutsService", () => {
     const mockInviteModel = {
       find: jest.fn(),
       findById: jest.fn(),
+      findOne: jest.fn(),
       findByIdAndUpdate: jest.fn(),
+      updateOne: jest.fn().mockResolvedValue({}),
+      updateMany: jest.fn().mockResolvedValue({}),
     };
 
     const mockTransactionModel = {
@@ -35,6 +38,11 @@ describe("PaymentsPayoutsService", () => {
       findById: jest.fn(),
       findOne: jest.fn(),
       create: jest.fn(),
+      updateMany: jest.fn().mockResolvedValue({}),
+      // Default: the guarded claim succeeds (returns the matched row).
+      findOneAndUpdate: jest.fn((filter: any) => ({
+        lean: jest.fn().mockResolvedValue({ _id: filter?._id }),
+      })),
     };
 
     const mockAppSettingsModel = {
@@ -241,10 +249,30 @@ describe("PaymentsPayoutsService", () => {
       transactionModel.findOne.mockResolvedValue(null);
       transactionModel.create.mockImplementation(async (data: any) => data);
 
+      await expect(
+        service.submitPaymentProof("camp1", "brand1", {
+          utrNumber: "UTR123",
+          paymentProofUrl: "https://proof",
+        }),
+      ).rejects.toThrow("accept the paid-collaboration terms");
+      expect(transactionModel.create).not.toHaveBeenCalled();
+
       const result = await service.submitPaymentProof("camp1", "brand1", {
         utrNumber: "UTR123",
         paymentProofUrl: "https://proof",
+        acceptTerms: true,
       });
+      expect(inviteModel.updateMany).toHaveBeenCalledWith(
+        { _id: { $in: ["i1", "i2"] } },
+        {
+          $set: {
+            "termsAcceptance.host": expect.objectContaining({
+              userId: "brand1",
+              version: expect.any(String),
+            }),
+          },
+        },
+      );
 
       expect(result.success).toBe(true);
       expect(result.count).toBe(2);

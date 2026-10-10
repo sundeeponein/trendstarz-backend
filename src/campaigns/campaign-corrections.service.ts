@@ -219,6 +219,11 @@ export class CampaignCorrectionsService {
     if (txs.some((t) => t.payoutStatus === "paid")) {
       return no("A payout for this collaboration was already paid.");
     }
+    if (txs.some((t) => t.refundStatus === "sent")) {
+      return no(
+        "The host was already refunded — approve a verified post from Payments → Refunds instead (it opens a settlement case).",
+      );
+    }
     if (String(campaign?.status || "") !== "active") {
       return no(
         "The campaign is not active — extend/reopen its end date first.",
@@ -485,9 +490,18 @@ export class CampaignCorrectionsService {
     const check = await this.checkRestore(invite, campaign, txs);
     if (!check.allowed) throw new BadRequestException(check.why);
 
+    if (txs.some((t) => t.refundStatus === "sent")) {
+      throw new BadRequestException(
+        "The host was already refunded for this collaboration. If the creator did post, approve it from Payments → Refunds (it opens a settlement case) instead of restoring.",
+      );
+    }
+    // A refund on hold / owed is known not to have been sent; only legacy rows (no refund
+    // status recorded) need the admin to confirm the host wasn't refunded.
     const refundMarked = txs.some(
       (t) =>
-        t.payoutStatus === "skipped" || t.resolveOutcome === "refund_to_brand",
+        !["on_hold", "owed"].includes(String(t.refundStatus)) &&
+        (t.payoutStatus === "skipped" ||
+          t.resolveOutcome === "refund_to_brand"),
     );
     if (refundMarked && body?.hostNotRefunded !== true) {
       throw new BadRequestException(
@@ -501,6 +515,7 @@ export class CampaignCorrectionsService {
     invite.status = previousStatus;
     invite.withdrawnAt = undefined;
     invite.withdrawnReason = undefined;
+    invite.financialCaseOpen = false;
     invite.updatedAt = now;
 
     // A restored creator always gets a real window to submit.
@@ -534,6 +549,7 @@ export class CampaignCorrectionsService {
       {
         inviteId: idIn(invite._id),
         payoutStatus: { $ne: "paid" },
+        refundStatus: { $ne: "sent" },
         $or: [
           { payoutStatus: "skipped" },
           { resolveOutcome: "refund_to_brand" },
@@ -546,6 +562,25 @@ export class CampaignCorrectionsService {
           disputeStatus: "none",
         },
         $unset: { resolveOutcome: "", resolvedAt: "" },
+      },
+    );
+    // Any refund still on hold / owed is cancelled — the creator is back in the collaboration.
+    await this.transactionModel.updateMany(
+      {
+        inviteId: idIn(invite._id),
+        refundStatus: { $in: ["on_hold", "owed"] },
+      },
+      {
+        $set: { refundStatus: "cancelled", refundCancelledAt: now },
+        $push: {
+          refundHistory: {
+            at: now,
+            action: "refund_cancelled_participation_restored",
+            by: String(adminId),
+            byRole: "admin",
+            note: reason,
+          },
+        },
       },
     );
 

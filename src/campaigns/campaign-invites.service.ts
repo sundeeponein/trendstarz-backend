@@ -41,6 +41,21 @@ import { inviteWithdrawnEvent } from "../platform-events/invite-withdrawn.event"
 import { settingHours } from "../utils/workflow-timing.util";
 import { idIn } from "../utils/id-match.util";
 import { tierChangesSinceInvite } from "./tier-change-since-invite.util";
+import {
+  RefundActor,
+  formatRupees,
+  holdRefunds,
+  markRefundsOwed,
+  notifyPayer,
+  refundOnHoldNotice,
+  releaseToCreator,
+  anyId,
+  latePostWindowsByInvite,
+} from "../payments-payouts/campaign-refund.util";
+import {
+  PAID_COLLAB_TERMS_VERSION,
+  OFFPLATFORM_REPORT_LABEL,
+} from "./paid-collab-terms";
 
 function detectPlatform(url: string): string {
   if (!url) return "other";
@@ -684,7 +699,39 @@ export class CampaignInvitesService {
     return { role: "brand", name: "Creator" };
   }
 
+  /** Contact details stay visible for this long after a collaboration closes. */
+  static readonly CONTACT_VISIBLE_AFTER_CLOSE_DAYS = 7;
+
+  /**
+   * True once a finished collaboration is more than 7 days old and nothing still needs both
+   * sides in touch (no open report, refund hold, late post or settlement). The records
+   * themselves are kept; admin views are not affected.
+   */
+  static contactExpired(invite: any, now = Date.now()): boolean {
+    const status = String(invite?.status || "").toLowerCase();
+    if (!["completed", "approved"].includes(status)) return false;
+    if (
+      invite?.reportedIssue?.reportedAt &&
+      !invite?.reportedIssue?.resolvedAt
+    ) {
+      return false;
+    }
+    if (invite?.financialCaseOpen) return false;
+    const closedRaw = invite?.completedAt || invite?.updatedAt;
+    const closedAt = closedRaw ? new Date(closedRaw).getTime() : NaN;
+    if (!Number.isFinite(closedAt)) return false;
+    return (
+      now - closedAt >
+      CampaignInvitesService.CONTACT_VISIBLE_AFTER_CLOSE_DAYS *
+        24 *
+        60 *
+        60 *
+        1000
+    );
+  }
+
   private isInviteContactVisible(invite: any): boolean {
+    if (CampaignInvitesService.contactExpired(invite)) return false;
     const status = String(invite?.status || "")
       .trim()
       .toLowerCase();
@@ -1664,7 +1711,9 @@ export class CampaignInvitesService {
       this.recordInviteViews(visible, influencerId, "influencer");
     }
 
-    const visibleWithSubmissions = await this.attachLatestSubmissions(visible);
+    const visibleWithSubmissions = await this.attachLatePostWindows(
+      await this.attachLatestSubmissions(visible),
+    );
     const ownSocial = await this.ownSocialMedia(
       this.influencerModel,
       influencerId,
@@ -1723,7 +1772,9 @@ export class CampaignInvitesService {
 
     this.recordInviteViews(visible, photographerId, "photographer");
 
-    const visibleWithSubmissions = await this.attachLatestSubmissions(visible);
+    const visibleWithSubmissions = await this.attachLatePostWindows(
+      await this.attachLatestSubmissions(visible),
+    );
     const ownSocial = await this.ownSocialMedia(
       this.photographerModel,
       photographerId,
@@ -4303,7 +4354,11 @@ export class CampaignInvitesService {
   private async finalizeDisputeOutcome(
     inviteId: string,
     outcome: "pay_influencer" | "refund_host",
-    opts: { resolvedBy: "admin" | "influencer" | "system"; note?: string } = {
+    opts: {
+      resolvedBy: "admin" | "influencer" | "system";
+      note?: string;
+      adminId?: string;
+    } = {
       resolvedBy: "admin",
     },
   ) {
@@ -4317,6 +4372,15 @@ export class CampaignInvitesService {
       !!invite.reportedIssue?.reportedAt && !invite.reportedIssue?.resolvedAt;
     if (invite.status !== "disputed" && !hasOpenReport) {
       return { success: true, status: invite.status, skipped: true };
+    }
+    if (
+      invite.reportedIssue?.category === "offplatform" &&
+      opts.resolvedBy === "admin" &&
+      !String(opts.note || "").trim()
+    ) {
+      throw new BadRequestException(
+        "This report is about skipping the post / dealing outside TrendStarZ. Write what you checked and decided before resolving it.",
+      );
     }
 
     const now = new Date();
@@ -4353,7 +4417,7 @@ export class CampaignInvitesService {
         userId:
           opts.resolvedBy === "influencer" ? invite.influencerId : undefined,
       };
-    if (outcome === "refund_host") {
+    if (outcome === "refund_host" && previousStatus !== "withdrawn") {
       await this.recordInviteWithdrawn(
         invite,
         "dispute_refund",
@@ -4382,26 +4446,54 @@ export class CampaignInvitesService {
       );
     }
 
-    // Guard against ever downgrading a transaction that's already been paid out via the
-    // separate payments-payouts dispute-resolution surface.
-    await this.campaignTransactionModel.updateMany(
-      {
-        inviteId: idIn(invite._id),
-        payoutStatus: { $ne: "paid" },
-      },
-      {
-        $set: {
-          payoutStatus: outcome === "pay_influencer" ? "processing" : "skipped",
-          workStatus: outcome === "pay_influencer" ? "approved" : "disputed",
-          disputeStatus: "resolved",
-          resolveOutcome:
-            outcome === "pay_influencer"
-              ? "release_to_influencer"
-              : "refund_to_brand",
-          resolvedAt: now,
+    const refundActor: RefundActor =
+      opts.resolvedBy === "admin"
+        ? { by: opts.adminId, byRole: "admin" }
+        : opts.resolvedBy === "influencer"
+          ? { by: invite.influencerId, byRole: "creator" }
+          : { byRole: "system" };
+    if (outcome === "pay_influencer") {
+      // Never pays a creator whose host was already refunded — that opens a settlement.
+      const released = await releaseToCreator(
+        this.campaignTransactionModel,
+        invite._id,
+        now,
+        refundActor,
+        String(opts.note || "Dispute resolved for the creator."),
+      );
+      await this.afterDeliveryVerified(invite, released);
+    } else {
+      // Guard against ever downgrading a transaction that's already been paid out via the
+      // separate payments-payouts dispute-resolution surface.
+      await this.campaignTransactionModel.updateMany(
+        {
+          inviteId: idIn(invite._id),
+          payoutStatus: { $ne: "paid" },
         },
-      },
-    );
+        {
+          $set: {
+            payoutStatus: "skipped",
+            workStatus: "disputed",
+            disputeStatus: "resolved",
+            resolveOutcome: "refund_to_brand",
+            resolvedAt: now,
+          },
+        },
+      );
+      // An admin decision is the approval → owed now. A creator giving up the dispute or
+      // the no-response timer → the normal 7-day hold (the creator may still post late).
+      await this.startRefund(
+        invite,
+        now,
+        opts.resolvedBy === "admin" ? "owed" : "hold",
+        refundActor,
+        opts.resolvedBy === "admin"
+          ? `Admin resolved the dispute for the host. ${String(opts.note || "").trim()}`.trim()
+          : opts.resolvedBy === "influencer"
+            ? "Creator withdrew from the dispute."
+            : String(opts.note || "Dispute closed with no creator response."),
+      );
+    }
 
     this.invalidateAttentionCache();
 
@@ -4444,17 +4536,20 @@ export class CampaignInvitesService {
       outcome?: "completed" | "withdrawn" | "disputed";
       note?: string;
     } = {},
+    adminId?: string,
   ) {
     if (body.outcome === "completed") {
       return this.finalizeDisputeOutcome(inviteId, "pay_influencer", {
         resolvedBy: "admin",
         note: body.note,
+        adminId,
       });
     }
     if (body.outcome === "withdrawn") {
       return this.finalizeDisputeOutcome(inviteId, "refund_host", {
         resolvedBy: "admin",
         note: body.note,
+        adminId,
       });
     }
 
@@ -4466,6 +4561,14 @@ export class CampaignInvitesService {
     // submission-review dispute flow) — fall back to the invite's own disputed status.
     if (!invite.reportedIssue?.reportedAt && invite.status !== "disputed") {
       throw new BadRequestException("Invite has no reported issue.");
+    }
+    if (
+      invite.reportedIssue?.category === "offplatform" &&
+      !String(body.note || "").trim()
+    ) {
+      throw new BadRequestException(
+        "This report is about skipping the post / dealing outside TrendStarZ. Write what you checked and decided before closing it.",
+      );
     }
     if (!invite.reportedIssue) {
       invite.reportedIssue = {
@@ -4597,6 +4700,111 @@ export class CampaignInvitesService {
   }
 
   /**
+   * The payer's money for this invite may be due back (no post was made). "hold" = the
+   * automatic 7-day hold (the creator may still submit a late post for review); "owed" =
+   * a person approved the refund. The host is told it is under review — never promised.
+   */
+  private async startRefund(
+    invite: any,
+    now: Date,
+    mode: "hold" | "owed",
+    actor: RefundActor,
+    reason: string,
+  ): Promise<any[]> {
+    let rows: any[] = [];
+    try {
+      rows =
+        mode === "hold"
+          ? await holdRefunds(
+              this.campaignTransactionModel,
+              invite._id,
+              now,
+              actor,
+              reason,
+            )
+          : await markRefundsOwed(
+              this.campaignTransactionModel,
+              invite._id,
+              now,
+              actor,
+              reason,
+            );
+    } catch (err: any) {
+      this.logger.error(
+        `startRefund(${mode}) failed for invite ${String(invite?._id)}: ${err?.message || err}`,
+      );
+      return [];
+    }
+    if (!rows.length) return rows;
+    if (mode === "hold") await this.setFinancialCaseOpen(invite._id, true);
+    const campaign = await this.safeFindById(
+      this.campaignModel,
+      String(invite.campaignId),
+      "title",
+    );
+    const campaignTitle = String(campaign?.title || "your campaign");
+    for (const tx of rows) {
+      const notice =
+        mode === "hold"
+          ? refundOnHoldNotice(tx, campaignTitle)
+          : {
+              title: "Refund approved",
+              body: `TrendStarZ approved a refund of ${formatRupees(
+                Number(tx?.payerTotal || 0),
+              )} for "${campaignTitle}". You will be notified with the UTR once it is sent.`,
+            };
+      notifyPayer(
+        {
+          pushService: this.pushService,
+          notificationsService: this.notificationsService,
+        },
+        tx,
+        notice.title,
+        notice.body,
+      );
+    }
+    return rows;
+  }
+
+  /** After a creator's delivery is verified: settlement notices + contact-case flag. */
+  private async afterDeliveryVerified(
+    invite: any,
+    result: { released: any[]; settlement: any[] },
+  ) {
+    await this.setFinancialCaseOpen(invite._id, result.settlement.length > 0);
+    if (!result.settlement.length && !result.released.length) return;
+    const campaign = await this.safeFindById(
+      this.campaignModel,
+      String(invite.campaignId),
+      "title",
+    );
+    const campaignTitle = String(campaign?.title || "your campaign");
+    const deps = {
+      pushService: this.pushService,
+      notificationsService: this.notificationsService,
+    };
+    for (const tx of result.settlement) {
+      notifyPayer(
+        deps,
+        tx,
+        "Repayment needed",
+        `TrendStarZ verified the creator's post for "${campaignTitle}" after your refund was sent. Please repay ${formatRupees(
+          Number(tx?.settlement?.amount || 0),
+        )} so the creator can be paid. Contact TrendStarZ support for payment details.`,
+      );
+    }
+    for (const tx of result.released) {
+      if (tx?.refundStatus !== "cancelled") continue;
+      notifyPayer(
+        deps,
+        tx,
+        "Post verified — no refund",
+        `TrendStarZ verified the creator's post for "${campaignTitle}". The refund under review is cancelled and the creator will be paid.`,
+      );
+    }
+  }
+
+  /**
    * Closes out an invite that never got a submission — same "no real payout" convention as
    * `finalizeDisputeOutcome`'s refund_host outcome, but for invites that were never disputed
    * (source status is accepted/payment_confirmed/working, not disputed).
@@ -4652,11 +4860,30 @@ export class CampaignInvitesService {
         },
       },
     );
+    const byAdmin = opts.actor?.userRole === "admin";
+    const held = await this.startRefund(
+      invite,
+      now,
+      byAdmin ? "owed" : "hold",
+      byAdmin
+        ? { by: opts.actor?.userId, byRole: "admin" }
+        : { byRole: "system" },
+      reason,
+    );
 
     this.invalidateAttentionCache();
 
     const title = "Participation Closed";
-    const body = `${reason} No payout will be made for this collaboration.`;
+    const holdUntil = held[0]?.refundHoldUntil
+      ? new Date(held[0].refundHoldUntil)
+      : null;
+    const body =
+      !byAdmin && holdUntil
+        ? `${reason} If you already published the post, submit the link by ${holdUntil.toLocaleDateString(
+            "en-IN",
+            { day: "numeric", month: "short", timeZone: "Asia/Kolkata" },
+          )} for review — TrendStarZ will verify it before any payout.`
+        : `${reason} No payout will be made for this collaboration.`;
     this.pushService
       .sendToUser(
         String(invite.influencerId),
@@ -4957,5 +5184,559 @@ export class CampaignInvitesService {
     const result = { pendingInvites, overdueDeliverables, disputedAgainstMe };
     this.setCachedAttention(cacheKey, result);
     return result;
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // Paid-collaboration safeguards: late post, off-platform report, terms, campaign end
+  // ─────────────────────────────────────────────────────────────────────────
+
+  /** Paid statuses whose creator still has an open posting window. */
+  private static readonly PAID_WORKING_STATUSES = [
+    "payment_confirmed",
+    "working",
+  ];
+
+  /**
+   * True while any PAID creator is still inside their posting window (a paid creator with
+   * no post date yet counts as open). Hosts can't end the campaign then — only TrendStarZ.
+   */
+  async paidCreatorsStillPosting(campaignId: unknown): Promise<boolean> {
+    const id = String(campaignId);
+    const [campaign, invites, graceHours] = await Promise.all([
+      this.campaignModel.findById(id).select("postingDeadlineMode").lean(),
+      this.inviteModel
+        .find({
+          campaignId: { $in: [campaignId, id] },
+          status: { $in: CampaignInvitesService.PAID_WORKING_STATUSES },
+        })
+        .select(
+          "selectedPostDate paymentConfirmedAt submissionDeadlineExtendedTo",
+        )
+        .lean(),
+      this.getPaidSubmitGraceHours(),
+    ]);
+    const now = Date.now();
+    return ((invites as any[]) || []).some((invite) => {
+      if (!invite.selectedPostDate) return true;
+      const closesAt = this.computeGraceDeadline(
+        invite,
+        campaign,
+        graceHours,
+      ).closesAt.getTime();
+      return !Number.isFinite(closesAt) || closesAt > now;
+    });
+  }
+
+  /** True when a campaign has paid-collaboration money records (it must not be deleted). */
+  async hasPaidCollaborationRecords(campaignId: unknown): Promise<boolean> {
+    const found = await this.campaignTransactionModel
+      .findOne({
+        campaignId: anyId(campaignId),
+        collectionStatus: { $in: ["proof_submitted", "verified"] },
+      })
+      .select("_id")
+      .lean();
+    return !!found;
+  }
+
+  /** Adds the late-post window (refund on hold) to a creator's closed invites. */
+  private async attachLatePostWindows(invites: any[]): Promise<any[]> {
+    const closed = (invites || []).filter((i) => i?.status === "withdrawn");
+    if (!closed.length) return invites;
+    const windows = await latePostWindowsByInvite(
+      this.campaignTransactionModel,
+      closed.map((i) => i._id),
+    );
+    if (!windows.size) return invites;
+    return invites.map((inv) => {
+      const latePostWindow = windows.get(String(inv?._id));
+      return latePostWindow ? { ...inv, latePostWindow } : inv;
+    });
+  }
+
+  /**
+   * Creator posted but missed the deadline: submit the link while the refund is on hold.
+   * This only RECORDS the link — nothing changes with the money until an admin verifies
+   * the post and the agreed deliverables.
+   */
+  async submitLatePost(
+    inviteId: string,
+    creatorId: string,
+    body: { postUrl?: string; note?: string },
+  ) {
+    const postUrl = String(body?.postUrl || "").trim();
+    if (!/^https?:\/\/\S+$/i.test(postUrl)) {
+      throw new BadRequestException("Enter the full post link (https://…).");
+    }
+    const invite: any = await this.inviteModel.findById(inviteId);
+    if (!invite) throw new NotFoundException("Invite not found");
+    if (String(invite.influencerId) !== String(creatorId)) {
+      throw new BadRequestException("Not your invite");
+    }
+    if (invite.status !== "withdrawn") {
+      throw new BadRequestException(
+        "A late post can only be submitted after the collaboration was closed.",
+      );
+    }
+    const accepted = String(invite.selectedPlatform || "")
+      .toLowerCase()
+      .replace(/^x$/, "twitter");
+    if (accepted && detectPlatform(postUrl) !== accepted) {
+      throw new BadRequestException(
+        `This collaboration was for ${invite.selectedPlatform}. Submit the ${invite.selectedPlatform} post link.`,
+      );
+    }
+
+    const now = new Date();
+    const rows: any[] = await this.campaignTransactionModel
+      .find({ inviteId: anyId(invite._id), refundStatus: "on_hold" })
+      .lean();
+    const open = rows.filter(
+      (r) =>
+        r.refundHoldUntil &&
+        new Date(r.refundHoldUntil).getTime() > now.getTime(),
+    );
+    if (!open.length) {
+      throw new BadRequestException(
+        "The late-post window has closed. Contact TrendStarZ support if you published the post.",
+      );
+    }
+
+    const campaign: any = await this.campaignModel
+      .findById(invite.campaignId)
+      .select("title postingDeadlineMode")
+      .lean();
+    const originalDeadline = invite.selectedPostDate
+      ? this.computeGraceDeadline(
+          invite,
+          campaign,
+          await this.getPaidSubmitGraceHours(),
+        ).closesAt
+      : null;
+    const note = String(body?.note || "")
+      .trim()
+      .slice(0, 500);
+
+    let saved = 0;
+    for (const row of open) {
+      const updated = await this.campaignTransactionModel
+        .findOneAndUpdate(
+          {
+            _id: row._id,
+            refundStatus: "on_hold",
+            "latePost.status": { $nin: ["pending", "approved"] },
+          },
+          {
+            $set: {
+              latePost: {
+                url: postUrl,
+                note,
+                submittedAt: now,
+                originalDeadline,
+                status: "pending",
+              },
+            },
+            $push: {
+              refundHistory: {
+                at: now,
+                action: "late_post_submitted",
+                by: String(creatorId),
+                byRole: "creator",
+                url: postUrl,
+                originalDeadline,
+              },
+            },
+          },
+          { new: true },
+        )
+        .lean();
+      if (updated) saved += 1;
+    }
+    if (!saved) {
+      throw new BadRequestException(
+        "A late post is already waiting for review on this collaboration.",
+      );
+    }
+    await this.setFinancialCaseOpen(invite._id, true);
+    this.invalidateAttentionCache();
+
+    notifyPayer(
+      {
+        pushService: this.pushService,
+        notificationsService: this.notificationsService,
+      },
+      open[0],
+      "Late post submitted",
+      `The creator submitted a post link for "${campaign?.title || "your campaign"}" after the deadline. TrendStarZ will verify it before deciding on your refund.`,
+    );
+    return { success: true, status: "pending_review" };
+  }
+
+  /**
+   * Admin verifies a late post (or a post found outside the platform) and decides.
+   * approve → the creator is paid (refund cancelled) — or, when the refund was already
+   *           sent, a settlement case opens; the invite becomes Completed and the original
+   *           deadline/closure is kept on record.
+   * reject  → the hold continues; the creator is told why.
+   */
+  async adminReviewLatePost(
+    inviteId: string,
+    adminId: string,
+    body: { action?: "approve" | "reject"; note?: string; postUrl?: string },
+  ) {
+    const action = body?.action;
+    if (action !== "approve" && action !== "reject") {
+      throw new BadRequestException("Choose approve or reject.");
+    }
+    const note = String(body?.note || "").trim();
+    if (note.length < 10) {
+      throw new BadRequestException(
+        "Write what you checked (post, date, deliverables) — at least 10 characters.",
+      );
+    }
+    const invite: any = await this.inviteModel.findById(inviteId);
+    if (!invite) throw new NotFoundException("Invite not found");
+    if (invite.status !== "withdrawn") {
+      throw new BadRequestException(
+        `This collaboration is '${invite.status}', not closed — nothing to review.`,
+      );
+    }
+    if (invite.reportedIssue?.reportedAt && !invite.reportedIssue?.resolvedAt) {
+      throw new BadRequestException(
+        "This collaboration has an open report. Resolve it on the Disputes page first.",
+      );
+    }
+    const rows: any[] = await this.campaignTransactionModel
+      .find({ inviteId: anyId(invite._id) })
+      .lean();
+    const pending = rows.find((r) => r.latePost?.status === "pending");
+    const now = new Date();
+    const actor: RefundActor = { by: adminId, byRole: "admin" };
+
+    if (action === "reject") {
+      if (!pending) {
+        throw new BadRequestException(
+          "There is no late post waiting for review.",
+        );
+      }
+      const updated = await this.campaignTransactionModel
+        .findOneAndUpdate(
+          { _id: pending._id, "latePost.status": "pending" },
+          {
+            $set: {
+              "latePost.status": "rejected",
+              "latePost.reviewedAt": now,
+              "latePost.reviewedBy": String(adminId),
+              "latePost.reviewNote": note,
+            },
+            $push: {
+              refundHistory: {
+                at: now,
+                action: "late_post_rejected",
+                by: String(adminId),
+                byRole: "admin",
+                note,
+              },
+            },
+          },
+          { new: true },
+        )
+        .lean();
+      if (!updated) {
+        throw new BadRequestException(
+          "This late post was reviewed meanwhile. Reload and try again.",
+        );
+      }
+      this.notifyCreatorSimple(
+        invite,
+        "Late post not approved",
+        `TrendStarZ could not verify your late post: ${note}`,
+      );
+      return { success: true, decision: "rejected" };
+    }
+
+    // approve — needs a post link: the creator's pending one or one admin found.
+    const postUrl = String(
+      body?.postUrl || pending?.latePost?.url || "",
+    ).trim();
+    if (!/^https?:\/\/\S+$/i.test(postUrl)) {
+      throw new BadRequestException(
+        "Add the verified post link (https://…) before approving.",
+      );
+    }
+    const refundable = rows.filter((r) =>
+      ["on_hold", "owed", "sent"].includes(String(r.refundStatus)),
+    );
+    if (!refundable.length) {
+      throw new BadRequestException(
+        "No refund is under review for this collaboration, so there is nothing to approve here.",
+      );
+    }
+
+    const result = await releaseToCreator(
+      this.campaignTransactionModel,
+      invite._id,
+      now,
+      actor,
+      `Late post verified: ${note}`,
+    );
+    if (!result.released.length && !result.settlement.length) {
+      throw new BadRequestException(
+        "The payment changed meanwhile. Reload and try again.",
+      );
+    }
+    await this.campaignTransactionModel.updateMany(
+      {
+        _id: {
+          $in: [...result.released, ...result.settlement].map((r) => r._id),
+        },
+      },
+      {
+        $set: {
+          "latePost.url": postUrl,
+          "latePost.status": "approved",
+          "latePost.reviewedAt": now,
+          "latePost.reviewedBy": String(adminId),
+          "latePost.reviewNote": note,
+        },
+        $push: {
+          refundHistory: {
+            at: now,
+            action: "late_post_approved",
+            by: String(adminId),
+            byRole: "admin",
+            url: postUrl,
+            note,
+          },
+        },
+      },
+    );
+
+    const originalDeadline =
+      pending?.latePost?.originalDeadline ||
+      rows.find((r) => r.latePost?.originalDeadline)?.latePost
+        ?.originalDeadline ||
+      null;
+    invite.latePostApproval = {
+      approvedAt: now,
+      approvedBy: String(adminId),
+      postUrl,
+      note,
+      originalDeadline,
+      withdrawnAt: invite.withdrawnAt,
+      withdrawnReason: invite.withdrawnReason,
+    };
+    invite.status = "completed";
+    invite.completedAt = now;
+    invite.withdrawnAt = undefined;
+    invite.withdrawnReason = undefined;
+    invite.financialCaseOpen = result.settlement.length > 0;
+    invite.updatedAt = now;
+    await invite.save();
+
+    let submission: any = await this.submissionModel.findOne({
+      inviteId: invite._id,
+    });
+    const submittedAt = pending?.latePost?.submittedAt || now;
+    if (submission) {
+      Object.assign(submission, {
+        postUrl,
+        postPlatform: detectPlatform(postUrl),
+        status: "approved",
+        reviewedAt: now,
+        isLate: true,
+        brandFeedback: "Late post verified by TrendStarZ.",
+      });
+      await submission.save();
+    } else {
+      submission = await this.submissionModel.create({
+        campaignId: String(invite.campaignId),
+        influencerId: invite.influencerId,
+        inviteId: invite._id,
+        postUrl,
+        postPlatform: detectPlatform(postUrl),
+        submittedAt,
+        reviewedAt: now,
+        status: "approved",
+        isLate: true,
+        brandFeedback: "Late post verified by TrendStarZ.",
+      });
+    }
+    await this.recordContentReviewed(
+      "approved",
+      invite,
+      submission,
+      { userId: adminId, userRole: "admin" },
+      "late_post_admin",
+      now,
+    ).catch(() => undefined);
+    this.invalidateAttentionCache();
+
+    await this.afterDeliveryVerified(invite, result);
+    this.notifyCreatorSimple(
+      invite,
+      "Late post approved",
+      result.settlement.length
+        ? "TrendStarZ verified your post. Your payout is pending settlement with the host — we'll update you."
+        : "TrendStarZ verified your post. Your payout is being processed.",
+    );
+    return {
+      success: true,
+      decision: "approved",
+      released: result.released.length,
+      settlement: result.settlement.length,
+    };
+  }
+
+  /**
+   * Either side reports "Asked to skip posting / deal outside TrendStarZ". It goes to the
+   * Disputes page and blocks the refund from moving until an admin resolves it. The other
+   * side is not notified (so the report can't be used to warn them).
+   */
+  async reportOffPlatform(inviteId: string, userId: string, details: string) {
+    const text = String(details || "").trim();
+    if (text.length < 20) {
+      throw new BadRequestException(
+        "Describe what happened in at least 20 characters.",
+      );
+    }
+    const invite: any = await this.inviteModel.findById(inviteId);
+    if (!invite) throw new NotFoundException("Invite not found");
+    let role: "creator" | "host";
+    if (String(invite.influencerId) === String(userId)) {
+      role = "creator";
+    } else {
+      await this.assertBrandOwnsInvite(inviteId, userId);
+      role = "host";
+    }
+
+    const activePaid = [
+      "payment_confirmed",
+      "working",
+      "submitted",
+      "disputed",
+    ].includes(invite.status);
+    let inRefund = false;
+    if (invite.status === "withdrawn") {
+      inRefund = !!(await this.campaignTransactionModel
+        .findOne({
+          inviteId: anyId(invite._id),
+          refundStatus: { $in: ["on_hold", "owed"] },
+        })
+        .select("_id")
+        .lean());
+    }
+    if (!activePaid && !inRefund) {
+      throw new BadRequestException(
+        "This can be reported on a paid collaboration that is active or whose refund is still under review.",
+      );
+    }
+
+    const now = new Date();
+    const line = `[${OFFPLATFORM_REPORT_LABEL}] (reported by ${role}) ${text}`;
+    const open =
+      !!invite.reportedIssue?.reportedAt && !invite.reportedIssue?.resolvedAt;
+    if (open) {
+      invite.reportedIssue.reason =
+        `${invite.reportedIssue.reason || ""}\n[${role} ${now.toISOString()}]: ${line}`.trim();
+      invite.reportedIssue.category = "offplatform";
+    } else {
+      invite.reportedIssue = {
+        reason: line,
+        reportedAt: now,
+        category: "offplatform",
+        reportedByRole: role,
+      };
+    }
+    invite.updatedAt = now;
+    await invite.save();
+    await this.campaignTransactionModel.updateMany(
+      { inviteId: anyId(invite._id) },
+      {
+        $push: {
+          refundHistory: {
+            at: now,
+            action: "offplatform_reported",
+            by: String(userId),
+            byRole: role,
+          },
+        },
+      },
+    );
+    this.invalidateAttentionCache();
+    return { success: true };
+  }
+
+  /**
+   * Records that the creator (or the host) accepted the paid-collaboration terms on this
+   * invite. Idempotent: an existing acceptance of the same version is kept.
+   */
+  async acceptPaidTerms(inviteId: string, userId: string) {
+    const invite: any = await this.inviteModel.findById(inviteId);
+    if (!invite) throw new NotFoundException("Invite not found");
+    let side: "creator" | "host";
+    if (String(invite.influencerId) === String(userId)) {
+      side = "creator";
+    } else {
+      await this.assertBrandOwnsInvite(inviteId, userId);
+      side = "host";
+    }
+    const existing = invite.termsAcceptance?.[side];
+    if (existing?.version === PAID_COLLAB_TERMS_VERSION) {
+      return { success: true, termsAcceptance: invite.termsAcceptance };
+    }
+    await this.inviteModel.updateOne(
+      { _id: invite._id },
+      {
+        $set: {
+          [`termsAcceptance.${side}`]: {
+            acceptedAt: new Date(),
+            version: PAID_COLLAB_TERMS_VERSION,
+            userId: String(userId),
+          },
+        },
+      },
+    );
+    const updated: any = await this.inviteModel
+      .findById(invite._id)
+      .select("termsAcceptance")
+      .lean();
+    return { success: true, termsAcceptance: updated?.termsAcceptance };
+  }
+
+  private notifyCreatorSimple(invite: any, title: string, body: string) {
+    const role = this.normalizeRecipientRole(invite?.recipientRole);
+    const url =
+      role === "photographer"
+        ? "/photographer-dashboard"
+        : "/influencer-dashboard";
+    this.pushService
+      .sendToUser(String(invite.influencerId), { title, body, url }, "campaign")
+      .catch(() => {
+        /* non-critical */
+      });
+    this.notificationsService
+      .createForUser({
+        userId: String(invite.influencerId),
+        userRole: role,
+        title,
+        body,
+        url,
+      })
+      .catch(() => {
+        /* non-critical */
+      });
+  }
+
+  /** Marks whether a refund/late-post/settlement case still needs both sides' contact. */
+  private async setFinancialCaseOpen(inviteId: unknown, open: boolean) {
+    try {
+      await this.inviteModel.updateOne(
+        { _id: inviteId },
+        { $set: { financialCaseOpen: open } },
+      );
+    } catch {
+      /* non-critical: only affects contact visibility */
+    }
   }
 }

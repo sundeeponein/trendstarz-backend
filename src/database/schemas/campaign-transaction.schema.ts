@@ -121,22 +121,83 @@ export const CampaignTransactionSchema = new Schema(
     disputeIssueReason: { type: String },
     disputeReason: { type: String },
     disputeEvidenceUrl: { type: String },
-    disputedBy: { type: Schema.Types.Mixed },     // userId of whoever raised dispute
-    disputedByRole: { type: String },              // 'brand' | 'influencer' | 'photographer' | 'admin'
+    disputedBy: { type: Schema.Types.Mixed }, // userId of whoever raised dispute
+    disputedByRole: { type: String }, // 'brand' | 'influencer' | 'photographer' | 'admin'
     disputedAt: { type: Date },
     resolveOutcome: {
       type: String,
       enum: ["release_to_influencer", "refund_to_brand"],
     },
-    resolvedBy: { type: Schema.Types.Mixed },      // admin userId
+    resolvedBy: { type: Schema.Types.Mixed }, // admin userId
     resolvedAt: { type: Date },
+
+    // ── Refund to payer (manual UPI; see payments-payouts/campaign-refund.util.ts) ──
+    // on_hold → owed → sent (or cancelled when a late post is verified first).
+    refundStatus: {
+      type: String,
+      enum: ["none", "on_hold", "owed", "sent", "cancelled"],
+      default: "none",
+      index: true,
+    },
+    refundOnHoldAt: { type: Date },
+    refundHoldUntil: { type: Date, index: true },
+    refundOwedAt: { type: Date },
+    refundOwedBy: { type: Schema.Types.Mixed },
+    refundOwedReason: { type: String },
+    refundCancelledAt: { type: Date },
+    refundAmount: { type: Number }, // paise actually sent back
+    refundUtr: { type: String },
+    refundTransferDate: { type: Date }, // when the UPI transfer was made (admin-entered)
+    refundSentAt: { type: Date }, // when admin recorded it
+    refundSentBy: { type: Schema.Types.Mixed }, // admin userId
+    refundNote: { type: String },
+    // Append-only audit trail of every refund / late-post / settlement decision.
+    refundHistory: { type: [Schema.Types.Mixed], default: undefined },
+
+    // Post link the creator submitted after the deadline, during the refund hold.
+    latePost: {
+      url: { type: String },
+      note: { type: String },
+      submittedAt: { type: Date },
+      originalDeadline: { type: Date },
+      status: { type: String, enum: ["pending", "approved", "rejected"] },
+      reviewedAt: { type: Date },
+      reviewedBy: { type: Schema.Types.Mixed },
+      reviewNote: { type: String },
+    },
+
+    // Delivery verified after the refund was already sent: host repays, then creator is paid.
+    settlement: {
+      status: {
+        type: String,
+        enum: [
+          "none",
+          "awaiting_host_repayment",
+          "repaid",
+          "exception_approved",
+        ],
+      },
+      amount: { type: Number }, // paise the host is asked to repay
+      reason: { type: String },
+      openedAt: { type: Date },
+      openedBy: { type: Schema.Types.Mixed },
+      hostRepaymentUtr: { type: String },
+      hostRepaidAmount: { type: Number },
+      hostRepaidAt: { type: Date },
+      closedAt: { type: Date },
+      closedBy: { type: Schema.Types.Mixed },
+      exceptionReason: { type: String },
+    },
 
     adminNotes: { type: String },
   },
   { timestamps: true },
 );
 
-CampaignTransactionSchema.index({ campaignId: 1, inviteId: 1, payerId: 1 }, { unique: true });
+CampaignTransactionSchema.index(
+  { campaignId: 1, inviteId: 1, payerId: 1 },
+  { unique: true },
+);
 // Admin dispute queue
 CampaignTransactionSchema.index({ disputeStatus: 1, createdAt: -1 });
 
@@ -166,7 +227,11 @@ export interface CampaignTransaction extends Document {
   payoutLastRetryAt?: Date;
   payoutInitiatedAt?: Date;
   payoutSettledAt?: Date;
-  collectionStatus: "awaiting_payment" | "proof_submitted" | "verified" | "failed";
+  collectionStatus:
+    | "awaiting_payment"
+    | "proof_submitted"
+    | "verified"
+    | "failed";
   payoutStatus: "pending" | "processing" | "paid" | "skipped" | "frozen";
   workStatus: "pending" | "submitted" | "approved" | "disputed";
   disputeStatus: "none" | "open" | "resolved";
@@ -179,5 +244,46 @@ export interface CampaignTransaction extends Document {
   resolveOutcome?: "release_to_influencer" | "refund_to_brand";
   resolvedBy?: string;
   resolvedAt?: Date;
+  refundStatus?: "none" | "on_hold" | "owed" | "sent" | "cancelled";
+  refundOnHoldAt?: Date;
+  refundHoldUntil?: Date;
+  refundOwedAt?: Date;
+  refundOwedBy?: string;
+  refundOwedReason?: string;
+  refundCancelledAt?: Date;
+  refundAmount?: number;
+  refundUtr?: string;
+  refundTransferDate?: Date;
+  refundSentAt?: Date;
+  refundSentBy?: string;
+  refundNote?: string;
+  refundHistory?: Array<Record<string, any>>;
+  latePost?: {
+    url?: string;
+    note?: string;
+    submittedAt?: Date;
+    originalDeadline?: Date;
+    status?: "pending" | "approved" | "rejected";
+    reviewedAt?: Date;
+    reviewedBy?: string;
+    reviewNote?: string;
+  };
+  settlement?: {
+    status?:
+      | "none"
+      | "awaiting_host_repayment"
+      | "repaid"
+      | "exception_approved";
+    amount?: number;
+    reason?: string;
+    openedAt?: Date;
+    openedBy?: string;
+    hostRepaymentUtr?: string;
+    hostRepaidAmount?: number;
+    hostRepaidAt?: Date;
+    closedAt?: Date;
+    closedBy?: string;
+    exceptionReason?: string;
+  };
   adminNotes?: string;
 }
