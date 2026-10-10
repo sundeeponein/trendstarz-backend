@@ -241,6 +241,44 @@ describe("Stage 3D-1a — run plan", () => {
   });
 });
 
+describe("re-check after the creator changes the handle", () => {
+  const success = (handle: string | undefined) => ({
+    status: "success",
+    lastError: null,
+    lastAttemptAt: daysAgo(2),
+    ...(handle === undefined ? {} : { requestedHandle: handle }),
+  });
+
+  it("a changed handle is due the next night, not after 7 days", () => {
+    const p = plan(
+      [approved("a", [yt(1, "@newname"), yt(2, "@same")])],
+      [
+        ["a", YT(1), success("@oldname")],
+        ["a", YT(2), success("same")], // "@" and case don't count as a change
+      ],
+    );
+    expect(p.due.map((d) => [d.socialAccountId, d.reason])).toEqual([
+      [YT(1), "handle_changed"],
+    ]);
+  });
+
+  it("once re-checked with the new handle it waits for the weekly refresh again", () => {
+    const p = plan(
+      [approved("a", [yt(1, "@newname")])],
+      [["a", YT(1), success("@newname")]],
+    );
+    expect(p.due).toEqual([]);
+  });
+
+  it("checks made before this was recorded just follow the weekly refresh", () => {
+    const p = plan(
+      [approved("a", [yt(1, "@newname")])],
+      [["a", YT(1), success(undefined)]],
+    );
+    expect(p.due).toEqual([]);
+  });
+});
+
 describe("Stage 3D-1a — observation service: system path and retention purge", () => {
   const setup = () => {
     const history: any[] = [];

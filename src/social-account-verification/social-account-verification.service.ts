@@ -293,6 +293,84 @@ export class SocialAccountVerificationService {
   }
 
   /**
+   * Records an automatic tier verification (after the system moved the declared
+   * tier to the observed one). Not an admin action: method "auto", evidence
+   * "observed", and the account is marked so it is never auto-corrected again.
+   * Call after the profile save + reconcile, with the updated entry.
+   */
+  async recordAutomaticTierDecision(params: {
+    profileType: SocialProfileType;
+    profileId: string;
+    entry: any;
+    decidedByName: string;
+    note: string;
+    now?: Date;
+    /** false = only verified a tier that already matched (not a correction). */
+    markAutoApplied?: boolean;
+  }) {
+    const entry = plain(params.entry);
+    const socialAccountId: unknown = entry.socialAccountId;
+    if (!isSocialAccountId(socialAccountId)) {
+      throw new BadRequestException("Invalid social account id");
+    }
+    const now = params.now ?? new Date();
+    const { profileType, profileId } = params;
+    const filter = { profileType, profileId, socialAccountId };
+    const existing = await this.stateModel.findOne(filter).lean();
+    const previousStatus = effectiveDecision(
+      "tier",
+      (existing as any)?.tier,
+      entry,
+    ).status;
+    const decision = {
+      status: "verified",
+      method: "auto",
+      evidenceBasis: "observed",
+      decidedTier: String(entry.tier ?? ""),
+      decidedAt: now,
+      decidedById: "system",
+      decidedByName: params.decidedByName,
+      decidedByRole: "system",
+      note: params.note,
+    };
+    const platformKey = String(
+      entry.platformKey || derivePlatformKey(entry.platform),
+    );
+    await this.stateModel.findOneAndUpdate(
+      filter,
+      {
+        $set: {
+          platformKey,
+          tier: decision,
+          ...(params.markAutoApplied === false
+            ? {}
+            : { tierAutoAppliedAt: now }),
+        },
+      },
+      { upsert: true, new: true, setDefaultsOnInsert: true },
+    );
+    await this.reviewModel.create({
+      socialAccountId,
+      profileId,
+      profileType,
+      platformKey,
+      platform: String(entry.platform ?? ""),
+      handle: String(entry.handle ?? ""),
+      declaredTier: String(entry.tier ?? ""),
+      reviewType: "tier",
+      previousStatus,
+      newStatus: "verified",
+      method: "auto",
+      evidenceBasis: "observed",
+      decidedAt: now,
+      decidedById: "system",
+      decidedByName: params.decidedByName,
+      decidedByRole: "system",
+      note: params.note,
+    });
+  }
+
+  /**
    * Profiles that have at least one ownership/tier review reset to pending by
    * a handle/tier change (and not re-decided since). Read-only; used by the
    * admin "Social media changed" filter and row badge.

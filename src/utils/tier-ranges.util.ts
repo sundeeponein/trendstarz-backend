@@ -100,3 +100,13 @@ export function meetsMinimumTier(
   const rank = (key: string) => CANONICAL_TIERS.findIndex((t) => t.key === key);
   return rank(tier.key) >= rank(min.key);
 }
+
+/** "1,001–10,000 followers" (or "1,000,001+ followers") for a tier label/key; "" if unknown. */
+export function tierRangeText(tier: unknown): string {
+  const t = resolveTier(tier);
+  if (!t) return "";
+  const n = (v: number) => v.toLocaleString("en-IN");
+  return t.maxFollowers === null
+    ? `${n(t.minFollowers)}+ followers`
+    : `${n(t.minFollowers)}–${n(t.maxFollowers)} followers`;
+}

@@ -40,6 +40,7 @@ import {
 import { inviteWithdrawnEvent } from "../platform-events/invite-withdrawn.event";
 import { settingHours } from "../utils/workflow-timing.util";
 import { idIn } from "../utils/id-match.util";
+import { tierChangesSinceInvite } from "./tier-change-since-invite.util";
 
 function detectPlatform(url: string): string {
   if (!url) return "other";
@@ -1591,6 +1592,19 @@ export class CampaignInvitesService {
     }));
   }
 
+  /** The creator's own social accounts (for "your tier changed since this invite"); [] on any error. */
+  private async ownSocialMedia(model: Model<any>, creatorId: string) {
+    try {
+      const doc: any = await model
+        .findById(creatorId)
+        .select("socialMedia")
+        .lean();
+      return Array.isArray(doc?.socialMedia) ? doc.socialMedia : [];
+    } catch {
+      return [];
+    }
+  }
+
   async findByInfluencer(influencerId: string, scope?: string) {
     const invites: any[] = await this.inviteModel
       .find({
@@ -1651,10 +1665,17 @@ export class CampaignInvitesService {
     }
 
     const visibleWithSubmissions = await this.attachLatestSubmissions(visible);
+    const ownSocial = await this.ownSocialMedia(
+      this.influencerModel,
+      influencerId,
+    );
 
     // Strip brand contact details from invites that haven't been unlocked yet
     return visibleWithSubmissions.map((rawInv: any) => {
-      const inv = this.applyRecipientLocationVisibility(rawInv);
+      const inv = {
+        ...this.applyRecipientLocationVisibility(rawInv),
+        tierChangedSinceInvite: tierChangesSinceInvite(ownSocial, rawInv),
+      };
       if (inv.brandId) {
         const shouldShowContact = this.isInviteContactVisible(inv);
         if (!shouldShowContact) {
@@ -1703,9 +1724,16 @@ export class CampaignInvitesService {
     this.recordInviteViews(visible, photographerId, "photographer");
 
     const visibleWithSubmissions = await this.attachLatestSubmissions(visible);
+    const ownSocial = await this.ownSocialMedia(
+      this.photographerModel,
+      photographerId,
+    );
 
     return visibleWithSubmissions.map((rawInv: any) => {
-      const inv = this.applyRecipientLocationVisibility(rawInv);
+      const inv = {
+        ...this.applyRecipientLocationVisibility(rawInv),
+        tierChangedSinceInvite: tierChangesSinceInvite(ownSocial, rawInv),
+      };
       if (inv.brandId) {
         const shouldShowContact = this.isInviteContactVisible(inv);
         if (!shouldShowContact) {

@@ -320,6 +320,9 @@ export const InfluencerSchema = new Schema(
         platform: { type: String },
         handle: { type: String },
         tier: { type: String },
+        // When an admin or the automatic YouTube correction last changed the tier
+        // (server-owned) — rates confirmed before it are flagged for review.
+        tierChangedAt: { type: Date, default: null },
         followersCount: { type: Number },
         contentTypes: [
           {
@@ -511,6 +514,9 @@ export const BrandSchema = new Schema(
         platform: { type: String },
         handle: { type: String },
         tier: { type: String },
+        // When an admin or the automatic YouTube correction last changed the tier
+        // (server-owned) — rates confirmed before it are flagged for review.
+        tierChangedAt: { type: Date, default: null },
         followersCount: { type: Number },
         contentTypes: [
           {
@@ -829,6 +835,9 @@ export const PhotographerSchema = new Schema(
         platform: { type: String },
         handle: { type: String },
         tier: { type: String },
+        // When an admin or the automatic YouTube correction last changed the tier
+        // (server-owned) — rates confirmed before it are flagged for review.
+        tierChangedAt: { type: Date, default: null },
         followersCount: { type: Number },
         selfReportedStats: {
           avgLikes: { type: Number, default: null },

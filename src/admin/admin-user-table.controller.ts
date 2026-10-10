@@ -41,6 +41,7 @@ import {
 } from "../utils/profile-eligibility.util";
 import { PROFILE_PHOTO_SAFETY_FLAG_CODES } from "../profile-verification/profile-verification.service";
 import { observationFreshness } from "../matching-evidence/evidence-quality.analysis";
+import { recordSocialEdit } from "../utils/admin-social-edit.util";
 
 @Controller("admin")
 @UseGuards(JwtAuthGuard, RolesGuard)
@@ -1675,62 +1676,7 @@ export class AdminUserTableController {
     type: string,
     profileId: string,
   ) {
-    const sm = user.socialMedia[index];
-    // Entries edited before the backfill get their identity here (same as a creator save would).
-    if (!sm.socialAccountId) sm.socialAccountId = newSocialAccountId();
-    if (!sm.platformKey) sm.platformKey = derivePlatformKey(sm.platform);
-    const socialAccountId = String(sm.socialAccountId);
-
-    const logEntry = {
-      platformIdx: index,
-      socialAccountId,
-      platform: sm.platform || "",
-      oldHandle: sm.handle || "",
-      newHandle: body.handle !== undefined ? String(body.handle).trim() : sm.handle || "",
-      oldTier: sm.tier || "",
-      newTier: body.tier !== undefined ? String(body.tier).trim() : sm.tier || "",
-      changedBy: body.changedBy || "",
-      changedByName: body.changedByName || "",
-      changedAt: new Date(),
-    };
-
-    if (body.handle !== undefined) sm.handle = String(body.handle).trim();
-    if (body.tier !== undefined) sm.tier = String(body.tier).trim();
-
-    // One latest log/notice per account: match by id, or by position for pre-backfill rows.
-    const sameAccount = (e: any) =>
-      e?.socialAccountId
-        ? e.socialAccountId === socialAccountId
-        : e?.platformIdx === index;
-
-    if (!Array.isArray(user.socialMediaEditLog)) user.socialMediaEditLog = [];
-    const existingIdx = user.socialMediaEditLog.findIndex(sameAccount);
-    if (existingIdx >= 0) {
-      user.socialMediaEditLog[existingIdx] = logEntry;
-    } else {
-      user.socialMediaEditLog.push(logEntry);
-    }
-
-    if (!Array.isArray(user.adminSocialNotifications)) user.adminSocialNotifications = [];
-    const notifEntry = {
-      platformIdx: index,
-      socialAccountId,
-      platform: logEntry.platform,
-      oldHandle: logEntry.oldHandle,
-      newHandle: logEntry.newHandle,
-      oldTier: logEntry.oldTier,
-      newTier: logEntry.newTier,
-      changedByName: logEntry.changedByName,
-      changedAt: logEntry.changedAt,
-      seen: false,
-    };
-    const existingNotifIdx =
-      user.adminSocialNotifications.findIndex(sameAccount);
-    if (existingNotifIdx >= 0) {
-      user.adminSocialNotifications[existingNotifIdx] = notifEntry;
-    } else {
-      user.adminSocialNotifications.push(notifEntry);
-    }
+    recordSocialEdit(user, index, body);
 
     const saved = await user.save();
     // Stage 3A-1: an admin handle/tier edit also resets that account's decision to pending.

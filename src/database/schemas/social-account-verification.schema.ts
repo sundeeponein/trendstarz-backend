@@ -32,8 +32,12 @@ export const SOCIAL_PROFILE_TYPES = [
 ] as const;
 export type SocialProfileType = (typeof SOCIAL_PROFILE_TYPES)[number];
 
-/** "manual" = explicit admin decision; "invalidated" = system reset after a handle/tier change. */
-export const SOCIAL_REVIEW_METHODS = ["manual", "invalidated"] as const;
+/**
+ * "manual" = explicit admin decision; "invalidated" = system reset after a
+ * handle/tier change; "auto" = tier corrected from a YouTube observation
+ * (tier-review/tier-auto-apply.ts — strict safeguards, once per account).
+ */
+export const SOCIAL_REVIEW_METHODS = ["manual", "invalidated", "auto"] as const;
 
 /**
  * Stage 3D-1b — what an admin decision rested on: a usable platform observation
@@ -77,6 +81,8 @@ export const SocialAccountVerificationSchema = new Schema(
     platformKey: { type: String, default: "" },
     ownership: { type: DecisionSchema },
     tier: { type: DecisionSchema },
+    // Set once when the system auto-corrected this account's tier; it never does so again.
+    tierAutoAppliedAt: { type: Date },
   },
   { collection: "social_account_verifications", timestamps: true },
 );

@@ -33,6 +33,8 @@ function setup() {
         current.push(doc);
       }
       Object.assign(doc, update.$set);
+      for (const [k, v] of Object.entries(update.$inc || {}))
+        doc[k] = (doc[k] || 0) + (v as number);
       return Promise.resolve(doc);
     }),
     findOne: jest.fn((f: any) =>
@@ -285,6 +287,11 @@ describe("SocialAccountObservationService (Stage 3A-2)", () => {
       "reason",
       "requestedById",
       "requestedByRole",
+      // The creator's own handle we looked up (not platform data) — for re-checks after a change.
+      "requestedHandle",
+      // Rename recovery + failure count (our own bookkeeping, not platform data).
+      "handleChangedTo",
+      "failureCount",
     ]);
     for (const doc of [...current, ...history]) {
       for (const key of Object.keys(doc)) expect(allowed.has(key)).toBe(true);
@@ -395,6 +402,72 @@ describe("SocialAccountObservationService (Stage 3A-2)", () => {
     // Constructor arity is the whole dependency surface: no profile, verification
     // or review model can be written from here.
     expect(SocialAccountObservationService.length).toBe(4);
+  });
+});
+
+describe("YouTube renamed on the platform (rename recovery)", () => {
+  const CHANNEL = "UCabcdefghijklmnopqrstuv";
+  const notFound: ObservationOutcome = {
+    ok: false,
+    reason: "external_account_not_found",
+  } as any;
+
+  it("the old handle is gone, but the channel id still answers: observed under the new handle", async () => {
+    const { service, current, youtube } = setup();
+    youtube.observe.mockResolvedValueOnce(ytSuccess(5000));
+    await service.observeScheduled({ ...base, entry: ytEntry() });
+
+    youtube.observe.mockResolvedValueOnce(notFound).mockResolvedValueOnce({
+      ok: true,
+      data: { ...(ytSuccess(5200) as any).data, observedHandle: "creator_new" },
+    });
+    await service.observeScheduled({ ...base, entry: ytEntry() });
+
+    expect(youtube.observe.mock.calls.map(([h]) => h)).toEqual([
+      "creator123",
+      "creator123",
+      CHANNEL,
+    ]);
+    expect(current[0]).toMatchObject({
+      status: "success",
+      observedHandle: "creator_new",
+      observedFollowersCount: 5200,
+      handleChangedTo: "creator_new",
+      failureCount: 0,
+    });
+  });
+
+  it("no fallback when the creator switched to another handle (the old channel must not answer for it)", async () => {
+    const { service, current, youtube } = setup();
+    youtube.observe.mockResolvedValueOnce(ytSuccess(5000));
+    await service.observeScheduled({ ...base, entry: ytEntry() });
+
+    youtube.observe.mockResolvedValueOnce(notFound);
+    await service.observeScheduled({
+      ...base,
+      entry: { ...ytEntry(), handle: "a_different_channel" },
+    });
+
+    expect(youtube.observe).toHaveBeenCalledTimes(2);
+    expect(current[0]).toMatchObject({
+      status: "failed",
+      lastError: "external_account_not_found",
+      failureCount: 1,
+    });
+  });
+
+  it("counts failed lookups in a row and resets on success", async () => {
+    const { service, current, youtube } = setup();
+    youtube.observe.mockResolvedValue(notFound);
+    await service.observeScheduled({ ...base, entry: ytEntry() });
+    await service.observeScheduled({ ...base, entry: ytEntry() });
+    expect(current[0].failureCount).toBe(2);
+    youtube.observe.mockResolvedValue(ytSuccess(10));
+    await service.observeScheduled({ ...base, entry: ytEntry() });
+    expect(current[0]).toMatchObject({
+      failureCount: 0,
+      handleChangedTo: null,
+    });
   });
 });
 

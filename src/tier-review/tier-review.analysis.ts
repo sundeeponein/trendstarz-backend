@@ -87,6 +87,10 @@ export interface TierReviewItem {
     lastAttemptFailed: boolean;
     /** The exact page the platform resolved the account to (e.g. the YouTube channel). */
     externalUrl: string | null;
+    /** Same channel found by its id under this new handle (the creator renamed it on YouTube). */
+    handleChangedTo: string | null;
+    /** 2+ lookups in a row found no channel for the creator's handle. */
+    notFound: boolean;
   };
   declaredVsObserved: "match" | "mismatch" | "not_available";
   /** A fresh/stale observation with a follower count: the admin may decide on "observed" evidence. */
@@ -233,6 +237,8 @@ export function buildTierReviewItems(input: TierReviewInput): TierReviewItem[] {
           connected: cmp.observed.connected,
           lastAttemptFailed: cmp.observed.lastAttempt?.status === "failed",
           externalUrl: webLink(latest?.externalUrl),
+          handleChangedTo: renamedTo(obsById.get(k), entry),
+          notFound: notFoundNow(obsById.get(k)),
         },
         declaredVsObserved,
         observedUsable,
@@ -252,6 +258,27 @@ export function buildTierReviewItems(input: TierReviewInput): TierReviewItem[] {
 }
 
 /** The queue page for a query, plus counts (before filtering by reason) for the filter chips. */
+const handleKey = (h: unknown) =>
+  (typeof h === "string" ? h : "").trim().replace(/^@+/, "").toLowerCase();
+
+/** The new handle when the channel was found by id under a different handle than the creator's. */
+function renamedTo(doc: any, entry: any): string | null {
+  const to =
+    typeof doc?.handleChangedTo === "string" ? doc.handleChangedTo : "";
+  return to && handleKey(to) !== handleKey(entry?.handle) ? to : null;
+}
+
+/** Same rule the creator sees (creator-observation.controller): 2+ "not found" in a row. */
+function notFoundNow(doc: any): boolean {
+  return (
+    doc?.status === "failed" &&
+    ["external_account_not_found", "account_mismatch"].includes(
+      String(doc?.lastError),
+    ) &&
+    Number(doc?.failureCount || 0) >= 2
+  );
+}
+
 /** An http(s) link as given, a bare "instagram.com/x" as https, anything else (javascript:, …) → null. */
 function webLink(value: unknown): string | null {
   const raw = typeof value === "string" ? value.trim() : "";

@@ -297,4 +297,40 @@ describe("tier review queue (Stage 3D-1b)", () => {
     ).filter((i) => i.platformKey === "youtube");
     expect(yt.profileUrl).toBeNull();
   });
+
+  it("tags a channel renamed on YouTube, and one that can't be found", () => {
+    const c = creator("c1");
+    const items = buildTierReviewItems(
+      input({
+        creators: [{ profileType: "Influencer", profile: c }],
+        observations: [
+          {
+            ...ytObs("c1", 5000),
+            observedHandle: "chan_new",
+            handleChangedTo: "chan_new",
+          },
+        ],
+      }),
+    );
+    const yt = items.find((i) => i.platformKey === "youtube")!;
+    expect(yt.observed).toMatchObject({
+      handleChangedTo: "chan_new",
+      notFound: false,
+    });
+
+    const lost = buildTierReviewItems(
+      input({
+        creators: [{ profileType: "Influencer", profile: creator("c2") }],
+        observations: [
+          {
+            ...ytObs("c2", 5000),
+            status: "failed",
+            lastError: "external_account_not_found",
+            failureCount: 2,
+          },
+        ],
+      }),
+    ).find((i) => i.platformKey === "youtube")!;
+    expect(lost.observed.notFound).toBe(true);
+  });
 });

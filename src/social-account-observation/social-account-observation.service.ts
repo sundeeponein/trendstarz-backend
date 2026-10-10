@@ -99,6 +99,20 @@ function platformKeyOf(entry: Record<string, any>): string {
   return String(entry.platformKey || derivePlatformKey(entry.platform));
 }
 
+/** Handles compare without "@", spaces or case. */
+function handleKey(handle: unknown): string {
+  return (typeof handle === "string" ? handle : "")
+    .trim()
+    .replace(/^@+/, "")
+    .toLowerCase();
+}
+
+/** Failures a renamed YouTube channel produces when looked up by its old handle. */
+const RENAME_RECOVERABLE: string[] = [
+  "external_account_not_found",
+  "account_mismatch",
+];
+
 @Injectable()
 export class SocialAccountObservationService {
   constructor(
@@ -205,16 +219,50 @@ export class SocialAccountObservationService {
     }
     const platformKey = platformKeyOf(entry);
 
-    const outcome = await this.fetch(
+    const filter = { profileType, profileId, socialAccountId };
+    let outcome = await this.fetch(
       platformKey,
       profileType,
       profileId,
       entry.handle,
     );
 
+    // YouTube rename recovery: the handle no longer resolves (or now belongs to
+    // someone else), but we know this channel's permanent id from an earlier check —
+    // look it up by id. Found → same channel, renamed: keep observing it and tell
+    // the creator their handle changed. The handle the creator gave is not changed.
+    let handleChangedTo: string | null = null;
+    if (
+      platformKey === "youtube" &&
+      !outcome.ok &&
+      RENAME_RECOVERABLE.includes(outcome.reason)
+    ) {
+      const previous: any = await this.currentModel.findOne(filter).lean();
+      const channelId = String(previous?.externalAccountId ?? "");
+      // Only for the handle we checked before: if the creator switched to another
+      // channel, the old channel's id must not answer for the new handle.
+      const sameHandleAsBefore = [
+        previous?.requestedHandle,
+        previous?.observedHandle,
+      ]
+        .filter((h) => typeof h === "string" && h)
+        .some((h) => handleKey(h) === handleKey(entry.handle));
+      if (sameHandleAsBefore && /^UC[A-Za-z0-9_-]{22}$/.test(channelId)) {
+        const byId = await this.fetch(
+          platformKey,
+          profileType,
+          profileId,
+          channelId,
+        );
+        if (byId.ok) {
+          outcome = byId;
+          handleChangedTo = String(byId.data.observedHandle ?? "") || null;
+        }
+      }
+    }
+
     // Server time only — never a browser or platform timestamp.
     const now = new Date();
-    const filter = { profileType, profileId, socialAccountId };
     const requestedById = requester.id;
 
     if (outcome.ok) {
@@ -228,6 +276,9 @@ export class SocialAccountObservationService {
             status: "success",
             lastError: null,
             lastAttemptAt: now,
+            requestedHandle: String(entry.handle ?? ""),
+            handleChangedTo,
+            failureCount: 0,
           },
         },
         { upsert: true, setDefaultsOnInsert: true },
@@ -242,7 +293,9 @@ export class SocialAccountObservationService {
             status: "failed",
             lastError: outcome.reason,
             lastAttemptAt: now,
+            requestedHandle: String(entry.handle ?? ""),
           },
+          $inc: { failureCount: 1 },
         },
         { upsert: true, setDefaultsOnInsert: true },
       );

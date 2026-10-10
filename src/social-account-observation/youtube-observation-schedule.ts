@@ -15,6 +15,14 @@ import {
  * No platform calls, no DB, no clock other than `now`. The scheduler service
  * loads the data and performs the observations; this only plans them.
  */
+/** Handles compare without "@", spaces or case. */
+function handleKey(handle: unknown): string {
+  return (typeof handle === "string" ? handle : "")
+    .trim()
+    .replace(/^@+/, "")
+    .toLowerCase();
+}
+
 export const YOUTUBE_SCHEDULE = {
   /** A successfully observed account is refreshed after this many days. */
   refreshEveryDays: 7,
@@ -83,7 +91,13 @@ export function consecutiveIdentityFailures(
   return n;
 }
 
-export type DueReason = "never_observed" | "refresh" | "retry" | "paused_retry";
+export type DueReason =
+  | "never_observed"
+  | "refresh"
+  | "retry"
+  | "paused_retry"
+  // The creator changed the handle since the last attempt: re-check the next night.
+  | "handle_changed";
 
 export interface ScheduledAccount {
   profileType: "Influencer" | "Photographer";
@@ -170,6 +184,14 @@ export function planYoutubeObservationRun(input: PlanInput): YoutubeRunPlan {
 
       if (since === null) {
         due.push({ ...account, reason: "never_observed" });
+        continue;
+      }
+      // Only docs that recorded the handle they looked up (older ones refresh as usual).
+      if (
+        typeof doc?.requestedHandle === "string" &&
+        handleKey(doc.requestedHandle) !== handleKey(entry.handle)
+      ) {
+        due.push({ ...account, reason: "handle_changed" });
         continue;
       }
       if (doc?.status === "failed") {

@@ -76,6 +76,15 @@ export const SocialAccountObservationSchema = new Schema(
       default: null,
     },
     lastAttemptAt: { type: Date, required: true },
+    // The handle the last attempt looked up. When the creator's handle no longer
+    // matches it, the schedule re-checks the next night (not after 7 days).
+    requestedHandle: { type: String, default: null },
+    // YouTube rename recovery: the creator's handle no longer resolves, but the
+    // channel (by its permanent id) does — under this new handle. Cleared once the
+    // creator's handle matches again.
+    handleChangedTo: { type: String, default: null },
+    // Failed lookups in a row (reset on success) — 2+ "not found" tells the creator.
+    failureCount: { type: Number, default: 0 },
   },
   { collection: "social_account_observations", timestamps: true },
 );
