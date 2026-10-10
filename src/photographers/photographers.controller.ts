@@ -296,6 +296,20 @@ export class PhotographersController {
     return this.photographersService.getProfile(req.user.userId);
   }
 
+  /** Authenticated: answer / dismiss the "your social account was updated" notices. */
+  @Patch("me/admin-social-notifications/dismiss")
+  @UseGuards(JwtAuthGuard)
+  async dismissAdminSocialNotifications(
+    @Req() req: any,
+    @Body() body?: { action?: "confirmed" | "cancelled" },
+  ) {
+    await this.photographersService.dismissAdminSocialNotifications(
+      req.user.userId,
+      body?.action,
+    );
+    return { message: "Notifications dismissed" };
+  }
+
   /** Authenticated: update own profile */
   @Patch("me/profile")
   @UseGuards(JwtAuthGuard)

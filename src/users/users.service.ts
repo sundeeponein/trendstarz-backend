@@ -2398,7 +2398,11 @@ export class UsersService implements OnModuleInit {
       verificationStatus: verificationStatus || "not_submitted",
       verifiedByTrendStarz: !!verifiedByTrendStarz,
       location: location || { state: "" },
-      socialMedia: allowSocial ? socialMedia : [],
+      // Restricted viewers get platform + tier only (no handles, links or rates) —
+      // same as Search, so the profile's TIER and platform count aren't empty.
+      socialMedia: allowSocial
+        ? socialMedia
+        : restrictedSocialSummary(socialMedia),
       socialMediaRestricted: !allowSocial,
       collaborationAvailability: collaborationAvailability || null,
       isPremium,
@@ -2471,7 +2475,11 @@ export class UsersService implements OnModuleInit {
       verificationStatus: verificationStatus || "not_submitted",
       verifiedByTrendStarz: !!verifiedByTrendStarz,
       location: location || { state: "" },
-      socialMedia: allowSocial ? socialMedia : [],
+      // Restricted viewers get platform + tier only (no handles, links or rates) —
+      // same as Search, so the profile's TIER and platform count aren't empty.
+      socialMedia: allowSocial
+        ? socialMedia
+        : restrictedSocialSummary(socialMedia),
       socialMediaRestricted: !allowSocial,
       collaborationAvailability: collaborationAvailability || null,
       isPremium,

@@ -325,3 +325,55 @@ describe("PhotographersService creator save records changed sections", () => {
     );
   });
 });
+
+describe("PhotographersService — 'your social account was updated' notices", () => {
+  const make = (photographerModel: any) =>
+    new PhotographersService(
+      photographerModel,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      { reconcile: jest.fn().mockResolvedValue(0) } as any,
+    );
+
+  it("the own profile returns only unanswered notices", async () => {
+    const service = make({
+      findById: () => ({
+        lean: () =>
+          Promise.resolve({
+            _id: "ph1",
+            lastLoginAt: new Date(),
+            password: "secret",
+            adminSocialNotifications: [
+              { platform: "YouTube", newTier: "Micro", seen: false },
+              { platform: "YouTube", newTier: "Nano", seen: true },
+            ],
+          }),
+      }),
+      db: null,
+    });
+    const profile: any = await service.getProfile("ph1");
+    expect(profile.adminSocialNotifications).toEqual([
+      { platform: "YouTube", newTier: "Micro", seen: false },
+    ]);
+    expect(profile.password).toBeUndefined();
+  });
+
+  it("dismiss marks them seen and records the answer", async () => {
+    const updateOne = jest.fn().mockResolvedValue({});
+    await make({ updateOne }).dismissAdminSocialNotifications(
+      "ph1",
+      "confirmed",
+    );
+    const [filter, update] = updateOne.mock.calls[0];
+    expect(filter).toEqual({ _id: "ph1" });
+    expect(update.$set).toMatchObject({
+      "adminSocialNotifications.$[].seen": true,
+      "adminSocialNotifications.$[].userAction": "confirmed",
+    });
+  });
+});

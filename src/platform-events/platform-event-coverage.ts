@@ -48,11 +48,12 @@ export const PLATFORM_EVENT_COHORTS: Record<
   },
   // Stage 3D-1c: counter_offer_declined.
   stage3d1c: {
-    deployedAt: null,
+    deployedAt: new Date("2026-10-08T14:35:38.000Z"),
+    // No counter-offer has been declined in production yet (checked 2026-10-10).
     observedFirstEventAt: null,
-    confidence: "not_yet_deployed",
+    confidence: "confirmed_deployment",
     evidence:
-      "Not deployed yet. After release, set deployedAt from the Railway 'Nest application successfully started' log and confidence to confirmed_deployment.",
+      "Railway deployment 23aba8be (commit 6299780, created 2026-10-08T14:32:32Z): 'Nest application successfully started' logged at 2026-10-08T14:35:38Z. No counter_offer_declined event observed yet.",
   },
 };
 

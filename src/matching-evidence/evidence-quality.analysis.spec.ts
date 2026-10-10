@@ -469,7 +469,12 @@ describe("Stage 3D-1m — outcome coverage", () => {
       live: 1,
       backfilled: 1,
     });
-    expect(Object.keys(r.liveCaptureSince)).toEqual(["stage1", "stage15"]);
+    // 3D-1c is listed now that its go-live time is recorded.
+    expect(r.liveCaptureSince).toEqual({
+      stage1: expect.any(String),
+      stage15: expect.any(String),
+      stage3d1c: "2026-10-08T14:35:38.000Z",
+    });
   });
 });
 

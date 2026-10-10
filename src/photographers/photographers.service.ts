@@ -440,7 +440,27 @@ export class PhotographersService {
     } catch {
       /* history is best-effort */
     }
-    return { ...safe, profileTrafficLast30Days };
+    return {
+      ...safe,
+      // Only notices the photographer hasn't answered yet (same as influencers).
+      adminSocialNotifications: (safe.adminSocialNotifications || []).filter(
+        (n: any) => !n?.seen,
+      ),
+      profileTrafficLast30Days,
+    };
+  }
+
+  /** Marks every "your social account was updated" notice seen, with the photographer's answer. */
+  async dismissAdminSocialNotifications(
+    userId: string,
+    action?: "confirmed" | "cancelled",
+  ): Promise<void> {
+    const set: any = { "adminSocialNotifications.$[].seen": true };
+    if (action === "confirmed" || action === "cancelled") {
+      set["adminSocialNotifications.$[].userAction"] = action;
+      set["adminSocialNotifications.$[].respondedAt"] = new Date();
+    }
+    await this.photographerModel.updateOne({ _id: userId }, { $set: set });
   }
 
   async updateProfile(userId: string, data: any, localAuthBypass = false) {
