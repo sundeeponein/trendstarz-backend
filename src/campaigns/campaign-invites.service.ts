@@ -53,9 +53,11 @@ import {
   latePostWindowsByInvite,
 } from "../payments-payouts/campaign-refund.util";
 import {
-  PAID_COLLAB_TERMS_VERSION,
   OFFPLATFORM_REPORT_LABEL,
+  currentTermsVersion,
+  termsV2EffectiveAt,
 } from "./paid-collab-terms";
+import { reverseIssuedCredit } from "../payments-payouts/platform-credit.util";
 
 function detectPlatform(url: string): string {
   if (!url) return "other";
@@ -130,6 +132,7 @@ export class CampaignInvitesService {
     @InjectModel("CampaignTransaction")
     private readonly campaignTransactionModel: Model<any>,
     @InjectModel("AppSettings") private readonly appSettingsModel: Model<any>,
+    @InjectModel("PlatformCredit") private readonly creditModel: Model<any>,
     private readonly plansService: PlansService,
     private readonly pushService: PushService,
     private readonly notificationsService: NotificationsService,
@@ -699,6 +702,36 @@ export class CampaignInvitesService {
     return { role: "brand", name: "Creator" };
   }
 
+  /**
+   * What one side may see of an invite: only their own private closure answer, no admin
+   * excuse/slot notes, and an off-platform report only if they made it (the other side is
+   * never told about it).
+   */
+  static forParty(invite: any, side: "creator" | "host"): any {
+    if (!invite || typeof invite !== "object") return invite;
+    const out: any = { ...invite };
+    if (out.closureAnswers) {
+      out.closureAnswers = out.closureAnswers[side]
+        ? { [side]: out.closureAnswers[side] }
+        : undefined;
+    }
+    delete out.missExcused;
+    delete out.slotRestored;
+    const report = out.reportedIssue;
+    if (report?.category === "offplatform" && report?.reportedByRole !== side) {
+      delete out.reportedIssue;
+    }
+    if (out.cancelRequest && out.cancelRequest.requestedByRole !== side) {
+      // The other side sees that TrendStarZ is reviewing a request, not its text.
+      out.cancelRequest = {
+        type: out.cancelRequest.type,
+        status: out.cancelRequest.status,
+        requestedByRole: out.cancelRequest.requestedByRole,
+      };
+    }
+    return out;
+  }
+
   /** Contact details stay visible for this long after a collaboration closes. */
   static readonly CONTACT_VISIBLE_AFTER_CLOSE_DAYS = 7;
 
@@ -730,7 +763,23 @@ export class CampaignInvitesService {
     );
   }
 
-  private isInviteContactVisible(invite: any): boolean {
+  /**
+   * Online-post campaigns (paid_collab) never share phone or email between host and
+   * creator — the brief, deliverables and submission all run in TrendStarZ. Product,
+   * location and event campaigns keep contact sharing for coordination.
+   */
+  static contactSharedForCampaignType(campaignType: unknown): boolean {
+    const type = typeof campaignType === "string" ? campaignType : "";
+    return type.toLowerCase() !== "paid_collab";
+  }
+
+  private isInviteContactVisible(invite: any, campaignType?: unknown): boolean {
+    const type =
+      campaignType ??
+      invite?.campaignId?.campaignType ??
+      invite?.campaign?.campaignType;
+    if (!CampaignInvitesService.contactSharedForCampaignType(type))
+      return false;
     if (CampaignInvitesService.contactExpired(invite)) return false;
     const status = String(invite?.status || "")
       .trim()
@@ -833,7 +882,7 @@ export class CampaignInvitesService {
     return clone;
   }
 
-  private async attachRecipientProfile(invite: any) {
+  private async attachRecipientProfile(invite: any, campaignType?: unknown) {
     const role = this.normalizeRecipientRole(
       invite?.recipientRole ||
         invite?.role ||
@@ -858,7 +907,7 @@ export class CampaignInvitesService {
       return invite;
     }
 
-    if (!this.isInviteContactVisible(invite)) {
+    if (!this.isInviteContactVisible(invite, campaignType)) {
       const redactedRecipient = this.omitContactFields(
         recipient as Record<string, any>,
       );
@@ -1098,10 +1147,9 @@ export class CampaignInvitesService {
     );
     // Count invites for this campaign. Invite volume is controlled by the
     // sender's plan; campaign.maxInfluencers is the accepted-slot close target.
-    const inviteCount = await this.inviteModel.countDocuments({
-      campaignId: data.campaignId,
-      status: { $nin: this.getNonConsumingInviteStatuses() },
-    });
+    const inviteCount = await this.inviteModel.countDocuments(
+      await this.consumingInviteFilter(data.campaignId),
+    );
     const acceptanceCloseAt = this.getRoleAcceptanceCloseAt(
       campaign,
       recipientRole,
@@ -1128,7 +1176,7 @@ export class CampaignInvitesService {
     }
     if (maxInvitesPerCampaign !== -1 && inviteCount >= maxInvitesPerCampaign) {
       throw new BadRequestException(
-        `Plan limit: Only ${maxInvitesPerCampaign} invites per campaign allowed. Upgrade for more.`,
+        `Plan limit: Only ${maxInvitesPerCampaign} invites per campaign allowed (a paid invite stays counted even if it closed or was refunded). Upgrade for more.`,
       );
     }
     // Per-month cap only applies when explicitly set in the plan
@@ -1315,10 +1363,15 @@ export class CampaignInvitesService {
         queries.push({ campaignId: new Types.ObjectId(campaignId) });
       }
       const invites = await this.inviteModel.find({ $or: queries }).lean();
+      const campaignForType: any = await this.campaignModel
+        .findById(campaignId)
+        .select("campaignType")
+        .lean()
+        .catch(() => null);
 
       const enriched = await Promise.all(
         (Array.isArray(invites) ? invites : []).map((inv: any) =>
-          this.attachRecipientProfile(inv),
+          this.attachRecipientProfile(inv, campaignForType?.campaignType),
         ),
       );
 
@@ -1327,7 +1380,9 @@ export class CampaignInvitesService {
         const withSubmissions = await this.attachLatestSubmissions(enriched);
         return this.attachLatestPayouts(withSubmissions);
       }
-      return enriched;
+      return enriched.map((inv: any) =>
+        CampaignInvitesService.forParty(inv, "host"),
+      );
     } catch {
       return [];
     }
@@ -1722,7 +1777,10 @@ export class CampaignInvitesService {
     // Strip brand contact details from invites that haven't been unlocked yet
     return visibleWithSubmissions.map((rawInv: any) => {
       const inv = {
-        ...this.applyRecipientLocationVisibility(rawInv),
+        ...CampaignInvitesService.forParty(
+          this.applyRecipientLocationVisibility(rawInv),
+          "creator",
+        ),
         tierChangedSinceInvite: tierChangesSinceInvite(ownSocial, rawInv),
       };
       if (inv.brandId) {
@@ -1782,7 +1840,10 @@ export class CampaignInvitesService {
 
     return visibleWithSubmissions.map((rawInv: any) => {
       const inv = {
-        ...this.applyRecipientLocationVisibility(rawInv),
+        ...CampaignInvitesService.forParty(
+          this.applyRecipientLocationVisibility(rawInv),
+          "creator",
+        ),
         tierChangedSinceInvite: tierChangesSinceInvite(ownSocial, rawInv),
       };
       if (inv.brandId) {
@@ -1858,8 +1919,14 @@ export class CampaignInvitesService {
       .select("payoutStatus paidOutAt payoutSettledAt payoutUtr")
       .sort({ updatedAt: -1, createdAt: -1 })
       .lean();
+    const isAdminViewer = role === "admin" || role === "subadmin";
     const inviteForResponse = {
-      ...invite,
+      ...(isAdminViewer
+        ? invite
+        : CampaignInvitesService.forParty(
+            invite,
+            String(invite.influencerId) === viewer.id ? "creator" : "host",
+          )),
       payoutStatus: tx?.payoutStatus || null,
       paidOutAt:
         invite?.paidOutAt || tx?.paidOutAt || tx?.payoutSettledAt || null,
@@ -4771,6 +4838,43 @@ export class CampaignInvitesService {
     invite: any,
     result: { released: any[]; settlement: any[] },
   ) {
+    // Fee credit given for a refund that turned out wrong is taken back: unused credit is
+    // reversed; credit already spent is added to what the host must repay.
+    for (const tx of result.settlement) {
+      const status = tx?.feeCredit?.status;
+      if (status === "needs_review") {
+        await this.campaignTransactionModel.updateOne(
+          { _id: tx._id, "feeCredit.status": "needs_review" },
+          {
+            $set: {
+              "feeCredit.status": "withheld",
+              "feeCredit.note": "Post verified after refund",
+            },
+          },
+        );
+        continue;
+      }
+      if (status !== "issued") continue;
+      const { alreadyUsed } = await reverseIssuedCredit(
+        this.creditModel,
+        String(tx._id),
+        "system",
+        "Post verified after the refund — fee credit taken back",
+      );
+      const updated = await this.campaignTransactionModel
+        .findOneAndUpdate(
+          { _id: tx._id, "feeCredit.status": "issued" },
+          {
+            $set: { "feeCredit.status": "reversed" },
+            ...(alreadyUsed > 0
+              ? { $inc: { "settlement.amount": alreadyUsed } }
+              : {}),
+          },
+          { new: true },
+        )
+        .lean();
+      if (updated) tx.settlement = (updated as any).settlement;
+    }
     await this.setFinancialCaseOpen(invite._id, result.settlement.length > 0);
     if (!result.settlement.length && !result.released.length) return;
     const campaign = await this.safeFindById(
@@ -4829,6 +4933,13 @@ export class CampaignInvitesService {
     if (invite.reportedIssue?.reportedAt && !invite.reportedIssue?.resolvedAt) {
       return { success: true, status: invite.status, skipped: true };
     }
+    // A pending cancel/pause request waits for the admin's decision (deadline unchanged).
+    if (
+      invite.cancelRequest?.status === "pending" &&
+      opts.actor?.userRole !== "admin"
+    ) {
+      return { success: true, status: invite.status, skipped: true };
+    }
 
     const now = new Date();
     const previousStatus = invite.status;
@@ -4861,6 +4972,13 @@ export class CampaignInvitesService {
       },
     );
     const byAdmin = opts.actor?.userRole === "admin";
+    if (!byAdmin) {
+      // A no-post closure (counts in the creator's completion record unless excused).
+      await this.campaignTransactionModel.updateMany(
+        { inviteId: idIn(invite._id), payoutStatus: { $ne: "paid" } },
+        { $set: { noPostClosure: true } },
+      );
+    }
     const held = await this.startRefund(
       invite,
       now,
@@ -5681,8 +5799,10 @@ export class CampaignInvitesService {
       await this.assertBrandOwnsInvite(inviteId, userId);
       side = "host";
     }
+    const settings: any = await this.appSettingsModel.findOne({}).lean();
+    const version = currentTermsVersion(settings);
     const existing = invite.termsAcceptance?.[side];
-    if (existing?.version === PAID_COLLAB_TERMS_VERSION) {
+    if (existing?.version === version) {
       return { success: true, termsAcceptance: invite.termsAcceptance };
     }
     await this.inviteModel.updateOne(
@@ -5691,7 +5811,7 @@ export class CampaignInvitesService {
         $set: {
           [`termsAcceptance.${side}`]: {
             acceptedAt: new Date(),
-            version: PAID_COLLAB_TERMS_VERSION,
+            version,
             userId: String(userId),
           },
         },
@@ -5702,6 +5822,620 @@ export class CampaignInvitesService {
       .select("termsAcceptance")
       .lean();
     return { success: true, termsAcceptance: updated?.termsAcceptance };
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // Anti-circumvention: paid slot, closure answers, cancel requests, record
+  // ─────────────────────────────────────────────────────────────────────────
+
+  /**
+   * Invites that use a campaign invite slot. Declined invites and withdrawals before payment
+   * free their slot. Under terms v2 a paid invite (payment confirmed on/after the effective
+   * date) stays counted after it closes — unless an admin restored the slot with a reason.
+   */
+  private async consumingInviteFilter(campaignId: unknown) {
+    const settings: any = await this.appSettingsModel.findOne({}).lean();
+    const from = termsV2EffectiveAt(settings);
+    const active = { status: { $nin: this.getNonConsumingInviteStatuses() } };
+    if (!from) return { campaignId, ...active };
+    return {
+      campaignId,
+      $or: [
+        active,
+        {
+          status: "withdrawn",
+          paymentConfirmedAt: { $gte: from },
+          "slotRestored.at": null,
+        },
+      ],
+    };
+  }
+
+  static readonly CLOSURE_ANSWERS = {
+    creator: [
+      "forgot",
+      "posted_not_submitted",
+      "host_asked_not_to_post",
+      "host_offered_outside",
+      "other",
+    ],
+    host: ["saw_post", "no_post", "asked_creator_to_stop", "other"],
+  } as const;
+
+  /** Answers that point at a deal outside TrendStarZ → open a report (evidence, not proof). */
+  private static readonly OFFPLATFORM_ANSWERS = new Set([
+    "host_asked_not_to_post",
+    "host_offered_outside",
+    "asked_creator_to_stop",
+  ]);
+
+  /**
+   * Private "what happened?" after a no-post closure. Each side answers once; the other
+   * side never sees it. An off-platform answer opens a report, which holds the refund.
+   */
+  async submitClosureAnswer(
+    inviteId: string,
+    userId: string,
+    body: { answer?: string; details?: string; link?: string },
+  ) {
+    const invite: any = await this.inviteModel.findById(inviteId);
+    if (!invite) throw new NotFoundException("Invite not found");
+    let side: "creator" | "host";
+    if (String(invite.influencerId) === String(userId)) {
+      side = "creator";
+    } else {
+      await this.assertBrandOwnsInvite(inviteId, userId);
+      side = "host";
+    }
+    const answer = String(body?.answer || "");
+    if (
+      !(
+        CampaignInvitesService.CLOSURE_ANSWERS[side] as readonly string[]
+      ).includes(answer)
+    ) {
+      throw new BadRequestException("Choose one of the answers.");
+    }
+    if (invite.closureAnswers?.[side]?.at) {
+      throw new BadRequestException(
+        "You already answered for this collaboration.",
+      );
+    }
+    const open = await this.campaignTransactionModel
+      .findOne({
+        inviteId: anyId(invite._id),
+        noPostClosure: true,
+        refundStatus: { $in: ["on_hold", "owed"] },
+      })
+      .select("_id")
+      .lean();
+    if (invite.status !== "withdrawn" || !open) {
+      throw new BadRequestException(
+        "This question is only open while the refund for a closed collaboration is under review.",
+      );
+    }
+    const details = String(body?.details || "")
+      .trim()
+      .slice(0, 1000);
+    const link = String(body?.link || "").trim();
+    if (link && !/^https?:\/\/\S+$/i.test(link)) {
+      throw new BadRequestException("Enter the full link (https://…).");
+    }
+    if (answer === "saw_post" && !link) {
+      throw new BadRequestException("Paste the link of the post you saw.");
+    }
+    const now = new Date();
+    await this.inviteModel.updateOne(
+      { _id: invite._id, [`closureAnswers.${side}.at`]: null },
+      {
+        $set: {
+          [`closureAnswers.${side}`]: { answer, details, link, at: now },
+        },
+      },
+    );
+    await this.campaignTransactionModel.updateMany(
+      { inviteId: anyId(invite._id) },
+      {
+        $push: {
+          refundHistory: {
+            at: now,
+            action: "closure_answer",
+            by: String(userId),
+            byRole: side,
+            note: answer,
+          },
+        },
+      },
+    );
+    if (CampaignInvitesService.OFFPLATFORM_ANSWERS.has(answer)) {
+      const fresh: any = await this.inviteModel.findById(invite._id);
+      const text = `${side === "creator" ? "Creator" : "Host"} answered "${answer.replace(/_/g, " ")}" after the no-post closure.${details ? ` ${details}` : ""}`;
+      const isOpen =
+        !!fresh.reportedIssue?.reportedAt && !fresh.reportedIssue?.resolvedAt;
+      if (isOpen) {
+        fresh.reportedIssue.reason =
+          `${fresh.reportedIssue.reason || ""}\n[${side} ${now.toISOString()}]: [${OFFPLATFORM_REPORT_LABEL}] ${text}`.trim();
+        fresh.reportedIssue.category = "offplatform";
+      } else {
+        fresh.reportedIssue = {
+          reason: `[${OFFPLATFORM_REPORT_LABEL}] (from closure answer) ${text}`,
+          reportedAt: now,
+          category: "offplatform",
+          reportedByRole: side,
+        };
+      }
+      fresh.updatedAt = now;
+      await fresh.save();
+      this.invalidateAttentionCache();
+    }
+    return { success: true };
+  }
+
+  /** Paid statuses in which a cancel / pause can be requested. */
+  private static readonly CANCELLABLE_STATUSES = [
+    "accepted",
+    "payment_confirmed",
+    "working",
+  ];
+
+  /**
+   * Host or creator asks TrendStarZ to cancel or pause a paid collaboration. Nothing changes
+   * until an admin decides — the deadline and payout stay as they are (and the automatic
+   * closure waits while the request is pending).
+   */
+  async requestCancelOrPause(
+    inviteId: string,
+    userId: string,
+    body: { type?: string; reason?: string },
+  ) {
+    const type =
+      body?.type === "pause"
+        ? "pause"
+        : body?.type === "cancel"
+          ? "cancel"
+          : null;
+    if (!type) throw new BadRequestException("Choose cancel or pause.");
+    const reason = String(body?.reason || "").trim();
+    if (reason.length < 15) {
+      throw new BadRequestException(
+        "Explain the reason in at least 15 characters.",
+      );
+    }
+    const invite: any = await this.inviteModel.findById(inviteId);
+    if (!invite) throw new NotFoundException("Invite not found");
+    let role: "creator" | "host";
+    if (String(invite.influencerId) === String(userId)) {
+      role = "creator";
+    } else {
+      await this.assertBrandOwnsInvite(inviteId, userId);
+      role = "host";
+    }
+    if (!CampaignInvitesService.CANCELLABLE_STATUSES.includes(invite.status)) {
+      throw new BadRequestException(
+        "A cancel or pause can be requested only on an active paid collaboration that has no post yet.",
+      );
+    }
+    const paid = await this.campaignTransactionModel
+      .findOne({ inviteId: anyId(invite._id), collectionStatus: "verified" })
+      .select("_id")
+      .lean();
+    if (!paid) {
+      throw new BadRequestException(
+        "Payment is not confirmed yet — before payment the collaboration can be withdrawn normally.",
+      );
+    }
+    if (invite.cancelRequest?.status === "pending") {
+      throw new BadRequestException(
+        "A request is already waiting for TrendStarZ.",
+      );
+    }
+    const now = new Date();
+    await this.inviteModel.updateOne(
+      { _id: invite._id, "cancelRequest.status": { $ne: "pending" } },
+      {
+        $set: {
+          cancelRequest: {
+            type,
+            requestedByRole: role,
+            requestedBy: String(userId),
+            reason,
+            at: now,
+            status: "pending",
+          },
+        },
+      },
+    );
+    this.invalidateAttentionCache();
+    return { success: true, status: "pending" };
+  }
+
+  /** Admin: pending cancel / pause requests with campaign and people. */
+  async adminListCancelRequests() {
+    const invites: any[] = await this.inviteModel
+      .find({ "cancelRequest.status": "pending" })
+      .sort({ "cancelRequest.at": 1 })
+      .limit(200)
+      .lean();
+    if (!invites.length) return { success: true, data: [] };
+    const campaignIds = [...new Set(invites.map((i) => String(i.campaignId)))];
+    const [campaigns, brands, photographers, influencers, txs] =
+      await Promise.all([
+        this.campaignModel
+          .find({ _id: { $in: campaignIds } })
+          .select("title campaignNumber")
+          .lean(),
+        this.brandModel
+          .find({ _id: { $in: invites.map((i) => String(i.brandId)) } })
+          .select("brandName")
+          .lean(),
+        this.photographerModel
+          .find({
+            _id: {
+              $in: invites.flatMap((i) => [
+                String(i.brandId),
+                String(i.influencerId),
+              ]),
+            },
+          })
+          .select("name")
+          .lean(),
+        this.influencerModel
+          .find({ _id: { $in: invites.map((i) => String(i.influencerId)) } })
+          .select("name")
+          .lean(),
+        this.campaignTransactionModel
+          .find({
+            inviteId: { $in: invites.flatMap((i) => anyId(i._id).$in) },
+            collectionStatus: "verified",
+          })
+          .select("inviteId agreedAmount platformFee payerTotal refundPolicy")
+          .lean(),
+      ]);
+    const byId = (list: any[]) =>
+      new Map(list.map((d: any) => [String(d._id), d]));
+    const cMap = byId(campaigns);
+    const people = new Map([...byId(influencers), ...byId(photographers)]);
+    const bMap = byId(brands);
+    const txByInvite = new Map(txs.map((t: any) => [String(t.inviteId), t]));
+    return {
+      success: true,
+      data: invites.map((i) => ({
+        inviteId: i._id,
+        status: i.status,
+        campaignTitle: cMap.get(String(i.campaignId))?.title || "",
+        campaignNumber: cMap.get(String(i.campaignId))?.campaignNumber || null,
+        hostName:
+          bMap.get(String(i.brandId))?.brandName ||
+          people.get(String(i.brandId))?.name ||
+          "",
+        creatorName: people.get(String(i.influencerId))?.name || "",
+        selectedPostDate: i.selectedPostDate || null,
+        agreedAmount: Number(txByInvite.get(String(i._id))?.agreedAmount || 0),
+        request: i.cancelRequest,
+      })),
+    };
+  }
+
+  /**
+   * Admin decides a cancel / pause request.
+   *  reject  — nothing changes; the requester is told why.
+   *  pause   — the creator's posting deadline moves by `pauseDays` (1–14).
+   *  cancel  — TrendStarZ cancels: the host's refund is approved (owed); when the creator
+   *            had started work, `compensation` (paise, ≤ agreed amount) is paid to them
+   *            and taken from the refund.
+   */
+  async adminDecideCancelRequest(
+    inviteId: string,
+    adminId: string,
+    body: {
+      decision?: "approve" | "reject";
+      note?: string;
+      compensation?: number;
+      pauseDays?: number;
+    },
+  ) {
+    const note = String(body?.note || "").trim();
+    if (note.length < 10) {
+      throw new BadRequestException(
+        "Write the reason for the decision (at least 10 characters).",
+      );
+    }
+    const invite: any = await this.inviteModel.findById(inviteId);
+    if (!invite) throw new NotFoundException("Invite not found");
+    const req = invite.cancelRequest;
+    if (req?.status !== "pending") {
+      throw new BadRequestException(
+        "There is no pending request on this collaboration.",
+      );
+    }
+    const now = new Date();
+    const decision =
+      body?.decision === "approve"
+        ? "approved"
+        : body?.decision === "reject"
+          ? "rejected"
+          : null;
+    if (!decision) throw new BadRequestException("Choose approve or reject.");
+
+    const claim = async (extra: Record<string, unknown> = {}) => {
+      const res = await this.inviteModel.updateOne(
+        { _id: invite._id, "cancelRequest.status": "pending" },
+        {
+          $set: {
+            "cancelRequest.status": decision,
+            "cancelRequest.decidedBy": String(adminId),
+            "cancelRequest.decidedAt": now,
+            "cancelRequest.decisionNote": note,
+            ...extra,
+          },
+        },
+      );
+      if (!res?.modifiedCount) {
+        throw new BadRequestException(
+          "This request was decided meanwhile. Reload and try again.",
+        );
+      }
+    };
+    const tell = (title: string, body: string) => {
+      this.notifyCreatorSimple(invite, title, body);
+      notifyPayer(
+        {
+          pushService: this.pushService,
+          notificationsService: this.notificationsService,
+        },
+        { payerId: invite.brandId, payerRole: "brand" },
+        title,
+        body,
+      );
+    };
+
+    if (decision === "rejected") {
+      await claim();
+      tell(
+        `${req.type === "pause" ? "Pause" : "Cancel"} request not approved`,
+        `TrendStarZ did not approve the request: ${note}. The collaboration continues as agreed.`,
+      );
+      return { success: true, decision };
+    }
+
+    if (req.type === "pause") {
+      const days = Math.round(Number(body?.pauseDays));
+      if (!Number.isFinite(days) || days < 1 || days > 14) {
+        throw new BadRequestException("Pause for 1 to 14 days.");
+      }
+      const campaign: any = await this.campaignModel
+        .findById(invite.campaignId)
+        .select("postingDeadlineMode")
+        .lean();
+      const current = invite.selectedPostDate
+        ? this.computeGraceDeadline(
+            invite,
+            campaign,
+            await this.getPaidSubmitGraceHours(),
+          ).closesAt
+        : now;
+      const base = Math.max(current.getTime(), now.getTime());
+      const until = new Date(base + days * 24 * 60 * 60 * 1000);
+      await claim({
+        "cancelRequest.pauseDays": days,
+        submissionDeadlineExtendedTo: until,
+      });
+      tell(
+        "Collaboration paused",
+        `TrendStarZ paused this collaboration. The posting deadline is now ${until.toLocaleDateString("en-IN", { day: "numeric", month: "short", timeZone: "Asia/Kolkata" })}.`,
+      );
+      return { success: true, decision, submissionDeadlineExtendedTo: until };
+    }
+
+    // cancel
+    const rows: any[] = await this.campaignTransactionModel
+      .find({
+        inviteId: anyId(invite._id),
+        collectionStatus: "verified",
+        payoutStatus: { $ne: "paid" },
+      })
+      .lean();
+    const agreed = rows.reduce(
+      (sum, r) => sum + Number(r.agreedAmount || 0),
+      0,
+    );
+    const compensation = Math.max(
+      0,
+      Math.round(Number(body?.compensation || 0)),
+    );
+    if (compensation > agreed) {
+      throw new BadRequestException(
+        `Compensation can't be more than the agreed amount (${formatRupees(agreed)}).`,
+      );
+    }
+    await claim({ "cancelRequest.compensationAmount": compensation });
+    const result: any = await this.expireUnsubmittedInvite(
+      String(invite._id),
+      `Cancelled by TrendStarZ at the ${req.requestedByRole}'s request.`,
+      {
+        withdrawnReason: "admin_cancel",
+        actor: { userId: adminId, userRole: "admin" },
+      },
+    );
+    if (result?.skipped) {
+      throw new BadRequestException(
+        `The collaboration is now '${result?.status ?? "unknown"}' — nothing was cancelled. Reload and try again.`,
+      );
+    }
+    if (compensation > 0 && rows[0]) {
+      await this.campaignTransactionModel.updateOne(
+        { _id: rows[0]._id, payoutStatus: { $ne: "paid" } },
+        {
+          $set: {
+            compensation: {
+              amount: compensation,
+              decidedBy: String(adminId),
+              decidedAt: now,
+              note,
+            },
+            recipientPayout: compensation,
+            payoutStatus: "processing",
+          },
+          $push: {
+            refundHistory: {
+              at: now,
+              action: "compensation_awarded",
+              by: String(adminId),
+              byRole: "admin",
+              amount: compensation,
+              note,
+            },
+          },
+        },
+      );
+    }
+    if (req.requestedByRole === "host") {
+      // The host chose to stop: never held against the creator's record.
+      await this.inviteModel.updateOne(
+        { _id: invite._id },
+        {
+          $set: {
+            missExcused: {
+              at: now,
+              by: String(adminId),
+              reason: "Cancelled at the host's request",
+            },
+          },
+        },
+      );
+    }
+    tell(
+      "Collaboration cancelled by TrendStarZ",
+      compensation > 0
+        ? `TrendStarZ cancelled this collaboration. The creator receives ${formatRupees(compensation)} for work done; the rest is refunded to the host.`
+        : "TrendStarZ cancelled this collaboration. The host's refund is approved.",
+    );
+    return { success: true, decision, compensation };
+  }
+
+  /** Admin: this closure must not count against the creator (e.g. host told them not to post). */
+  async adminExcuseMiss(inviteId: string, adminId: string, reason?: string) {
+    const note = String(reason || "").trim();
+    if (note.length < 10) {
+      throw new BadRequestException("Write why (at least 10 characters).");
+    }
+    const res = await this.inviteModel.updateOne(
+      { _id: inviteId },
+      {
+        $set: {
+          missExcused: { at: new Date(), by: String(adminId), reason: note },
+        },
+      },
+    );
+    if (!res?.matchedCount) throw new NotFoundException("Invite not found");
+    await this.campaignTransactionModel.updateMany(
+      { inviteId: anyId(inviteId) },
+      {
+        $push: {
+          refundHistory: {
+            at: new Date(),
+            action: "miss_excused",
+            by: String(adminId),
+            byRole: "admin",
+            note,
+          },
+        },
+      },
+    );
+    return { success: true };
+  }
+
+  /** Admin gives back the campaign invite slot of a paid, closed invite (documented exception). */
+  async adminRestoreSlot(inviteId: string, adminId: string, reason?: string) {
+    const note = String(reason || "").trim();
+    if (note.length < 10) {
+      throw new BadRequestException(
+        "Write why the slot is restored (at least 10 characters).",
+      );
+    }
+    const invite: any = await this.inviteModel.findById(inviteId).lean();
+    if (!invite) throw new NotFoundException("Invite not found");
+    if (invite.status !== "withdrawn" || !invite.paymentConfirmedAt) {
+      throw new BadRequestException(
+        "Only a paid invite that closed uses a slot after closing.",
+      );
+    }
+    if (invite.slotRestored?.at) {
+      throw new BadRequestException("The slot was already restored.");
+    }
+    await this.inviteModel.updateOne(
+      { _id: invite._id, "slotRestored.at": null },
+      {
+        $set: {
+          slotRestored: { at: new Date(), by: String(adminId), reason: note },
+        },
+      },
+    );
+    await this.campaignTransactionModel.updateMany(
+      { inviteId: anyId(invite._id) },
+      {
+        $push: {
+          refundHistory: {
+            at: new Date(),
+            action: "slot_restored",
+            by: String(adminId),
+            byRole: "admin",
+            note,
+          },
+        },
+      },
+    );
+    return { success: true };
+  }
+
+  /**
+   * A creator's paid-collaboration record shown to hosts (display only — never ranking).
+   * completed = paid collaborations delivered and approved;
+   * missed    = system no-post closures, excluding excused ones, open reports and posts
+   *             verified later.
+   */
+  async creatorCompletionRecord(creatorId: string) {
+    const id = String(creatorId || "");
+    if (!id) return { completed: 0, missed: 0 };
+    const [completed, noPost] = await Promise.all([
+      this.campaignTransactionModel.countDocuments({
+        recipientId: anyId(id),
+        transactionType: "paid_collab",
+        collectionStatus: "verified",
+        workStatus: "approved",
+        refundStatus: { $nin: ["on_hold", "owed", "sent"] },
+        "compensation.amount": { $in: [null, 0] },
+      }),
+      this.campaignTransactionModel
+        .find({
+          recipientId: anyId(id),
+          noPostClosure: true,
+          refundStatus: { $ne: "cancelled" },
+        })
+        .select("inviteId")
+        .lean(),
+    ]);
+    let missed = 0;
+    if (noPost.length) {
+      const invites: any[] = await this.inviteModel
+        .find({
+          _id: {
+            $in: noPost
+              .flatMap((r: any) => anyId(r.inviteId).$in)
+              .filter(
+                (v) => typeof v !== "string" || /^[a-f0-9]{24}$/i.test(v),
+              ),
+          },
+        })
+        .select("missExcused reportedIssue status")
+        .lean();
+      missed = invites.filter(
+        (i) =>
+          !i.missExcused?.at &&
+          i.status === "withdrawn" &&
+          !(i.reportedIssue?.reportedAt && !i.reportedIssue?.resolvedAt),
+      ).length;
+    }
+    return { completed, missed };
   }
 
   private notifyCreatorSimple(invite: any, title: string, body: string) {

@@ -82,10 +82,19 @@ describe("Paid-collaboration safeguards (CampaignInvitesService)", () => {
   let txs: FakeCollection;
   let submissions: FakeCollection;
   let push: { sendToUser: jest.Mock };
+  let credits: FakeCollection;
+  let settings: FakeCollection;
   let notifications: { createForUser: jest.Mock };
 
-  async function build(inviteRows: any[], txRows: any[] = []) {
+  async function build(
+    inviteRows: any[],
+    txRows: any[] = [],
+    appSettings: any[] = [],
+    creditRows: any[] = [],
+  ) {
     invites = new InviteCollection(inviteRows);
+    credits = new FakeCollection(creditRows);
+    settings = new FakeCollection(appSettings);
     txs = new FakeCollection(txRows);
     submissions = new FakeCollection([]);
     (submissions as any).create = jest.fn((d: any) => {
@@ -114,7 +123,8 @@ describe("Paid-collaboration safeguards (CampaignInvitesService)", () => {
         { provide: getModelToken("Photographer"), useValue: empty },
         { provide: getModelToken("Influencer"), useValue: empty },
         { provide: getModelToken("CampaignTransaction"), useValue: txs },
-        { provide: getModelToken("AppSettings"), useValue: empty },
+        { provide: getModelToken("AppSettings"), useValue: settings },
+        { provide: getModelToken("PlatformCredit"), useValue: credits },
         { provide: PlansService, useValue: {} },
         { provide: PushService, useValue: push },
         { provide: NotificationsService, useValue: notifications },
@@ -473,6 +483,366 @@ describe("Paid-collaboration safeguards (CampaignInvitesService)", () => {
           done({ financialCaseOpen: true }),
         ),
       ).toBe(false);
+    });
+  });
+
+  describe("paid invite slot (terms v2)", () => {
+    const from = new Date(Date.now() - 10 * DAY);
+    const rows = [
+      { _id: "a", campaignId: CAMPAIGN, status: "payment_confirmed" },
+      {
+        _id: "b",
+        campaignId: CAMPAIGN,
+        status: "withdrawn",
+        paymentConfirmedAt: new Date(Date.now() - DAY),
+      },
+      { _id: "c", campaignId: CAMPAIGN, status: "withdrawn" }, // before payment
+      { _id: "d", campaignId: CAMPAIGN, status: "declined" },
+      {
+        _id: "e",
+        campaignId: CAMPAIGN,
+        status: "withdrawn",
+        paymentConfirmedAt: new Date(Date.now() - 20 * DAY),
+      }, // paid before v2
+      {
+        _id: "f",
+        campaignId: CAMPAIGN,
+        status: "withdrawn",
+        paymentConfirmedAt: new Date(Date.now() - DAY),
+        slotRestored: {
+          at: new Date(),
+          by: "admin1",
+          reason: "platform error",
+        },
+      },
+    ];
+    const count = async () =>
+      invites.countDocuments(
+        await (service as any).consumingInviteFilter(CAMPAIGN),
+      );
+
+    it("before the effective date a closed paid invite frees its slot (unchanged)", async () => {
+      await build(rows);
+      expect(await count()).toBe(1);
+    });
+
+    it("after it, a paid invite that closed stays counted; declined, unpaid and restored ones don't", async () => {
+      await build(rows, [], [{ paidCollabTermsV2EffectiveAt: from }]);
+      expect(await count()).toBe(2); // a + b
+    });
+
+    it("admin can restore a paid slot only with a reason", async () => {
+      await build(rows, [], [{ paidCollabTermsV2EffectiveAt: from }]);
+      await expect(
+        service.adminRestoreSlot("b", "admin1", "x"),
+      ).rejects.toThrow("at least 10");
+      await service.adminRestoreSlot("b", "admin1", "Creator account was fake");
+      expect(await count()).toBe(1);
+      await expect(
+        service.adminRestoreSlot("c", "admin1", "Creator account was fake"),
+      ).rejects.toThrow("Only a paid invite");
+    });
+  });
+
+  describe("private closure answers", () => {
+    const closed = (over: Record<string, any> = {}) =>
+      working({ status: "withdrawn", withdrawnAt: new Date(), ...over });
+    const held = (over: Record<string, any> = {}) =>
+      txRow({ refundStatus: "on_hold", noPostClosure: true, ...over });
+
+    it("an off-platform answer opens a report (refund held); the host never sees it", async () => {
+      await build([closed()], [held()]);
+      await service.submitClosureAnswer(INVITE, "creator1", {
+        answer: "host_offered_outside",
+        details: "Host said pay me on WhatsApp instead",
+      });
+      const inv = invites.get(INVITE);
+      expect(inv.closureAnswers.creator.answer).toBe("host_offered_outside");
+      expect(inv.reportedIssue).toMatchObject({
+        category: "offplatform",
+        reportedByRole: "creator",
+      });
+      const hostView = CampaignInvitesService.forParty(inv, "host");
+      expect(hostView.closureAnswers).toBeUndefined();
+      expect(hostView.reportedIssue).toBeUndefined();
+      expect(
+        CampaignInvitesService.forParty(inv, "creator").closureAnswers.creator
+          .answer,
+      ).toBe("host_offered_outside");
+    });
+
+    it("each side answers once; a 'saw the post' answer needs the link", async () => {
+      await build([closed()], [held()]);
+      await expect(
+        service.submitClosureAnswer(INVITE, "host1", { answer: "saw_post" }),
+      ).rejects.toThrow("Paste the link");
+      await service.submitClosureAnswer(INVITE, "host1", {
+        answer: "saw_post",
+        link: "https://www.instagram.com/reel/x",
+      });
+      await expect(
+        service.submitClosureAnswer(INVITE, "host1", { answer: "no_post" }),
+      ).rejects.toThrow("already answered");
+      expect(invites.get(INVITE).reportedIssue).toBeUndefined(); // not an off-platform answer
+    });
+
+    it("closed once the refund was sent", async () => {
+      await build([closed()], [held({ refundStatus: "sent" })]);
+      await expect(
+        service.submitClosureAnswer(INVITE, "creator1", { answer: "forgot" }),
+      ).rejects.toThrow("only open while");
+    });
+  });
+
+  describe("cancel / pause requests", () => {
+    const paidTx = (over: Record<string, any> = {}) =>
+      txRow({
+        payoutStatus: "pending",
+        agreedAmount: 50000,
+        platformFee: 5000,
+        ...over,
+      });
+
+    it("needs a confirmed payment and a reason; a pending request stops the automatic closure", async () => {
+      await build(
+        [working()],
+        [paidTx({ collectionStatus: "proof_submitted" })],
+      );
+      await expect(
+        service.requestCancelOrPause(INVITE, "host1", {
+          type: "cancel",
+          reason: "Brand changed the launch plan",
+        }),
+      ).rejects.toThrow("Payment is not confirmed");
+      await build([working()], [paidTx()]);
+      await expect(
+        service.requestCancelOrPause(INVITE, "host1", {
+          type: "cancel",
+          reason: "no",
+        }),
+      ).rejects.toThrow("15 characters");
+      await service.requestCancelOrPause(INVITE, "host1", {
+        type: "cancel",
+        reason: "Brand changed the launch plan",
+      });
+      const res: any = await service.expireUnsubmittedInvite(
+        INVITE,
+        "Posting deadline passed.",
+      );
+      expect(res.skipped).toBe(true);
+      expect(invites.get(INVITE).status).toBe("payment_confirmed");
+      // The creator sees that a request exists, not the host's text.
+      const creatorView = CampaignInvitesService.forParty(
+        invites.get(INVITE),
+        "creator",
+      );
+      expect(creatorView.cancelRequest).toEqual({
+        type: "cancel",
+        status: "pending",
+        requestedByRole: "host",
+      });
+    });
+
+    it("approved cancel with compensation: creator paid part, host refunded the rest, not held against the creator", async () => {
+      await build([working()], [paidTx()]);
+      await service.requestCancelOrPause(INVITE, "host1", {
+        type: "cancel",
+        reason: "Brand changed the launch plan",
+      });
+      await expect(
+        service.adminDecideCancelRequest(INVITE, "admin1", {
+          decision: "approve",
+          note: "Creator had drafted the reel",
+          compensation: 60000,
+        }),
+      ).rejects.toThrow("can't be more than the agreed amount");
+      await service.adminDecideCancelRequest(INVITE, "admin1", {
+        decision: "approve",
+        note: "Creator had drafted the reel",
+        compensation: 20000,
+      });
+      const tx = txs.get("tx1");
+      expect(tx).toMatchObject({
+        refundStatus: "owed",
+        payoutStatus: "processing",
+        recipientPayout: 20000,
+      });
+      expect(tx.compensation.amount).toBe(20000);
+      expect(tx.noPostClosure).toBeUndefined();
+      const inv = invites.get(INVITE);
+      expect(inv.status).toBe("withdrawn");
+      expect(inv.cancelRequest.status).toBe("approved");
+      expect(inv.missExcused.reason).toContain("host");
+      await expect(
+        service.adminDecideCancelRequest(INVITE, "admin1", {
+          decision: "reject",
+          note: "Changed my mind here",
+        }),
+      ).rejects.toThrow("no pending request");
+    });
+
+    it("approved pause moves the deadline; reject changes nothing", async () => {
+      await build(
+        [working({ selectedPostDate: new Date(Date.now() + DAY) })],
+        [paidTx()],
+      );
+      await service.requestCancelOrPause(INVITE, "creator1", {
+        type: "pause",
+        reason: "I am unwell this week, need time",
+      });
+      await expect(
+        service.adminDecideCancelRequest(INVITE, "admin1", {
+          decision: "approve",
+          note: "Medical reason accepted",
+          pauseDays: 30,
+        }),
+      ).rejects.toThrow("1 to 14 days");
+      const res: any = await service.adminDecideCancelRequest(
+        INVITE,
+        "admin1",
+        {
+          decision: "approve",
+          note: "Medical reason accepted",
+          pauseDays: 5,
+        },
+      );
+      expect(
+        new Date(res.submissionDeadlineExtendedTo).getTime(),
+      ).toBeGreaterThan(Date.now() + 5 * DAY);
+      expect(invites.get(INVITE).status).toBe("payment_confirmed");
+    });
+  });
+
+  describe("creator completion record (display only)", () => {
+    it("counts delivered work and system no-post closures, skipping excused, reported and later-verified ones", async () => {
+      await build(
+        [
+          { _id: "64b000000000000000000101", status: "withdrawn" },
+          {
+            _id: "64b000000000000000000102",
+            status: "withdrawn",
+            missExcused: { at: new Date() },
+          },
+          {
+            _id: "64b000000000000000000103",
+            status: "withdrawn",
+            reportedIssue: { reportedAt: new Date() },
+          },
+          { _id: "64b000000000000000000104", status: "completed" }, // late post verified
+        ],
+        [
+          txRow({
+            _id: "c1",
+            recipientId: "creator1",
+            workStatus: "approved",
+            payoutStatus: "paid",
+          }),
+          txRow({
+            _id: "c2",
+            recipientId: "creator1",
+            workStatus: "approved",
+            payoutStatus: "processing",
+          }),
+          txRow({
+            _id: "m1",
+            inviteId: "64b000000000000000000101",
+            noPostClosure: true,
+            refundStatus: "owed",
+          }),
+          txRow({
+            _id: "m2",
+            inviteId: "64b000000000000000000102",
+            noPostClosure: true,
+            refundStatus: "sent",
+          }),
+          txRow({
+            _id: "m3",
+            inviteId: "64b000000000000000000103",
+            noPostClosure: true,
+            refundStatus: "on_hold",
+          }),
+          txRow({
+            _id: "m4",
+            inviteId: "64b000000000000000000104",
+            noPostClosure: true,
+            refundStatus: "cancelled",
+            workStatus: "approved",
+          }),
+        ],
+      );
+      expect(await service.creatorCompletionRecord("creator1")).toEqual({
+        completed: 3,
+        missed: 1,
+      });
+    });
+
+    it("admin excuse needs a reason", async () => {
+      await build([{ _id: "64b000000000000000000101", status: "withdrawn" }]);
+      await expect(
+        service.adminExcuseMiss("64b000000000000000000101", "admin1", "x"),
+      ).rejects.toThrow("at least 10");
+      await service.adminExcuseMiss(
+        "64b000000000000000000101",
+        "admin1",
+        "Host told the creator not to post",
+      );
+      expect(invites.get("64b000000000000000000101").missExcused.reason).toBe(
+        "Host told the creator not to post",
+      );
+    });
+  });
+
+  describe("online-post contact rule", () => {
+    it("paid_collab hides phone/email; product, location and event campaigns keep them", () => {
+      expect(
+        CampaignInvitesService.contactSharedForCampaignType("paid_collab"),
+      ).toBe(false);
+      for (const t of ["product", "invite_location", "event_coverage"]) {
+        expect(CampaignInvitesService.contactSharedForCampaignType(t)).toBe(
+          true,
+        );
+      }
+    });
+  });
+
+  describe("settlement takes back fee credit", () => {
+    it("unused credit is reversed and spent credit is added to what the host repays", async () => {
+      await build(
+        [working({ status: "withdrawn", withdrawnAt: new Date() })],
+        [
+          txRow({
+            refundStatus: "sent",
+            refundAmount: 50000,
+            refundPolicy: "fee_credit",
+            platformFee: 5000,
+            feeCredit: { status: "issued", amount: 5000 },
+          }),
+        ],
+        [],
+        [
+          {
+            _id: "lot",
+            ownerId: "host1",
+            type: "issued",
+            amount: 5000,
+            remaining: 3000,
+            transactionId: "tx1",
+            expiresAt: new Date(Date.now() + 300 * DAY),
+          },
+        ],
+      );
+      await service.adminReviewLatePost(INVITE, "admin1", {
+        action: "approve",
+        note: "Found the reel on the profile",
+        postUrl: "https://www.instagram.com/reel/abc",
+      });
+      const tx = txs.get("tx1");
+      expect(tx.settlement).toMatchObject({
+        status: "awaiting_host_repayment",
+        amount: 50000 + 2000,
+      });
+      expect(tx.feeCredit.status).toBe("reversed");
+      expect(credits.get("lot").remaining).toBe(0);
     });
   });
 });

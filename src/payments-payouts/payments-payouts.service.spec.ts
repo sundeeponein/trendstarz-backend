@@ -86,7 +86,10 @@ describe("PaymentsPayoutsService", () => {
           provide: getModelToken("CampaignTransaction"),
           useValue: mockTransactionModel,
         },
-        { provide: getModelToken("AppSettings"), useValue: mockAppSettingsModel },
+        {
+          provide: getModelToken("AppSettings"),
+          useValue: mockAppSettingsModel,
+        },
         { provide: getModelToken("Brand"), useValue: mockBrandModel },
         { provide: getModelToken("Influencer"), useValue: mockInfluencerModel },
         {
@@ -97,10 +100,33 @@ describe("PaymentsPayoutsService", () => {
           // Added to the service after these tests; affiliate conversions are irrelevant here.
           provide: getModelToken("LinkConversion"),
           useValue: {
-            find: jest.fn().mockReturnValue({ lean: jest.fn().mockResolvedValue([]) }),
-            findOne: jest.fn().mockReturnValue({ lean: jest.fn().mockResolvedValue(null) }),
+            find: jest
+              .fn()
+              .mockReturnValue({ lean: jest.fn().mockResolvedValue([]) }),
+            findOne: jest
+              .fn()
+              .mockReturnValue({ lean: jest.fn().mockResolvedValue(null) }),
             updateOne: jest.fn().mockResolvedValue({ modifiedCount: 0 }),
             updateMany: jest.fn().mockResolvedValue({ modifiedCount: 0 }),
+            create: jest.fn().mockResolvedValue({}),
+          },
+        },
+        {
+          provide: getModelToken("PlatformCredit"),
+          useValue: {
+            find: jest.fn().mockReturnValue({
+              select: jest
+                .fn()
+                .mockReturnValue({ lean: jest.fn().mockResolvedValue([]) }),
+              sort: jest
+                .fn()
+                .mockReturnValue({ lean: jest.fn().mockResolvedValue([]) }),
+              lean: jest.fn().mockResolvedValue([]),
+            }),
+            findOneAndUpdate: jest
+              .fn()
+              .mockReturnValue({ lean: jest.fn().mockResolvedValue(null) }),
+            updateOne: jest.fn().mockResolvedValue({}),
             create: jest.fn().mockResolvedValue({}),
           },
         },
@@ -226,12 +252,10 @@ describe("PaymentsPayoutsService", () => {
       inviteModel.find.mockImplementation((query: any) => {
         if (query?._id?.$in) {
           return {
-            lean: jest
-              .fn()
-              .mockResolvedValue([
-                { _id: "i1", influencerId: "inf1" },
-                { _id: "i2", influencerId: "inf2" },
-              ]),
+            lean: jest.fn().mockResolvedValue([
+              { _id: "i1", influencerId: "inf1" },
+              { _id: "i2", influencerId: "inf2" },
+            ]),
           };
         }
         return {
@@ -360,8 +384,8 @@ describe("PaymentsPayoutsService", () => {
       expect(tx.adminNotes).toBe("done");
       expect(tx.paidOutAt).toBeInstanceOf(Date);
       expect(tx.save).toHaveBeenCalled();
-      expect(inviteModel.findByIdAndUpdate).toHaveBeenCalledWith(
-        "inv1",
+      expect(inviteModel.updateOne).toHaveBeenCalledWith(
+        { _id: "inv1" },
         expect.objectContaining({
           $set: expect.objectContaining({
             status: "approved",
@@ -425,13 +449,15 @@ describe("PaymentsPayoutsService", () => {
     let originalAutoPayoutEnabled: boolean;
 
     beforeEach(() => {
-      originalAutoPayoutEnabled = (PaymentsPayoutsService as any).AUTO_PAYOUT_ENABLED;
+      originalAutoPayoutEnabled = (PaymentsPayoutsService as any)
+        .AUTO_PAYOUT_ENABLED;
       (PaymentsPayoutsService as any).AUTO_PAYOUT_ENABLED = true;
       razorpayService.isPayoutsConfigured.mockReturnValue(true);
     });
 
     afterEach(() => {
-      (PaymentsPayoutsService as any).AUTO_PAYOUT_ENABLED = originalAutoPayoutEnabled;
+      (PaymentsPayoutsService as any).AUTO_PAYOUT_ENABLED =
+        originalAutoPayoutEnabled;
     });
 
     it("skips gateway payout until the admin-configured payout wait is satisfied", async () => {
@@ -531,8 +557,8 @@ describe("PaymentsPayoutsService", () => {
       expect(tx.payoutGatewayProvider).toBe("razorpayx");
       expect(tx.payoutUtr).toBe("UTR_AUTO_READY");
       expect(tx.save).toHaveBeenCalled();
-      expect(inviteModel.findByIdAndUpdate).toHaveBeenCalledWith(
-        "inv_auto_ready",
+      expect(inviteModel.updateOne).toHaveBeenCalledWith(
+        { _id: "inv_auto_ready" },
         expect.objectContaining({
           $set: expect.objectContaining({
             status: "approved",
@@ -890,6 +916,7 @@ describe("PaymentsPayoutsService – payout webhook retries (real PlatformEvents
                 .mockReturnValue({ lean: jest.fn().mockResolvedValue(invite) }),
             }),
             findByIdAndUpdate: jest.fn().mockResolvedValue(undefined),
+            updateOne: jest.fn().mockResolvedValue({}),
           },
         },
         {
@@ -901,6 +928,7 @@ describe("PaymentsPayoutsService – payout webhook retries (real PlatformEvents
         { provide: getModelToken("Influencer"), useValue: {} },
         { provide: getModelToken("Photographer"), useValue: {} },
         { provide: getModelToken("LinkConversion"), useValue: {} },
+        { provide: getModelToken("PlatformCredit"), useValue: {} },
         {
           provide: RazorpayService,
           useValue: { verifyWebhookSignature: jest.fn().mockReturnValue(true) },

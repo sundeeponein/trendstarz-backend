@@ -175,6 +175,47 @@ export const CampaignInviteSchema = new Schema({
   },
   // A refund hold, pending late post or settlement still needs both sides' contact.
   financialCaseOpen: { type: Boolean },
+  // Admin gave back the campaign invite slot of a paid, closed invite (with a reason).
+  slotRestored: {
+    at: { type: Date },
+    by: { type: String },
+    reason: { type: String },
+  },
+  // Private answers after a no-post closure ("why didn't it happen?") — admin only.
+  closureAnswers: {
+    creator: {
+      answer: { type: String },
+      details: { type: String },
+      link: { type: String },
+      at: { type: Date },
+    },
+    host: {
+      answer: { type: String },
+      details: { type: String },
+      link: { type: String },
+      at: { type: Date },
+    },
+  },
+  // Admin confirmed this closure must not count against the creator's record.
+  missExcused: {
+    at: { type: Date },
+    by: { type: String },
+    reason: { type: String },
+  },
+  // In-platform request to cancel or pause a paid collaboration (admin decides).
+  cancelRequest: {
+    type: { type: String, enum: ["cancel", "pause"] },
+    requestedByRole: { type: String, enum: ["host", "creator"] },
+    requestedBy: { type: String },
+    reason: { type: String },
+    at: { type: Date },
+    status: { type: String, enum: ["pending", "approved", "rejected"] },
+    decidedBy: { type: String },
+    decidedAt: { type: Date },
+    decisionNote: { type: String },
+    compensationAmount: { type: Number }, // paise, approved cancellations only
+    pauseDays: { type: Number },
+  },
   createdAt: { type: Date, default: Date.now },
   updatedAt: { type: Date, default: Date.now },
 });

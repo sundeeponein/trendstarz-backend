@@ -1153,6 +1153,9 @@ export const AppSettingsSchema = new Schema({
     type: Number,
     default: WORKFLOW_TIMING_DEFAULTS.campaignAutoCloseGraceHours,
   },
+  // Paid-collab terms v2 (paid-slot rule + fee credit) start here. Null = not active.
+  // Set only after the legal review; applies to payments made from this moment.
+  paidCollabTermsV2EffectiveAt: { type: Date, default: null },
   earlyAccessCommissionPercent: { type: Number, default: 0 },
   partnerCommissionPercent: { type: Number, default: 2 },
   internalTestCommissionPercent: { type: Number, default: 0 },

@@ -76,6 +76,8 @@ const laterInviteProviders = [
   { provide: ProfileVerificationService, useValue: inertService() },
   { provide: TrackingLinksService, useValue: inertService() },
   { provide: PlatformEventsService, useValue: inertService() },
+  // TrendStarZ credit ledger (fee credit, terms v2) — empty by default.
+  { provide: getModelToken("PlatformCredit"), useValue: lenientModel({}) },
 ];
 
 describe("CampaignInvitesService (admin disputes + remind)", () => {
@@ -1526,7 +1528,9 @@ describe("CampaignInvitesService contact visibility in invite lists", () => {
     const byId = new Map(result.map((row: any) => [row._id, row]));
 
     // accepted + unlocked => details visible
-    expect(byId.get("paid-accepted-unlocked")?.brandId?.email).toBe("paid@example.com");
+    // Online-post (paid_collab) campaigns never share phone/email; venue rules unchanged.
+    expect(byId.get("paid-accepted-unlocked")?.brandId?.email).toBeUndefined();
+    expect(byId.get("paid-accepted-unlocked")?.brandId?.phoneNumber).toBeUndefined();
     expect(byId.get("paid-accepted-unlocked")?.campaignId?.venueAddress).toBe("Road A");
 
     // accepted + locked => details hidden

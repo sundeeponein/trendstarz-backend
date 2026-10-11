@@ -9,6 +9,7 @@ import {
 } from "../database/schemas/profile.schemas";
 import { CampaignInviteSchema } from "../database/schemas/campaign-invite.schema";
 import { CampaignTransactionSchema } from "../database/schemas/campaign-transaction.schema";
+import { PlatformCreditSchema } from "../database/schemas/platform-credit.schema";
 import { LinkConversionSchema } from "../database/schemas/link-conversion.schema";
 import { PaymentsPayoutsController } from "./payments-payouts.controller";
 import { PaymentsPayoutsService } from "./payments-payouts.service";
@@ -31,6 +32,11 @@ import { PlatformEventsModule } from "../platform-events/platform-events.module"
         name: "CampaignTransaction",
         schema: CampaignTransactionSchema,
         collection: "campaigntransactions",
+      },
+      {
+        name: "PlatformCredit",
+        schema: PlatformCreditSchema,
+        collection: "platform_credits",
       },
       { name: "Brand", schema: BrandSchema, collection: "brands" },
       { name: "Influencer", schema: InfluencerSchema, collection: "influencers" },

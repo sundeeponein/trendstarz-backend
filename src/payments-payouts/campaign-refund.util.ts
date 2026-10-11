@@ -63,10 +63,27 @@ export function isRefundDue(tx: any): boolean {
   return tx?.refundStatus === "owed";
 }
 
-/** Full amount the payer paid (agreed amount + platform fee), in paise. */
+/**
+ * Cash the payer gets back by UPI, in paise:
+ *  - "full_refund" (payments before terms v2): everything paid, fee included;
+ *  - "fee_credit" (terms v2): the creator's agreed amount — the fee comes back as credit;
+ * minus any compensation an admin awarded the creator on a cancellation.
+ */
 export function refundDueAmount(tx: any): number {
-  const n = Number(tx?.payerTotal || 0);
+  const base =
+    tx?.refundPolicy === "fee_credit"
+      ? Number(tx?.agreedAmount || 0)
+      : Number(tx?.payerTotal || 0);
+  const compensation = Number(tx?.compensation?.amount || 0);
+  const n = base - (Number.isFinite(compensation) ? compensation : 0);
   return Number.isFinite(n) && n > 0 ? Math.round(n) : 0;
+}
+
+/** Platform fee returned as TrendStarZ credit on a no-post refund (terms v2 only). */
+export function feeCreditAmount(tx: any): number {
+  if (tx?.refundPolicy !== "fee_credit") return 0;
+  const fee = Number(tx?.platformFee || 0);
+  return Number.isFinite(fee) && fee > 0 ? Math.round(fee) : 0;
 }
 
 export function formatRupees(paise: number): string {
@@ -436,6 +453,13 @@ export function refundOnHoldNotice(tx: any, campaignTitle: string) {
  */
 export const RISK_WINDOW_DAYS = 90;
 
+/**
+ * Host no-post rate: at least `threshold` no-post closures among the host's last `window`
+ * paid collaborations (rows newest first, each with a refund-state flag).
+ */
+export const HOST_NO_POST_RATE = { window: 5, threshold: 2 } as const;
+export const REPLACED_AFTER_NO_POST_DAYS = 7;
+
 export function riskFlags(
   tx: any,
   recent: Array<{
@@ -444,6 +468,7 @@ export function riskFlags(
     recipientId: unknown;
     createdAt?: Date;
   }>,
+  extra: { replacedAfterNoPost?: boolean; hostNoPostRate?: boolean } = {},
 ): string[] {
   const id = String(tx?._id);
   const payer = String(tx?.payerId);
@@ -463,5 +488,7 @@ export function riskFlags(
   if (recent.filter((r) => String(r.recipientId) === recipient).length >= 2) {
     flags.push("creator_repeat_no_post");
   }
+  if (extra.replacedAfterNoPost) flags.push("replaced_after_no_post");
+  if (extra.hostNoPostRate) flags.push("host_no_post_rate");
   return flags;
 }

@@ -173,6 +173,35 @@ export class PaymentsPayoutsController {
     );
   }
 
+  /** Admin issues a fee credit that was parked for review. */
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Post(":id/fee-credit/approve")
+  async approveFeeCredit(@Param("id") id: string, @Req() req: any) {
+    return this.paymentsPayoutsService.approveFeeCredit(id, req.user?.userId);
+  }
+
+  /** Admin withholds a fee credit that was parked for review (reason required). */
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Post(":id/fee-credit/withhold")
+  async withholdFeeCredit(
+    @Param("id") id: string,
+    @Req() req: any,
+    @Body() body: { reason?: string },
+  ) {
+    return this.paymentsPayoutsService.withholdFeeCredit(
+      id,
+      req.user?.userId,
+      body?.reason,
+    );
+  }
+
+  /** Admin: an owner's TrendStarZ credit balance and ledger. */
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Get("admin/credit/:ownerId")
+  async adminCredit(@Param("ownerId") ownerId: string) {
+    return this.paymentsPayoutsService.adminCredit(ownerId);
+  }
+
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Post(":id/settlement/host-repaid")
   async recordHostRepayment(
@@ -206,6 +235,13 @@ export class PaymentsPayoutsController {
   @Post("admin/auto-payout/run")
   async runAutoPayout(@Req() req: any) {
     return this.paymentsPayoutsService.runAutoPayoutSweep(req.user?.userId);
+  }
+
+  /** The signed-in host's TrendStarZ credit balance and ledger. */
+  @UseGuards(JwtAuthGuard)
+  @Get("my/credit")
+  async myCredit(@Req() req: any) {
+    return this.paymentsPayoutsService.myCredit(req.user?.userId);
   }
 
   @UseGuards(JwtAuthGuard)

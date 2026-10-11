@@ -270,6 +270,46 @@ export class CampaignInvitesController {
     );
   }
 
+  /** Private "what happened?" answer after a no-post closure (host or creator). */
+  @UseGuards(JwtAuthGuard)
+  @Post(":id/closure-answer")
+  async submitClosureAnswer(
+    @Param("id") id: string,
+    @Req() req: any,
+    @Body() body: { answer?: string; details?: string; link?: string },
+  ) {
+    return this.invitesService.submitClosureAnswer(
+      id,
+      this.requesterId(req),
+      body || {},
+    );
+  }
+
+  /** Host or creator asks TrendStarZ to cancel or pause a paid collaboration. */
+  @UseGuards(JwtAuthGuard)
+  @Post(":id/cancel-request")
+  async requestCancelOrPause(
+    @Param("id") id: string,
+    @Req() req: any,
+    @Body() body: { type?: string; reason?: string },
+  ) {
+    return this.invitesService.requestCancelOrPause(
+      id,
+      this.requesterId(req),
+      body || {},
+    );
+  }
+
+  /** A creator's completed vs missed paid collaborations (display only). */
+  @UseGuards(JwtAuthGuard)
+  @Get("creator/:creatorId/record")
+  async creatorRecord(@Param("creatorId") creatorId: string) {
+    return {
+      success: true,
+      data: await this.invitesService.creatorCompletionRecord(creatorId),
+    };
+  }
+
   /** Either side: "Asked to skip posting / deal outside TrendStarZ". */
   @UseGuards(JwtAuthGuard)
   @Post(":id/report-offplatform")
@@ -583,6 +623,60 @@ export class CampaignInvitesController {
       id,
       body || {},
       req.user?.userId,
+    );
+  }
+
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Get("admin/cancel-requests")
+  async adminListCancelRequests() {
+    return this.invitesService.adminListCancelRequests();
+  }
+
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Post("admin/:id/cancel-request/decide")
+  async adminDecideCancelRequest(
+    @Param("id") id: string,
+    @Req() req: any,
+    @Body()
+    body: {
+      decision?: "approve" | "reject";
+      note?: string;
+      compensation?: number;
+      pauseDays?: number;
+    },
+  ) {
+    return this.invitesService.adminDecideCancelRequest(
+      id,
+      String(req.user?.userId || ""),
+      body || {},
+    );
+  }
+
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Post("admin/:id/excuse-miss")
+  async adminExcuseMiss(
+    @Param("id") id: string,
+    @Req() req: any,
+    @Body() body: { reason?: string },
+  ) {
+    return this.invitesService.adminExcuseMiss(
+      id,
+      String(req.user?.userId || ""),
+      body?.reason,
+    );
+  }
+
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Post("admin/:id/restore-slot")
+  async adminRestoreSlot(
+    @Param("id") id: string,
+    @Req() req: any,
+    @Body() body: { reason?: string },
+  ) {
+    return this.invitesService.adminRestoreSlot(
+      id,
+      String(req.user?.userId || ""),
+      body?.reason,
     );
   }
 

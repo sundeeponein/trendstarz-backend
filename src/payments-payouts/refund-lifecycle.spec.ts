@@ -38,32 +38,39 @@ describe("Refund lifecycle (PaymentsPayoutsService)", () => {
   let invites: FakeCollection;
   let push: { sendToUser: jest.Mock };
   let notifications: { createForUser: jest.Mock };
+  let credits: FakeCollection;
+  let settings: FakeCollection;
+  let campaigns: FakeCollection;
 
   async function build(
     txRows: any[],
     inviteRows: any[] = [{ _id: INVITE, status: "withdrawn" }],
+    opts: { settings?: any[]; credits?: any[]; campaigns?: any[] } = {},
   ) {
     txs = new FakeCollection(txRows);
     invites = new FakeCollection(inviteRows);
+    credits = new FakeCollection(opts.credits || []);
+    settings = new FakeCollection(opts.settings || []);
+    campaigns = new FakeCollection(
+      opts.campaigns || [
+        { _id: "64b0000000000000000000c1", title: "Diwali Reels" },
+      ],
+    );
     push = { sendToUser: jest.fn().mockResolvedValue(undefined) };
     notifications = { createForUser: jest.fn().mockResolvedValue(undefined) };
     const empty = new FakeCollection([]);
     const module = await Test.createTestingModule({
       providers: [
         PaymentsPayoutsService,
-        {
-          provide: getModelToken("Campaign"),
-          useValue: new FakeCollection([
-            { _id: "64b0000000000000000000c1", title: "Diwali Reels" },
-          ]),
-        },
+        { provide: getModelToken("Campaign"), useValue: campaigns },
         { provide: getModelToken("CampaignInvite"), useValue: invites },
         { provide: getModelToken("CampaignTransaction"), useValue: txs },
-        { provide: getModelToken("AppSettings"), useValue: empty },
+        { provide: getModelToken("AppSettings"), useValue: settings },
         { provide: getModelToken("Brand"), useValue: empty },
         { provide: getModelToken("Influencer"), useValue: empty },
         { provide: getModelToken("Photographer"), useValue: empty },
         { provide: getModelToken("LinkConversion"), useValue: empty },
+        { provide: getModelToken("PlatformCredit"), useValue: credits },
         {
           provide: RazorpayService,
           useValue: { isPayoutsConfigured: jest.fn() },
@@ -377,6 +384,199 @@ describe("Refund lifecycle (PaymentsPayoutsService)", () => {
       expect(byId.c.flags).toEqual([]);
       const owedOnly = await service.listRefunds("owed");
       expect(owedOnly.data.map((d: any) => d._id)).toEqual(["a"]);
+    });
+  });
+
+  describe("terms v2: fee comes back as credit", () => {
+    const v2 = (over: Record<string, any> = {}) =>
+      row({ refundStatus: "owed", refundPolicy: "fee_credit", ...over });
+    const campaignDoc = {
+      _id: "64b0000000000000000000c1",
+      title: "Diwali Reels",
+      brandId: "host1",
+      campaignType: "paid_collab",
+      pricePerInfluencer: 50000,
+    };
+    const acceptedInvite = {
+      _id: "64b0000000000000000000a1",
+      campaignId: "64b0000000000000000000c1",
+      influencerId: "creator1",
+      status: "accepted",
+      agreedAmountPaise: 50000,
+    };
+    const saveable = () =>
+      txs.findById.mockImplementation((id: any) => {
+        const doc: any = { ...txs.get(id) };
+        doc.save = jest.fn(() => {
+          const data = { ...doc };
+          delete data.save;
+          Object.assign(txs.get(id), data);
+          return Promise.resolve(doc);
+        });
+        return doc;
+      });
+
+    it("cash refund = creator's agreed amount; the fee becomes 12-month credit", async () => {
+      await build([v2()]);
+      const res: any = await service.markRefundSent("tx1", "admin1", {
+        refundUtr: "UTR1",
+      });
+      expect(txs.get("tx1")).toMatchObject({
+        refundStatus: "sent",
+        refundAmount: 50000,
+      });
+      expect(res.feeCredit).toEqual({ status: "issued", amount: 5000 });
+      expect(txs.get("tx1").feeCredit).toMatchObject({
+        status: "issued",
+        amount: 5000,
+      });
+      expect(credits.docs).toEqual([
+        expect.objectContaining({
+          ownerId: "host1",
+          type: "issued",
+          amount: 5000,
+          remaining: 5000,
+          transactionId: "tx1",
+        }),
+      ]);
+      expect(notifications.createForUser).toHaveBeenCalledWith(
+        expect.objectContaining({
+          body: expect.stringContaining("TrendStarZ credit"),
+        }),
+      );
+    });
+
+    it("payments made before the new terms keep the full cash refund and get no credit", async () => {
+      await build([row({ refundStatus: "owed" })]);
+      await service.markRefundSent("tx1", "admin1", { refundUtr: "UTR1" });
+      expect(txs.get("tx1").refundAmount).toBe(55000);
+      expect(credits.docs).toHaveLength(0);
+    });
+
+    it("a host with 2+ other no-post refunds in 90 days waits for admin review", async () => {
+      const now = new Date();
+      await build([
+        v2({ createdAt: now }),
+        row({ _id: "o1", refundStatus: "sent", createdAt: now }),
+        row({ _id: "o2", refundStatus: "owed", createdAt: now }),
+      ]);
+      const res: any = await service.markRefundSent("tx1", "admin1", {
+        refundUtr: "UTR1",
+      });
+      expect(res.feeCredit.status).toBe("needs_review");
+      expect(credits.docs).toHaveLength(0);
+      await service.approveFeeCredit("tx1", "admin1");
+      expect(txs.get("tx1").feeCredit.status).toBe("issued");
+      expect(credits.docs).toHaveLength(1);
+      await expect(service.approveFeeCredit("tx1", "admin1")).rejects.toThrow(
+        "not waiting for review",
+      );
+    });
+
+    it("withheld credit needs a reason and is recorded", async () => {
+      await build([
+        v2({
+          refundStatus: "sent",
+          feeCredit: { status: "needs_review", amount: 5000 },
+        }),
+      ]);
+      await expect(
+        service.withholdFeeCredit("tx1", "admin1", "short"),
+      ).rejects.toThrow("at least 10");
+      await service.withholdFeeCredit(
+        "tx1",
+        "admin1",
+        "Repeated no-post pattern with same creator",
+      );
+      expect(txs.get("tx1").feeCredit).toMatchObject({
+        status: "withheld",
+        note: "Repeated no-post pattern with same creator",
+      });
+      expect(credits.docs).toHaveLength(0);
+    });
+
+    it("UPI payment: available credit pays the platform fee; a rejected proof gives it back", async () => {
+      await build([], [acceptedInvite], {
+        campaigns: [campaignDoc],
+        settings: [
+          {
+            platformFeeEnabled: true,
+            platformFeePercent: 10,
+            paidCollabTermsV2EffectiveAt: new Date(Date.now() - DAY),
+          },
+        ],
+        credits: [
+          {
+            _id: "lot",
+            ownerId: "host1",
+            type: "issued",
+            amount: 3000,
+            remaining: 3000,
+            expiresAt: new Date(Date.now() + 100 * DAY),
+          },
+        ],
+      });
+      const calc: any = await service.calculatePayment(
+        campaignDoc._id,
+        "host1",
+      );
+      expect(calc).toMatchObject({
+        creditAvailable: 3000,
+        creditToApply: 3000,
+        termsV2Active: true,
+      });
+      await service.submitPaymentProof(campaignDoc._id, "host1", {
+        utrNumber: "U1",
+        acceptTerms: true,
+      });
+      const tx = txs.docs[0];
+      expect(tx).toMatchObject({
+        refundPolicy: "fee_credit",
+        creditApplied: 3000,
+      });
+      expect(tx.payerTotal).toBe(calc.payerTotal - 3000);
+      expect(credits.get("lot").remaining).toBe(0);
+      saveable();
+      await service.rejectCollection(String(tx._id), "Wrong UTR");
+      expect(credits.get("lot").remaining).toBe(3000);
+    });
+
+    it("before the effective date new payments stay on the old policy", async () => {
+      await build([], [acceptedInvite], {
+        campaigns: [campaignDoc],
+        settings: [
+          {
+            platformFeeEnabled: true,
+            platformFeePercent: 10,
+            paidCollabTermsV2EffectiveAt: null,
+          },
+        ],
+      });
+      await service.submitPaymentProof(campaignDoc._id, "host1", {
+        utrNumber: "U1",
+        acceptTerms: true,
+      });
+      expect(txs.docs[0].refundPolicy).toBe("full_refund");
+    });
+
+    it("a cancellation compensation can be paid while the rest is refunded", async () => {
+      await build(
+        [
+          row({
+            refundStatus: "owed",
+            payoutStatus: "processing",
+            recipientPayout: 20000,
+            compensation: { amount: 20000 },
+          }),
+        ],
+        [{ _id: INVITE, status: "withdrawn" }],
+      );
+      saveable();
+      await service.markPayoutPaid("tx1", { payoutUtr: "P1" });
+      expect(txs.get("tx1").payoutStatus).toBe("paid");
+      expect(invites.get(INVITE).status).toBe("withdrawn"); // stays cancelled
+      const { data } = await service.listRefunds();
+      expect(data[0].cashRefundDue).toBe(55000 - 20000);
     });
   });
 });

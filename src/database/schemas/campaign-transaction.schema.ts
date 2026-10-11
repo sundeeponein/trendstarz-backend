@@ -166,6 +166,32 @@ export const CampaignTransactionSchema = new Schema(
       reviewNote: { type: String },
     },
 
+    // Refund policy fixed at payment time: "full_refund" (before terms v2) or "fee_credit"
+    // (terms v2: creator amount back by UPI, platform fee back as TrendStarZ credit).
+    refundPolicy: { type: String, enum: ["full_refund", "fee_credit"] },
+    creditApplied: { type: Number, default: 0 }, // paise of credit that paid this fee
+    feeCredit: {
+      status: {
+        type: String,
+        enum: ["needs_review", "issued", "withheld", "reversed"],
+      },
+      amount: { type: Number },
+      issuedAt: { type: Date },
+      ledgerEntryId: { type: String },
+      reviewedBy: { type: Schema.Types.Mixed },
+      reviewedAt: { type: Date },
+      note: { type: String },
+    },
+    // Set when the system closed the creator for not posting (completion record).
+    noPostClosure: { type: Boolean },
+    // Admin-approved cancellation after work started: part of the money goes to the creator.
+    compensation: {
+      amount: { type: Number }, // paise paid to the creator
+      decidedBy: { type: Schema.Types.Mixed },
+      decidedAt: { type: Date },
+      note: { type: String },
+    },
+
     // Delivery verified after the refund was already sent: host repays, then creator is paid.
     settlement: {
       status: {
@@ -267,6 +293,24 @@ export interface CampaignTransaction extends Document {
     reviewedAt?: Date;
     reviewedBy?: string;
     reviewNote?: string;
+  };
+  refundPolicy?: "full_refund" | "fee_credit";
+  creditApplied?: number;
+  feeCredit?: {
+    status?: "needs_review" | "issued" | "withheld" | "reversed";
+    amount?: number;
+    issuedAt?: Date;
+    ledgerEntryId?: string;
+    reviewedBy?: string;
+    reviewedAt?: Date;
+    note?: string;
+  };
+  noPostClosure?: boolean;
+  compensation?: {
+    amount?: number;
+    decidedBy?: string;
+    decidedAt?: Date;
+    note?: string;
   };
   settlement?: {
     status?:

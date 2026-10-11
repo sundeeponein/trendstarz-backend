@@ -53,15 +53,29 @@ function matchValue(actual: any, cond: any): boolean {
             );
           case "$ne":
             return v == null ? actual != null : !same(actual, v);
+          case "$lt":
+            return (
+              actual != null &&
+              new Date(actual).getTime() < new Date(v).getTime()
+            );
           case "$lte":
             return (
               actual != null &&
               new Date(actual).getTime() <= new Date(v).getTime()
             );
+          case "$gt":
+            return (
+              actual != null &&
+              (typeof v === "number"
+                ? Number(actual) > v
+                : new Date(actual).getTime() > new Date(v).getTime())
+            );
           case "$gte":
             return (
               actual != null &&
-              new Date(actual).getTime() >= new Date(v).getTime()
+              (typeof v === "number"
+                ? Number(actual) >= v
+                : new Date(actual).getTime() >= new Date(v).getTime())
             );
           default:
             throw new Error(`fake-collection: unsupported operator ${op}`);
@@ -91,16 +105,50 @@ function applyUpdate(doc: any, update: any) {
     setPath(doc, path, list);
   }
   for (const path of Object.keys(update.$unset || {})) unsetPath(doc, path);
+  for (const [path, value] of Object.entries(update.$inc || {})) {
+    setPath(doc, path, Number(getPath(doc, path) || 0) + Number(value));
+  }
 }
 
-/** Chainable query result (select/lean/sort/limit return itself; awaitable). */
+/** Chainable query result (select/lean/limit return itself; sort applies; awaitable). */
 function query(value: () => any) {
   const q: any = {};
-  for (const m of ["select", "lean", "sort", "limit", "populate", "exec"]) {
+  let sortSpec: Record<string, number> | null = null;
+  let limitN: number | null = null;
+  for (const m of ["select", "lean", "populate", "exec"]) {
     q[m] = () => q;
   }
-  q.then = (res: any, rej: any) => Promise.resolve().then(value).then(res, rej);
-  q.catch = (rej: any) => Promise.resolve().then(value).catch(rej);
+  q.sort = (spec: Record<string, number>) => {
+    sortSpec = spec;
+    return q;
+  };
+  q.limit = (n: number) => {
+    limitN = n;
+    return q;
+  };
+  const run = () => {
+    let out = value();
+    if (Array.isArray(out) && sortSpec) {
+      const [[key, dir]] = Object.entries(sortSpec);
+      out = [...out].sort((a, b) => {
+        const av = getPath(a, key);
+        const bv = getPath(b, key);
+        const an =
+          av instanceof Date || typeof av === "string"
+            ? new Date(av).getTime()
+            : Number(av);
+        const bn =
+          bv instanceof Date || typeof bv === "string"
+            ? new Date(bv).getTime()
+            : Number(bv);
+        return (an - bn) * (dir < 0 ? -1 : 1);
+      });
+    }
+    if (Array.isArray(out) && limitN != null) out = out.slice(0, limitN);
+    return out;
+  };
+  q.then = (res: any, rej: any) => Promise.resolve().then(run).then(res, rej);
+  q.catch = (rej: any) => Promise.resolve().then(run).catch(rej);
   return q;
 }
 
@@ -129,6 +177,22 @@ export class FakeCollection {
 
   findById = jest.fn((id: any) => query(() => clone(this.get(id) ?? null)));
 
+  private seq = 0;
+
+  create = jest.fn((data: any) => {
+    const doc = {
+      _id: data?._id ?? `auto${++this.seq}`,
+      createdAt: new Date(),
+      ...structuredClone(data),
+    };
+    this.docs.push(doc);
+    return Promise.resolve(clone(doc));
+  });
+
+  countDocuments = jest.fn((filter: any = {}) =>
+    query(() => this.docs.filter((d) => matches(d, filter)).length),
+  );
+
   findOneAndUpdate = jest.fn((filter: any, update: any, opts: any = {}) =>
     query(() => {
       this.beforeFindOneAndUpdate?.(filter);
@@ -152,7 +216,11 @@ export class FakeCollection {
     query(() => {
       const doc = this.docs.find((d) => matches(d, filter));
       if (doc) applyUpdate(doc, update);
-      return { acknowledged: true, modifiedCount: doc ? 1 : 0 };
+      return {
+        acknowledged: true,
+        matchedCount: doc ? 1 : 0,
+        modifiedCount: doc ? 1 : 0,
+      };
     }),
   );
 }

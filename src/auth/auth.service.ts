@@ -2453,6 +2453,9 @@ export class AuthService {
         WORKFLOW_TIMING_DEFAULTS.payoutReleaseWaitHours,
       // Admin grace: also the minimum time a creator paid late gets to submit (0 = none).
       campaignAutoCloseGraceHours: graceHoursFromSettings(settings),
+      // When the paid-collab terms v2 (paid-slot rule + fee credit) start; null = not yet.
+      paidCollabTermsV2EffectiveAt:
+        settings?.paidCollabTermsV2EffectiveAt ?? null,
       minCampaignStartDays: settings?.minCampaignStartDays ?? 3,
       maxCampaignDurationDays: settings?.maxCampaignDurationDays ?? 15,
       otpVerificationEnabled: !!settings?.otpVerificationEnabled,

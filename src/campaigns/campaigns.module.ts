@@ -11,6 +11,7 @@ import {
 import { CampaignInviteSchema } from "../database/schemas/campaign-invite.schema";
 import { CampaignSubmissionSchema } from "../database/schemas/campaign-submission.schema";
 import { CampaignTransactionSchema } from "../database/schemas/campaign-transaction.schema";
+import { PlatformCreditSchema } from "../database/schemas/platform-credit.schema";
 import { AnalyticsEventSchema } from "../database/schemas/analytics-event.schema";
 import { ProfileFlagSchema } from "../database/schemas/profile-flag.schema";
 import { TrackingLinkSchema } from "../database/schemas/tracking-link.schema";
@@ -58,6 +59,11 @@ import { PlatformEventsModule } from "../platform-events/platform-events.module"
         name: "CampaignTransaction",
         schema: CampaignTransactionSchema,
         collection: "campaigntransactions",
+      },
+      {
+        name: "PlatformCredit",
+        schema: PlatformCreditSchema,
+        collection: "platform_credits",
       },
       {
         name: "AnalyticsEvent",

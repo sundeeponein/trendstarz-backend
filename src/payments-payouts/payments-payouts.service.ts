@@ -34,8 +34,22 @@ import {
   refundDueAmount,
   refundState,
   riskFlags,
+  feeCreditAmount,
+  HOST_NO_POST_RATE,
+  REPLACED_AFTER_NO_POST_DAYS,
 } from "./campaign-refund.util";
-import { PAID_COLLAB_TERMS_VERSION } from "../campaigns/paid-collab-terms";
+import {
+  currentTermsVersion,
+  termsV2Active,
+} from "../campaigns/paid-collab-terms";
+import {
+  consumeCredit,
+  creditBalance,
+  creditStatement,
+  expireCredit,
+  issueCredit,
+  restoreCreditUse,
+} from "./platform-credit.util";
 
 type FeeSettings = {
   platformFeeEnabled: boolean;
@@ -79,6 +93,8 @@ export class PaymentsPayoutsService {
     @InjectModel("Influencer") private readonly influencerModel: Model<any>,
     @InjectModel("Photographer") private readonly photographerModel: Model<any>,
     @InjectModel("LinkConversion") private readonly linkConversionModel: Model<any>,
+    @InjectModel("PlatformCredit")
+    private readonly creditModel: Model<any>,
     private readonly razorpayService: RazorpayService,
     private readonly pushService: PushService,
     private readonly notificationsService: NotificationsService,
@@ -233,13 +249,19 @@ export class PaymentsPayoutsService {
       via,
     );
     if (!tx?.inviteId) return;
-    await this.inviteModel.findByIdAndUpdate(tx.inviteId, {
-      $set: {
-        status: "approved",
-        paidOutAt: paidOutAt || tx.paidOutAt || new Date(),
-        updatedAt: new Date(),
+    // A cancellation compensation is paid on a cancelled (withdrawn) collaboration — it
+    // must stay cancelled, so only the payout time is recorded.
+    const compensation = Number(tx?.compensation?.amount || 0) > 0;
+    await this.inviteModel.updateOne(
+      { _id: tx.inviteId },
+      {
+        $set: {
+          ...(compensation ? {} : { status: "approved" }),
+          paidOutAt: paidOutAt || tx.paidOutAt || new Date(),
+          updatedAt: new Date(),
+        },
       },
-    });
+    );
   }
 
   /**
@@ -379,6 +401,9 @@ export class PaymentsPayoutsService {
       .select("status completedAt updatedAt")
       .lean();
     const inviteStatus = String(invite?.status || "").toLowerCase();
+    if (Number(tx?.compensation?.amount || 0) > 0 && inviteStatus === "withdrawn") {
+      return { eligible: true }; // admin-approved cancellation compensation
+    }
     if (!new Set(["completed", "approved"]).has(inviteStatus)) {
       return {
         eligible: false,
@@ -554,6 +579,7 @@ export class PaymentsPayoutsService {
     const acceptedInvites = await this.inviteModel
       .find({ _id: { $in: calc.acceptedInviteIds } })
       .lean();
+    const policySettings: any = await this.appSettingsModel.findOne({}).lean();
 
     const saved: any[] = [];
     for (const invite of acceptedInvites) {
@@ -576,9 +602,8 @@ export class PaymentsPayoutsService {
       // Payer role: for pay_to_join the creator pays; for regular campaigns use
       // the campaign owner's actual role (brand or photographer or influencer).
       const campaignOwnerRole = this.resolveCampaignOwnerRole(campaign);
-      const invitePayerRole: "brand" | "influencer" | "photographer" = isPayToJoin
-        ? inviteRecipientRole
-        : campaignOwnerRole;
+      const invitePayerRole: "brand" | "influencer" | "photographer" =
+        isPayToJoin ? inviteRecipientRole : campaignOwnerRole;
       const inviteBaseFeePercent = calc.feeSettings
         ? this.getRoleBaseFeePercent(calc.feeSettings, invitePayerRole)
         : Number(calc.platformFeePercent || 0);
@@ -597,11 +622,15 @@ export class PaymentsPayoutsService {
         ? this.roundPercent(inviteAgreedAmount, inviteEffectiveFeePercent)
         : 0;
       // Recipient-side payout fee: role-specific, default 0%, scaffolded for future 1-4%.
-      const inviteRecipientFeeRoleForPayout: "brand" | "influencer" | "photographer" = isPayToJoin
-        ? "brand"
-        : inviteRecipientRole;
+      const inviteRecipientFeeRoleForPayout:
+        | "brand"
+        | "influencer"
+        | "photographer" = isPayToJoin ? "brand" : inviteRecipientRole;
       const inviteRecipientFeePercent = calc.feeSettings
-        ? this.getRecipientFeePercent(calc.feeSettings, inviteRecipientFeeRoleForPayout)
+        ? this.getRecipientFeePercent(
+            calc.feeSettings,
+            inviteRecipientFeeRoleForPayout,
+          )
         : 0;
       const inviteRecipientFee = calc.platformFeeEnabled
         ? this.roundPercent(inviteAgreedAmount, inviteRecipientFeePercent)
@@ -646,6 +675,13 @@ export class PaymentsPayoutsService {
         gateway: payload?.gateway || "manual_upi",
       };
 
+      // Refund policy is fixed when the payment is made (terms v2 = fee credit).
+      txData.refundPolicy =
+        !isPayToJoin && termsV2Active(policySettings)
+          ? "fee_credit"
+          : "full_refund";
+      txData.creditApplied = 0;
+
       if (mode === "manual_proof") {
         txData.utrNumber = payload?.utrNumber || "";
         txData.paymentProofUrl = payload?.paymentProofUrl || undefined;
@@ -657,15 +693,61 @@ export class PaymentsPayoutsService {
         txData.collectionStatus = "awaiting_payment";
       }
 
+      let row: any;
       if (existing) {
+        // A resubmission: give back credit the earlier (rejected) attempt used first.
+        await restoreCreditUse(this.creditModel, String(existing._id));
         Object.assign(existing, txData);
-        saved.push(await existing.save());
+        row = await existing.save();
       } else {
-        saved.push(await this.transactionModel.create(txData));
+        row = await this.transactionModel.create(txData);
       }
+      // TrendStarZ credit pays (part of) this row's platform fee — UPI payments only.
+      if (mode === "manual_proof" && !isPayToJoin && inviteFee > 0) {
+        const used = await consumeCredit(this.creditModel, {
+          ownerId: String(payerId),
+          wanted: inviteFee,
+          transactionId: String(row._id),
+          campaignId: String(campaign._id || ""),
+        });
+        if (used > 0) {
+          const payerTotal = Math.max(Number(row.payerTotal || 0) - used, 0);
+          await this.transactionModel.updateOne(
+            { _id: row._id },
+            { $set: { creditApplied: used, payerTotal } },
+          );
+          row.creditApplied = used;
+          row.payerTotal = payerTotal;
+        }
+      }
+      saved.push(row);
     }
 
     return saved;
+  }
+
+  /** What credit would pay on this payment (shown before paying; applied on submit). */
+  private async creditPreview(
+    payerId: string,
+    fee: number,
+    payerTotal: number,
+    isPayToJoin: boolean,
+  ) {
+    const creditAvailable = isPayToJoin
+      ? 0
+      : await creditBalance(this.creditModel, payerId).catch(() => 0);
+    const creditToApply = Math.min(
+      creditAvailable,
+      Math.max(0, Number(fee || 0)),
+    );
+    return {
+      creditAvailable,
+      creditToApply,
+      payerTotalAfterCredit: Math.max(
+        Number(payerTotal || 0) - creditToApply,
+        0,
+      ),
+    };
   }
 
   async calculatePayment(campaignId: string, payerId: string) {
@@ -745,6 +827,7 @@ export class PaymentsPayoutsService {
     }
     const feeSettings = await this.getFeeSettings();
     const { platformFeeEnabled } = feeSettings;
+    const settingsForTerms: any = await this.appSettingsModel.findOne({}).lean();
 
     const campaignType = campaign.campaignType || "paid_collab";
     const isPayToJoin = campaignType === "pay_to_join";
@@ -809,6 +892,10 @@ export class PaymentsPayoutsService {
       platformFeeEnabled,
       platformFeePercent: effectiveCommissionPercent,
       feeSettings,
+      // TrendStarZ credit pays only the platform fee (UPI payments).
+      ...(await this.creditPreview(payerId, fee, payerTotal, isPayToJoin)),
+      termsVersion: currentTermsVersion(settingsForTerms),
+      termsV2Active: termsV2Active(settingsForTerms),
       trustLabels: [
         "You pay only for accepted recipients",
         "Payment secured by TrendStarz",
@@ -1243,6 +1330,15 @@ export class PaymentsPayoutsService {
         settlementPending,
         settlementPendingCount: settlementRows.length,
         hostRepayments,
+        /** TrendStarZ credit issued as fee refunds (terms v2). */
+        feeCreditIssued: sum(
+          rows.filter((r: any) => r.feeCredit?.status === "issued"),
+          (r) => Number(r.feeCredit?.amount || 0),
+        ),
+        feeCreditInReview: sum(
+          rows.filter((r: any) => r.feeCredit?.status === "needs_review"),
+          (r) => Number(r.feeCredit?.amount || 0),
+        ),
         netBalance:
           collected +
           hostRepayments -
@@ -1583,6 +1679,8 @@ export class PaymentsPayoutsService {
     tx.collectionStatus = "failed";
     tx.adminNotes = reason || "Payment proof rejected";
     await tx.save();
+    // Credit used on this rejected payment goes back to the host.
+    await restoreCreditUse(this.creditModel, String(tx._id), "admin");
 
     // Fire-and-forget: notify brand their UTR was rejected
     if (tx.payerId) {
@@ -1656,8 +1754,11 @@ export class PaymentsPayoutsService {
         {
           _id: tx._id,
           payoutStatus: { $in: ["pending", "processing"] },
-          refundStatus: { $nin: ["on_hold", "owed", "sent"] },
           "settlement.status": { $ne: SETTLEMENT_OPEN },
+          $or: [
+            { refundStatus: { $nin: ["on_hold", "owed", "sent"] } },
+            { "compensation.amount": { $gt: 0 } },
+          ],
         },
         { $set: { payoutStatus: "paid", paidOutAt: new Date() } },
         { new: false },
@@ -2020,6 +2121,26 @@ export class PaymentsPayoutsService {
       return getPartyLogo("brand", brandId);
     };
 
+    // Which closures this user already answered privately (host / creator question).
+    const closedInviteIds = (rows as any[])
+      .filter((r) => r.noPostClosure && r.inviteId)
+      .flatMap((r) => anyId(r.inviteId).$in);
+    const answeredInvites: any[] = closedInviteIds.length
+      ? await this.inviteModel
+          .find({
+            _id: {
+              $in: closedInviteIds.filter(
+                (id) => typeof id !== "string" || /^[a-f0-9]{24}$/i.test(id),
+              ),
+            },
+          })
+          .select("closureAnswers")
+          .lean()
+      : [];
+    const answersByInvite = new Map(
+      answeredInvites.map((i: any) => [String(i._id), i.closureAnswers]),
+    );
+
     const enriched = (rows as any[]).map((r: any) => {
       const campaign = campaignMap.get(String(r.campaignId));
       // "other party" from the current user's perspective
@@ -2028,6 +2149,8 @@ export class PaymentsPayoutsService {
       const otherId =
         normalizedRole === "influencer" ? r.payerId : r.recipientId;
       const isPayer = String(r.payerId) === String(userId);
+      const answers = answersByInvite.get(String(r.inviteId));
+      const answered = !!(isPayer ? answers?.host?.at : answers?.creator?.at);
       // Admin-only audit fields never go to the host or creator.
       const publicRow = { ...r };
       for (const key of [
@@ -2041,7 +2164,7 @@ export class PaymentsPayoutsService {
       }
       return {
         ...publicRow,
-        refundView: this.publicRefundView(r, isPayer),
+        refundView: this.publicRefundView(r, isPayer, answered),
         campaignTitle: campaign?.title || "",
         campaignType: r.transactionType || campaign?.campaignType || "",
         otherPartyName: getPartyName(otherRole, otherId),
@@ -2380,6 +2503,7 @@ export class PaymentsPayoutsService {
       );
     }
     await this.setFinancialCaseOpen(anyId(updated.inviteId), false);
+    const credit = await this.settleFeeCredit(updated, adminId);
 
     const campaign: any = await this.campaignModel
       .findById(updated.campaignId)
@@ -2393,9 +2517,14 @@ export class PaymentsPayoutsService {
       },
       updated,
       "Refund sent",
-      `${formatRupees(refundAmount)} for "${campaign?.title || "your campaign"}" was refunded to you (UTR ${refundUtr}).`,
+      `${formatRupees(refundAmount)} for "${campaign?.title || "your campaign"}" was refunded to you (UTR ${refundUtr}).` +
+        (credit.status === "issued"
+          ? ` The platform fee of ${formatRupees(credit.amount)} was added as TrendStarZ credit (valid 12 months).`
+          : credit.status === "needs_review"
+            ? " The platform fee will be reviewed by TrendStarZ before it is added as credit."
+            : ""),
     );
-    return { success: true, transaction: updated };
+    return { success: true, transaction: updated, feeCredit: credit };
   }
 
   /**
@@ -2543,6 +2672,207 @@ export class PaymentsPayoutsService {
         .catch(() => undefined);
     }
     return { success: true, transaction: updated };
+  }
+
+  // ── TrendStarZ fee credit (terms v2) ────────────────────────────────────────
+
+  /** No-post refunds this payer had in the last 90 days (any refund state but cancelled). */
+  private async recentNoPostRefunds(payerId: unknown, excludeId?: unknown) {
+    const since = new Date(Date.now() - RISK_WINDOW_DAYS * 24 * 60 * 60 * 1000);
+    const rows: any[] = await this.transactionModel
+      .find({
+        payerId: anyId(payerId),
+        transactionType: "paid_collab",
+        createdAt: { $gte: since },
+        refundStatus: { $in: ["on_hold", "owed", "sent"] },
+      })
+      .select("_id")
+      .lean();
+    return rows.filter((r) => String(r._id) !== String(excludeId)).length;
+  }
+
+  /**
+   * After a terms-v2 refund is sent: return the platform fee as 12-month credit — or, when
+   * the host already had 2+ no-post refunds in 90 days, park it for admin review.
+   */
+  private async settleFeeCredit(
+    tx: any,
+    adminId: string,
+  ): Promise<{ status: string; amount: number }> {
+    const amount = feeCreditAmount(tx);
+    if (!amount || tx?.feeCredit?.status) {
+      return { status: tx?.feeCredit?.status || "none", amount };
+    }
+    const prior = await this.recentNoPostRefunds(tx.payerId, tx._id);
+    if (prior >= 2) {
+      await this.transactionModel.updateOne(
+        { _id: tx._id, "feeCredit.status": null },
+        {
+          $set: { feeCredit: { status: "needs_review", amount } },
+          $push: {
+            refundHistory: historyEntry(
+              "fee_credit_needs_review",
+              { byRole: "system" },
+              { amount, note: `${prior} other no-post refunds in 90 days` },
+            ),
+          },
+        },
+      );
+      return { status: "needs_review", amount };
+    }
+    return this.issueFeeCreditFor(
+      tx,
+      adminId,
+      "Platform fee returned on a no-post refund",
+    );
+  }
+
+  private async issueFeeCreditFor(tx: any, adminId: string, reason: string) {
+    const amount = feeCreditAmount(tx);
+    // Claim first so a double click can't issue two lots.
+    const claimed = await this.transactionModel
+      .findOneAndUpdate(
+        {
+          _id: tx._id,
+          refundStatus: "sent",
+          "feeCredit.status": { $in: [null, "needs_review"] },
+          "settlement.status": { $ne: SETTLEMENT_OPEN },
+        },
+        { $set: { "feeCredit.status": "issued", "feeCredit.amount": amount } },
+        { new: true },
+      )
+      .lean();
+    if (!claimed) {
+      throw new BadRequestException(
+        "Credit can't be issued now (already decided, refund not sent, or a settlement is open).",
+      );
+    }
+    const lot: any = await issueCredit(this.creditModel, {
+      ownerId: String(tx.payerId),
+      ownerRole: tx.payerRole,
+      amount,
+      transactionId: String(tx._id),
+      campaignId: String(tx.campaignId || ""),
+      reason,
+      createdBy: adminId || "system",
+    });
+    const now = new Date();
+    await this.transactionModel.updateOne(
+      { _id: tx._id },
+      {
+        $set: {
+          "feeCredit.issuedAt": now,
+          "feeCredit.ledgerEntryId": lot?._id ? String(lot._id) : null,
+          "feeCredit.reviewedBy": adminId || null,
+        },
+        $push: {
+          refundHistory: historyEntry(
+            "fee_credit_issued",
+            adminId ? { by: adminId, byRole: "admin" } : { byRole: "system" },
+            { amount },
+            now,
+          ),
+        },
+      },
+    );
+    return { status: "issued", amount };
+  }
+
+  /** Admin issues a fee credit that was parked for review. */
+  async approveFeeCredit(transactionId: string, adminId: string) {
+    const tx: any = await this.transactionModel.findById(transactionId).lean();
+    if (!tx) throw new NotFoundException("Transaction not found");
+    if (tx.feeCredit?.status !== "needs_review") {
+      throw new BadRequestException(
+        "This fee credit is not waiting for review.",
+      );
+    }
+    const res = await this.issueFeeCreditFor(
+      tx,
+      adminId,
+      "Platform fee returned on a no-post refund (admin reviewed)",
+    );
+    notifyPayer(
+      {
+        pushService: this.pushService,
+        notificationsService: this.notificationsService,
+      },
+      tx,
+      "TrendStarZ credit added",
+      `${formatRupees(res.amount)} was added to your TrendStarZ credit (valid 12 months, usable for platform fees).`,
+    );
+    return { success: true, ...res };
+  }
+
+  /** Admin withholds a fee credit that was parked for review (reason recorded). */
+  async withholdFeeCredit(
+    transactionId: string,
+    adminId: string,
+    reason?: string,
+  ) {
+    const note = String(reason || "").trim();
+    if (note.length < 10) {
+      throw new BadRequestException(
+        "Write why the credit is withheld (at least 10 characters).",
+      );
+    }
+    const updated = await this.transactionModel
+      .findOneAndUpdate(
+        { _id: transactionId, "feeCredit.status": "needs_review" },
+        {
+          $set: {
+            "feeCredit.status": "withheld",
+            "feeCredit.reviewedBy": adminId,
+            "feeCredit.reviewedAt": new Date(),
+            "feeCredit.note": note,
+          },
+          $push: {
+            refundHistory: historyEntry(
+              "fee_credit_withheld",
+              { by: adminId, byRole: "admin" },
+              { note },
+            ),
+          },
+        },
+        { new: true },
+      )
+      .lean();
+    if (!updated) {
+      throw new BadRequestException(
+        "This fee credit is not waiting for review.",
+      );
+    }
+    return { success: true };
+  }
+
+  /** The signed-in host's credit balance and ledger. */
+  async myCredit(userId: string) {
+    return {
+      success: true,
+      data: await creditStatement(this.creditModel, userId),
+    };
+  }
+
+  /** Admin: any owner's credit balance and ledger. */
+  async adminCredit(ownerId: string) {
+    return {
+      success: true,
+      data: await creditStatement(this.creditModel, ownerId),
+    };
+  }
+
+  @Cron("0 30 1 * * *")
+  async expireCreditCron() {
+    try {
+      const res = await expireCredit(this.creditModel);
+      if (res.expired) {
+        this.logger.log(
+          `Credit expired: ${res.expired} paise across ${res.lots} lots`,
+        );
+      }
+    } catch (err: any) {
+      this.logger.error(`expireCredit failed: ${err?.message || err}`);
+    }
   }
 
   /**
@@ -2723,6 +3053,13 @@ export class PaymentsPayoutsService {
     const byId = (list: any[]) =>
       new Map(list.map((d: any) => [String(d._id), d]));
     const inviteMap = byId(invites);
+    const replaced = await this.replacedAfterNoPost(
+      view.map((x) => x.row),
+      inviteMap,
+    );
+    const noPostRate = await this.hostNoPostRates(
+      view.map((x) => x.row.payerId),
+    );
     const campaignMap = byId(campaigns);
     const peopleMap = new Map([...byId(influencers), ...byId(photographers)]);
     const brandMap = byId(brands);
@@ -2773,27 +3110,120 @@ export class PaymentsPayoutsService {
         reportCategory: invite?.reportedIssue?.category || null,
         reportReason: openReport ? invite?.reportedIssue?.reason || "" : null,
         termsAcceptance: invite?.termsAcceptance || null,
-        flags: rowState === "legacy_unconfirmed" ? [] : riskFlags(row, recent),
+        flags:
+          rowState === "legacy_unconfirmed"
+            ? []
+            : riskFlags(row, recent, {
+                replacedAfterNoPost: replaced.has(String(row._id)),
+                hostNoPostRate: noPostRate.get(String(row.payerId)) === true,
+              }),
+        refundPolicy: row.refundPolicy || "full_refund",
+        cashRefundDue: refundDueAmount(row),
+        feeCredit: row.feeCredit?.status ? row.feeCredit : null,
+        feeCreditAmount: feeCreditAmount(row),
+        creditApplied: Number(row.creditApplied || 0),
+        compensation: row.compensation?.amount ? row.compensation : null,
+        closureAnswers: invite?.closureAnswers || null,
+        slotRestored: invite?.slotRestored?.at ? invite.slotRestored : null,
+        missExcused: invite?.missExcused?.at ? invite.missExcused : null,
+        paidSlot: !!invite?.paymentConfirmedAt,
         history: row.refundHistory || [],
       };
     });
     return { success: true, data };
   }
 
+  /**
+   * "Replaced after no-post": the host invited another creator to the same campaign within
+   * 7 days after this paid no-post closure. A signal for review, not proof.
+   */
+  private async replacedAfterNoPost(
+    rows: any[],
+    inviteMap: Map<string, any>,
+  ): Promise<Set<string>> {
+    const out = new Set<string>();
+    const closures = rows
+      .map((r) => ({ row: r, invite: inviteMap.get(String(r.inviteId)) }))
+      .filter((x) => x.invite?.withdrawnAt);
+    if (!closures.length) return out;
+    const campaignIds = [
+      ...new Set(closures.map((x) => String(x.row.campaignId))),
+    ];
+    const later: any[] = await this.inviteModel
+      .find({
+        campaignId: {
+          $in: campaignIds.flatMap((id) => anyId(id).$in),
+        },
+      })
+      .select("_id campaignId createdAt")
+      .lean();
+    const windowMs = REPLACED_AFTER_NO_POST_DAYS * 24 * 60 * 60 * 1000;
+    for (const { row, invite } of closures) {
+      const closedAt = new Date(invite.withdrawnAt).getTime();
+      const hit = later.some(
+        (i) =>
+          String(i.campaignId) === String(row.campaignId) &&
+          String(i._id) !== String(row.inviteId) &&
+          new Date(i.createdAt).getTime() > closedAt &&
+          new Date(i.createdAt).getTime() <= closedAt + windowMs,
+      );
+      if (hit) out.add(String(row._id));
+    }
+    return out;
+  }
+
+  /** Host no-post rate: 2+ no-post closures among the host's last 5 paid collaborations. */
+  private async hostNoPostRates(
+    payerIds: unknown[],
+  ): Promise<Map<string, boolean>> {
+    const out = new Map<string, boolean>();
+    for (const payerId of [...new Set(payerIds.map((p) => String(p)))]) {
+      const last: any[] = await this.transactionModel
+        .find({
+          payerId: anyId(payerId),
+          transactionType: "paid_collab",
+          collectionStatus: "verified",
+        })
+        .sort({ createdAt: -1 })
+        .limit(HOST_NO_POST_RATE.window)
+        .select("refundStatus noPostClosure")
+        .lean();
+      const noPost = last.filter(
+        (r) =>
+          r.noPostClosure ||
+          ["on_hold", "owed", "sent"].includes(String(r.refundStatus)),
+      ).length;
+      out.set(payerId, noPost >= HOST_NO_POST_RATE.threshold);
+    }
+    return out;
+  }
+
   /** What the payer / recipient may see about a refund (no admin ids, no audit). */
-  private publicRefundView(tx: any, isPayer: boolean) {
+  private publicRefundView(tx: any, isPayer: boolean, answered = false) {
     const state = refundState(tx);
     if (state === "none") return null;
     if (state === "legacy_unconfirmed") return { state: "under_review" };
     if (state === "cancelled") return { state: "cancelled" };
+    // The private "what happened?" question is open while the refund is not yet sent.
+    const canAnswerClosure =
+      !answered &&
+      (state === "on_hold" || state === "owed") &&
+      !!tx.noPostClosure;
     if (!isPayer) {
       return {
         state: state === "settlement" ? "pending_settlement" : "closed_no_post",
         latePostStatus: tx.latePost?.status || null,
+        inviteId: tx.inviteId ? String(tx.inviteId) : null,
+        canAnswerClosure,
       };
     }
     return {
       state,
+      inviteId: tx.inviteId ? String(tx.inviteId) : null,
+      canAnswerClosure,
+      refundPolicy: tx.refundPolicy || "full_refund",
+      creditAmount: feeCreditAmount(tx),
+      creditStatus: tx.feeCredit?.status || null,
       amount:
         state === "sent"
           ? Number(tx.refundAmount ?? tx.payerTotal ?? 0)
@@ -2814,7 +3244,12 @@ export class PaymentsPayoutsService {
         ? "This payout is already paid."
         : `This payout can't be paid (status: ${tx?.payoutStatus}).`;
     }
-    if (["on_hold", "owed", "sent"].includes(String(tx?.refundStatus))) {
+    // An approved cancellation can pay the creator a compensation next to the host's refund.
+    const compensated = Number(tx?.compensation?.amount || 0) > 0;
+    if (
+      !compensated &&
+      ["on_hold", "owed", "sent"].includes(String(tx?.refundStatus))
+    ) {
       return "A refund to the host is in progress or was sent for this collaboration. Resolve it in Payments → Refunds first.";
     }
     if (tx?.settlement?.status === SETTLEMENT_OPEN) {
@@ -2852,13 +3287,14 @@ export class PaymentsPayoutsService {
     }
     const ids = (calc?.acceptedInviteIds || []).filter(Boolean);
     if (!ids.length) return;
+    const settings: any = await this.appSettingsModel.findOne({}).lean();
     await this.inviteModel.updateMany(
       { _id: { $in: ids } },
       {
         $set: {
           "termsAcceptance.host": {
             acceptedAt: new Date(),
-            version: PAID_COLLAB_TERMS_VERSION,
+            version: currentTermsVersion(settings),
             userId: String(payerId),
           },
         },

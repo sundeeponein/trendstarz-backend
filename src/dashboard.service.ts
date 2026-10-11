@@ -86,9 +86,16 @@ export class DashboardService {
           inviteId: invite._id,
           inviteStatus: st,
           creatorTermsAccepted: !!invite.termsAcceptance?.creator?.acceptedAt,
+          // Only the creator's own off-platform report (the host's is kept private).
           openReport:
             !!invite.reportedIssue?.reportedAt &&
-            !invite.reportedIssue?.resolvedAt,
+            !invite.reportedIssue?.resolvedAt &&
+            (invite.reportedIssue?.category !== "offplatform" ||
+              invite.reportedIssue?.reportedByRole === "creator"),
+          cancelRequestStatus:
+            invite.cancelRequest?.requestedByRole === "creator"
+              ? invite.cancelRequest?.status || null
+              : null,
         });
       }
       if (st === "completed" || st === "disputed" || st === "approved") {
@@ -112,6 +119,7 @@ export class DashboardService {
           withdrawnAt: invite.withdrawnAt,
           withdrawnReason: invite.withdrawnReason,
           autoClosed,
+          closureAnswered: !!invite.closureAnswers?.creator?.at,
         });
       }
     }

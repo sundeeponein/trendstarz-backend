@@ -335,6 +335,7 @@ export class AdminListsController {
       payoutReleaseWaitHours: workflowTimingDefaults.payoutReleaseWaitHours,
       disputeResponseWaitHours: workflowTimingDefaults.disputeResponseWaitHours,
       campaignAutoCloseGraceHours: workflowTimingDefaults.campaignAutoCloseGraceHours,
+      paidCollabTermsV2EffectiveAt: null,
       earlyAccessAssignmentMode: "manual",
       earlyAccessLastRunAt: null,
       earlyAccessLastRunStatus: "",
@@ -471,6 +472,20 @@ export class AdminListsController {
         );
       }
       next[key] = Math.round(hours * 100) / 100;
+    }
+    if (next.paidCollabTermsV2EffectiveAt !== undefined) {
+      // Empty = switch the v2 financial rules off again (only affects new payments).
+      if (!next.paidCollabTermsV2EffectiveAt) {
+        next.paidCollabTermsV2EffectiveAt = null;
+      } else {
+        const at = new Date(next.paidCollabTermsV2EffectiveAt);
+        if (Number.isNaN(at.getTime())) {
+          throw new BadRequestException(
+            "paidCollabTermsV2EffectiveAt must be a valid date",
+          );
+        }
+        next.paidCollabTermsV2EffectiveAt = at;
+      }
     }
     if (next.minCampaignStartDays !== undefined) {
       const days = Number(next.minCampaignStartDays);

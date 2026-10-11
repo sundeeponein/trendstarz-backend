@@ -40,6 +40,7 @@ describe("applyToCampaign — minimum tier is 'this tier or above'", () => {
       { findById: () => ({ lean: () => Promise.resolve(influencer) }) }, // influencerModel
       trap(), // campaignTransactionModel
       trap(), // appSettingsModel
+      trap(), // creditModel (PlatformCredit)
       trap(), // plansService
       trap(), // pushService
       trap(), // notificationsService
