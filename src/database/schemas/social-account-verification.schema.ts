@@ -83,6 +83,30 @@ export const SocialAccountVerificationSchema = new Schema(
     tier: { type: DecisionSchema },
     // Set once when the system auto-corrected this account's tier; it never does so again.
     tierAutoAppliedAt: { type: Date },
+    // Hosts reported that this account's link doesn't open (renamed / deleted).
+    // open → admin confirms (ownership back to pending) or dismisses; a handle update
+    // by the creator closes it.
+    linkReport: {
+      status: {
+        type: String,
+        enum: ["open", "confirmed", "dismissed", "resolved"],
+      },
+      handle: { type: String }, // the handle the reports were about
+      firstReportedAt: { type: Date },
+      lastReportedAt: { type: Date },
+      count: { type: Number, default: 0 },
+      reporters: [
+        {
+          userId: { type: String },
+          role: { type: String },
+          at: { type: Date },
+        },
+      ],
+      resolvedAt: { type: Date },
+      resolvedById: { type: String },
+      resolvedByName: { type: String },
+      note: { type: String },
+    },
   },
   { collection: "social_account_verifications", timestamps: true },
 );

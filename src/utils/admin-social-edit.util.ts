@@ -1,4 +1,8 @@
-import { derivePlatformKey, newSocialAccountId } from "./social-account.util";
+import {
+  derivePlatformKey,
+  newSocialAccountId,
+  socialHandleKey,
+} from "./social-account.util";
 
 /**
  * Applies a handle/tier edit to a loaded creator profile document (not saved):
@@ -15,6 +19,8 @@ export function recordSocialEdit(
     tier?: string;
     changedBy?: string;
     changedByName?: string;
+    /** Same account renamed (e.g. YouTube channel id confirmed): keep / set its id. */
+    platformAccountId?: string | null;
   },
 ): void {
   const sm = user.socialMedia[index];
@@ -37,7 +43,20 @@ export function recordSocialEdit(
     changedAt: new Date(),
   };
 
-  if (body.handle !== undefined) sm.handle = String(body.handle).trim();
+  if (body.handle !== undefined) {
+    const nextHandle = String(body.handle).trim();
+    // Another handle may be another account — unless the caller confirmed it's the same one.
+    if (
+      body.platformAccountId === undefined &&
+      socialHandleKey(nextHandle) !== socialHandleKey(sm.handle)
+    ) {
+      sm.platformAccountId = null;
+    }
+    sm.handle = nextHandle;
+  }
+  if (body.platformAccountId !== undefined) {
+    sm.platformAccountId = body.platformAccountId;
+  }
   if (body.tier !== undefined) {
     const nextTier = String(body.tier).trim();
     // Rates set before this moment are flagged "check this rate" for the creator.

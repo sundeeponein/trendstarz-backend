@@ -10,6 +10,8 @@ import { SocialAccountVerificationModule } from "../social-account-verification/
 import { CreatorObservationController } from "./creator-observation.controller";
 import { CreatorRatesController } from "./creator-rates.controller";
 import { TierAutoApplyService } from "./tier-auto-apply.service";
+import { SocialLinkHealthController } from "./social-link-health.controller";
+import { SocialLinkHealthService } from "./social-link-health.service";
 import { TierReviewController } from "./tier-review.controller";
 import { TierReviewService } from "./tier-review.service";
 
@@ -36,7 +38,8 @@ import { TierReviewService } from "./tier-review.service";
     TierReviewController,
     CreatorObservationController,
     CreatorRatesController,
+    SocialLinkHealthController,
   ],
-  providers: [TierReviewService, TierAutoApplyService],
+  providers: [TierReviewService, TierAutoApplyService, SocialLinkHealthService],
 })
 export class TierReviewModule {}

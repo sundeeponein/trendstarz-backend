@@ -182,6 +182,14 @@ export function mergeRateRows(
  * - An unmatched incoming entry is a new account and gets a new id; a stored
  *   entry with no incoming match was removed by the creator (as before).
  */
+/** Handles compare without "@", spaces or case. */
+export function socialHandleKey(handle: unknown): string {
+  return (typeof handle === "string" ? handle : "")
+    .trim()
+    .replace(/^@+/, "")
+    .toLowerCase();
+}
+
 export function mergeSocialMediaEntries(
   existing: any[] | null | undefined,
   incoming: any[] | null | undefined,
@@ -207,6 +215,14 @@ export function mergeSocialMediaEntries(
     const merged: Record<string, any> = stored ? { ...stored } : {};
     merged.platform = item?.platform ?? stored?.platform ?? "";
     merged.handle = item?.handle ?? stored?.handle ?? "";
+    // A different handle may be a different account: forget its permanent platform id
+    // (the next observation of the new handle learns it again).
+    if (
+      stored &&
+      socialHandleKey(stored.handle) !== socialHandleKey(merged.handle)
+    ) {
+      merged.platformAccountId = null;
+    }
     merged.tier = item?.tier !== undefined ? item.tier : (stored?.tier ?? "");
     if (Array.isArray(item?.contentTypes)) {
       const rates = mergeRateRows(stored?.contentTypes, item.contentTypes, now);

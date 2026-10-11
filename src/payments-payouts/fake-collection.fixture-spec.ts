@@ -212,9 +212,20 @@ export class FakeCollection {
     }),
   );
 
-  updateOne = jest.fn((filter: any, update: any) =>
+  updateOne = jest.fn((filter: any, update: any, opts: any = {}) =>
     query(() => {
-      const doc = this.docs.find((d) => matches(d, filter));
+      let doc = this.docs.find((d) => matches(d, filter));
+      if (!doc && opts?.upsert) {
+        // Like Mongo: equality fields of the filter + $setOnInsert, then the update.
+        doc = { _id: `upsert${this.docs.length + 1}` };
+        for (const [k, v] of Object.entries(filter || {})) {
+          if (!k.startsWith("$") && (v == null || typeof v !== "object")) {
+            setPath(doc, k, v);
+          }
+        }
+        applyUpdate(doc, { $set: update.$setOnInsert || {} });
+        this.docs.push(doc);
+      }
       if (doc) applyUpdate(doc, update);
       return {
         acknowledged: true,

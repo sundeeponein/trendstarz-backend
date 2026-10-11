@@ -818,6 +818,8 @@ describe("SocialAccountVerificationService.profileIdsWithChangedReviews", () => 
           "ownership.invalidatedAt": { $ne: null },
         },
         { "tier.status": "pending", "tier.invalidatedAt": { $ne: null } },
+        // Hosts reported the link doesn't open.
+        { "linkReport.status": "open" },
       ],
     });
   });

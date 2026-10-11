@@ -16,6 +16,7 @@ import {
 import {
   derivePlatformKey,
   isSocialAccountId,
+  socialHandleKey,
 } from "../utils/social-account.util";
 import { resolveTier } from "../utils/tier-ranges.util";
 
@@ -142,6 +143,21 @@ export function effectiveDecision(
     };
   }
   return plain as SocialDecisionView;
+}
+
+/** Admin view of a broken-link report (no reporter ids). */
+function linkReportView(report: any) {
+  if (!report?.status) return null;
+  return {
+    status: report.status,
+    handle: report.handle || "",
+    count: Number(report.count || 0),
+    firstReportedAt: report.firstReportedAt || null,
+    lastReportedAt: report.lastReportedAt || null,
+    resolvedAt: report.resolvedAt || null,
+    resolvedByName: report.resolvedByName || "",
+    note: report.note || "",
+  };
 }
 
 function plain(entry: any): Record<string, any> {
@@ -387,6 +403,8 @@ export class SocialAccountVerificationService {
           "ownership.invalidatedAt": { $ne: null },
         },
         { "tier.status": "pending", "tier.invalidatedAt": { $ne: null } },
+        // Hosts reported the link doesn't open — waiting for admin to confirm/dismiss.
+        { "linkReport.status": "open" },
       ],
     };
     if (profileIds) {
@@ -458,6 +476,23 @@ export class SocialAccountVerificationService {
       let invalidated = 0;
       for (const state of states) {
         const entry = byId.get(String(state.socialAccountId));
+        // The creator updated the handle a broken-link report was about: report closed.
+        const report = state.linkReport;
+        if (
+          (report?.status === "open" || report?.status === "confirmed") &&
+          socialHandleKey(report.handle) !== socialHandleKey(entry?.handle)
+        ) {
+          await this.stateModel.updateOne(
+            { _id: state._id, "linkReport.status": report.status },
+            {
+              $set: {
+                "linkReport.status": "resolved",
+                "linkReport.resolvedAt": new Date(),
+                "linkReport.resolvedByName": "Creator updated the handle",
+              },
+            },
+          );
+        }
         for (const reviewType of ["ownership", "tier"] as SocialReviewType[]) {
           const decision = state[reviewType];
           if (
@@ -541,7 +576,201 @@ export class SocialAccountVerificationService {
         entry,
       ),
       tierVerification: effectiveDecision("tier", state?.tier, entry),
+      linkReport: linkReportView(state?.linkReport),
     };
+  }
+
+  // ── Broken-link reports (hosts) ─────────────────────────────────────────────
+
+  /** A REPORTER_COOLDOWN_DAYS window per reporter per account. */
+  static readonly REPORTER_COOLDOWN_DAYS = 30;
+
+  /**
+   * A signed-in user reports that a social account's link doesn't open. Returns
+   * `firstOpen: true` when this report opened the case (the caller tells the creator).
+   */
+  async reportBrokenLink(params: {
+    profileType: SocialProfileType;
+    profileId: string;
+    entry: any;
+    reporterId: string;
+    reporterRole: string;
+    now?: Date;
+  }): Promise<{ firstOpen: boolean; status: string }> {
+    const now = params.now || new Date();
+    const entry = plain(params.entry);
+    const socialAccountId = String(entry.socialAccountId || "");
+    if (!isSocialAccountId(socialAccountId)) {
+      throw new BadRequestException("Unknown social account");
+    }
+    const filter = {
+      profileType: params.profileType,
+      profileId: params.profileId,
+      socialAccountId,
+    };
+    const state: any = await this.stateModel.findOne(filter).lean();
+    const report = state?.linkReport;
+    const sameHandle =
+      socialHandleKey(report?.handle) === socialHandleKey(entry.handle);
+    const isOpen = report?.status === "open" && sameHandle;
+    if (isOpen) {
+      const cutoff =
+        now.getTime() -
+        SocialAccountVerificationService.REPORTER_COOLDOWN_DAYS * 86400000;
+      const recent = (report.reporters || []).some(
+        (r: any) =>
+          String(r.userId) === String(params.reporterId) &&
+          new Date(r.at).getTime() > cutoff,
+      );
+      if (recent) return { firstOpen: false, status: "open" };
+      await this.stateModel.updateOne(filter, {
+        $set: { "linkReport.lastReportedAt": now },
+        $inc: { "linkReport.count": 1 },
+        $push: {
+          "linkReport.reporters": {
+            userId: String(params.reporterId),
+            role: params.reporterRole,
+            at: now,
+          },
+        },
+      });
+      return { firstOpen: false, status: "open" };
+    }
+    await this.stateModel.updateOne(
+      filter,
+      {
+        $setOnInsert: {
+          platformKey: String(
+            entry.platformKey || derivePlatformKey(entry.platform),
+          ),
+        },
+        $set: {
+          linkReport: {
+            status: "open",
+            handle: String(entry.handle || ""),
+            firstReportedAt: now,
+            lastReportedAt: now,
+            count: 1,
+            reporters: [
+              {
+                userId: String(params.reporterId),
+                role: params.reporterRole,
+                at: now,
+              },
+            ],
+          },
+        },
+      },
+      { upsert: true },
+    );
+    return { firstOpen: true, status: "open" };
+  }
+
+  /**
+   * Admin decides a broken-link report. confirm → the ownership decision goes back to
+   * pending (reason link_broken), so the account is re-reviewed in "Social changed";
+   * dismiss → the link works, report closed.
+   */
+  async resolveLinkReport(
+    actor: any,
+    params: {
+      profileType: SocialProfileType;
+      profileId: string;
+      entry: any;
+      action: "confirm" | "dismiss";
+      note?: string;
+    },
+  ): Promise<{ status: string }> {
+    const entry = plain(params.entry);
+    const filter = {
+      profileType: params.profileType,
+      profileId: params.profileId,
+      socialAccountId: String(entry.socialAccountId || ""),
+    };
+    const state: any = await this.stateModel.findOne(filter).lean();
+    if (state?.linkReport?.status !== "open") {
+      throw new ConflictException(
+        "There is no open link report on this account.",
+      );
+    }
+    const now = new Date();
+    const adminId = String(actor?.userId || actor?._id || actor?.id || "");
+    const adminName = await this.adminName(adminId, actor);
+    const status = params.action === "confirm" ? "confirmed" : "dismissed";
+    const set: Record<string, unknown> = {
+      "linkReport.status": status,
+      "linkReport.resolvedAt": now,
+      "linkReport.resolvedById": adminId,
+      "linkReport.resolvedByName": adminName,
+      "linkReport.note": String(params.note || "").trim(),
+    };
+    const ownership = state.ownership;
+    const resetOwnership =
+      params.action === "confirm" &&
+      ownership &&
+      (DECIDED_STATUSES as readonly string[]).includes(ownership.status);
+    if (resetOwnership) {
+      set.ownership = {
+        status: "pending",
+        note: "",
+        invalidatedAt: now,
+        invalidatedReason: "link_broken",
+        lastDecision: decisionSnapshot(ownership),
+      };
+    }
+    const res = await this.stateModel.updateOne(
+      { ...filter, "linkReport.status": "open" },
+      { $set: set },
+    );
+    if (!res?.modifiedCount) {
+      throw new ConflictException(
+        "This report was decided meanwhile. Reload and try again.",
+      );
+    }
+    if (resetOwnership) {
+      await this.reviewModel.create({
+        socialAccountId: filter.socialAccountId,
+        profileId: params.profileId,
+        profileType: params.profileType,
+        platformKey: String(entry.platformKey || state.platformKey || ""),
+        platform: String(entry.platform ?? ""),
+        handle: String(entry.handle ?? ""),
+        declaredTier: String(entry.tier ?? ""),
+        reviewType: "ownership",
+        previousStatus: ownership.status,
+        newStatus: "pending",
+        method: "invalidated",
+        decidedAt: now,
+        decidedById: adminId,
+        decidedByName: adminName,
+        decidedByRole: "admin",
+        note: `Link @${entry.handle ?? ""} doesn't open (reported by hosts, confirmed by admin).`,
+      });
+    }
+    return { status };
+  }
+
+  /** Public, minimal: which accounts of a profile have an open/confirmed broken-link report. */
+  async linkReportsForProfile(
+    profileType: SocialProfileType,
+    profileId: string,
+  ): Promise<Record<string, { status: string; since: Date | null }>> {
+    const rows: any[] = await this.stateModel
+      .find({
+        profileType,
+        profileId,
+        "linkReport.status": { $in: ["open", "confirmed"] },
+      })
+      .select("socialAccountId linkReport.status linkReport.firstReportedAt")
+      .lean();
+    const out: Record<string, { status: string; since: Date | null }> = {};
+    for (const r of rows) {
+      out[String(r.socialAccountId)] = {
+        status: String(r.linkReport?.status),
+        since: r.linkReport?.firstReportedAt || null,
+      };
+    }
+    return out;
   }
 
   /** Admin display name from the users collection (the JWT carries only id/email/role). */

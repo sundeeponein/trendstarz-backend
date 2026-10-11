@@ -13,6 +13,10 @@ import {
   NotFoundException,
   ConflictException,
 } from "@nestjs/common";
+import {
+  handleConfirmOverdue,
+  overdueConfirmFilter,
+} from "../tier-review/social-link-health.service";
 import { JwtAuthGuard } from "../auth/jwt-auth.guard";
 import { RolesGuard } from "../auth/roles.guard";
 import { InjectModel } from "@nestjs/mongoose";
@@ -353,6 +357,8 @@ export class AdminUserTableController {
         ];
         if (changed.length)
           anyOf.push({ _id: { $in: this.toExcludedIdValues(changed) } });
+        // Ignored the 90-day "are these still your accounts?" check for 14+ days.
+        anyOf.push(overdueConfirmFilter());
       }
       filter.$and = [
         ...(Array.isArray(filter.$and) ? filter.$and : []),
@@ -1055,7 +1061,8 @@ export class AdminUserTableController {
         : [];
       r.creatorUpdatedFields = fields;
       r.creatorUpdatesPending = approved && fields.length > 0;
-      r.socialReviewChanged = changed.has(String(r?._id || ""));
+      r.socialReviewChanged =
+        changed.has(String(r?._id || "")) || handleConfirmOverdue(r);
     }
   }
 

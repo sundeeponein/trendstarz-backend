@@ -323,6 +323,10 @@ export const InfluencerSchema = new Schema(
         // When an admin or the automatic YouTube correction last changed the tier
         // (server-owned) — rates confirmed before it are flagged for review.
         tierChangedAt: { type: Date, default: null },
+        // Server-owned permanent platform id (YouTube channel id, "UC…") learned from
+        // an observation of this exact handle — links built from it survive renames.
+        // Cleared when the handle is changed to another account.
+        platformAccountId: { type: String, default: null },
         followersCount: { type: Number },
         contentTypes: [
           {
@@ -345,6 +349,9 @@ export const InfluencerSchema = new Schema(
         },
       },
     ],
+    // Periodic "are these still your accounts?" check (every 90 days).
+    socialConfirmedAt: { type: Date, default: null },
+    socialConfirmPromptedAt: { type: Date, default: null },
     socialMediaEditLog: [
       {
         platformIdx: { type: Number },
@@ -517,6 +524,10 @@ export const BrandSchema = new Schema(
         // When an admin or the automatic YouTube correction last changed the tier
         // (server-owned) — rates confirmed before it are flagged for review.
         tierChangedAt: { type: Date, default: null },
+        // Server-owned permanent platform id (YouTube channel id, "UC…") learned from
+        // an observation of this exact handle — links built from it survive renames.
+        // Cleared when the handle is changed to another account.
+        platformAccountId: { type: String, default: null },
         followersCount: { type: Number },
         contentTypes: [
           {
@@ -536,6 +547,9 @@ export const BrandSchema = new Schema(
         },
       },
     ],
+    // Periodic "are these still your accounts?" check (every 90 days).
+    socialConfirmedAt: { type: Date, default: null },
+    socialConfirmPromptedAt: { type: Date, default: null },
     socialMediaEditLog: [
       {
         platformIdx: { type: Number },
@@ -838,6 +852,10 @@ export const PhotographerSchema = new Schema(
         // When an admin or the automatic YouTube correction last changed the tier
         // (server-owned) — rates confirmed before it are flagged for review.
         tierChangedAt: { type: Date, default: null },
+        // Server-owned permanent platform id (YouTube channel id, "UC…") learned from
+        // an observation of this exact handle — links built from it survive renames.
+        // Cleared when the handle is changed to another account.
+        platformAccountId: { type: String, default: null },
         followersCount: { type: Number },
         selfReportedStats: {
           avgLikes: { type: Number, default: null },
@@ -847,6 +865,9 @@ export const PhotographerSchema = new Schema(
         },
       },
     ],
+    // Periodic "are these still your accounts?" check (every 90 days).
+    socialConfirmedAt: { type: Date, default: null },
+    socialConfirmPromptedAt: { type: Date, default: null },
     socialMediaEditLog: [
       {
         platformIdx: { type: Number },
