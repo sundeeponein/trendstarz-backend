@@ -282,6 +282,14 @@ describe("Social links that keep working", () => {
       });
     });
 
+    it("the 'Link not working — reported' filter lists only open reports", async () => {
+      const { service } = verificationService([]);
+      await service.reportBrokenLink(params());
+      expect((await service.profileIdsWithOpenLinkReports("Influencer")).has(PROFILE)).toBe(true);
+      await service.resolveLinkReport({ userId: "admin1" }, { profileType: "Influencer", profileId: PROFILE, entry: entry(), action: "dismiss" });
+      expect((await service.profileIdsWithOpenLinkReports("Influencer")).size).toBe(0);
+    });
+
     it("hosts only see open/confirmed reports, without reporter details", async () => {
       const { service } = verificationService([]);
       await service.reportBrokenLink(params());

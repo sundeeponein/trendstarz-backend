@@ -770,6 +770,7 @@ describe("AdminUserTableController 'updated since review' filters", () => {
           new Set(ids ? ids.filter((i) => i === CHANGED) : [CHANGED]),
         ),
       ),
+      profileIdsWithOpenLinkReports: jest.fn(() => Promise.resolve(new Set())),
     };
     const args: any[] = Array.from({ length: 12 }, () => ({}));
     args[0] = model;

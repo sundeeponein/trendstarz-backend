@@ -64,6 +64,13 @@ export class SocialLinkHealthController {
     return this.service.resolveLinkReport(req.user, body || {});
   }
 
+  /** Admin: creators with an open broken-link report, per profile type. */
+  @UseGuards(RolesGuard)
+  @Get("admin/social-links/open-count")
+  openCount() {
+    return this.service.openReportCounts();
+  }
+
   /** The creator's own 90-day "are these still your accounts?" check. */
   @Get("creator/social-confirm")
   confirmStatus(@Req() req: any) {

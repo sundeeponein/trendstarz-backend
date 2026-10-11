@@ -366,6 +366,19 @@ export class AdminUserTableController {
       ];
       return;
     }
+    // Hosts reported a social link that doesn't open (open reports only).
+    if (normalized === "link_reported") {
+      const ids = [
+        ...(await this.socialAccountVerification.profileIdsWithOpenLinkReports(
+          toSocialProfileType(role.userType),
+        )),
+      ];
+      filter.$and = [
+        ...(Array.isArray(filter.$and) ? filter.$and : []),
+        { _id: { $in: this.toExcludedIdValues(ids) } },
+      ];
+      return;
+    }
     if (normalized === "callback_requested") {
       filter.isMobileVerified = { $ne: true };
       filter.mobileCallbackRequestedAt = { $ne: null };
@@ -1047,11 +1060,16 @@ export class AdminUserTableController {
     userType: "Influencer" | "Brand" | "Photographer",
   ): Promise<void> {
     const ids = rows.map((r) => String(r?._id || "")).filter(Boolean);
-    const changed =
-      await this.socialAccountVerification.profileIdsWithChangedReviews(
+    const [changed, linkReported] = await Promise.all([
+      this.socialAccountVerification.profileIdsWithChangedReviews(
         userType,
         ids,
-      );
+      ),
+      this.socialAccountVerification.profileIdsWithOpenLinkReports(
+        userType,
+        ids,
+      ),
+    ]);
     for (const r of rows) {
       const approved =
         r?.verificationStatus === "approved" ||
@@ -1063,6 +1081,7 @@ export class AdminUserTableController {
       r.creatorUpdatesPending = approved && fields.length > 0;
       r.socialReviewChanged =
         changed.has(String(r?._id || "")) || handleConfirmOverdue(r);
+      r.linkReportOpen = linkReported.has(String(r?._id || ""));
     }
   }
 

@@ -420,6 +420,26 @@ export class SocialAccountVerificationService {
     return new Set(rows.map((r) => String(r.profileId)));
   }
 
+  /** Profiles with an OPEN broken-link report (admin "Link not working — reported" filter). */
+  async profileIdsWithOpenLinkReports(
+    profileType: SocialProfileType,
+    profileIds?: string[],
+  ): Promise<Set<string>> {
+    const query: Record<string, unknown> = {
+      profileType,
+      "linkReport.status": "open",
+    };
+    if (profileIds) {
+      if (!profileIds.length) return new Set();
+      query.profileId = { $in: profileIds };
+    }
+    const rows = (await this.stateModel
+      .find(query)
+      .select("profileId")
+      .lean()) as Array<{ profileId?: unknown }>;
+    return new Set(rows.map((r) => String(r.profileId)));
+  }
+
   /** Effective ownership/tier status for every social account on a profile (admin view). */
   async listForProfile(
     profileType: SocialProfileType,

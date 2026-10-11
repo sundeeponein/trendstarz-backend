@@ -337,6 +337,18 @@ export class SocialLinkHealthService {
     return { success: true, ...res };
   }
 
+  /** Admin: how many creators have a link hosts reported as not opening (per type). */
+  async openReportCounts() {
+    const [influencer, photographer] = await Promise.all([
+      this.verification.profileIdsWithOpenLinkReports("Influencer"),
+      this.verification.profileIdsWithOpenLinkReports("Photographer"),
+    ]);
+    return {
+      success: true,
+      data: { Influencer: influencer.size, Photographer: photographer.size },
+    };
+  }
+
   /** Which of a profile's links are reported as not opening (for hosts' "may be outdated"). */
   async linkStatus(profileType: string, profileId: string) {
     const type =
