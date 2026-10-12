@@ -14,6 +14,8 @@ import { InjectModel } from "@nestjs/mongoose";
 import { Model, Types } from "mongoose";
 import { CloudinaryService } from "../cloudinary.service";
 import { PlansService } from "../plans/plans.service";
+import { receivedInvitesPerMonthFrom } from "../plans/invite-limits.util";
+import { fullyBookedCreatorIds } from "../campaigns/creator-monthly-slots.util";
 import { availabilityUpdate } from "../utils/collaboration-availability.util";
 import {
   PROFILE_SELECTION_LIMITS,
@@ -715,6 +717,30 @@ export class PhotographersService {
     }
   }
 
+  /** Monthly invite cap per photographer (free vs pro plan); -1 = unlimited. */
+  private async photographerReceiveCapFor(): Promise<(p: any) => number> {
+    let freeReceiveCap = 1;
+    let proReceiveCap = 10;
+    try {
+      const [freePlan, proPlan] = await Promise.all([
+        this.plansService.findFreePlanForUserType("Photographer"),
+        this.plansService.findProPlanForUserType("Photographer"),
+      ]);
+      freeReceiveCap =
+        receivedInvitesPerMonthFrom(freePlan?.limits) ?? freeReceiveCap;
+      proReceiveCap =
+        receivedInvitesPerMonthFrom(proPlan?.limits) ?? proReceiveCap;
+    } catch {
+      // fall back to the defaults above
+    }
+    const now = new Date();
+    return (p: any) => {
+      const premium =
+        !!p?.isPremium && (!p?.premiumEnd || new Date(p.premiumEnd) >= now);
+      return premium ? proReceiveCap : freeReceiveCap;
+    };
+  }
+
   async searchPhotographers(query: {
     skill?: string;
     location?: string;
@@ -759,7 +785,7 @@ export class PhotographersService {
     };
 
     const projection = this.selectStringToProjection(
-      "name username email phoneNumber profileImage profileImages location skills pricing equipment socialMedia collaborationAvailability contact gender portfolio status adminTags isPremium commissionBadge commissionOverride verifiedByTrendStarz verificationStatus firstRegisteredAt createdAt lastLoginAt",
+      "name username email phoneNumber profileImage profileImages location skills pricing equipment socialMedia collaborationAvailability contact gender portfolio status adminTags isPremium commissionBadge commissionOverride verifiedByTrendStarz verificationStatus firstRegisteredAt createdAt lastLoginAt premiumStart premiumEnd",
     );
 
     let docs = await this.photographerModel
@@ -781,10 +807,19 @@ export class PhotographersService {
     const auditByUserId = await this.collaborationAuditSummaryMap(
       docs.map((d: any) => d?._id),
     );
+    // Shown with a "Fully booked this month" badge; the invite lists leave them out.
+    const fullyBooked = await fullyBookedCreatorIds(
+      this.campaignInviteModel,
+      docs,
+      await this.photographerReceiveCapFor(),
+    );
     docs = docs.map((d: any) => {
       const audit = auditByUserId.get(String(d._id));
       return {
         ...d,
+        premiumStart: undefined,
+        premiumEnd: undefined,
+        monthlySlotsFull: fullyBooked.has(String(d._id)),
         profileImage: d?.profileImages?.[0]?.url || null,
         ...publicScoreFields(audit, !!query.viewerIsAuthenticated),
       };

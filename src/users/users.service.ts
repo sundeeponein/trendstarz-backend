@@ -19,6 +19,7 @@ import {
 } from "../utils/profile-selection-limits.util";
 import { normalizeSocialMediaList } from "../utils/social-handle.util";
 import { receivedInvitesPerMonthFrom } from "../plans/invite-limits.util";
+import { fullyBookedCreatorIds } from "../campaigns/creator-monthly-slots.util";
 import {
   PROFILE_TRAFFIC_DAILY_COLLECTION,
   TrafficKind,
@@ -1986,20 +1987,14 @@ export class UsersService implements OnModuleInit {
     const allowSocialLinks =
       await this.plansService.canViewSocialLinks(viewerId);
     if (campaignEligibleOnly) {
-      // Campaign invite list: must be email-verified AND admin-approved (or manually
-      // verified by admin). Profile completeness (photo, location, social tier) is
-      // NOT required — manually-verified users may still be building their profile.
-      // Use $and so the search-query $or (set below) cannot overwrite this condition.
-      baseFilter.isEmailVerified = true;
-      baseFilter.$and = [
-        ...(Array.isArray(baseFilter.$and) ? baseFilter.$and : []),
-        {
-          $or: [
-            { verifiedByTrendStarz: true },
-            { verificationStatus: "approved" },
-          ],
-        },
-      ];
+      // Campaign invite list: the same account + profile conditions the send check
+      // enforces (approved, email AND mobile verified, active, not suspended, photo,
+      // location, social tier) — nobody is listed who would then be refused.
+      applyDiscoverableProfileFilter(baseFilter, {
+        photoField: "profileImages",
+        requireSocialTier: true,
+        viewerIsAuthenticated: true,
+      });
       this.applyExcludedIds(
         baseFilter,
         await this.campaignProfileBlockedIds("Influencer"),
@@ -2064,7 +2059,7 @@ export class UsersService implements OnModuleInit {
 
     if (lite) {
       const selection =
-        "name username profileImage profileImages categories influencerCategory creatorTypes verificationStatus verifiedByTrendStarz location socialMedia collaborationAvailability adminTags isPremium premiumEnd promotionalPrice dateOfBirth firstRegisteredAt createdAt lastLoginAt";
+        "name username profileImage profileImages categories influencerCategory creatorTypes verificationStatus verifiedByTrendStarz location socialMedia collaborationAvailability adminTags isPremium premiumEnd promotionalPrice dateOfBirth firstRegisteredAt createdAt lastLoginAt premiumStart";
       const projection = this.selectStringToProjection(selection);
       const [pagedRows, total] = await Promise.all([
         this.influencerModel
@@ -2087,6 +2082,11 @@ export class UsersService implements OnModuleInit {
       const auditByUserId = await this.collaborationAuditSummaryMap(
         (pagedRows || []).map((inf: any) => inf?._id),
       );
+      const fullyBooked = await fullyBookedCreatorIds(
+        this.campaignInviteModel,
+        pagedRows || [],
+        await this.influencerReceiveCapFor(),
+      );
 
       const data = await Promise.all(
         (pagedRows || []).map(async (inf: any) => {
@@ -2106,6 +2106,8 @@ export class UsersService implements OnModuleInit {
             // and goes stale the moment profileImages[0] changes (re-upload/recrop).
             profileImage: visibleProfileImages[0]?.url || null,
             isPremium: this.isCurrentlyPremium(inf),
+            premiumStart: undefined,
+            monthlySlotsFull: fullyBooked.has(String(inf._id)),
             ageRange: this.computeAgeRangeFromDob(inf?.dateOfBirth),
             // Restricted viewers get platform + tier only (the Follower Tier
             // filter needs it); handles/links/rates stay gated.
@@ -2127,52 +2129,16 @@ export class UsersService implements OnModuleInit {
       return { data, total, page, limit, ...smartLocationMeta };
     }
 
-    // Monthly invite reception caps for free/pro influencers — plans looked up by
-    // type (the free plan's code changed from influencer-free to
-    // influencer-starter), own key first, else the shared per-campaign value.
-    let freeReceiveCap = 1;
-    let proReceiveCap = 10;
-    try {
-      const [freePlan, proPlan] = await Promise.all([
-        this.plansService.findFreePlanForUserType("Influencer"),
-        this.plansService.findProPlanForUserType("Influencer"),
-      ]);
-      freeReceiveCap =
-        receivedInvitesPerMonthFrom(freePlan?.limits) ?? freeReceiveCap;
-      proReceiveCap =
-        receivedInvitesPerMonthFrom(proPlan?.limits) ?? proReceiveCap;
-    } catch {
-      // fall back to the defaults above
-    }
-
+    const receiveCapFor = await this.influencerReceiveCapFor();
     const all = await this.influencerModel.find(baseFilter).lean();
 
-    // Per-influencer monthly cycle anchored on signup (free) or premiumStart (pro)
-    const now = new Date();
-    const inviteCounts = await Promise.all(
-      all.map(async (inf: any) => {
-        const cycleStart = this.computePlanCycleStart(inf, now);
-        const count = await this.campaignInviteModel.countDocuments({
-          influencerId: inf._id,
-          createdAt: { $gte: cycleStart },
-          // Withdrawn/declined invites don't hold a slot — same convention as
-          // CampaignInvitesService.getNonConsumingInviteStatuses(). Without this,
-          // a withdrawn/declined invite still burns the recipient's monthly quota,
-          // making them permanently invisible to new invite searches (including on
-          // a brand-new campaign) for the rest of that cycle even though nothing
-          // is actually pending or accepted anymore.
-          status: { $nin: ["withdrawn", "declined"] },
-        });
-        return count;
-      }),
+    // Invite lists hide creators whose monthly slots are all used (Search shows them with a badge).
+    const fullyBooked = await fullyBookedCreatorIds(
+      this.campaignInviteModel,
+      all,
+      receiveCapFor,
     );
-
-    const eligible = all.filter((inf: any, idx: number) => {
-      const isPremium = this.isCurrentlyPremium(inf);
-      const cap = isPremium ? proReceiveCap : freeReceiveCap;
-      if (cap === -1) return true;
-      return inviteCounts[idx] < cap;
-    });
+    const eligible = all.filter((inf: any) => !fullyBooked.has(String(inf._id)));
 
     eligible.sort((a: any, b: any) => this.compareSearchRank(a, b, viewerContext));
 
@@ -2250,27 +2216,27 @@ export class UsersService implements OnModuleInit {
   }
 
   /**
-   * Per-user monthly cycle start.
-   * Anchor:
-   *  - Pro user with active premium → premiumStart
-   *  - Otherwise → createdAt (signup)
-   * The current cycle start is the latest anchor + N months that is <= now.
+   * Monthly invite cap per influencer (free vs pro plan — plans looked up by type,
+   * since the free plan's code changed from influencer-free to influencer-starter;
+   * own key first, else the shared per-campaign value). -1 = unlimited.
    */
-  private computePlanCycleStart(user: any, now: Date = new Date()): Date {
-    const isPremium = this.isCurrentlyPremium(user);
-    const anchorRaw =
-      isPremium && user?.premiumStart ? user.premiumStart : user?.createdAt;
-    const anchor = anchorRaw ? new Date(anchorRaw) : new Date(0);
-    if (anchor > now) return anchor;
-
-    const cycle = new Date(anchor);
-    while (true) {
-      const next = new Date(cycle);
-      next.setMonth(next.getMonth() + 1);
-      if (next > now) break;
-      cycle.setTime(next.getTime());
+  private async influencerReceiveCapFor(): Promise<(inf: any) => number> {
+    let freeReceiveCap = 1;
+    let proReceiveCap = 10;
+    try {
+      const [freePlan, proPlan] = await Promise.all([
+        this.plansService.findFreePlanForUserType("Influencer"),
+        this.plansService.findProPlanForUserType("Influencer"),
+      ]);
+      freeReceiveCap =
+        receivedInvitesPerMonthFrom(freePlan?.limits) ?? freeReceiveCap;
+      proReceiveCap =
+        receivedInvitesPerMonthFrom(proPlan?.limits) ?? proReceiveCap;
+    } catch {
+      // fall back to the defaults above
     }
-    return cycle;
+    return (inf: any) =>
+      this.isCurrentlyPremium(inf) ? proReceiveCap : freeReceiveCap;
   }
 
   async searchInfluencers(query: {

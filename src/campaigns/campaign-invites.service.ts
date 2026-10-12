@@ -13,6 +13,7 @@ import { Cron, CronExpression } from "@nestjs/schedule";
 import { InjectModel } from "@nestjs/mongoose";
 import { Model, Types } from "mongoose";
 import { receivedInvitesPerMonthFrom } from "../plans/invite-limits.util";
+import { countUsedMonthlySlots } from "./creator-monthly-slots.util";
 import { sendAppEmail } from "../utils/app-email.service";
 import { inviteReminderTemplate } from "../email/templates/campaign.templates";
 import { PlansService } from "../plans/plans.service";
@@ -1209,39 +1210,11 @@ export class CampaignInvitesService {
       const recipientMonthlyCap =
         receivedInvitesPerMonthFrom(recipientLimits) ?? -1;
       if (recipientMonthlyCap !== -1) {
-        const recipientCycleStart = this.computePlanCycleStart(recipientDoc);
-        const now = new Date();
-        const recipientMonthCount = await this.inviteModel.countDocuments({
-          influencerId: recipientId,
-          recipientRole,
-          createdAt: { $gte: recipientCycleStart },
-          $or: [
-            {
-              status: {
-                $in: [
-                  "accepted",
-                  "payment_confirmed",
-                  "working",
-                  "submitted",
-                  "approved",
-                  "completed",
-                ],
-              },
-            },
-            {
-              $and: [
-                { status: { $in: ["pending", "invited"] } },
-                { overdueFlaggedAt: { $in: [null, undefined] } },
-                {
-                  $or: [
-                    { dueDate: { $in: [null, undefined] } },
-                    { dueDate: { $gte: now } },
-                  ],
-                },
-              ],
-            },
-          ],
-        });
+        const recipientMonthCount = await countUsedMonthlySlots(
+          this.inviteModel,
+          recipientId,
+          recipientDoc,
+        );
         if (recipientMonthCount >= recipientMonthlyCap) {
           throw new BadRequestException(
             `This ${recipientRole} has reached their monthly invite limit (${recipientMonthlyCap}). Try again after their next cycle.`,
@@ -4946,6 +4919,8 @@ export class CampaignInvitesService {
     invite.status = "withdrawn";
     if (!invite.withdrawnAt) invite.withdrawnAt = now;
     invite.withdrawnReason = reason;
+    // "expired_unsubmitted" keeps holding the creator's monthly slot (creator-monthly-slots.util).
+    invite.withdrawnReasonCode = opts.withdrawnReason ?? "expired_unsubmitted";
     invite.updatedAt = now;
     await invite.save();
     await this.recordInviteWithdrawn(

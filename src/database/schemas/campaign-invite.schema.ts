@@ -119,6 +119,8 @@ export const CampaignInviteSchema = new Schema({
   postingReminder24hSentAt: { type: Date },
   withdrawnAt: { type: Date },
   withdrawnReason: { type: String },
+  // Why it was withdrawn, as an INVITE_WITHDRAWN_REASONS code (set by expireUnsubmittedInvite).
+  withdrawnReasonCode: { type: String },
   // Admin correction: this creator may submit until at least this time (see submissionWindow).
   submissionDeadlineExtendedTo: { type: Date },
   // Admin corrections log (append-only, admin-only — hidden from every query unless

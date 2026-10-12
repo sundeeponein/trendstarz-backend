@@ -582,7 +582,7 @@ describe("CampaignInvitesService – create() gating", () => {
     ).rejects.toThrow("has reached their monthly invite limit (2)");
   });
 
-  it("enforces recipient cap based on accepted + active pending only", async () => {
+  it("enforces recipient cap based on accepted + active pending + unexcused no-shows", async () => {
     mockCampaignLean({ acceptanceDeadline: new Date(Date.now() + 60 * 60 * 1000) });
     plansService.getUserPlanCapabilities.mockImplementation(async (userId: string) => {
       if (userId === "inf1") {
@@ -614,8 +614,10 @@ describe("CampaignInvitesService – create() gating", () => {
     expect(serialized).toContain("pending");
     expect(serialized).toContain("overdueFlaggedAt");
     expect(serialized).toContain("dueDate");
+    // A no-show (accepted, closed with nothing submitted) keeps the slot unless excused.
+    expect(serialized).toContain("expired_unsubmitted");
+    expect(serialized).toContain("missExcused.at");
     expect(serialized).not.toContain("declined");
-    expect(serialized).not.toContain("withdrawn");
   });
 
   it("defaults invite dueDate to campaign acceptanceDeadline", async () => {
