@@ -366,6 +366,8 @@ export class CampaignsService {
 
   private normalizeCampaignPayload(data: any, settings?: any, existing?: any) {
     const normalized: any = { ...data };
+    // Server-owned: set only by update() when the one post-approval date change is used.
+    delete normalized.datesChangedAt;
     const minStartDays = Number(settings?.minCampaignStartDays ?? 3);
     const maxDurationDays = Number(settings?.maxCampaignDurationDays ?? 15);
 
@@ -1575,6 +1577,52 @@ export class CampaignsService {
     }
   }
 
+  /**
+   * After approval the host may change the start/end dates only ONCE, and only
+   * while no creator has accepted. Before approval dates stay freely editable.
+   * Works on the normalized payload so `startDate` and `timelineStart` (and the
+   * end-date pair) can't be used to slip past each other. Returns true when this
+   * update is the one allowed change, so the caller can record it.
+   */
+  private async assertDateChangeAllowed(
+    campaign: any,
+    normalized: any,
+  ): Promise<boolean> {
+    const status = String(campaign.status || "");
+    // "pending" = paused by the host after approval; pausing must not reset the rule.
+    if (!["active", "pending", "completed"].includes(status)) return false;
+
+    const day = (v: unknown) => {
+      if (!v) return "";
+      const d = new Date(v as string);
+      return Number.isNaN(d.getTime()) ? "" : d.toISOString().slice(0, 10);
+    };
+    const startChanged =
+      !!normalized.startDate &&
+      day(normalized.startDate) !==
+        day(campaign.startDate || campaign.timelineStart);
+    const endChanged =
+      !!normalized.endDate &&
+      day(normalized.endDate) !== day(campaign.endDate || campaign.timelineEnd);
+    if (!startChanged && !endChanged) return false;
+
+    const acceptedCount = await this.campaignInviteModel.countDocuments({
+      campaignId: campaign._id,
+      status: { $in: ["accepted", "payment_confirmed", "working", "submitted", "completed", "approved"] },
+    });
+    if (acceptedCount > 0) {
+      throw new BadRequestException(
+        "Campaign dates cannot be changed after a creator has accepted.",
+      );
+    }
+    if (campaign.datesChangedAt) {
+      throw new BadRequestException(
+        "Campaign dates can be changed only once after approval, and they have already been changed.",
+      );
+    }
+    return true;
+  }
+
   async update(id: string, brandId: string, data: any) {
     const campaign = await this.campaignModel.findById(id);
     if (!campaign) throw new NotFoundException("Campaign not found");
@@ -1667,6 +1715,9 @@ export class CampaignsService {
         ? "photographer"
         : "brand";
     const normalized = this.normalizeCampaignPayload(data, settings, campaign);
+    if (await this.assertDateChangeAllowed(campaign, normalized)) {
+      normalized.datesChangedAt = new Date();
+    }
     await this.assertCampaignLanguages(normalized);
     await this.assertCampaignTargetLocation(normalized, campaign);
     const inviteRecipientRole = this.normalizeInviteRecipientRole(

@@ -414,6 +414,67 @@ describe("CampaignsService", () => {
     });
   });
 
+  describe("post-approval date change (once, before any acceptance)", () => {
+    const approved = {
+      ...mockCampaign,
+      status: "active",
+      startDate: new Date("2026-10-13T00:00:00.000Z"),
+      endDate: new Date("2026-10-19T00:00:00.000Z"),
+      datesChangedAt: null as Date | null,
+    };
+    const check = (campaign: any, normalized: any) =>
+      (service as any).assertDateChangeAllowed(campaign, normalized);
+
+    it("allows the first change while nobody has accepted, and reports it", async () => {
+      campaignInviteModel.countDocuments = jest.fn().mockResolvedValue(0);
+      await expect(
+        check(approved, { startDate: new Date("2026-10-14T00:00:00.000Z") }),
+      ).resolves.toBe(true);
+    });
+
+    it("blocks a second change", async () => {
+      campaignInviteModel.countDocuments = jest.fn().mockResolvedValue(0);
+      await expect(
+        check(
+          { ...approved, datesChangedAt: new Date() },
+          { endDate: new Date("2026-10-20T00:00:00.000Z") },
+        ),
+      ).rejects.toThrow("can be changed only once");
+    });
+
+    it("blocks any change once a creator has accepted", async () => {
+      campaignInviteModel.countDocuments = jest.fn().mockResolvedValue(1);
+      await expect(
+        check(approved, { endDate: new Date("2026-10-20T00:00:00.000Z") }),
+      ).rejects.toThrow("after a creator has accepted");
+    });
+
+    it("re-sending the same dates is not a change", async () => {
+      await expect(
+        check(
+          { ...approved, datesChangedAt: new Date() },
+          { startDate: approved.startDate, endDate: approved.endDate },
+        ),
+      ).resolves.toBe(false);
+    });
+
+    it("dates stay freely editable before approval", async () => {
+      await expect(
+        check(
+          { ...approved, status: "pending_review", datesChangedAt: new Date() },
+          { startDate: new Date("2026-10-20T00:00:00.000Z") },
+        ),
+      ).resolves.toBe(false);
+    });
+
+    it("a client cannot reset the change marker", () => {
+      const normalized = (service as any).normalizeCampaignPayload({
+        datesChangedAt: null,
+      });
+      expect("datesChangedAt" in normalized).toBe(false);
+    });
+  });
+
   describe("remove", () => {
     it("should delete campaign owned by brand", async () => {
       const result = await service.remove(mockCampaign._id, mockBrand._id);

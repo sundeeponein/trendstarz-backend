@@ -1437,6 +1437,8 @@ export const CampaignSchema = new Schema(
     timelineEnd: { type: Date },
     startDate: { type: Date },
     endDate: { type: Date },
+    // Set when the host uses their one post-approval date change (see CampaignsService.assertDateChangeAllowed).
+    datesChangedAt: { type: Date, default: null },
     platforms: [{ type: String }],
     categories: [{ type: String }],
     deliverables: [{ type: String }],
