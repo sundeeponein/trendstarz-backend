@@ -1636,6 +1636,25 @@ export class CampaignsService {
     return val;
   }
 
+  /**
+   * Whether an incoming value equals the stored one. The incoming value is cast
+   * through the campaign schema first, so schema defaults the browser never
+   * sends (e.g. socialMedia contentTypes' server-owned priceConfirmedAt) don't
+   * make an unchanged field look changed.
+   */
+  private sameCampaignValue(campaign: any, field: string, incoming: unknown): boolean {
+    let cast: unknown = incoming ?? null;
+    try {
+      const probe: any = new this.campaignModel({ [field]: incoming ?? null });
+      if (typeof probe?.get === "function") cast = probe.get(field) ?? null;
+    } catch {
+      // Uncastable input: compare it as sent (it will differ and be refused).
+    }
+    const oldVal = JSON.stringify(this.stripMongoIds(campaign[field] ?? null));
+    const newVal = JSON.stringify(this.stripMongoIds(cast));
+    return oldVal === newVal;
+  }
+
   private async assertEditableFields(campaign: any, incoming: any): Promise<void> {
     const status = String(campaign.status || "");
     const isApproved = status === "active" || status === "completed";
@@ -1644,9 +1663,7 @@ export class CampaignsService {
     // Check fields locked on approval
     for (const field of this.LOCKED_ON_APPROVAL) {
       if (!(field in incoming)) continue;
-      const oldVal = JSON.stringify(this.stripMongoIds(campaign[field] ?? null));
-      const newVal = JSON.stringify(this.stripMongoIds(incoming[field] ?? null));
-      if (oldVal !== newVal) {
+      if (!this.sameCampaignValue(campaign, field, incoming[field])) {
         throw new BadRequestException(
           `"${field}" cannot be changed after the campaign is approved.`,
         );
@@ -1662,9 +1679,7 @@ export class CampaignsService {
 
     for (const field of this.LOCKED_ON_ACCEPTANCE) {
       if (!(field in incoming)) continue;
-      const oldVal = JSON.stringify(this.stripMongoIds(campaign[field] ?? null));
-      const newVal = JSON.stringify(this.stripMongoIds(incoming[field] ?? null));
-      if (oldVal !== newVal) {
+      if (!this.sameCampaignValue(campaign, field, incoming[field])) {
         throw new BadRequestException(
           `"${field}" cannot be changed after an influencer has confirmed participation.`,
         );
