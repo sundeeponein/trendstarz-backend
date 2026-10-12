@@ -692,6 +692,7 @@ describe("Stage 3C-1 admin eligibility list — ranking attached, nothing else c
     // Only read methods exist on the mocks: any write/notify/event call would throw.
     const invites = {
       invitedRecipientIds: jest.fn().mockResolvedValue(new Set(["c", "f"])),
+      fullyBookedRecipientIds: jest.fn().mockResolvedValue(new Set()),
     };
     const list = await new MatchingEligibilityService(
       inputs as any,

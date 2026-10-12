@@ -134,6 +134,13 @@ describe("CampaignsService", () => {
           useValue: mockProfileFlagModel,
         },
         { provide: getModelToken("Counter"), useValue: mockCounterModel },
+        {
+          provide: getModelToken("DeletedCampaignSlot"),
+          useValue: {
+            countDocuments: jest.fn().mockResolvedValue(0),
+            create: jest.fn().mockResolvedValue({}),
+          },
+        },
         { provide: PlansService, useValue: mockPlansService },
         { provide: CloudinaryService, useValue: {} },
         { provide: PushService, useValue: {} },
@@ -472,6 +479,71 @@ describe("CampaignsService", () => {
         datesChangedAt: null,
       });
       expect("datesChangedAt" in normalized).toBe(false);
+    });
+  });
+
+  describe("monthly campaign slots", () => {
+    const deletedSlots = () => (service as any).deletedCampaignSlotModel;
+
+    it("a draft never needs a free slot", async () => {
+      campaignModel.countDocuments.mockResolvedValue(5);
+      await expect(
+        service.create(mockBrand._id, {
+          title: "Draft",
+          status: "draft",
+          minInfluencers: 1,
+          maxInfluencers: 1,
+        }),
+      ).resolves.toBeDefined();
+    });
+
+    it("counts this month's campaigns in any status but draft/rejected — completed included", async () => {
+      campaignModel.countDocuments.mockClear();
+      await service.campaignSlotUsage(mockBrand._id);
+      const filter = campaignModel.countDocuments.mock.calls[0][0];
+      expect(filter.status).toEqual({ $nin: ["draft", "rejected"] });
+      expect(JSON.stringify(filter.$or)).toContain("slotUsedAt");
+    });
+
+    it("a deleted campaign that went live still uses its slot", async () => {
+      plansService.getUserPlanCapabilities.mockResolvedValue({
+        limits: [{ key: "maxActiveCampaigns", value: 1 }],
+      });
+      campaignModel.countDocuments.mockResolvedValue(0);
+      deletedSlots().countDocuments.mockResolvedValueOnce(1);
+      await expect(
+        service.create(mockBrand._id, {
+          title: "Second",
+          minInfluencers: 1,
+          maxInfluencers: 1,
+        }),
+      ).rejects.toThrow("campaign slot");
+    });
+
+    it("deleting a live campaign keeps its slot counted; deleting a draft doesn't", async () => {
+      deletedSlots().create.mockClear();
+      campaignModel.findById.mockResolvedValue({
+        ...mockCampaign,
+        status: "active",
+        createdAt: new Date(),
+      });
+      await service.remove(mockCampaign._id, mockBrand._id);
+      expect(deletedSlots().create).toHaveBeenCalledTimes(1);
+
+      deletedSlots().create.mockClear();
+      campaignModel.findById.mockResolvedValue({ ...mockCampaign, status: "draft" });
+      await service.remove(mockCampaign._id, mockBrand._id);
+      expect(deletedSlots().create).not.toHaveBeenCalled();
+    });
+
+    it("resubmitting a rejected campaign needs a free slot", async () => {
+      campaignModel.countDocuments.mockResolvedValue(5);
+      const campaign = { ...mockCampaign, status: "rejected", save: jest.fn() };
+      campaignModel.findById.mockResolvedValue(campaign);
+      await expect(
+        service.update(mockCampaign._id, mockBrand._id, { status: "pending_review" }),
+      ).rejects.toThrow("campaign slot");
+      expect(campaign.save).not.toHaveBeenCalled();
     });
   });
 

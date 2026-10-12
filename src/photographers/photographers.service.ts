@@ -807,7 +807,7 @@ export class PhotographersService {
     const auditByUserId = await this.collaborationAuditSummaryMap(
       docs.map((d: any) => d?._id),
     );
-    // Shown with a "Fully booked this month" badge; the invite lists leave them out.
+    // Not shown on Search; the campaign invite lists use it to leave these photographers out.
     const fullyBooked = await fullyBookedCreatorIds(
       this.campaignInviteModel,
       docs,

@@ -8,6 +8,7 @@ import {
   MAX_PAGE_SIZE,
   buildCampaignEligibilityList,
   campaignInviteWindow,
+  inviteBlockedReason,
   parseCampaignEligibilityQuery,
   toEligibilityRow,
 } from "./campaign-eligibility";
@@ -246,6 +247,7 @@ describe("Stage 3B-3 campaign eligibility list", () => {
 describe("Stage 3B-3 service / controller", () => {
   const invites = {
     invitedRecipientIds: jest.fn().mockResolvedValue(new Set(["f1"])),
+    fullyBookedRecipientIds: jest.fn().mockResolvedValue(new Set()),
   };
   it("evaluates every creator of the recipient type through the 3B-2 evaluator", async () => {
     const inputs = {
@@ -437,5 +439,30 @@ describe("Stage 3B-3 hardening — invited vs eligible vs invitable (decided on 
     const forged = { ...row("f", { categories: ["Food"] }), invitable: true };
     const l = build([forged]);
     expect(l.rows[0]).toMatchObject({ overall: "FAIL", invitable: false });
+  });
+});
+
+describe("inviteBlockedReason — monthly slots", () => {
+  const open = { open: true, reason: null };
+
+  it("a fully booked creator who otherwise passes cannot be invited", () => {
+    expect(
+      inviteBlockedReason({ overall: "PASS", invited: false, fullyBooked: true }, open),
+    ).toBe("Fully booked this month — all monthly invite slots are used.");
+  });
+
+  it("a creator with free slots who passes can be invited", () => {
+    expect(
+      inviteBlockedReason({ overall: "PASS", invited: false, fullyBooked: false }, open),
+    ).toBeNull();
+  });
+
+  it("'already invited' and 'not eligible' still explain the row first", () => {
+    expect(
+      inviteBlockedReason({ overall: "PASS", invited: true, fullyBooked: true }, open),
+    ).toBe("Already invited to this campaign.");
+    expect(
+      inviteBlockedReason({ overall: "FAIL", invited: false, fullyBooked: true }, open),
+    ).toBe("Not eligible.");
   });
 });

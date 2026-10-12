@@ -54,6 +54,13 @@ export class CampaignsController {
     return this.campaignsService.findByBrandName(brandName);
   }
 
+  /** The signed-in host's campaign slots for their current plan month. */
+  @UseGuards(JwtAuthGuard)
+  @Get("slot-usage")
+  async slotUsage(@Req() req: any) {
+    return this.campaignsService.campaignSlotUsage(String(req.user?.userId || ""));
+  }
+
   @Get(":id")
   async findOne(@Param("id") id: string) {
     return this.campaignsService.findById(id);

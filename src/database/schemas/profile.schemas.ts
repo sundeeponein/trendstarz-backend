@@ -1439,6 +1439,8 @@ export const CampaignSchema = new Schema(
     endDate: { type: Date },
     // Set when the host uses their one post-approval date change (see CampaignsService.assertDateChangeAllowed).
     datesChangedAt: { type: Date, default: null },
+    // When the campaign took one of the host's monthly campaign slots (left draft/rejected).
+    slotUsedAt: { type: Date, default: null },
     platforms: [{ type: String }],
     categories: [{ type: String }],
     deliverables: [{ type: String }],

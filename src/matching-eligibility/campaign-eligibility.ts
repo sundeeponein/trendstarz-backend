@@ -55,6 +55,8 @@ export interface CampaignEligibilityRow extends CreatorDisplay {
   >;
   /** Already holds an invite for this campaign (any status). Separate from eligibility. */
   invited: boolean;
+  /** All of the creator's monthly invite slots are used (same rule as the send check). */
+  fullyBooked: boolean;
   /**
    * Decided here, not in the browser: campaign accepts invites AND overall
    * PASS AND not already invited. Re-checked again at send time.
@@ -98,7 +100,9 @@ export function campaignInviteWindow(
 
 /** Why a row can't be invited (null = it can). */
 export function inviteBlockedReason(
-  row: Pick<CampaignEligibilityRow, "overall" | "invited">,
+  row: Pick<CampaignEligibilityRow, "overall" | "invited"> & {
+    fullyBooked?: boolean;
+  },
   window: CampaignInviteWindow,
 ): string | null {
   if (row.invited) return "Already invited to this campaign.";
@@ -106,6 +110,8 @@ export function inviteBlockedReason(
   if (row.overall === "FAIL") return "Not eligible.";
   if (row.overall === "UNKNOWN")
     return "Eligibility unknown — some requirements can't be checked.";
+  if (row.fullyBooked)
+    return "Fully booked this month — all monthly invite slots are used.";
   return null;
 }
 
@@ -207,6 +213,7 @@ export function toEligibilityRow(
   display: CreatorDisplay,
   invited = false,
   ranked: RankedCreator | null = null,
+  fullyBooked = false,
 ): CampaignEligibilityRow {
   const requirements = {} as CampaignEligibilityRow["requirements"];
   for (const key of REQUIREMENT_KEYS) {
@@ -231,6 +238,7 @@ export function toEligibilityRow(
     overall,
     requirements,
     invited,
+    fullyBooked,
     // Filled in by buildCampaignEligibilityList, which knows the campaign window.
     invitable: false,
     inviteBlockedReason: null,

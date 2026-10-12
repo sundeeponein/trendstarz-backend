@@ -88,6 +88,10 @@ export class MatchingEligibilityService {
       this.inputs.forAllCreators(creatorType),
       this.invites.invitedRecipientIds(campaignId),
     ]);
+    const fullyBooked = await this.invites.fullyBookedRecipientIds(
+      creatorType === "Photographer" ? "photographer" : "influencer",
+      creators.map(({ input }) => input.creatorId),
+    );
     // Stage 3C-1: one clock per request — the invite window and every
     // creator's activity bucket are judged against the same instant.
     const asOf = new Date();
@@ -108,6 +112,7 @@ export class MatchingEligibilityService {
         display,
         invited.has(creator.creatorId),
         ranked.get(creator.creatorId) ?? null,
+        fullyBooked.has(creator.creatorId),
       ),
     );
     return buildCampaignEligibilityList(

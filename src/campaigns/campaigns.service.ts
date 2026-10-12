@@ -36,6 +36,7 @@ import {
   resolveCampaignTypeConfigs,
 } from "../campaign-type-configs";
 import { getRequiredFields } from "./campaign-required-fields";
+import { planCycleStart } from "./creator-monthly-slots.util";
 import { sendAppEmail } from "../utils/app-email.service";
 import {
   openCampaignLiveTemplate,
@@ -64,6 +65,15 @@ const VALID_TRANSITIONS: Record<string, string[]> = {
   active: ["pending", "completed"],
   completed: [],
 };
+
+/**
+ * Monthly campaign slots: a campaign takes one of its host's slots when it is
+ * submitted/published and keeps it for that plan month (completed included).
+ * Drafts and admin-rejected campaigns hold none.
+ */
+const SLOT_FREE_STATUSES = ["draft", "rejected"];
+/** Deleting a campaign in one of these still counts its slot (it went live). */
+const WENT_LIVE_STATUSES = ["active", "pending", "completed", "cancelled"];
 
 const TIER_FILTERED_OPEN_ROLLOUT_AT = new Date("2026-05-05T00:00:00.000Z"); // Rolled out May 2026
 const ENABLE_CAMPAIGN_LIVE_EMAILS = false; // comment this if need to send campaign notification emails
@@ -111,6 +121,8 @@ export class CampaignsService {
     @InjectModel("AppSettings") private readonly appSettingsModel: Model<any>,
     @InjectModel("ProfileFlag") private readonly profileFlagModel: Model<any>,
     @InjectModel("Counter") private readonly counterModel: Model<any>,
+    @InjectModel("DeletedCampaignSlot")
+    private readonly deletedCampaignSlotModel: Model<any>,
     private readonly plansService: PlansService,
     private readonly cloudinaryService: CloudinaryService,
     private readonly pushService: PushService,
@@ -368,6 +380,7 @@ export class CampaignsService {
     const normalized: any = { ...data };
     // Server-owned: set only by update() when the one post-approval date change is used.
     delete normalized.datesChangedAt;
+    delete normalized.slotUsedAt;
     const minStartDays = Number(settings?.minCampaignStartDays ?? 3);
     const maxDurationDays = Number(settings?.maxCampaignDurationDays ?? 15);
 
@@ -1093,17 +1106,9 @@ export class CampaignsService {
     const caps = await this.plansService.getUserPlanCapabilities(ownerId);
     const settings = await this.appSettingsModel.findOne({}).lean().exec();
     this.assertCampaignModeAvailability(data, caps.hasPremium, settings);
-    const maxCampaigns =
-      caps.limits.find((l: any) => l.key === "maxActiveCampaigns")?.value ?? 1;
-    // Count currently active/pending/draft campaigns — completed or deleted do NOT count toward the cap
-    const count = await this.campaignModel.countDocuments({
-      brandId: ownerId,
-      status: { $in: ["active", "pending", "draft", "paused"] },
-    });
-    if (maxCampaigns !== -1 && count >= maxCampaigns) {
-      throw new BadRequestException(
-        `Plan limit: Only ${maxCampaigns} active campaign(s) allowed. Upgrade for more.`,
-      );
+    // Drafts don't take a monthly slot; submitting/publishing does.
+    if (requestedStatus !== "draft") {
+      await this.assertCampaignSlotAvailable(ownerId, caps);
     }
     const selectedType = String(data?.campaignType || "");
     this.assertCampaignTypeAllowed(
@@ -1156,6 +1161,9 @@ export class CampaignsService {
       ...normalized,
       brandId: ownerId,
       campaignNumber,
+      slotUsedAt: SLOT_FREE_STATUSES.includes(String(normalized.status))
+        ? null
+        : new Date(),
     });
 
     // Relocate any staged-upload campaign image(s) into their final
@@ -1476,6 +1484,93 @@ export class CampaignsService {
       .lean();
   }
 
+  private async loadOwnerPlanAnchor(ownerId: string) {
+    const select = "createdAt premiumStart premiumEnd isPremium";
+    const find = async (model: Model<any>) => {
+      try {
+        return await model.findById(ownerId).select(select).lean();
+      } catch {
+        return null;
+      }
+    };
+    const [brand, photographer, influencer] = await Promise.all([
+      find(this.brandModel),
+      find(this.photographerModel),
+      find(this.influencerModel),
+    ]);
+    return brand || photographer || influencer || null;
+  }
+
+  /**
+   * The host's campaign slots for their current plan month (anchored on signup,
+   * or premiumStart while premium). Counts campaigns that took a slot this
+   * month — any status but draft/rejected — plus deleted ones that went live.
+   */
+  async campaignSlotUsage(
+    ownerId: string,
+    caps?: any,
+    excludeCampaignId?: string,
+  ): Promise<{ used: number; limit: number; resetsAt: Date }> {
+    const planCaps =
+      caps ?? (await this.plansService.getUserPlanCapabilities(ownerId));
+    const limitRaw = Number(
+      (planCaps?.limits || []).find((l: any) => l?.key === "maxActiveCampaigns")
+        ?.value ?? 1,
+    );
+    const limit = Number.isFinite(limitRaw) ? limitRaw : 1;
+    const now = new Date();
+    const cycleStart = planCycleStart(
+      await this.loadOwnerPlanAnchor(ownerId),
+      now,
+    );
+    const resetsAt = new Date(cycleStart);
+    resetsAt.setMonth(resetsAt.getMonth() + 1);
+
+    const ownerForms: any[] = [ownerId];
+    if (Types.ObjectId.isValid(ownerId)) ownerForms.push(new Types.ObjectId(ownerId));
+    const filter: Record<string, any> = {
+      brandId: { $in: ownerForms },
+      status: { $nin: SLOT_FREE_STATUSES },
+      // Older campaigns have no slotUsedAt: their creation date stands in.
+      $or: [
+        { slotUsedAt: { $gte: cycleStart } },
+        { slotUsedAt: null, createdAt: { $gte: cycleStart } },
+      ],
+    };
+    if (excludeCampaignId && Types.ObjectId.isValid(excludeCampaignId)) {
+      filter._id = { $ne: new Types.ObjectId(excludeCampaignId) };
+    }
+    const [live, deleted] = await Promise.all([
+      this.campaignModel.countDocuments(filter),
+      this.deletedCampaignSlotModel.countDocuments({
+        ownerId: String(ownerId),
+        slotUsedAt: { $gte: cycleStart },
+      }),
+    ]);
+    return { used: live + deleted, limit, resetsAt };
+  }
+
+  private async assertCampaignSlotAvailable(
+    ownerId: string,
+    caps?: any,
+    excludeCampaignId?: string,
+  ): Promise<void> {
+    const { used, limit, resetsAt } = await this.campaignSlotUsage(
+      ownerId,
+      caps,
+      excludeCampaignId,
+    );
+    if (limit === -1 || used < limit) return;
+    const resets = resetsAt.toLocaleDateString("en-IN", {
+      day: "numeric",
+      month: "short",
+      timeZone: "Asia/Kolkata",
+    });
+    throw new BadRequestException(
+      `Plan limit: you've used all ${limit} campaign slot${limit === 1 ? "" : "s"} for this month. Slots reset on ${resets}. Save it as a draft or upgrade for more.`,
+    );
+  }
+
   async findById(id: string) {
     return this.campaignModel.findById(id).lean();
   }
@@ -1686,6 +1781,19 @@ export class CampaignsService {
 
     // ── Status-based field-lock enforcement ────────────────────────────────
     await this.assertEditableFields(campaign, data);
+
+    // Leaving draft/rejected (submitting or resubmitting) takes a monthly slot.
+    const takesSlot =
+      !!data.status &&
+      SLOT_FREE_STATUSES.includes(String(campaign.status)) &&
+      !SLOT_FREE_STATUSES.includes(String(data.status));
+    if (takesSlot) {
+      await this.assertCampaignSlotAvailable(
+        String(campaign.brandId),
+        undefined,
+        String(campaign._id),
+      );
+    }
     // ────────────────────────────────────────────────────────────────────────
 
     const caps = await this.plansService.getUserPlanCapabilities(brandId);
@@ -1715,6 +1823,7 @@ export class CampaignsService {
         ? "photographer"
         : "brand";
     const normalized = this.normalizeCampaignPayload(data, settings, campaign);
+    if (takesSlot) normalized.slotUsedAt = new Date();
     if (await this.assertDateChangeAllowed(campaign, normalized)) {
       normalized.datesChangedAt = new Date();
     }
@@ -2292,6 +2401,14 @@ export class CampaignsService {
       inviteQueries.push({ campaignId: new Types.ObjectId(id) });
     }
     await this.campaignInviteModel.deleteMany({ $or: inviteQueries });
+    // A campaign that went live keeps using its monthly slot after it's deleted.
+    if (WENT_LIVE_STATUSES.includes(String(campaign.status))) {
+      await this.deletedCampaignSlotModel.create({
+        ownerId: String(campaign.brandId),
+        campaignId: String(campaign._id),
+        slotUsedAt: campaign.slotUsedAt || campaign.createdAt || new Date(),
+      });
+    }
     const publicId = campaign.image?.public_id;
     if (publicId) {
       await this.cloudinaryService

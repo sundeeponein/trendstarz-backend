@@ -33,6 +33,7 @@ function makeService(
       })),
     }, // profileFlagModel
     {}, // counterModel
+    {}, // deletedCampaignSlotModel
     {}, // plansService
     {}, // cloudinaryService
     pushService,

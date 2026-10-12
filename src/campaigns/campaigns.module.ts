@@ -9,6 +9,7 @@ import {
   CounterSchema,
 } from "../database/schemas/profile.schemas";
 import { CampaignInviteSchema } from "../database/schemas/campaign-invite.schema";
+import { DeletedCampaignSlotSchema } from "../database/schemas/deleted-campaign-slot.schema";
 import { CampaignSubmissionSchema } from "../database/schemas/campaign-submission.schema";
 import { CampaignTransactionSchema } from "../database/schemas/campaign-transaction.schema";
 import { PlatformCreditSchema } from "../database/schemas/platform-credit.schema";
@@ -45,6 +46,11 @@ import { PlatformEventsModule } from "../platform-events/platform-events.module"
     ProfileVerificationModule,
     MongooseModule.forFeature([
       { name: "Campaign", schema: CampaignSchema, collection: "campaigns" },
+      {
+        name: "DeletedCampaignSlot",
+        schema: DeletedCampaignSlotSchema,
+        collection: "deletedcampaignslots",
+      },
       {
         name: "CampaignInvite",
         schema: CampaignInviteSchema,

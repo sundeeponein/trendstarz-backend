@@ -2059,7 +2059,7 @@ export class UsersService implements OnModuleInit {
 
     if (lite) {
       const selection =
-        "name username profileImage profileImages categories influencerCategory creatorTypes verificationStatus verifiedByTrendStarz location socialMedia collaborationAvailability adminTags isPremium premiumEnd promotionalPrice dateOfBirth firstRegisteredAt createdAt lastLoginAt premiumStart";
+        "name username profileImage profileImages categories influencerCategory creatorTypes verificationStatus verifiedByTrendStarz location socialMedia collaborationAvailability adminTags isPremium premiumEnd promotionalPrice dateOfBirth firstRegisteredAt createdAt lastLoginAt";
       const projection = this.selectStringToProjection(selection);
       const [pagedRows, total] = await Promise.all([
         this.influencerModel
@@ -2082,11 +2082,6 @@ export class UsersService implements OnModuleInit {
       const auditByUserId = await this.collaborationAuditSummaryMap(
         (pagedRows || []).map((inf: any) => inf?._id),
       );
-      const fullyBooked = await fullyBookedCreatorIds(
-        this.campaignInviteModel,
-        pagedRows || [],
-        await this.influencerReceiveCapFor(),
-      );
 
       const data = await Promise.all(
         (pagedRows || []).map(async (inf: any) => {
@@ -2106,8 +2101,6 @@ export class UsersService implements OnModuleInit {
             // and goes stale the moment profileImages[0] changes (re-upload/recrop).
             profileImage: visibleProfileImages[0]?.url || null,
             isPremium: this.isCurrentlyPremium(inf),
-            premiumStart: undefined,
-            monthlySlotsFull: fullyBooked.has(String(inf._id)),
             ageRange: this.computeAgeRangeFromDob(inf?.dateOfBirth),
             // Restricted viewers get platform + tier only (the Follower Tier
             // filter needs it); handles/links/rates stay gated.
@@ -2132,7 +2125,7 @@ export class UsersService implements OnModuleInit {
     const receiveCapFor = await this.influencerReceiveCapFor();
     const all = await this.influencerModel.find(baseFilter).lean();
 
-    // Invite lists hide creators whose monthly slots are all used (Search shows them with a badge).
+    // Invite lists hide creators whose monthly slots are all used (the send check refuses them).
     const fullyBooked = await fullyBookedCreatorIds(
       this.campaignInviteModel,
       all,

@@ -13,7 +13,10 @@ import { Cron, CronExpression } from "@nestjs/schedule";
 import { InjectModel } from "@nestjs/mongoose";
 import { Model, Types } from "mongoose";
 import { receivedInvitesPerMonthFrom } from "../plans/invite-limits.util";
-import { countUsedMonthlySlots } from "./creator-monthly-slots.util";
+import {
+  countUsedMonthlySlots,
+  fullyBookedCreatorIds,
+} from "./creator-monthly-slots.util";
 import { sendAppEmail } from "../utils/app-email.service";
 import { inviteReminderTemplate } from "../email/templates/campaign.templates";
 import { PlansService } from "../plans/plans.service";
@@ -1019,6 +1022,40 @@ export class CampaignInvitesService {
    * Stage 3B-4 — recipients that already hold an invite for this campaign (any
    * status). Optionally limited to `recipientIds`.
    */
+  /**
+   * Ids of the given creators whose monthly invite slots are all used — the
+   * same rule the send check applies (cap from their free/pro plan).
+   */
+  async fullyBookedRecipientIds(
+    role: "influencer" | "photographer",
+    creatorIds: string[],
+  ): Promise<Set<string>> {
+    const ids = (creatorIds || []).filter((id) => Types.ObjectId.isValid(id));
+    if (!ids.length) return new Set();
+    const userType = role === "photographer" ? "Photographer" : "Influencer";
+    const model =
+      role === "photographer" ? this.photographerModel : this.influencerModel;
+    let freeCap = 1;
+    let proCap = 10;
+    try {
+      const [freePlan, proPlan] = await Promise.all([
+        this.plansService.findFreePlanForUserType(userType),
+        this.plansService.findProPlanForUserType(userType),
+      ]);
+      freeCap = receivedInvitesPerMonthFrom(freePlan?.limits) ?? freeCap;
+      proCap = receivedInvitesPerMonthFrom(proPlan?.limits) ?? proCap;
+    } catch {
+      // fall back to the defaults above
+    }
+    const creators: any[] = await model
+      .find({ _id: { $in: ids } })
+      .select("createdAt premiumStart premiumEnd isPremium")
+      .lean();
+    return fullyBookedCreatorIds(this.inviteModel, creators, (c) =>
+      this.isCurrentlyPremium(c) ? proCap : freeCap,
+    );
+  }
+
   async invitedRecipientIds(
     campaignId: string,
     recipientIds?: string[],
