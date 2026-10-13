@@ -121,6 +121,10 @@ export const CampaignInviteSchema = new Schema({
   withdrawnReason: { type: String },
   // Why it was withdrawn, as an INVITE_WITHDRAWN_REASONS code (set by expireUnsubmittedInvite).
   withdrawnReasonCode: { type: String },
+  // Barter/location: fixed platform fee (paise) owed when the creator accepted; null/0 = none.
+  platformFeeDue: { type: Number, default: null },
+  // When TrendStarZ verified that fee — the collaboration is confirmed from then on.
+  platformFeePaidAt: { type: Date, default: null },
   // Admin correction: this creator may submit until at least this time (see submissionWindow).
   submissionDeadlineExtendedTo: { type: Date },
   // Admin corrections log (append-only, admin-only — hidden from every query unless

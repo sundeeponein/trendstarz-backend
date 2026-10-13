@@ -1,7 +1,7 @@
 import { BadRequestException, NotFoundException } from "@nestjs/common";
 import { getModelToken } from "@nestjs/mongoose";
 import { Test, TestingModule } from "@nestjs/testing";
-import { PaymentsPayoutsService } from "./payments-payouts.service";
+import { PaymentsPayoutsService, platformFeeGst } from "./payments-payouts.service";
 import { PushService } from "../push/push.service";
 import { NotificationsService } from "../notifications/notifications.service";
 import { PlatformEventsService } from "../platform-events/platform-events.service";
@@ -299,6 +299,212 @@ describe("PaymentsPayoutsService", () => {
       await expect(service.verifyCollectionBatch("batch_x")).rejects.toThrow(
         "No payment waiting for verification",
       );
+    });
+  });
+
+  describe("platform fee (barter/location)", () => {
+    const barterCampaign = () =>
+      campaignModel.findById.mockReturnValue({
+        lean: jest.fn().mockResolvedValue({
+          _id: "camp9",
+          brandId: "brand1",
+          campaignType: "product",
+          productPaymentMode: "product_only",
+        }),
+      });
+
+    it("charges the fee owed for each unconfirmed creator, never a creator payment", async () => {
+      barterCampaign();
+      inviteModel.find.mockReturnValue({
+        lean: jest.fn().mockResolvedValue([
+          { _id: "i1", platformFeeDue: 14900, platformFeePaidAt: null },
+          { _id: "i2", platformFeeDue: 14900, platformFeePaidAt: null },
+        ]),
+      });
+      transactionModel.find.mockReturnValue({
+        select: jest.fn().mockReturnValue({
+          lean: jest.fn().mockResolvedValue([{ feeInviteId: "i2" }]),
+        }),
+      });
+      const result: any = await service.calculatePayment("camp9", "brand1");
+      expect(result.isPlatformFee).toBe(true);
+      expect(result.acceptedInviteIds).toEqual(["i1"]); // i2 already under review
+      expect(result.platformFee).toBe(14900);
+      expect(result.payerTotal).toBe(14900);
+      expect(result.agreedAmount).toBe(0);
+      expect(result.recipientPayoutTotal).toBe(0);
+    });
+
+    it("refunds a fee as credit only for a creator no-show", async () => {
+      transactionModel.findById.mockResolvedValue({
+        _id: "t1",
+        transactionType: "platform_fee",
+        collectionStatus: "verified",
+        feeInviteId: "i1",
+        payerId: "brand1",
+        platformFee: 14900,
+      });
+      inviteModel.findById.mockReturnValue({
+        select: jest.fn().mockReturnValue({
+          lean: jest.fn().mockResolvedValue({ status: "withdrawn", withdrawnReasonCode: "owner" }),
+        }),
+      });
+      await expect(service.refundPlatformFeeAsCredit("t1", "admin1")).rejects.toThrow(
+        "only when the creator was a no-show",
+      );
+    });
+  });
+
+  describe("platform fee — GST, Razorpay amount, retries, separation", () => {
+    const FEE = 14900; // ₹149
+    const barterCampaign = () =>
+      campaignModel.findById.mockReturnValue({
+        lean: jest.fn().mockResolvedValue({
+          _id: "camp9",
+          brandId: "brand1",
+          campaignType: "product",
+          productPaymentMode: "product_only",
+        }),
+      });
+    const twoCreators = () =>
+      inviteModel.find.mockReturnValue({
+        lean: jest.fn().mockResolvedValue([
+          { _id: "i1", influencerId: "inf1", platformFeeDue: FEE, platformFeePaidAt: null },
+          { _id: "i2", influencerId: "inf2", platformFeeDue: FEE, platformFeePaidAt: null },
+        ]),
+      });
+    const settings = (over: any = {}) =>
+      appSettingsModel.findOne.mockReturnValue({
+        lean: jest.fn().mockResolvedValue({ gstPercent: 18, ...over }),
+      });
+    const createdRows = () => {
+      let n = 0;
+      transactionModel.create.mockImplementation(async (d: any) => ({ ...d, _id: `t${++n}` }));
+    };
+
+    it("rounds GST per row to the nearest paisa", () => {
+      expect(platformFeeGst(14900, 18)).toBe(2682); // ₹26.82
+      expect(platformFeeGst(24900, 18)).toBe(4482); // ₹44.82
+      expect(platformFeeGst(9999, 18)).toBe(1800); // 1799.82 → 1800
+      expect(platformFeeGst(14900, 0)).toBe(0);
+      expect(platformFeeGst(0, 18)).toBe(0);
+    });
+
+    it("totals are GST-inclusive and equal the sum of the per-row GST", async () => {
+      barterCampaign();
+      twoCreators();
+      settings();
+      const calc: any = await service.calculatePayment("camp9", "brand1");
+      expect(calc.platformFee).toBe(2 * FEE);
+      expect(calc.gstPercent).toBe(18);
+      expect(calc.gstAmount).toBe(2 * 2682);
+      expect(calc.amountDueRazorpay).toBe(2 * (FEE + 2682)); // ₹351.64
+      expect(calc.amountDueUpi).toBe(2 * (FEE + 2682)); // no credit
+    });
+
+    it("Razorpay is charged exactly the displayed total, and the rows add up to it", async () => {
+      barterCampaign();
+      twoCreators();
+      settings();
+      createdRows();
+      razorpayService.createOrder.mockResolvedValue({ orderId: "order_1", amount: 35164 });
+      const res: any = await service.createRazorpayOrderForCampaign("camp9", "brand1", false);
+      expect(razorpayService.createOrder).toHaveBeenCalledWith(35164, expect.anything());
+      const rows = res.transactions;
+      expect(rows.map((r: any) => r.payerTotal)).toEqual([FEE + 2682, FEE + 2682]);
+      expect(rows.reduce((s: number, r: any) => s + r.payerTotal, 0)).toBe(35164);
+      expect(rows.every((r: any) => r.gatewayOrderAmount === 35164)).toBe(true);
+    });
+
+    it("keeps fees separate from commission: no creator payout, own type, placeholder inviteId", async () => {
+      barterCampaign();
+      twoCreators();
+      settings({ platformFeeEnabled: false, platformFeePercent: 10 });
+      createdRows();
+      razorpayService.createOrder.mockResolvedValue({ orderId: "order_2", amount: 1 });
+      const res: any = await service.createRazorpayOrderForCampaign("camp9", "brand1", false);
+      for (const row of res.transactions) {
+        expect(row.transactionType).toBe("platform_fee");
+        expect(row.platformFee).toBe(FEE); // the fixed fee, commission switch is off
+        expect(row.agreedAmount).toBe(0);
+        expect(row.recipientPayout).toBe(0);
+        expect(row.payoutStatus).toBe("skipped");
+        expect(String(row.inviteId)).not.toBe(String(row.feeInviteId));
+      }
+    });
+
+    it("a retried Razorpay order reuses the creator's row and remembers the earlier order", async () => {
+      barterCampaign();
+      inviteModel.find.mockReturnValue({
+        lean: jest.fn().mockResolvedValue([
+          { _id: "i1", influencerId: "inf1", platformFeeDue: FEE, platformFeePaidAt: null },
+        ]),
+      });
+      settings();
+      const existing: any = {
+        _id: "t1",
+        inviteId: "placeholder1",
+        gatewayOrderIds: ["order_old"],
+        save: jest.fn().mockImplementation(function (this: any) { return this; }),
+      };
+      transactionModel.findOne.mockResolvedValue(existing);
+      transactionModel.create.mockClear();
+      razorpayService.createOrder.mockResolvedValue({ orderId: "order_new", amount: FEE + 2682 });
+      await service.createRazorpayOrderForCampaign("camp9", "brand1", false);
+      expect(transactionModel.create).not.toHaveBeenCalled(); // no second row
+      expect(existing.gatewayOrderIds).toEqual(["order_old", "order_new"]);
+      expect(existing.inviteId).toBe("placeholder1");
+    });
+
+    it("UPI proof: each row records fee + GST as what the host paid", async () => {
+      barterCampaign();
+      twoCreators();
+      settings();
+      createdRows();
+      const res: any = await service.submitPaymentProof("camp9", "brand1", { utrNumber: "UTR123" });
+      expect(res.transactions.map((r: any) => [r.collectionStatus, r.gstAmount, r.payerTotal])).toEqual([
+        ["proof_submitted", 2682, FEE + 2682],
+        ["proof_submitted", 2682, FEE + 2682],
+      ]);
+    });
+
+    it("admin verification confirms the creator: contact unlocks and the posting window starts", async () => {
+      const tx: any = {
+        _id: "t1",
+        transactionType: "platform_fee",
+        feeInviteId: "i1",
+        gateway: "manual_upi",
+        payerId: "brand1",
+        payerRole: "brand",
+        payoutStatus: "skipped",
+        save: jest.fn().mockResolvedValue(undefined),
+      };
+      transactionModel.findById.mockResolvedValue(tx);
+      inviteModel.updateOne.mockClear();
+      await service.verifyCollection("t1");
+      expect(tx.payoutStatus).toBe("skipped"); // never a creator payout
+      const [filter, update] = inviteModel.updateOne.mock.calls.find(
+        (c: any[]) => c[1]?.$set?.platformFeePaidAt,
+      );
+      expect(filter).toEqual({ _id: "i1", platformFeePaidAt: null });
+      expect(update.$set).toMatchObject({ unlocked: true, unlockType: "platform_fee" });
+    });
+
+    it("refuses to verify a Razorpay payment whose rows don't match the order amount", async () => {
+      campaignModel.findById.mockReturnValue({
+        lean: jest.fn().mockResolvedValue({ _id: "camp9", brandId: "brand1", campaignType: "product" }),
+      });
+      razorpayService.verifySignature.mockReturnValue(true);
+      transactionModel.find.mockResolvedValueOnce([
+        { transactionType: "platform_fee", payerTotal: 17582, gatewayOrderAmount: 35164, save: jest.fn() },
+      ]);
+      await expect(
+        service.verifyRazorpayCampaignPayment("camp9", "brand1", {
+          orderId: "order_1",
+          paymentId: "pay_1",
+          signature: "sig",
+        }),
+      ).rejects.toThrow("Payment amount mismatch");
     });
   });
 

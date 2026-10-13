@@ -76,6 +76,14 @@ describe("campaign deadlines", () => {
       expect(iso(w.closesAt)).toBe("2026-10-12T00:00:00.000Z");
     });
 
+    it("platform fee confirmed after the chosen date starts the window on confirmation", () => {
+      const w = submissionWindow(
+        { selectedPostDate: POST, platformFeePaidAt: "2026-10-09T00:00:00.000Z" },
+        "strict",
+      )!;
+      expect(iso(w.closesAt)).toBe("2026-10-10T00:00:00.000Z");
+    });
+
     it("barter: a product delivered before the chosen date changes nothing", () => {
       const w = submissionWindow(
         {

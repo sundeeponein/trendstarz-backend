@@ -555,6 +555,27 @@ describe("CampaignsService", () => {
       ).rejects.toThrow("barter or location campaigns");
     });
 
+    it("switching a submitted paid campaign to barter is refused when the barter share is used", async () => {
+      plansService.getUserPlanCapabilities.mockResolvedValue({
+        limits: [
+          { key: "maxActiveCampaigns", value: 3 },
+          { key: "maxBarterCampaignsPerMonth", value: 2 },
+        ],
+      });
+      campaignModel.countDocuments.mockResolvedValue(2);
+      const campaign = {
+        ...mockCampaign,
+        status: "pending_review",
+        campaignType: "paid_collab",
+        save: jest.fn(),
+      };
+      campaignModel.findById.mockResolvedValue(campaign);
+      await expect(
+        service.update(mockCampaign._id, mockBrand._id, { campaignType: "invite_location" }),
+      ).rejects.toThrow("barter or location campaigns");
+      expect(campaign.save).not.toHaveBeenCalled();
+    });
+
     it("resubmitting a rejected campaign needs a free slot", async () => {
       campaignModel.countDocuments.mockResolvedValue(5);
       const campaign = { ...mockCampaign, status: "rejected", save: jest.fn() };

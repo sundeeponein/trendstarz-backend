@@ -81,6 +81,8 @@ export function submissionWindow(
     submissionDeadlineExtendedTo?: unknown;
     /** Barter: the creator can't post before the product arrives. */
     productFulfillment?: { deliveredAt?: unknown } | null;
+    /** Barter/location with a platform fee: the creator starts once the host confirmed. */
+    platformFeePaidAt?: unknown;
   },
   postingDeadlineMode?: string,
   /** Admin grace hours: the minimum time to submit after payment (0 = none). */
@@ -89,11 +91,12 @@ export function submissionWindow(
   const chosenPostDate = toTime(invite?.selectedPostDate);
   if (chosenPostDate === null) return null;
   // A product delivered after the chosen date moves the window to the delivery day.
-  const deliveredAt = toTime(invite?.productFulfillment?.deliveredAt);
-  const postDate =
-    deliveredAt !== null && deliveredAt > chosenPostDate
-      ? deliveredAt
-      : chosenPostDate;
+  // …and so does a host confirmation (platform fee verified) after it.
+  const postDate = Math.max(
+    chosenPostDate,
+    toTime(invite?.productFulfillment?.deliveredAt) ?? chosenPostDate,
+    toTime(invite?.platformFeePaidAt) ?? chosenPostDate,
+  );
 
   const postStrict = postDate + 24 * HOUR_MS;
   const postCloses =

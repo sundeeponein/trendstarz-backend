@@ -148,6 +148,16 @@ export class PaymentsPayoutsController {
     return this.paymentsPayoutsService.rejectCollectionBatch(batchId, body?.reason);
   }
 
+  /** Admin: return a no-show creator's platform fee to the host as TrendStarZ credit. */
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Post(":id/refund-fee-credit")
+  async refundFeeCredit(@Param("id") id: string, @Req() req: any) {
+    return this.paymentsPayoutsService.refundPlatformFeeAsCredit(
+      id,
+      String(req.user?.userId || ""),
+    );
+  }
+
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Post(":id/verify")
   async verify(@Param("id") id: string, @Body() body: { notes?: string }) {

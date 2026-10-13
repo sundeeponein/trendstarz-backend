@@ -46,6 +46,7 @@ export const INVITE_WITHDRAWN_REASONS = [
   "admin_cancel", // admin cancelled the campaign's participation
   "location_no_show", // host marked the location visit as a no-show (after the visit date)
   "product_not_delivered", // campaign ended before the host delivered the product (no penalty)
+  "platform_fee_unpaid", // campaign ended before the host confirmed (paid the platform fee) — no penalty
 ] as const;
 
 export type InviteWithdrawnReason = (typeof INVITE_WITHDRAWN_REASONS)[number];

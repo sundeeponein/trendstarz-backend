@@ -505,6 +505,14 @@ export class AdminListsController {
       }
       next.maxCampaignDurationDays = Math.floor(days);
     }
+    for (const key of ["barterPlatformFee", "locationPlatformFee"]) {
+      if (next[key] === undefined) continue;
+      const rupees = Number(next[key]);
+      if (!Number.isFinite(rupees) || rupees < 0 || rupees > 100000) {
+        throw new BadRequestException(`${key} must be between ₹0 and ₹1,00,000`);
+      }
+      next[key] = Math.round(rupees);
+    }
     const roleSpecificFeeKeys = ["brandFeePercent", "influencerFeePercent", "photographerFeePercent"];
     for (const key of [
       "platformFeePercent",

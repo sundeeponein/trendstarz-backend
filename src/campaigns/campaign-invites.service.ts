@@ -14,8 +14,10 @@ import { InjectModel } from "@nestjs/mongoose";
 import { Model, Types } from "mongoose";
 import { receivedInvitesPerMonthFrom } from "../plans/invite-limits.util";
 import {
+  awaitingPlatformFee,
   barterLimitsFrom,
   isBarterOrLocationCampaign,
+  platformFeeFor,
 } from "./barter-limits.util";
 import {
   countUsedMonthlySlots,
@@ -1516,7 +1518,7 @@ export class CampaignInvitesService {
           selectedPostDate: { $ne: null },
         })
         .select(
-          "selectedPostDate paymentConfirmedAt submissionDeadlineExtendedTo productFulfillment.deliveredAt",
+          "selectedPostDate paymentConfirmedAt submissionDeadlineExtendedTo productFulfillment.deliveredAt platformFeePaidAt",
         )
         .lean(),
       this.getPaidSubmitGraceHours(),
@@ -2030,6 +2032,11 @@ export class CampaignInvitesService {
           "disputed",
         ]);
 
+    if (isLocationCampaign && awaitingPlatformFee(invite)) {
+      throw new BadRequestException(
+        "Confirm this collaboration first — pay the TrendStarZ platform fee to unlock contact and shipping details.",
+      );
+    }
     if (!unlockableStatuses.has(invite.status)) {
       const msg = isLocationCampaign
         ? "Invite must be accepted before contact can be unlocked."
@@ -2681,7 +2688,7 @@ export class CampaignInvitesService {
       const campaign: any = await this.campaignModel
         .findById(invite.campaignId)
         .select(
-          "status ownerType createdByRole requestKind startDate endDate timelineStart timelineEnd socialMedia platforms campaignMode minInfluencerTier minInfluencers maxInfluencers maxPhotographers maxPhotoVideoGraphers maxPhotovideographers maxPhotoVideographers inviteSlots acceptanceDeadline campaignType productShippingRequired",
+          "status ownerType createdByRole requestKind startDate endDate timelineStart timelineEnd socialMedia platforms campaignMode minInfluencerTier minInfluencers maxInfluencers maxPhotographers maxPhotoVideoGraphers maxPhotovideographers maxPhotoVideographers inviteSlots acceptanceDeadline campaignType productShippingRequired productPaymentMode",
         )
         .lean();
       if (!campaign) throw new NotFoundException("Campaign not found");
@@ -2805,6 +2812,16 @@ export class CampaignInvitesService {
         selected.getTime() + 24 * 60 * 60 * 1000,
       );
       invite.acceptedAt = new Date();
+      if (status === "accepted") {
+        // Barter/location: the platform fee owed at this moment (admin setting; 0 = none).
+        // Fixed here, so a later change of the setting never re-prices an accepted creator.
+        const feeSettings: any = await this.appSettingsModel
+          .findOne({})
+          .select("barterPlatformFee locationPlatformFee")
+          .lean();
+        const fee = platformFeeFor(campaign, feeSettings);
+        invite.platformFeeDue = fee > 0 ? fee : null;
+      }
       const recipientAny = recipient as any;
       invite.acceptedContact = {
         whatsapp: !!recipientAny?.contact?.whatsapp,
@@ -3767,6 +3784,11 @@ export class CampaignInvitesService {
     ) {
       throw new BadRequestException(
         `Can only submit for active invites. Status was: ${invite.status}`,
+      );
+    }
+    if (awaitingPlatformFee(invite)) {
+      throw new BadRequestException(
+        "The host hasn't confirmed this collaboration yet. You can submit once it's confirmed.",
       );
     }
     const campaign: any = await this.campaignModel
@@ -5185,7 +5207,7 @@ export class CampaignInvitesService {
         campaignId: idIn(campaignId),
         status: { $in: ["accepted", "payment_confirmed", "working"] },
       })
-      .select("_id productFulfillment.deliveredAt")
+      .select("_id productFulfillment.deliveredAt platformFeeDue platformFeePaidAt")
       .lean();
     const campaign: any = candidates.length
       ? await this.campaignModel
@@ -5194,6 +5216,15 @@ export class CampaignInvitesService {
           .lean()
       : null;
     for (const candidate of candidates) {
+      // The host never confirmed (paid the platform fee): no penalty for the creator.
+      if (awaitingPlatformFee(candidate)) {
+        await this.expireUnsubmittedInvite(
+          String(candidate._id),
+          "Campaign ended before the host confirmed this collaboration.",
+          { withdrawnReason: "platform_fee_unpaid" },
+        );
+        continue;
+      }
       // The host never delivered the product: close it without counting against the creator.
       if (this.awaitingProductDelivery(campaign, candidate)) {
         await this.expireUnsubmittedInvite(
@@ -5260,8 +5291,10 @@ export class CampaignInvitesService {
         .select("postingDeadlineMode campaignType productShippingRequired")
         .lean();
       if (!campaign) continue;
-      // Barter: no posting deadline until the host has delivered the product.
+      // Barter: no posting deadline until the host has delivered the product,
+      // or (fee campaigns) until the host has confirmed the collaboration.
       if (this.awaitingProductDelivery(campaign, invite)) continue;
+      if (awaitingPlatformFee(invite)) continue;
       const deadline = this.computeGraceDeadline(invite, campaign, graceHours);
       if (Date.now() <= deadline.closesAt.getTime()) continue;
 
@@ -5438,7 +5471,7 @@ export class CampaignInvitesService {
           status: { $in: CampaignInvitesService.PAID_WORKING_STATUSES },
         })
         .select(
-          "selectedPostDate paymentConfirmedAt submissionDeadlineExtendedTo productFulfillment.deliveredAt",
+          "selectedPostDate paymentConfirmedAt submissionDeadlineExtendedTo productFulfillment.deliveredAt platformFeePaidAt",
         )
         .lean(),
       this.getPaidSubmitGraceHours(),

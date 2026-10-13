@@ -1839,6 +1839,26 @@ export class CampaignsService {
       !!data.status &&
       SLOT_FREE_STATUSES.includes(String(campaign.status)) &&
       !SLOT_FREE_STATUSES.includes(String(data.status));
+    // Already holding a slot and switching from paid to barter/location (e.g. while
+    // in review, before the type locks): it must fit the barter share too.
+    const current = campaign.toObject ? campaign.toObject() : campaign;
+    if (
+      !takesSlot &&
+      !SLOT_FREE_STATUSES.includes(String(data.status || campaign.status)) &&
+      !isBarterOrLocationCampaign(current) &&
+      isBarterOrLocationCampaign({ ...current, ...data })
+    ) {
+      const { barterUsed, barterLimit } = await this.campaignSlotUsage(
+        String(campaign.brandId),
+        undefined,
+        String(campaign._id),
+      );
+      if (barterLimit !== -1 && barterUsed >= barterLimit) {
+        throw new BadRequestException(
+          `Plan limit: only ${barterLimit} of your monthly campaign slots can be barter or location campaigns, and they're used. Keep this as a paid campaign or save a new draft.`,
+        );
+      }
+    }
     if (takesSlot) {
       await this.assertCampaignSlotAvailable(
         String(campaign.brandId),

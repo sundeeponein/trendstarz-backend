@@ -4,7 +4,7 @@ export const CampaignTransactionSchema = new Schema(
   {
     transactionType: {
       type: String,
-      enum: ["paid_collab", "pay_to_join"],
+      enum: ["paid_collab", "pay_to_join", "platform_fee"],
       required: true,
       index: true,
     },
@@ -34,6 +34,18 @@ export const CampaignTransactionSchema = new Schema(
       required: true,
       index: true,
     },
+    // platform_fee rows: the invite the fee confirms. Their inviteId is a placeholder
+    // id (never the real invite), so payout/refund/dispute code that looks transactions
+    // up by inviteId can never pick up a fee.
+    feeInviteId: { type: Schema.Types.Mixed, default: null, index: true },
+    // Fee refunded to the host as TrendStarZ credit (creator no-show, admin-approved).
+    feeCreditedAt: { type: Date, default: null },
+    // platform_fee rows: GST charged on this row's fee (paise), included in payerTotal.
+    gstAmount: { type: Number, default: 0 },
+    // Razorpay: every order created for this row (a retry replaces paymentBatchId, so an
+    // earlier order that still gets paid can be matched), and the order's amount (paise).
+    gatewayOrderIds: { type: [String], default: undefined },
+    gatewayOrderAmount: { type: Number, default: null },
     payerId: { type: Schema.Types.Mixed, required: true, index: true },
     payerRole: {
       type: String,

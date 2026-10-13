@@ -95,3 +95,22 @@ export function capBarterAcceptance<T extends Record<string, any>>(
   }
   return target;
 }
+
+/**
+ * Fixed platform fee (paise) for one confirmed creator on a barter/location
+ * campaign, from admin settings (₹; 0 = off). 0 for every other campaign type.
+ */
+export function platformFeeFor(campaign: any, settings: any): number {
+  if (!isBarterOrLocationCampaign(campaign)) return 0;
+  const rupees = Number(
+    String(campaign?.campaignType || "") === "invite_location"
+      ? settings?.locationPlatformFee
+      : settings?.barterPlatformFee,
+  );
+  return Number.isFinite(rupees) && rupees > 0 ? Math.round(rupees * 100) : 0;
+}
+
+/** Accepted, owes a platform fee, not confirmed yet — the creator can't start. */
+export function awaitingPlatformFee(invite: any): boolean {
+  return Number(invite?.platformFeeDue || 0) > 0 && !invite?.platformFeePaidAt;
+}

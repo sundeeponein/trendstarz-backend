@@ -1152,6 +1152,9 @@ export const AppSettingsSchema = new Schema({
   brandRecipientFeePercent: { type: Number, default: 0 },
   platformCommissionPercent: { type: Number, default: 12 },
   inviteUnlockFee: { type: Number, default: 499 },
+  // Fixed platform fee (₹, + GST) per confirmed creator on unpaid campaigns; 0 = off.
+  barterPlatformFee: { type: Number, default: 0 },
+  locationPlatformFee: { type: Number, default: 0 },
   minimumCampaignFee: { type: Number, default: 1000 },
   gstPercent: { type: Number, default: 0 },
   submissionApprovalWaitHours: {

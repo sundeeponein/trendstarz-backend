@@ -1,5 +1,7 @@
 import {
+  awaitingPlatformFee,
   barterLimitsFrom,
+  platformFeeFor,
   capBarterAcceptance,
   isBarterOrLocationCampaign,
 } from "./barter-limits.util";
@@ -40,5 +42,27 @@ describe("barter/location limits", () => {
   it("leaves paid campaigns and an unlimited cap alone", () => {
     expect(capBarterAcceptance({} as any, { campaignType: "paid_collab", maxInfluencers: 5 }, 1)).toEqual({});
     expect(capBarterAcceptance({} as any, { campaignType: "product", maxInfluencers: 5 }, -1)).toEqual({});
+  });
+});
+
+describe("platform fee (barter/location)", () => {
+  const settings = { barterPlatformFee: 149, locationPlatformFee: 249 };
+
+  it("charges the barter or location amount in paise, nothing for paid campaigns", () => {
+    expect(platformFeeFor({ campaignType: "product" }, settings)).toBe(14900);
+    expect(platformFeeFor({ campaignType: "invite_location" }, settings)).toBe(24900);
+    expect(platformFeeFor({ campaignType: "product", productPaymentMode: "product_plus_payment" }, settings)).toBe(0);
+    expect(platformFeeFor({ campaignType: "paid_collab" }, settings)).toBe(0);
+  });
+
+  it("is off at ₹0 (the launch setting)", () => {
+    expect(platformFeeFor({ campaignType: "product" }, {})).toBe(0);
+    expect(platformFeeFor({ campaignType: "invite_location" }, { locationPlatformFee: 0 })).toBe(0);
+  });
+
+  it("an invite waits for confirmation only while a fee is owed and unpaid", () => {
+    expect(awaitingPlatformFee({ platformFeeDue: 14900 })).toBe(true);
+    expect(awaitingPlatformFee({ platformFeeDue: 14900, platformFeePaidAt: new Date() })).toBe(false);
+    expect(awaitingPlatformFee({ platformFeeDue: null })).toBe(false);
   });
 });

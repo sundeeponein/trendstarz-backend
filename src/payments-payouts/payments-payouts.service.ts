@@ -5,7 +5,7 @@ import {
   NotFoundException,
 } from "@nestjs/common";
 import { InjectModel } from "@nestjs/mongoose";
-import { Model } from "mongoose";
+import { Model, Types } from "mongoose";
 import { Cron } from "@nestjs/schedule";
 import { sendAppEmail } from "../utils/app-email.service";
 import {
@@ -64,6 +64,18 @@ type FeeSettings = {
   photographerRecipientFeePercent: number;
   brandRecipientFeePercent: number;
 };
+
+import {
+  awaitingPlatformFee,
+  isBarterOrLocationCampaign,
+} from "../campaigns/barter-limits.util";
+/** GST (paise) on one platform-fee row, rounded to the nearest paisa. */
+export function platformFeeGst(feePaise: number, gstPercent: number): number {
+  const fee = Number(feePaise || 0);
+  const pct = Number(gstPercent || 0);
+  if (!(fee > 0) || !(pct > 0)) return 0;
+  return Math.round((fee * pct) / 100);
+}
 
 @Injectable()
 export class PaymentsPayoutsService {
@@ -576,6 +588,16 @@ export class PaymentsPayoutsService {
       paymentProofUrl?: string;
     },
   ): Promise<any[]> {
+    if (calc?.isPlatformFee) {
+      return this.upsertPlatformFeeTransactions(
+        campaign,
+        payerId,
+        calc,
+        paymentBatchId,
+        mode,
+        payload,
+      );
+    }
     const acceptedInvites = await this.inviteModel
       .find({ _id: { $in: calc.acceptedInviteIds } })
       .lean();
@@ -726,6 +748,233 @@ export class PaymentsPayoutsService {
     return saved;
   }
 
+  /**
+   * Barter/location payment: the fixed platform fee owed for each accepted creator
+   * (snapshotted on the invite at acceptance), not yet paid or under review.
+   */
+  private async calculatePlatformFee(
+    campaign: any,
+    payerId: string,
+    inviteIds?: string[],
+  ) {
+    const campaignId = String(campaign._id);
+    const invites: any[] = await this.inviteModel
+      .find({
+        campaignId: { $in: [campaign._id, campaignId] },
+        status: { $in: ["accepted", "working"] },
+        platformFeeDue: { $gt: 0 },
+        platformFeePaidAt: null,
+      })
+      .lean();
+    const pending = await this.transactionModel
+      .find({
+        campaignId,
+        transactionType: "platform_fee",
+        collectionStatus: { $in: ["verified", "proof_submitted"] },
+      })
+      .select("feeInviteId")
+      .lean();
+    const pendingVerificationInviteIds = new Set(
+      (pending as any[]).map((t) => String(t.feeInviteId || "")).filter(Boolean),
+    );
+    const selected =
+      Array.isArray(inviteIds) && inviteIds.length
+        ? new Set(inviteIds.map((id) => String(id)))
+        : null;
+    const due = invites.filter((inv) => {
+      const id = String(inv._id);
+      if (!awaitingPlatformFee(inv) || pendingVerificationInviteIds.has(id))
+        return false;
+      return !selected || selected.has(id);
+    });
+    const { gstPercent } = await this.getFeeSettings();
+    const fee = due.reduce((sum, inv) => sum + Number(inv.platformFeeDue || 0), 0);
+    // GST per creator row, rounded per row — the stored rows add up to exactly this.
+    const gstAmount = due.reduce(
+      (sum, inv) => sum + platformFeeGst(Number(inv.platformFeeDue || 0), gstPercent),
+      0,
+    );
+    const credit = await this.creditPreview(payerId, fee, fee, false);
+    return {
+      campaignId,
+      campaignType: campaign.campaignType,
+      isPlatformFee: true,
+      gstPercent,
+      gstAmount,
+      // What the host pays. Credit only applies to UPI payments (as for commission).
+      amountDueRazorpay: fee + gstAmount,
+      amountDueUpi: Math.max(fee + gstAmount - credit.creditToApply, 0),
+      acceptedCount: due.length,
+      acceptedInviteIds: due.map((i) => String(i._id)),
+      pendingVerificationInviteIds: [...pendingVerificationInviteIds],
+      pricePerInfluencer: 0,
+      agreedAmount: 0,
+      platformFee: fee,
+      payerTotal: fee,
+      recipientFee: 0,
+      recipientPayoutTotal: 0,
+      platformFeeEnabled: true,
+      ...credit,
+      trustLabels: [
+        "Fixed TrendStarZ platform fee per confirmed creator",
+        "Contact and shipping details unlock once verified",
+        "Fee comes back as TrendStarZ credit if the creator doesn't show up",
+      ],
+    };
+  }
+
+  /** One platform_fee transaction per creator (see feeInviteId on the schema). */
+  private async upsertPlatformFeeTransactions(
+    campaign: any,
+    payerId: string,
+    calc: any,
+    paymentBatchId: string,
+    mode: "manual_proof" | "gateway_order",
+    payload?: {
+      gateway?: "manual_upi" | "razorpay";
+      gatewayOrderId?: string;
+      utrNumber?: string;
+      paymentProofUrl?: string;
+    },
+  ): Promise<any[]> {
+    const invites: any[] = await this.inviteModel
+      .find({ _id: { $in: calc.acceptedInviteIds } })
+      .lean();
+    const campaignId = String(campaign._id || "");
+    const payerRole = this.resolveCampaignOwnerRole(campaign);
+    const gstPercent = Number(calc.gstPercent || 0);
+    const saved: any[] = [];
+    for (const invite of invites) {
+      const fee = Number(invite.platformFeeDue || 0);
+      if (!(fee > 0)) continue;
+      const gst = platformFeeGst(fee, gstPercent);
+      const recipientRole: "influencer" | "photographer" =
+        String(invite?.recipientRole || "").toLowerCase() === "photographer"
+          ? "photographer"
+          : "influencer";
+      // A retry (e.g. a rejected proof) reuses the creator's existing fee row — never a second charge.
+      const existing = await this.transactionModel.findOne({
+        campaignId,
+        transactionType: "platform_fee",
+        feeInviteId: { $in: [invite._id, String(invite._id)] },
+        payerId,
+      });
+      const txData: any = {
+        transactionType: "platform_fee",
+        direction: `${payerRole}_to_${recipientRole}`,
+        campaignId,
+        // Placeholder, never the real invite — keeps fee rows out of inviteId lookups.
+        inviteId: existing?.inviteId ?? new Types.ObjectId(),
+        feeInviteId: invite._id,
+        payerId,
+        payerRole,
+        recipientId: String(invite.influencerId),
+        recipientRole,
+        agreedAmount: 0,
+        platformFee: fee,
+        gstAmount: gst,
+        payerTotal: fee + gst,
+        recipientFee: 0,
+        recipientPayout: 0,
+        payoutStatus: "skipped",
+        paymentBatchId,
+        gateway: payload?.gateway || "manual_upi",
+      };
+      if (mode === "manual_proof") {
+        txData.utrNumber = payload?.utrNumber || "";
+        txData.paymentProofUrl = payload?.paymentProofUrl || undefined;
+        txData.collectionStatus = "proof_submitted";
+      } else {
+        txData.gatewayOrderId = payload?.gatewayOrderId || paymentBatchId;
+        txData.gatewayOrderIds = [
+          ...((existing?.gatewayOrderIds as string[]) || []),
+          txData.gatewayOrderId,
+        ];
+        txData.gatewayOrderAmount = calc.amountDueRazorpay;
+        txData.utrNumber = undefined;
+        txData.paymentProofUrl = undefined;
+        txData.collectionStatus = "awaiting_payment";
+      }
+      let row: any;
+      if (existing) {
+        await restoreCreditUse(this.creditModel, String(existing._id));
+        Object.assign(existing, txData);
+        row = await existing.save();
+      } else {
+        row = await this.transactionModel.create(txData);
+      }
+      if (mode === "manual_proof") {
+        const used = await consumeCredit(this.creditModel, {
+          ownerId: String(payerId),
+          wanted: fee,
+          transactionId: String(row._id),
+          campaignId,
+        });
+        if (used > 0) {
+          const payerTotal = Math.max(fee + gst - used, 0);
+          await this.transactionModel.updateOne(
+            { _id: row._id },
+            { $set: { creditApplied: used, payerTotal } },
+          );
+          row.creditApplied = used;
+          row.payerTotal = payerTotal;
+        }
+      }
+      saved.push(row);
+    }
+    return saved;
+  }
+
+  /**
+   * Admin: give a host their platform fee back as TrendStarZ credit when the
+   * creator didn't show up (closed as a no-show, not excused). Once per fee.
+   */
+  async refundPlatformFeeAsCredit(transactionId: string, adminId: string) {
+    const tx: any = await this.transactionModel.findById(transactionId);
+    if (!tx || tx.transactionType !== "platform_fee") {
+      throw new NotFoundException("Platform fee payment not found");
+    }
+    if (tx.collectionStatus !== "verified") {
+      throw new BadRequestException("Only a verified platform fee can be refunded.");
+    }
+    if (tx.feeCreditedAt) {
+      throw new BadRequestException("This fee was already refunded as credit.");
+    }
+    const invite: any = await this.inviteModel
+      .findById(tx.feeInviteId)
+      .select("status withdrawnReasonCode missExcused")
+      .lean();
+    const noShow =
+      invite?.status === "withdrawn" &&
+      ["expired_unsubmitted", "location_no_show"].includes(
+        String(invite?.withdrawnReasonCode || ""),
+      ) &&
+      !invite?.missExcused?.at;
+    if (!noShow) {
+      throw new BadRequestException(
+        "A fee is refunded as credit only when the creator was a no-show.",
+      );
+    }
+    // Everything the host paid for this fee — GST and any credit used included.
+    const amount =
+      Number(tx.platformFee || 0) + Number(tx.gstAmount || 0);
+    await issueCredit(this.creditModel, {
+      ownerId: String(tx.payerId),
+      ownerRole: tx.payerRole,
+      amount,
+      transactionId: String(tx._id),
+      campaignId: String(tx.campaignId || ""),
+      reason: "Platform fee refunded — creator no-show",
+      createdBy: String(adminId || "admin"),
+    });
+    const now = new Date();
+    await this.transactionModel.updateOne(
+      { _id: tx._id, feeCreditedAt: null },
+      { $set: { feeCreditedAt: now } },
+    );
+    return { success: true, amount, creditedAt: now };
+  }
+
   /** What credit would pay on this payment (shown before paying; applied on submit). */
   private async creditPreview(
     payerId: string,
@@ -765,6 +1014,11 @@ export class PaymentsPayoutsService {
     if (!campaign) throw new NotFoundException("Campaign not found");
 
     await this.assertCampaignOwner(campaign, payerId);
+
+    // Barter/location: no creator payment — a fixed TrendStarZ platform fee per confirmed creator.
+    if (isBarterOrLocationCampaign(campaign)) {
+      return this.calculatePlatformFee(campaign, payerId, inviteIds);
+    }
 
     const pricePerInfluencer = Number(campaign.pricePerInfluencer || 0);
 
@@ -1015,7 +1269,12 @@ export class PaymentsPayoutsService {
     }
     await this.recordHostTermsAcceptance(calc, payerId, acceptTerms);
 
-    const amountPaise = Number(calc.payerTotal || 0);
+    // Platform fee: GST-inclusive, the same total the payment window shows.
+    // Paid collabs: unchanged (see the GST note on calculatePayment).
+    const feeCalc: any = calc;
+    const amountPaise = Number(
+      feeCalc.isPlatformFee ? feeCalc.amountDueRazorpay : calc.payerTotal || 0,
+    );
     if (!Number.isFinite(amountPaise) || amountPaise <= 0) {
       throw new BadRequestException("Invalid campaign payable amount");
     }
@@ -1073,11 +1332,29 @@ export class PaymentsPayoutsService {
     const txs = await this.transactionModel.find({
       campaignId,
       payerId,
-      paymentBatchId: orderId,
+      $or: [{ paymentBatchId: orderId }, { gatewayOrderIds: orderId }],
       gateway: "razorpay",
     });
     if (!Array.isArray(txs) || !txs.length) {
       throw new NotFoundException("No Razorpay campaign transactions found for this order");
+    }
+
+    // Platform fees: the rows must add up to what this order charged.
+    const feeRows = txs.filter((t: any) => t.transactionType === "platform_fee");
+    if (feeRows.length) {
+      const rowsTotal = feeRows.reduce(
+        (sum: number, t: any) => sum + Number(t.payerTotal || 0),
+        0,
+      );
+      const orderAmount = Number(feeRows[0].gatewayOrderAmount || 0);
+      if (orderAmount > 0 && rowsTotal !== orderAmount) {
+        this.logger.error(
+          `Platform fee order ${orderId}: rows total ${rowsTotal} ≠ order amount ${orderAmount}`,
+        );
+        throw new BadRequestException(
+          "Payment amount mismatch — TrendStarZ will review this payment.",
+        );
+      }
     }
 
     const results: any[] = [];
@@ -1121,6 +1398,28 @@ export class PaymentsPayoutsService {
     for (const r of rows as any[]) {
       if (r.inviteId) inviteIds.add(String(r.inviteId));
     }
+    // Platform fees: whether the creator was a no-show (fee can go back as credit).
+    const feeInviteIds = (rows as any[])
+      .filter((r) => r.transactionType === "platform_fee" && r.feeInviteId)
+      .map((r) => String(r.feeInviteId));
+    const feeInvites: any[] = feeInviteIds.length
+      ? await this.inviteModel
+          .find({ _id: { $in: feeInviteIds } })
+          .select("status withdrawnReasonCode missExcused")
+          .lean()
+      : [];
+    const noShowFeeInviteIds = new Set(
+      feeInvites
+        .filter(
+          (inv) =>
+            inv.status === "withdrawn" &&
+            ["expired_unsubmitted", "location_no_show"].includes(
+              String(inv.withdrawnReasonCode || ""),
+            ) &&
+            !inv?.missExcused?.at,
+        )
+        .map((inv) => String(inv._id)),
+    );
 
     const invites = inviteIds.size
       ? await this.inviteModel
@@ -1258,6 +1557,11 @@ export class PaymentsPayoutsService {
       ...r,
       recipient: buildContact(r.recipientRole, r.recipientId),
       payer: buildContact(r.payerRole, r.payerId),
+      feeRefundable:
+        r.transactionType === "platform_fee" &&
+        r.collectionStatus === "verified" &&
+        !r.feeCreditedAt &&
+        noShowFeeInviteIds.has(String(r.feeInviteId || "")),
       inviteSnapshot: r.inviteId
         ? (() => {
             const inv = inviteMap.get(String(r.inviteId));
@@ -1576,6 +1880,24 @@ export class PaymentsPayoutsService {
         paymentConfirmedCampaignId = String(invite.campaignId || "");
       }
       await this.inviteModel.findByIdAndUpdate(tx.inviteId, { $set: update });
+    }
+
+    // Platform fee verified → the barter/location collaboration is confirmed:
+    // unlock contact/shipping details and start the creator's posting window.
+    if (tx.transactionType === "platform_fee" && tx.feeInviteId) {
+      const now = new Date();
+      await this.inviteModel.updateOne(
+        { _id: tx.feeInviteId, platformFeePaidAt: null },
+        {
+          $set: {
+            platformFeePaidAt: now,
+            unlocked: true,
+            unlockedAt: now,
+            unlockType: "platform_fee",
+            updatedAt: now,
+          },
+        },
+      );
     }
 
     // Notify recipient as soon as payment is confirmed so they can start posting.
@@ -3355,6 +3677,8 @@ export class PaymentsPayoutsService {
     acceptTerms?: boolean,
   ) {
     if (calc?.campaignType === "pay_to_join") return;
+    // A platform fee isn't a paid collaboration — the paid-collab terms don't apply.
+    if (calc?.isPlatformFee) return;
     if (acceptTerms !== true) {
       throw new BadRequestException(
         "Please accept the paid-collaboration terms before paying.",
