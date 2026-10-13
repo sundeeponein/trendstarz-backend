@@ -63,12 +63,19 @@ type FeeSettings = {
   influencerRecipientFeePercent: number;
   photographerRecipientFeePercent: number;
   brandRecipientFeePercent: number;
+  /** Premium rates by Free-rate field (null = same as Free) — see fee-rates.util. */
+  premiumRates: Record<string, number | null>;
 };
 
 import {
   awaitingPlatformFee,
   isBarterOrLocationCampaign,
 } from "../campaigns/barter-limits.util";
+import {
+  PREMIUM_RATE_FIELDS,
+  isActivePremium,
+  rateForPlan,
+} from "./fee-rates.util";
 /** GST (paise) on one platform-fee row, rounded to the nearest paisa. */
 export function platformFeeGst(feePaise: number, gstPercent: number): number {
   const fee = Number(feePaise || 0);
@@ -207,7 +214,89 @@ export class PaymentsPayoutsService {
       influencerRecipientFeePercent: creatorPercent("influencerRecipientFeePercent"),
       photographerRecipientFeePercent: creatorPercent("photographerRecipientFeePercent"),
       brandRecipientFeePercent: creatorPercent("brandRecipientFeePercent"),
+      premiumRates: Object.fromEntries(
+        Object.entries(PREMIUM_RATE_FIELDS).map(([free, premium]) => [
+          free,
+          typeof settings?.[premium] === "number" ? settings[premium] : null,
+        ]),
+      ),
     };
+  }
+
+  /**
+   * The payout fee a creator will pay on a paid-collab invite — shown on the
+   * invite before they accept, so the amount they see is what they receive.
+   * `locked` = fixed when they accepted.
+   */
+  async payoutFeePreview(inviteId: string, userId: string) {
+    const invite: any = await this.inviteModel.findById(inviteId).lean();
+    if (!invite) throw new NotFoundException("Invite not found");
+    if (String(invite.influencerId || "") !== String(userId || "")) {
+      throw new NotFoundException("Invite not found");
+    }
+    const campaign: any = await this.campaignModel
+      .findById(invite.campaignId)
+      .select("campaignType")
+      .lean();
+    if (String(campaign?.campaignType || "") !== "paid_collab") {
+      return { feePercent: 0, locked: false };
+    }
+    const feeSettings = await this.getFeeSettings();
+    const locked = typeof invite.recipientFeePercent === "number";
+    const role: "influencer" | "photographer" =
+      String(invite.recipientRole || "").toLowerCase() === "photographer"
+        ? "photographer"
+        : "influencer";
+    const feePercent = !feeSettings.platformFeeEnabled && !locked
+      ? 0
+      : await this.recipientFeePercentForInvite(invite, feeSettings, role);
+    return { feePercent, locked };
+  }
+
+  /** Whether this user's Premium is active right now (false if not found). */
+  private async isPremiumUser(
+    userId: string,
+    role: "brand" | "influencer" | "photographer",
+  ): Promise<boolean> {
+    if (!userId) return false;
+    const model =
+      role === "brand"
+        ? this.brandModel
+        : role === "photographer"
+          ? this.photographerModel
+          : this.influencerModel;
+    try {
+      const user: any = await model
+        .findById(userId)
+        .select("isPremium premiumEnd")
+        .lean();
+      return isActivePremium(user);
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Payout fee (%) for one creator: the rate locked in when they accepted, else
+   * their plan's current rate (Free / Premium).
+   */
+  private async recipientFeePercentForInvite(
+    invite: any,
+    feeSettings: FeeSettings,
+    role: "influencer" | "photographer",
+  ): Promise<number> {
+    if (typeof invite?.recipientFeePercent === "number")
+      return invite.recipientFeePercent;
+    const field =
+      role === "photographer"
+        ? "photographerRecipientFeePercent"
+        : "influencerRecipientFeePercent";
+    const premium = await this.isPremiumUser(String(invite?.influencerId || ""), role);
+    return rateForPlan(
+      Number((feeSettings as any)[field] || 0),
+      feeSettings.premiumRates?.[field],
+      premium,
+    );
   }
 
   private getRecipientFeePercent(
@@ -235,10 +324,19 @@ export class PaymentsPayoutsService {
   private getRoleBaseFeePercent(
     feeSettings: FeeSettings,
     payerRole: "brand" | "influencer" | "photographer",
+    isPremium = false,
   ): number {
-    if (payerRole === "photographer") return feeSettings.photographerFeePercent;
-    if (payerRole === "influencer") return feeSettings.influencerFeePercent;
-    return feeSettings.brandFeePercent;
+    const field =
+      payerRole === "photographer"
+        ? "photographerFeePercent"
+        : payerRole === "influencer"
+          ? "influencerFeePercent"
+          : "brandFeePercent";
+    return rateForPlan(
+      Number((feeSettings as any)[field] || 0),
+      feeSettings.premiumRates?.[field],
+      isPremium,
+    );
   }
 
   private async getPayoutReleaseWaitHours(): Promise<number> {
@@ -626,12 +724,16 @@ export class PaymentsPayoutsService {
       const campaignOwnerRole = this.resolveCampaignOwnerRole(campaign);
       const invitePayerRole: "brand" | "influencer" | "photographer" =
         isPayToJoin ? inviteRecipientRole : campaignOwnerRole;
-      const inviteBaseFeePercent = calc.feeSettings
-        ? this.getRoleBaseFeePercent(calc.feeSettings, invitePayerRole)
-        : Number(calc.platformFeePercent || 0);
       const invitePayerUserId = isPayToJoin
         ? String(invite.influencerId || "")
         : String(campaign.brandId || "");
+      const inviteBaseFeePercent = calc.feeSettings
+        ? this.getRoleBaseFeePercent(
+            calc.feeSettings,
+            invitePayerRole,
+            await this.isPremiumUser(invitePayerUserId, invitePayerRole),
+          )
+        : Number(calc.platformFeePercent || 0);
       let inviteEffectiveFeePercent = inviteBaseFeePercent;
       if (calc.platformFeeEnabled && invitePayerUserId && calc.feeSettings) {
         inviteEffectiveFeePercent = await this.getEffectiveCommissionPercent(
@@ -648,18 +750,31 @@ export class PaymentsPayoutsService {
         | "brand"
         | "influencer"
         | "photographer" = isPayToJoin ? "brand" : inviteRecipientRole;
-      const inviteRecipientFeePercent = calc.feeSettings
-        ? this.getRecipientFeePercent(
-            calc.feeSettings,
-            inviteRecipientFeeRoleForPayout,
-          )
-        : 0;
+      const inviteRecipientFeePercent = !calc.feeSettings
+        ? 0
+        : isPayToJoin
+          ? this.getRecipientFeePercent(
+              calc.feeSettings,
+              inviteRecipientFeeRoleForPayout,
+            )
+          : await this.recipientFeePercentForInvite(
+              invite,
+              calc.feeSettings,
+              inviteRecipientRole,
+            );
       const inviteRecipientFee = calc.platformFeeEnabled
         ? this.roundPercent(inviteAgreedAmount, inviteRecipientFeePercent)
         : 0;
+      // GST on this row's commission (paid collab only) — the same rule as calculatePayment.
+      const inviteGst = isPayToJoin
+        ? 0
+        : platformFeeGst(
+            inviteFee,
+            Number(calc.gstPercent ?? calc.feeSettings?.gstPercent ?? 0),
+          );
       const invitePayerTotal = isPayToJoin
         ? inviteAgreedAmount
-        : inviteAgreedAmount + inviteFee;
+        : inviteAgreedAmount + inviteFee + inviteGst;
       const inviteRecipientPayout = isPayToJoin
         ? Math.max(inviteAgreedAmount - inviteFee, 0)
         : Math.max(inviteAgreedAmount - inviteRecipientFee, 0);
@@ -690,6 +805,7 @@ export class PaymentsPayoutsService {
           calc.campaignType === "pay_to_join" ? "brand" : inviteRecipientRole,
         agreedAmount: inviteAgreedAmount,
         platformFee: inviteFee,
+        gstAmount: inviteGst,
         payerTotal: invitePayerTotal,
         recipientFee: inviteRecipientFee,
         recipientPayout: inviteRecipientPayout,
@@ -710,6 +826,11 @@ export class PaymentsPayoutsService {
         txData.collectionStatus = "proof_submitted";
       } else {
         txData.gatewayOrderId = payload?.gatewayOrderId || paymentBatchId;
+        txData.gatewayOrderIds = [
+          ...((existing?.gatewayOrderIds as string[]) || []),
+          txData.gatewayOrderId,
+        ];
+        txData.gatewayOrderAmount = calc.amountDueRazorpay ?? null;
         txData.utrNumber = undefined;
         txData.paymentProofUrl = undefined;
         txData.collectionStatus = "awaiting_payment";
@@ -1123,23 +1244,50 @@ export class PaymentsPayoutsService {
       ? creatorRole
       : campaignOwnerRole;
 
-    const baseFeePercent = this.getRoleBaseFeePercent(feeSettings, payerUserType);
+    const baseFeePercent = this.getRoleBaseFeePercent(
+      feeSettings,
+      payerUserType,
+      await this.isPremiumUser(payerUserId, payerUserType),
+    );
     const effectiveCommissionPercent = payerUserId
       ? await this.getEffectiveCommissionPercent(payerUserId, payerUserType, baseFeePercent)
       : baseFeePercent;
 
-    const fee = platformFeeEnabled
-      ? this.roundPercent(agreedAmount, effectiveCommissionPercent)
-      : 0;
+    // Commission per creator, rounded per row exactly like the stored transactions,
+    // so the total charged always equals the sum of the rows.
+    const rowFees = inviteAgreedAmounts.map((amount) =>
+      platformFeeEnabled ? this.roundPercent(amount, effectiveCommissionPercent) : 0,
+    );
+    const fee = !platformFeeEnabled
+      ? 0
+      : isPayToJoin
+        ? this.roundPercent(agreedAmount, effectiveCommissionPercent)
+        : rowFees.reduce((sum, f) => sum + f, 0);
+    // GST is charged on TrendStarZ's commission only, never on the creator's amount.
+    const gstPercent = Number(feeSettings.gstPercent || 0);
+    const gstAmount = isPayToJoin
+      ? 0
+      : rowFees.reduce((sum, f) => sum + platformFeeGst(f, gstPercent), 0);
 
     // Recipient-side payout fee: role-specific, default 0%, scaffolded for future 1-4%.
     const recipientRoleForPayout: "brand" | "influencer" | "photographer" = isPayToJoin
       ? "brand"
       : creatorRole;
     const recipientFeePercent = this.getRecipientFeePercent(feeSettings, recipientRoleForPayout);
-    const recipientFee = platformFeeEnabled
-      ? this.roundPercent(agreedAmount, recipientFeePercent)
-      : 0;
+    // Paid collab: each creator's own rate (locked at acceptance, Free/Premium), per row.
+    let recipientFee = 0;
+    if (platformFeeEnabled && isPayToJoin) {
+      recipientFee = this.roundPercent(agreedAmount, recipientFeePercent);
+    } else if (platformFeeEnabled) {
+      for (let i = 0; i < acceptedInvites.length; i++) {
+        const pct = await this.recipientFeePercentForInvite(
+          acceptedInvites[i],
+          feeSettings,
+          creatorRole,
+        );
+        recipientFee += this.roundPercent(inviteAgreedAmounts[i], pct);
+      }
+    }
 
     let payerTotal = agreedAmount;
     let recipientPayoutTotal = agreedAmount;
@@ -1152,10 +1300,16 @@ export class PaymentsPayoutsService {
       recipientPayoutTotal = Math.max(agreedAmount - recipientFee, 0);
     }
 
+    const credit = await this.creditPreview(payerId, fee, payerTotal, isPayToJoin);
     return {
       campaignId,
       campaignType,
       acceptedCount,
+      gstPercent,
+      gstAmount,
+      // What the host pays: agreed + commission + GST on commission (credit: UPI only).
+      amountDueRazorpay: payerTotal + gstAmount,
+      amountDueUpi: Math.max(payerTotal + gstAmount - credit.creditToApply, 0),
       acceptedInviteIds: acceptedInvites.map((i: any) => String(i._id)),
       acceptedInviteAgreedAmounts: inviteAgreedAmounts,
       pendingVerificationInviteIds: [...pendingVerificationInviteIds],
@@ -1170,7 +1324,7 @@ export class PaymentsPayoutsService {
       platformFeePercent: effectiveCommissionPercent,
       feeSettings,
       // TrendStarZ credit pays only the platform fee (UPI payments).
-      ...(await this.creditPreview(payerId, fee, payerTotal, isPayToJoin)),
+      ...credit,
       termsVersion: currentTermsVersion(settingsForTerms),
       termsV2Active: termsV2Active(settingsForTerms),
       trustLabels: [
@@ -1269,12 +1423,9 @@ export class PaymentsPayoutsService {
     }
     await this.recordHostTermsAcceptance(calc, payerId, acceptTerms);
 
-    // Platform fee: GST-inclusive, the same total the payment window shows.
-    // Paid collabs: unchanged (see the GST note on calculatePayment).
+    // GST-inclusive — the same total the payment window shows (credit isn't used here).
     const feeCalc: any = calc;
-    const amountPaise = Number(
-      feeCalc.isPlatformFee ? feeCalc.amountDueRazorpay : calc.payerTotal || 0,
-    );
+    const amountPaise = Number(feeCalc.amountDueRazorpay ?? calc.payerTotal ?? 0);
     if (!Number.isFinite(amountPaise) || amountPaise <= 0) {
       throw new BadRequestException("Invalid campaign payable amount");
     }
@@ -1339,17 +1490,18 @@ export class PaymentsPayoutsService {
       throw new NotFoundException("No Razorpay campaign transactions found for this order");
     }
 
-    // Platform fees: the rows must add up to what this order charged.
-    const feeRows = txs.filter((t: any) => t.transactionType === "platform_fee");
-    if (feeRows.length) {
-      const rowsTotal = feeRows.reduce(
+    // The rows must add up to what this order charged (rows created before
+    // gatewayOrderAmount existed are not checked).
+    const checkedRows = txs.filter((t: any) => Number(t.gatewayOrderAmount || 0) > 0);
+    if (checkedRows.length) {
+      const rowsTotal = checkedRows.reduce(
         (sum: number, t: any) => sum + Number(t.payerTotal || 0),
         0,
       );
-      const orderAmount = Number(feeRows[0].gatewayOrderAmount || 0);
-      if (orderAmount > 0 && rowsTotal !== orderAmount) {
+      const orderAmount = Number(checkedRows[0].gatewayOrderAmount || 0);
+      if (rowsTotal !== orderAmount) {
         this.logger.error(
-          `Platform fee order ${orderId}: rows total ${rowsTotal} ≠ order amount ${orderAmount}`,
+          `Razorpay order ${orderId}: rows total ${rowsTotal} ≠ order amount ${orderAmount}`,
         );
         throw new BadRequestException(
           "Payment amount mismatch — TrendStarZ will review this payment.",

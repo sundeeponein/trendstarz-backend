@@ -355,6 +355,108 @@ describe("PaymentsPayoutsService", () => {
     });
   });
 
+  describe("paid collab — GST on commission only", () => {
+    const paidCampaign = () =>
+      campaignModel.findById.mockReturnValue({
+        lean: jest.fn().mockResolvedValue({
+          _id: "camp1",
+          brandId: "brand1",
+          campaignType: "paid_collab",
+          pricePerInfluencer: 100000, // ₹1,000
+        }),
+      });
+    const oneCreator = () =>
+      inviteModel.find.mockReturnValue({
+        lean: jest.fn().mockResolvedValue([{ _id: "i1", influencerId: "inf1" }]),
+      });
+    const settings = (s: any) =>
+      appSettingsModel.findOne.mockReturnValue({ lean: jest.fn().mockResolvedValue(s) });
+
+    it("₹1,000 with no commission and no GST → ₹1,000", async () => {
+      paidCampaign();
+      oneCreator();
+      settings({ platformFeeEnabled: false, gstPercent: 0 });
+      const calc: any = await service.calculatePayment("camp1", "brand1");
+      expect(calc.amountDueRazorpay).toBe(100000);
+      expect(calc.gstAmount).toBe(0);
+    });
+
+    it("₹1,000 + 5% commission + 18% GST on the commission → ₹1,059 (not ₹1,230)", async () => {
+      paidCampaign();
+      oneCreator();
+      settings({ platformFeeEnabled: true, platformFeePercent: 5, brandFeePercent: 5, gstPercent: 18 });
+      const calc: any = await service.calculatePayment("camp1", "brand1");
+      expect(calc.platformFee).toBe(5000); // ₹50
+      expect(calc.gstAmount).toBe(900); // 18% of ₹50 = ₹9
+      expect(calc.amountDueRazorpay).toBe(105900); // ₹1,059
+      expect(calc.amountDueUpi).toBe(105900);
+    });
+
+    it("Razorpay order and stored rows match the ₹1,059 total", async () => {
+      paidCampaign();
+      oneCreator();
+      settings({ platformFeeEnabled: true, platformFeePercent: 5, brandFeePercent: 5, gstPercent: 18 });
+      transactionModel.create.mockImplementation(async (d: any) => ({ ...d, _id: "t1" }));
+      razorpayService.createOrder.mockResolvedValue({ orderId: "order_pc", amount: 105900 });
+      const res: any = await service.createRazorpayOrderForCampaign("camp1", "brand1", true);
+      expect(razorpayService.createOrder).toHaveBeenCalledWith(105900, expect.anything());
+      const [row] = res.transactions;
+      expect(row.agreedAmount).toBe(100000);
+      expect(row.platformFee).toBe(5000);
+      expect(row.gstAmount).toBe(900);
+      expect(row.payerTotal).toBe(105900);
+      expect(row.recipientPayout).toBe(100000); // GST never reduces the creator's payout
+      expect(row.gatewayOrderAmount).toBe(105900);
+    });
+
+    it("Premium brand pays its Premium commission (5% → 3%)", async () => {
+      paidCampaign();
+      oneCreator();
+      settings({ platformFeeEnabled: true, brandFeePercent: 5, brandFeePercentPremium: 3, gstPercent: 18 });
+      brandModel.findById.mockReturnValue({
+        lean: jest.fn().mockResolvedValue({ isPremium: true }),
+        select: jest.fn().mockReturnValue({ lean: jest.fn().mockResolvedValue({ isPremium: true }) }),
+      });
+      const calc: any = await service.calculatePayment("camp1", "brand1");
+      expect(calc.platformFee).toBe(3000); // ₹30
+      expect(calc.amountDueRazorpay).toBe(100000 + 3000 + 540);
+    });
+
+    it("the creator's payout fee locked at acceptance is used, not today's plan rate", async () => {
+      paidCampaign();
+      inviteModel.find.mockReturnValue({
+        lean: jest.fn().mockResolvedValue([
+          { _id: "i1", influencerId: "inf1", recipientFeePercent: 1 },
+        ]),
+      });
+      settings({ platformFeeEnabled: true, brandFeePercent: 5, influencerRecipientFeePercent: 2, gstPercent: 0 });
+      transactionModel.create.mockImplementation(async (d: any) => ({ ...d, _id: "t1" }));
+      razorpayService.createOrder.mockResolvedValue({ orderId: "o", amount: 1 });
+      const res: any = await service.createRazorpayOrderForCampaign("camp1", "brand1", true);
+      const [row] = res.transactions;
+      expect(row.recipientFee).toBe(1000); // 1% of ₹1,000
+      expect(row.recipientPayout).toBe(99000); // creator gets ₹990
+    });
+
+    it("commission and GST are rounded per creator, so the total equals the rows", async () => {
+      paidCampaign();
+      inviteModel.find.mockReturnValue({
+        lean: jest.fn().mockResolvedValue([
+          { _id: "i1", influencerId: "inf1", agreedAmountPaise: 33333 },
+          { _id: "i2", influencerId: "inf2", agreedAmountPaise: 33333 },
+        ]),
+      });
+      settings({ platformFeeEnabled: true, platformFeePercent: 5, brandFeePercent: 5, gstPercent: 18 });
+      transactionModel.create.mockImplementation(async (d: any) => ({ ...d, _id: d.feeInviteId || "t" }));
+      razorpayService.createOrder.mockImplementation(async (amount: number) => ({ orderId: "o", amount }));
+      const calc: any = await service.calculatePayment("camp1", "brand1");
+      const res: any = await service.createRazorpayOrderForCampaign("camp1", "brand1", true);
+      const rowsTotal = res.transactions.reduce((s: number, r: any) => s + r.payerTotal, 0);
+      expect(rowsTotal).toBe(calc.amountDueRazorpay);
+      expect(razorpayService.createOrder).toHaveBeenLastCalledWith(rowsTotal, expect.anything());
+    });
+  });
+
   describe("platform fee — GST, Razorpay amount, retries, separation", () => {
     const FEE = 14900; // ₹149
     const barterCampaign = () =>

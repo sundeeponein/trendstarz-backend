@@ -1150,6 +1150,12 @@ export const AppSettingsSchema = new Schema({
   influencerRecipientFeePercent: { type: Number, default: 0 },
   photographerRecipientFeePercent: { type: Number, default: 0 },
   brandRecipientFeePercent: { type: Number, default: 0 },
+  // Premium rates (null = same as the Free rate above) — see payments-payouts/fee-rates.util.
+  brandFeePercentPremium: { type: Number, default: null },
+  influencerFeePercentPremium: { type: Number, default: null },
+  photographerFeePercentPremium: { type: Number, default: null },
+  influencerRecipientFeePercentPremium: { type: Number, default: null },
+  photographerRecipientFeePercentPremium: { type: Number, default: null },
   platformCommissionPercent: { type: Number, default: 12 },
   inviteUnlockFee: { type: Number, default: 499 },
   // Fixed platform fee (₹, + GST) per confirmed creator on unpaid campaigns; 0 = off.

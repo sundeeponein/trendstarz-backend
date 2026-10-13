@@ -20,6 +20,10 @@ import {
   platformFeeFor,
 } from "./barter-limits.util";
 import {
+  isActivePremium,
+  recipientFeePercentFromSettings,
+} from "../payments-payouts/fee-rates.util";
+import {
   countUsedMonthlySlots,
   fullyBookedCreatorIds,
 } from "./creator-monthly-slots.util";
@@ -2817,10 +2821,20 @@ export class CampaignInvitesService {
         // Fixed here, so a later change of the setting never re-prices an accepted creator.
         const feeSettings: any = await this.appSettingsModel
           .findOne({})
-          .select("barterPlatformFee locationPlatformFee")
+          .select(
+            "barterPlatformFee locationPlatformFee platformFeeEnabled influencerRecipientFeePercent photographerRecipientFeePercent influencerRecipientFeePercentPremium photographerRecipientFeePercentPremium",
+          )
           .lean();
         const fee = platformFeeFor(campaign, feeSettings);
         invite.platformFeeDue = fee > 0 ? fee : null;
+        // Paid collab: the payout fee for this creator's plan (Free/Premium), locked now.
+        if (String(campaign.campaignType || "") === "paid_collab") {
+          invite.recipientFeePercent = recipientFeePercentFromSettings(
+            feeSettings,
+            recipientRole,
+            isActivePremium(recipient),
+          );
+        }
       }
       const recipientAny = recipient as any;
       invite.acceptedContact = {

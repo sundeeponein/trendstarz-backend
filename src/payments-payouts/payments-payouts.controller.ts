@@ -293,6 +293,16 @@ export class PaymentsPayoutsController {
 
   // ── Campaign-level status (brand polls after submitting payment) ──────────
 
+  /** Creator: the payout fee (%) on this invite, for showing the net amount before accepting. */
+  @UseGuards(JwtAuthGuard)
+  @Get("payout-fee/:inviteId")
+  async payoutFee(@Param("inviteId") inviteId: string, @Req() req: any) {
+    return this.paymentsPayoutsService.payoutFeePreview(
+      inviteId,
+      String(req.user?.userId || ""),
+    );
+  }
+
   @UseGuards(JwtAuthGuard)
   @Get("campaign/:campaignId/status")
   async campaignStatus(

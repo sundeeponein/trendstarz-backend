@@ -125,6 +125,8 @@ export const CampaignInviteSchema = new Schema({
   platformFeeDue: { type: Number, default: null },
   // When TrendStarZ verified that fee — the collaboration is confirmed from then on.
   platformFeePaidAt: { type: Date, default: null },
+  // Paid collab: payout fee (%) for the creator's plan, locked when they accepted.
+  recipientFeePercent: { type: Number, default: null },
   // Admin correction: this creator may submit until at least this time (see submissionWindow).
   submissionDeadlineExtendedTo: { type: Date },
   // Admin corrections log (append-only, admin-only — hidden from every query unless

@@ -513,7 +513,17 @@ export class AdminListsController {
       }
       next[key] = Math.round(rupees);
     }
-    const roleSpecificFeeKeys = ["brandFeePercent", "influencerFeePercent", "photographerFeePercent"];
+    const roleSpecificFeeKeys = [
+      "brandFeePercent",
+      "influencerFeePercent",
+      "photographerFeePercent",
+      // Premium rates: null = same as the Free rate.
+      "brandFeePercentPremium",
+      "influencerFeePercentPremium",
+      "photographerFeePercentPremium",
+      "influencerRecipientFeePercentPremium",
+      "photographerRecipientFeePercentPremium",
+    ];
     for (const key of [
       "platformFeePercent",
       "brandFeePercent",
@@ -522,6 +532,11 @@ export class AdminListsController {
       "influencerRecipientFeePercent",
       "photographerRecipientFeePercent",
       "brandRecipientFeePercent",
+      "brandFeePercentPremium",
+      "influencerFeePercentPremium",
+      "photographerFeePercentPremium",
+      "influencerRecipientFeePercentPremium",
+      "photographerRecipientFeePercentPremium",
       "gstPercent",
       "earlyAccessCommissionPercent",
       "partnerCommissionPercent",
