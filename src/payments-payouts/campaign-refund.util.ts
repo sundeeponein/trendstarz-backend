@@ -79,10 +79,15 @@ export function refundDueAmount(tx: any): number {
   return Number.isFinite(n) && n > 0 ? Math.round(n) : 0;
 }
 
-/** Platform fee returned as TrendStarZ credit on a no-post refund (terms v2 only). */
+/**
+ * Platform fee returned as TrendStarZ credit on a no-post refund (terms v2 only):
+ * the commission plus the GST the host paid on it (gstAmount; 0 on rows from
+ * before GST was recorded), so the host gets back everything beyond the creator's
+ * amount, which is refunded by UPI.
+ */
 export function feeCreditAmount(tx: any): number {
   if (tx?.refundPolicy !== "fee_credit") return 0;
-  const fee = Number(tx?.platformFee || 0);
+  const fee = Number(tx?.platformFee || 0) + Number(tx?.gstAmount || 0);
   return Number.isFinite(fee) && fee > 0 ? Math.round(fee) : 0;
 }
 

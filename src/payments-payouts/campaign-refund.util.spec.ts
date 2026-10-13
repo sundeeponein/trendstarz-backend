@@ -251,3 +251,29 @@ describe("campaign refunds", () => {
     });
   });
 });
+
+describe("terms v2 no-post refund — commission and its GST", () => {
+  const { feeCreditAmount: credit, refundDueAmount: cash } = require("./campaign-refund.util");
+
+  it("₹1,000 + 5% + 18% GST: ₹1,000 back by UPI, ₹59 (commission + GST) as credit", () => {
+    const tx = {
+      refundPolicy: "fee_credit",
+      agreedAmount: 100000,
+      platformFee: 5000,
+      gstAmount: 900,
+      payerTotal: 105900,
+    };
+    expect(cash(tx)).toBe(100000);
+    expect(credit(tx)).toBe(5900);
+    expect(cash(tx) + credit(tx)).toBe(tx.payerTotal); // the host gets back everything paid
+  });
+
+  it("older payments without stored GST credit just the commission (unchanged)", () => {
+    expect(credit({ refundPolicy: "fee_credit", platformFee: 5000 })).toBe(5000);
+  });
+
+  it("terms v1 refunds everything by UPI, GST included", () => {
+    expect(cash({ refundPolicy: "full_refund", payerTotal: 105900 })).toBe(105900);
+    expect(credit({ refundPolicy: "full_refund", platformFee: 5000, gstAmount: 900 })).toBe(0);
+  });
+});
