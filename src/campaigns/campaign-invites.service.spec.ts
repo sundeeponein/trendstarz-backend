@@ -2363,6 +2363,24 @@ describe("CampaignInvitesService – platform events", () => {
         expect(JSON.stringify(event)).not.toContain("98xxxxxx");
       });
 
+      it("refuses to withdraw a barter invite once the product was shipped", async () => {
+        inviteModel.findById.mockResolvedValue(
+          openInvite({ status: "accepted", productFulfillment: { status: "shipped", trackingId: "AWB1" } }),
+        );
+        await expect(service.withdrawInvite("inv1", "brand1")).rejects.toThrow(
+          "The product has already been sent to this creator.",
+        );
+      });
+
+      it("refuses to withdraw a location invite once the creator checked in", async () => {
+        inviteModel.findById.mockResolvedValue(
+          openInvite({ status: "accepted", locationVisit: { status: "checked_in" } }),
+        );
+        await expect(service.withdrawInvite("inv1", "brand1")).rejects.toThrow(
+          "This creator has already visited the location.",
+        );
+      });
+
       it("records nothing when the withdrawal is refused", async () => {
         inviteModel.findById.mockResolvedValue(
           openInvite({ status: "working" }),

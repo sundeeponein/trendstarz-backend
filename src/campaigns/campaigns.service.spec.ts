@@ -536,6 +536,25 @@ describe("CampaignsService", () => {
       expect(deletedSlots().create).not.toHaveBeenCalled();
     });
 
+    it("a barter campaign is refused once the month's barter share is used, even with total slots left", async () => {
+      plansService.getUserPlanCapabilities.mockResolvedValue({
+        limits: [
+          { key: "maxActiveCampaigns", value: 3 },
+          { key: "maxBarterCampaignsPerMonth", value: 2 },
+        ],
+      });
+      // total used 2 of 3; barter used 2 of 2
+      campaignModel.countDocuments.mockResolvedValue(2);
+      await expect(
+        service.create(mockBrand._id, {
+          title: "Third barter",
+          campaignType: "invite_location",
+          minInfluencers: 1,
+          maxInfluencers: 1,
+        }),
+      ).rejects.toThrow("barter or location campaigns");
+    });
+
     it("resubmitting a rejected campaign needs a free slot", async () => {
       campaignModel.countDocuments.mockResolvedValue(5);
       const campaign = { ...mockCampaign, status: "rejected", save: jest.fn() };

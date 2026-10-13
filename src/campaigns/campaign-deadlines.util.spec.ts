@@ -64,6 +64,29 @@ describe("campaign deadlines", () => {
       expect(iso(w.closesAt)).toBe("2026-10-08T00:00:00.000Z");
     });
 
+    it("barter: a product delivered after the chosen date starts the window on delivery", () => {
+      const w = submissionWindow(
+        {
+          selectedPostDate: POST,
+          productFulfillment: { deliveredAt: "2026-10-10T00:00:00.000Z" },
+        },
+        "grace_24h",
+      )!;
+      expect(iso(w.strictDeadline)).toBe("2026-10-11T00:00:00.000Z");
+      expect(iso(w.closesAt)).toBe("2026-10-12T00:00:00.000Z");
+    });
+
+    it("barter: a product delivered before the chosen date changes nothing", () => {
+      const w = submissionWindow(
+        {
+          selectedPostDate: POST,
+          productFulfillment: { deliveredAt: "2026-10-01T00:00:00.000Z" },
+        },
+        "strict",
+      )!;
+      expect(iso(w.closesAt)).toBe("2026-10-08T00:00:00.000Z");
+    });
+
     it("paid on the last day with an earlier post date: admin grace from payment, not late", () => {
       const paid = "2026-10-06T15:00:00.000Z";
       for (const mode of ["grace_24h", "strict"]) {

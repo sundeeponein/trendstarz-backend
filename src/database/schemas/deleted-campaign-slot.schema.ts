@@ -11,6 +11,8 @@ export const DeletedCampaignSlotSchema = new Schema(
     campaignId: { type: String, required: true },
     /** When the campaign took the slot (its slotUsedAt, else createdAt). */
     slotUsedAt: { type: Date, required: true, index: true },
+    /** Barter/location campaign — also counts toward that share of the slots. */
+    barter: { type: Boolean, default: false },
     deletedAt: { type: Date, default: Date.now },
   },
   { timestamps: false },

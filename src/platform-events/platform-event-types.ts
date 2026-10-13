@@ -44,6 +44,8 @@ export const INVITE_WITHDRAWN_REASONS = [
   "expired_never_accepted", // still unanswered when the campaign ended
   "dispute_refund", // dispute resolved in the owner's favour (admin, creator or auto-cancel)
   "admin_cancel", // admin cancelled the campaign's participation
+  "location_no_show", // host marked the location visit as a no-show (after the visit date)
+  "product_not_delivered", // campaign ended before the host delivered the product (no penalty)
 ] as const;
 
 export type InviteWithdrawnReason = (typeof INVITE_WITHDRAWN_REASONS)[number];

@@ -37,6 +37,12 @@ import {
 } from "../campaign-type-configs";
 import { getRequiredFields } from "./campaign-required-fields";
 import { planCycleStart } from "./creator-monthly-slots.util";
+import {
+  BARTER_CAMPAIGN_MATCH,
+  barterLimitsFrom,
+  capBarterAcceptance,
+  isBarterOrLocationCampaign,
+} from "./barter-limits.util";
 import { sendAppEmail } from "../utils/app-email.service";
 import {
   openCampaignLiveTemplate,
@@ -1108,7 +1114,12 @@ export class CampaignsService {
     this.assertCampaignModeAvailability(data, caps.hasPremium, settings);
     // Drafts don't take a monthly slot; submitting/publishing does.
     if (requestedStatus !== "draft") {
-      await this.assertCampaignSlotAvailable(ownerId, caps);
+      await this.assertCampaignSlotAvailable(
+        ownerId,
+        caps,
+        undefined,
+        isBarterOrLocationCampaign(data),
+      );
     }
     const selectedType = String(data?.campaignType || "");
     this.assertCampaignTypeAllowed(
@@ -1156,6 +1167,12 @@ export class CampaignsService {
     // (additive discriminator — see deriveLogisticsType).
     normalized.logisticsType = this.deriveLogisticsType(normalized);
     this.assertRequiredFieldsForCampaign(normalized);
+    // Barter/location: at most N accepted creators (plan limit, default 1).
+    capBarterAcceptance(
+      normalized,
+      normalized,
+      barterLimitsFrom(caps?.limits).acceptedPerCampaign,
+    );
     const campaignNumber = await this.nextCampaignNumber();
     const campaign = new this.campaignModel({
       ...normalized,
@@ -1510,7 +1527,13 @@ export class CampaignsService {
     ownerId: string,
     caps?: any,
     excludeCampaignId?: string,
-  ): Promise<{ used: number; limit: number; resetsAt: Date }> {
+  ): Promise<{
+    used: number;
+    limit: number;
+    resetsAt: Date;
+    barterUsed: number;
+    barterLimit: number;
+  }> {
     const planCaps =
       caps ?? (await this.plansService.getUserPlanCapabilities(ownerId));
     const limitRaw = Number(
@@ -1540,35 +1563,49 @@ export class CampaignsService {
     if (excludeCampaignId && Types.ObjectId.isValid(excludeCampaignId)) {
       filter._id = { $ne: new Types.ObjectId(excludeCampaignId) };
     }
-    const [live, deleted] = await Promise.all([
+    const deletedFilter = {
+      ownerId: String(ownerId),
+      slotUsedAt: { $gte: cycleStart },
+    };
+    const [live, deleted, barterLive, barterDeleted] = await Promise.all([
       this.campaignModel.countDocuments(filter),
-      this.deletedCampaignSlotModel.countDocuments({
-        ownerId: String(ownerId),
-        slotUsedAt: { $gte: cycleStart },
-      }),
+      this.deletedCampaignSlotModel.countDocuments(deletedFilter),
+      this.campaignModel.countDocuments({ ...filter, $and: [BARTER_CAMPAIGN_MATCH] }),
+      this.deletedCampaignSlotModel.countDocuments({ ...deletedFilter, barter: true }),
     ]);
-    return { used: live + deleted, limit, resetsAt };
+    return {
+      used: live + deleted,
+      limit,
+      resetsAt,
+      // Barter/location: a share of the same monthly slots (see barter-limits.util).
+      barterUsed: barterLive + barterDeleted,
+      barterLimit: barterLimitsFrom(planCaps?.limits).perMonth,
+    };
   }
 
   private async assertCampaignSlotAvailable(
     ownerId: string,
     caps?: any,
     excludeCampaignId?: string,
+    isBarter = false,
   ): Promise<void> {
-    const { used, limit, resetsAt } = await this.campaignSlotUsage(
-      ownerId,
-      caps,
-      excludeCampaignId,
-    );
-    if (limit === -1 || used < limit) return;
+    const { used, limit, resetsAt, barterUsed, barterLimit } =
+      await this.campaignSlotUsage(ownerId, caps, excludeCampaignId);
     const resets = resetsAt.toLocaleDateString("en-IN", {
       day: "numeric",
       month: "short",
       timeZone: "Asia/Kolkata",
     });
-    throw new BadRequestException(
-      `Plan limit: you've used all ${limit} campaign slot${limit === 1 ? "" : "s"} for this month. Slots reset on ${resets}. Save it as a draft or upgrade for more.`,
-    );
+    if (limit !== -1 && used >= limit) {
+      throw new BadRequestException(
+        `Plan limit: you've used all ${limit} campaign slot${limit === 1 ? "" : "s"} for this month. Slots reset on ${resets}. Save it as a draft or upgrade for more.`,
+      );
+    }
+    if (isBarter && barterLimit !== -1 && barterUsed >= barterLimit) {
+      throw new BadRequestException(
+        `Plan limit: only ${barterLimit} of your monthly campaign slots can be barter or location campaigns, and they're used. Slots reset on ${resets}. You can still create a paid collaboration, or save this as a draft.`,
+      );
+    }
   }
 
   async findById(id: string) {
@@ -1807,6 +1844,10 @@ export class CampaignsService {
         String(campaign.brandId),
         undefined,
         String(campaign._id),
+        isBarterOrLocationCampaign({
+          ...(campaign.toObject ? campaign.toObject() : campaign),
+          ...data,
+        }),
       );
     }
     // ────────────────────────────────────────────────────────────────────────
@@ -1897,6 +1938,11 @@ export class CampaignsService {
     // discriminator consistent across partial updates.
     normalized.logisticsType = this.deriveLogisticsType(mergedForValidation);
     this.assertRequiredFieldsForCampaign(mergedForValidation);
+    capBarterAcceptance(
+      normalized,
+      mergedForValidation,
+      barterLimitsFrom(caps?.limits).acceptedPerCampaign,
+    );
     const previousStatus = campaign.status;
     Object.assign(campaign, normalized);
     const saved = await campaign.save();
@@ -2422,6 +2468,7 @@ export class CampaignsService {
         ownerId: String(campaign.brandId),
         campaignId: String(campaign._id),
         slotUsedAt: campaign.slotUsedAt || campaign.createdAt || new Date(),
+        barter: isBarterOrLocationCampaign(campaign),
       });
     }
     const publicId = campaign.image?.public_id;

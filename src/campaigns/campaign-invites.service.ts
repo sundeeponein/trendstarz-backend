@@ -14,6 +14,10 @@ import { InjectModel } from "@nestjs/mongoose";
 import { Model, Types } from "mongoose";
 import { receivedInvitesPerMonthFrom } from "../plans/invite-limits.util";
 import {
+  barterLimitsFrom,
+  isBarterOrLocationCampaign,
+} from "./barter-limits.util";
+import {
   countUsedMonthlySlots,
   fullyBookedCreatorIds,
 } from "./creator-monthly-slots.util";
@@ -1165,8 +1169,11 @@ export class CampaignInvitesService {
     const configuredMaxInvitesPerCampaign = capLimits.find(
       (l: any) => l.key === "maxInvitesPerCampaign",
     )?.value;
-    const maxInvitesPerCampaign =
-      configuredMaxInvitesPerCampaign !== undefined
+    const isBarter = isBarterOrLocationCampaign(campaign);
+    // Barter/location campaigns have their own invite limit (plan limit, default 3).
+    const maxInvitesPerCampaign = isBarter
+      ? barterLimitsFrom(capLimits).invitesPerCampaign
+      : configuredMaxInvitesPerCampaign !== undefined
         ? Number(configuredMaxInvitesPerCampaign)
         : caps?.hasPremium
           ? 10
@@ -1215,7 +1222,9 @@ export class CampaignInvitesService {
     }
     if (maxInvitesPerCampaign !== -1 && inviteCount >= maxInvitesPerCampaign) {
       throw new BadRequestException(
-        `Plan limit: Only ${maxInvitesPerCampaign} invites per campaign allowed (a paid invite stays counted even if it closed or was refunded). Upgrade for more.`,
+        isBarter
+          ? `Plan limit: barter and location campaigns can invite up to ${maxInvitesPerCampaign} creators.`
+          : `Plan limit: Only ${maxInvitesPerCampaign} invites per campaign allowed (a paid invite stays counted even if it closed or was refunded). Upgrade for more.`,
       );
     }
     // Per-month cap only applies when explicitly set in the plan
@@ -1507,7 +1516,7 @@ export class CampaignInvitesService {
           selectedPostDate: { $ne: null },
         })
         .select(
-          "selectedPostDate paymentConfirmedAt submissionDeadlineExtendedTo",
+          "selectedPostDate paymentConfirmedAt submissionDeadlineExtendedTo productFulfillment.deliveredAt",
         )
         .lean(),
       this.getPaidSubmitGraceHours(),
@@ -2129,6 +2138,45 @@ export class CampaignInvitesService {
         "Check-in is only valid for `invite_location` campaigns.",
       );
     }
+    // No-show: only once the visit date has passed; closes the invite as the creator's no-show.
+    if (body.status === "no_show") {
+      if (!["accepted", "payment_confirmed", "working"].includes(invite.status)) {
+        throw new BadRequestException(
+          "Only an accepted visit that hasn't been submitted can be marked a no-show.",
+        );
+      }
+      const visitAt = invite.locationVisit?.scheduledAt || invite.selectedPostDate;
+      if (!visitAt || new Date(visitAt).getTime() > Date.now()) {
+        throw new BadRequestException(
+          "You can mark a no-show only after the visit date has passed.",
+        );
+      }
+      invite.locationVisit = {
+        ...(invite.locationVisit?.toObject?.() ?? invite.locationVisit ?? {}),
+        status: "no_show",
+        ...(body.note !== undefined ? { note: body.note } : {}),
+      };
+      await invite.save();
+      await this.expireUnsubmittedInvite(
+        String(invite._id),
+        "The host marked the location visit as a no-show.",
+        {
+          withdrawnReason: "location_no_show",
+          actor: { userId: brandId, userRole: "brand" },
+        },
+      );
+      return { success: true, locationVisit: invite.locationVisit, closed: true };
+    }
+    // Cancelled by the host: the creator is released with no penalty.
+    if (body.status === "cancelled") {
+      await this.withdrawInvite(
+        String(invite._id),
+        brandId,
+        body.note || "The host cancelled the location visit.",
+      );
+      return { success: true, locationVisit: { status: "cancelled" }, closed: true };
+    }
+
     const lv = invite.locationVisit || {};
     if (body.scheduledAt !== undefined)
       lv.scheduledAt = new Date(body.scheduledAt);
@@ -2368,8 +2416,40 @@ export class CampaignInvitesService {
    * Once the influencer is working (payment_confirmed / working / submitted / completed)
    * the invite is locked and cannot be withdrawn.
    */
+  /** Barter that ships a product, not yet marked delivered — the creator can't post yet. */
+  private awaitingProductDelivery(campaign: any, invite: any): boolean {
+    return (
+      String(campaign?.campaignType || "") === "product" &&
+      campaign?.productShippingRequired === true &&
+      !invite?.productFulfillment?.deliveredAt
+    );
+  }
+
+  /** The creator already acted on a barter/location invite (product sent, or they visited). */
+  private creatorAlreadyActed(invite: any): string | null {
+    const pf = invite?.productFulfillment || {};
+    if (
+      pf.shippedAt ||
+      pf.deliveredAt ||
+      String(pf.trackingId || "").trim() ||
+      ["shipped", "delivered"].includes(String(pf.status || ""))
+    ) {
+      return "The product has already been sent to this creator.";
+    }
+    if (String(invite?.locationVisit?.status || "") === "checked_in") {
+      return "This creator has already visited the location.";
+    }
+    return null;
+  }
+
   async withdrawInvite(inviteId: string, brandId: string, reason?: string) {
     const invite = await this.assertBrandOwnsInvite(inviteId, brandId);
+    const acted = this.creatorAlreadyActed(invite);
+    if (acted) {
+      throw new BadRequestException(
+        `${acted} It can no longer be withdrawn — use Report so TrendStarZ can review it.`,
+      );
+    }
     const lockedStatuses = new Set([
       "payment_confirmed",
       "working",
@@ -5105,9 +5185,24 @@ export class CampaignInvitesService {
         campaignId: idIn(campaignId),
         status: { $in: ["accepted", "payment_confirmed", "working"] },
       })
-      .select("_id")
+      .select("_id productFulfillment.deliveredAt")
       .lean();
+    const campaign: any = candidates.length
+      ? await this.campaignModel
+          .findById(campaignId)
+          .select("campaignType productShippingRequired")
+          .lean()
+      : null;
     for (const candidate of candidates) {
+      // The host never delivered the product: close it without counting against the creator.
+      if (this.awaitingProductDelivery(campaign, candidate)) {
+        await this.expireUnsubmittedInvite(
+          String(candidate._id),
+          "Campaign ended before the product was delivered.",
+          { withdrawnReason: "product_not_delivered" },
+        );
+        continue;
+      }
       await this.expireUnsubmittedInvite(String(candidate._id), reason);
     }
 
@@ -5162,9 +5257,11 @@ export class CampaignInvitesService {
         continue;
       const campaign: any = await this.campaignModel
         .findById(invite.campaignId)
-        .select("postingDeadlineMode")
+        .select("postingDeadlineMode campaignType productShippingRequired")
         .lean();
       if (!campaign) continue;
+      // Barter: no posting deadline until the host has delivered the product.
+      if (this.awaitingProductDelivery(campaign, invite)) continue;
       const deadline = this.computeGraceDeadline(invite, campaign, graceHours);
       if (Date.now() <= deadline.closesAt.getTime()) continue;
 
@@ -5341,7 +5438,7 @@ export class CampaignInvitesService {
           status: { $in: CampaignInvitesService.PAID_WORKING_STATUSES },
         })
         .select(
-          "selectedPostDate paymentConfirmedAt submissionDeadlineExtendedTo",
+          "selectedPostDate paymentConfirmedAt submissionDeadlineExtendedTo productFulfillment.deliveredAt",
         )
         .lean(),
       this.getPaidSubmitGraceHours(),

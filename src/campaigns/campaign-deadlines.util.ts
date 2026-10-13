@@ -5,7 +5,8 @@
  *
  * - A campaign's end date is a calendar date: it ends at the END of that day in
  *   India time (end dates are stored as midnight UTC of the date, i.e. 05:30 IST).
- * - A creator's submission window runs from their chosen post date (+24h, plus
+ * - A creator's submission window runs from their chosen post date — or the
+ *   product's delivery date when that is later (barter) — (+24h, plus
  *   24h grace unless the campaign is "strict"). It is never shorter than the
  *   admin grace period (settings.campaignAutoCloseGraceHours) after their payment
  *   was confirmed — 0/empty means no such minimum — and an admin can extend it
@@ -78,13 +79,21 @@ export function submissionWindow(
     selectedPostDate?: unknown;
     paymentConfirmedAt?: unknown;
     submissionDeadlineExtendedTo?: unknown;
+    /** Barter: the creator can't post before the product arrives. */
+    productFulfillment?: { deliveredAt?: unknown } | null;
   },
   postingDeadlineMode?: string,
   /** Admin grace hours: the minimum time to submit after payment (0 = none). */
   paidGraceHours = 0,
 ): SubmissionWindow | null {
-  const postDate = toTime(invite?.selectedPostDate);
-  if (postDate === null) return null;
+  const chosenPostDate = toTime(invite?.selectedPostDate);
+  if (chosenPostDate === null) return null;
+  // A product delivered after the chosen date moves the window to the delivery day.
+  const deliveredAt = toTime(invite?.productFulfillment?.deliveredAt);
+  const postDate =
+    deliveredAt !== null && deliveredAt > chosenPostDate
+      ? deliveredAt
+      : chosenPostDate;
 
   const postStrict = postDate + 24 * HOUR_MS;
   const postCloses =

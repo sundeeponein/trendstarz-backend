@@ -5,8 +5,9 @@
  * An invite holds one of the creator's slots for their plan month when it is:
  *  - accepted or further along (accepted … completed), or
  *  - still pending and not past its due date, or
- *  - a no-show: accepted, then closed because nothing was submitted — unless an
- *    admin excused it (missExcused). Host/admin cancellations and refunds free it.
+ *  - a no-show: accepted, then closed because nothing was submitted (or the host
+ *    marked the location visit a no-show) — unless an admin excused it
+ *    (missExcused). Host/admin cancellations, refunds and undelivered products free it.
  * Declined and other withdrawn invites free the slot.
  *
  * Counted by creator id only: CampaignInvite has no stored recipientRole, and
@@ -26,6 +27,8 @@ const SLOT_HOLDING_STATUSES = [
 
 /** Set on closures by expireUnsubmittedInvite (see INVITE_WITHDRAWN_REASONS). */
 export const NO_SHOW_REASON_CODE = "expired_unsubmitted";
+/** Closure codes that are the creator's no-show (they keep the slot). */
+const NO_SHOW_REASON_CODES = [NO_SHOW_REASON_CODE, "location_no_show"];
 
 /** Closure texts written before withdrawnReasonCode existed — the no-show ones only. */
 const LEGACY_NO_SHOW_REASONS = [
@@ -57,7 +60,7 @@ export function slotHoldingInviteMatch(now: Date = new Date()) {
           { "missExcused.at": null },
           {
             $or: [
-              { withdrawnReasonCode: NO_SHOW_REASON_CODE },
+              { withdrawnReasonCode: { $in: NO_SHOW_REASON_CODES } },
               {
                 withdrawnReasonCode: null,
                 withdrawnReason: { $in: LEGACY_NO_SHOW_REASONS },

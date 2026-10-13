@@ -45,6 +45,11 @@ describe("creator monthly slots", () => {
     expect(holds({ status: "withdrawn", withdrawnReasonCode: "expired_unsubmitted" })).toBe(true);
   });
 
+  it("a host-marked location no-show keeps the slot; an undelivered product frees it", () => {
+    expect(holds({ status: "withdrawn", withdrawnReasonCode: "location_no_show" })).toBe(true);
+    expect(holds({ status: "withdrawn", withdrawnReasonCode: "product_not_delivered" })).toBe(false);
+  });
+
   it("a no-show closed before the reason code existed is recognised by its text", () => {
     expect(
       holds({
