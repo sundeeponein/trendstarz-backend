@@ -1156,6 +1156,7 @@ export class CampaignInvitesService {
     await this.profileVerificationService.assertCampaignEligible(
       recipientId,
       recipientRole,
+      "recipient",
     );
     // Enforce invite limits for brands (admin-manageable)
     const caps = await this.plansService.getUserPlanCapabilities(brandId);

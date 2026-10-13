@@ -1160,13 +1160,27 @@ export class ProfileVerificationService {
     return "eligible";
   }
 
-  async assertCampaignEligible(userId: string, role: any) {
+  /**
+   * Throws when the profile can't take part in campaigns. The message names the
+   * failing checks — "verification required" alone reads as an admin-approval
+   * problem even when approval is fine and e.g. the mobile isn't verified.
+   * `audience`: "self" = the creator acting; "recipient" = a host inviting them.
+   */
+  async assertCampaignEligible(
+    userId: string,
+    role: any,
+    audience: "self" | "recipient" = "self",
+  ) {
     const dashboard = await this.getDashboard(userId, role);
     if (!dashboard.campaignEligibility.eligible) {
+      const blockers: string[] = dashboard.campaignEligibility.blockers;
+      const reasons = blockers.join("; ");
       throw new BadRequestException({
         message:
-          "Profile verification is required before campaign participation.",
-        blockers: dashboard.campaignEligibility.blockers,
+          audience === "recipient"
+            ? `This creator can't receive campaign invites yet — ${reasons}.`
+            : `Your profile can't join campaigns yet — ${reasons}. Please update your profile or contact TrendStarZ support.`,
+        blockers,
       });
     }
   }
