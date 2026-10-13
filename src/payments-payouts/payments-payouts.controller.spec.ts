@@ -44,10 +44,18 @@ describe("PaymentsPayoutsController", () => {
     service.calculatePayment.mockResolvedValue({ success: true } as any);
 
     const req = { user: { userId: "brand1" } };
-    const result = await controller.calculate("camp1", req);
+    const result = await controller.calculate("camp1", req, {});
 
-    expect(service.calculatePayment).toHaveBeenCalledWith("camp1", "brand1");
+    expect(service.calculatePayment).toHaveBeenCalledWith("camp1", "brand1", undefined);
     expect(result).toEqual({ success: true });
+  });
+
+  it("calculate passes the chosen creators (one-by-one payment)", async () => {
+    service.calculatePayment.mockResolvedValue({ success: true } as any);
+    await controller.calculate("camp1", { user: { userId: "brand1" } }, {
+      inviteIds: ["inv1", "inv1", ""],
+    });
+    expect(service.calculatePayment).toHaveBeenCalledWith("camp1", "brand1", ["inv1"]);
   });
 
   it("submitProof delegates body and req.user.userId", async () => {
@@ -77,6 +85,7 @@ describe("PaymentsPayoutsController", () => {
       "camp1",
       "brand1",
       true,
+      undefined,
     );
     expect(result).toEqual({ success: true });
   });

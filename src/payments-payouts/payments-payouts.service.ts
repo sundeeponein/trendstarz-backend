@@ -750,7 +750,17 @@ export class PaymentsPayoutsService {
     };
   }
 
-  async calculatePayment(campaignId: string, payerId: string) {
+  /**
+   * What the host pays now. `inviteIds` limits it to those creators (one-by-one
+   * payment); omitted = every accepted creator not yet paid. Creators whose
+   * payment proof is already waiting for admin verification are never charged
+   * again.
+   */
+  async calculatePayment(
+    campaignId: string,
+    payerId: string,
+    inviteIds?: string[],
+  ) {
     const campaign: any = await this.campaignModel.findById(campaignId).lean();
     if (!campaign) throw new NotFoundException("Campaign not found");
 
@@ -775,25 +785,35 @@ export class PaymentsPayoutsService {
       })
       .lean();
 
-    // Fetch transactions with verified collection to identify already-paid invites
-    const verifiedTransactions = await this.transactionModel
+    // Already paid (verified) or paid and waiting for admin verification.
+    const settledTransactions = await this.transactionModel
       .find({
         campaignId,
-        collectionStatus: "verified",
+        collectionStatus: { $in: ["verified", "proof_submitted"] },
       })
-      .select("inviteId")
+      .select("inviteId collectionStatus")
       .lean();
 
-    const paidInviteIds = new Set(
-      verifiedTransactions
-        .map((tx: any) => String(tx.inviteId || ""))
-        .filter((id: string) => id.length > 0),
-    );
+    const paidInviteIds = new Set<string>();
+    const pendingVerificationInviteIds = new Set<string>();
+    for (const tx of settledTransactions as any[]) {
+      const id = String(tx.inviteId || "");
+      if (!id) continue;
+      if (tx.collectionStatus === "verified") paidInviteIds.add(id);
+      else pendingVerificationInviteIds.add(id);
+    }
 
-    // Filter to only unpaid invites
-    const acceptedInvites = allAcceptedInvites.filter(
-      (inv: any) => !paidInviteIds.has(String(inv._id)),
-    );
+    const selected =
+      Array.isArray(inviteIds) && inviteIds.length
+        ? new Set(inviteIds.map((id) => String(id)))
+        : null;
+    // Only unpaid invites (and only the chosen ones, when the host picked creators).
+    const acceptedInvites = allAcceptedInvites.filter((inv: any) => {
+      const id = String(inv._id);
+      if (paidInviteIds.has(id) || pendingVerificationInviteIds.has(id))
+        return false;
+      return !selected || selected.has(id);
+    });
 
     const acceptedCount = acceptedInvites.length;
     if (acceptedCount === 0) {
@@ -801,6 +821,8 @@ export class PaymentsPayoutsService {
         campaignId,
         campaignType: campaign.campaignType || "paid_collab",
         acceptedCount: 0,
+        acceptedInviteIds: [],
+        pendingVerificationInviteIds: [...pendingVerificationInviteIds],
         pricePerInfluencer,
         agreedAmount: 0,
         platformFee: 0,
@@ -882,6 +904,7 @@ export class PaymentsPayoutsService {
       acceptedCount,
       acceptedInviteIds: acceptedInvites.map((i: any) => String(i._id)),
       acceptedInviteAgreedAmounts: inviteAgreedAmounts,
+      pendingVerificationInviteIds: [...pendingVerificationInviteIds],
       pricePerInfluencer,
       agreedAmount,
       platformFee: fee,
@@ -911,6 +934,8 @@ export class PaymentsPayoutsService {
       utrNumber: string;
       paymentProofUrl?: string;
       acceptTerms?: boolean;
+      /** Pay only for these creators (one-by-one); omitted = all unpaid. */
+      inviteIds?: string[];
     },
   ) {
     const utrNumber = (body.utrNumber || "").trim();
@@ -922,7 +947,11 @@ export class PaymentsPayoutsService {
     if (!campaign) throw new NotFoundException("Campaign not found");
     await this.assertCampaignOwner(campaign, payerId);
 
-    const calc = await this.calculatePayment(campaignId, payerId);
+    const calc = await this.calculatePayment(
+      campaignId,
+      payerId,
+      body?.inviteIds,
+    );
     if (!calc.acceptedCount) {
       throw new BadRequestException("No accepted recipients found for payment");
     }
@@ -974,12 +1003,13 @@ export class PaymentsPayoutsService {
     campaignId: string,
     payerId: string,
     acceptTerms?: boolean,
+    inviteIds?: string[],
   ) {
     const campaign: any = await this.campaignModel.findById(campaignId).lean();
     if (!campaign) throw new NotFoundException("Campaign not found");
     await this.assertCampaignOwner(campaign, payerId);
 
-    const calc = await this.calculatePayment(campaignId, payerId);
+    const calc = await this.calculatePayment(campaignId, payerId, inviteIds);
     if (!calc.acceptedCount) {
       throw new BadRequestException("No accepted recipients found for payment");
     }
@@ -1673,7 +1703,11 @@ export class PaymentsPayoutsService {
     return { success: true, transaction: tx };
   }
 
-  async rejectCollection(transactionId: string, reason: string) {
+  async rejectCollection(
+    transactionId: string,
+    reason: string,
+    notifyPayer = true,
+  ) {
     const tx = await this.transactionModel.findById(transactionId);
     if (!tx) throw new NotFoundException("Transaction not found");
     tx.collectionStatus = "failed";
@@ -1682,10 +1716,15 @@ export class PaymentsPayoutsService {
     // Credit used on this rejected payment goes back to the host.
     await restoreCreditUse(this.creditModel, String(tx._id), "admin");
 
-    // Fire-and-forget: notify brand their UTR was rejected
-    if (tx.payerId) {
+    if (notifyPayer) this.notifyPaymentRejected(tx.payerId, reason);
+    return { success: true, transaction: tx };
+  }
+
+  /** Fire-and-forget: tell the host their payment proof (UTR) was rejected. */
+  private notifyPaymentRejected(payerId: unknown, reason: string) {
+    if (payerId) {
       this.brandModel
-        .findById(tx.payerId)
+        .findById(payerId)
         .select("email brandName")
         .lean()
         .then((brand: any) => {
@@ -1712,8 +1751,44 @@ export class PaymentsPayoutsService {
           /* ignore */
         });
     }
+  }
 
-    return { success: true, transaction: tx };
+  /**
+   * One payment = one batch (paymentBatchId): the host paid for 1, 2 or 3
+   * creators with one UTR/order, so the admin confirms or rejects it as a whole.
+   */
+  private async pendingBatchTransactions(batchId: string) {
+    const id = String(batchId || "").trim();
+    if (!id) throw new BadRequestException("Payment batch is required");
+    const txs: any[] = await this.transactionModel
+      .find({ paymentBatchId: id, collectionStatus: "proof_submitted" })
+      .select("_id payerId")
+      .lean();
+    if (!txs.length) {
+      throw new NotFoundException(
+        "No payment waiting for verification in this batch",
+      );
+    }
+    return txs;
+  }
+
+  async verifyCollectionBatch(batchId: string, notes?: string) {
+    const txs = await this.pendingBatchTransactions(batchId);
+    const results: any[] = [];
+    for (const tx of txs) {
+      results.push(await this.verifyCollection(String(tx._id), notes));
+    }
+    return { success: true, count: results.length, results };
+  }
+
+  async rejectCollectionBatch(batchId: string, reason: string) {
+    const txs = await this.pendingBatchTransactions(batchId);
+    for (const tx of txs) {
+      await this.rejectCollection(String(tx._id), reason, false);
+    }
+    // One email for the whole payment, not one per creator.
+    this.notifyPaymentRejected(txs[0].payerId, reason);
+    return { success: true, count: txs.length };
   }
 
   async markPayoutPaid(

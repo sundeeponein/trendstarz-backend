@@ -36,9 +36,17 @@ export class PaymentsPayoutsController {
 
   @UseGuards(JwtAuthGuard)
   @Post(":campaignId/calculate")
-  async calculate(@Param("campaignId") campaignId: string, @Req() req: any) {
+  async calculate(
+    @Param("campaignId") campaignId: string,
+    @Req() req: any,
+    @Body() body: { inviteIds?: string[] },
+  ) {
     const payerId = req.user?.userId;
-    return this.paymentsPayoutsService.calculatePayment(campaignId, payerId);
+    return this.paymentsPayoutsService.calculatePayment(
+      campaignId,
+      payerId,
+      inviteIdList(body?.inviteIds),
+    );
   }
 
   @Throttle({ default: { ttl: 60000, limit: 5 } }) // max 5 UTR submissions per minute per IP
@@ -52,14 +60,14 @@ export class PaymentsPayoutsController {
       utrNumber: string;
       paymentProofUrl?: string;
       acceptTerms?: boolean;
+      inviteIds?: string[];
     },
   ) {
     const payerId = req.user?.userId;
-    return this.paymentsPayoutsService.submitPaymentProof(
-      campaignId,
-      payerId,
-      body,
-    );
+    return this.paymentsPayoutsService.submitPaymentProof(campaignId, payerId, {
+      ...body,
+      inviteIds: inviteIdList(body?.inviteIds),
+    });
   }
 
   @UseGuards(JwtAuthGuard)
@@ -67,13 +75,14 @@ export class PaymentsPayoutsController {
   async createRazorpayOrder(
     @Param("campaignId") campaignId: string,
     @Req() req: any,
-    @Body() body: { acceptTerms?: boolean },
+    @Body() body: { acceptTerms?: boolean; inviteIds?: string[] },
   ) {
     const payerId = req.user?.userId;
     return this.paymentsPayoutsService.createRazorpayOrderForCampaign(
       campaignId,
       payerId,
       body?.acceptTerms,
+      inviteIdList(body?.inviteIds),
     );
   }
 
@@ -117,6 +126,26 @@ export class PaymentsPayoutsController {
   @Get("admin/gateway-readiness")
   async gatewayReadiness() {
     return this.paymentsPayoutsService.getGatewayReadiness();
+  }
+
+  /** Admin: confirm one whole payment (every creator it covered) in one step. */
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Post("batch/:batchId/verify")
+  async verifyBatch(
+    @Param("batchId") batchId: string,
+    @Body() body: { notes?: string },
+  ) {
+    return this.paymentsPayoutsService.verifyCollectionBatch(batchId, body?.notes);
+  }
+
+  /** Admin: reject one whole payment (its UTR/proof covers every creator in it). */
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Post("batch/:batchId/reject")
+  async rejectBatch(
+    @Param("batchId") batchId: string,
+    @Body() body: { reason: string },
+  ) {
+    return this.paymentsPayoutsService.rejectCollectionBatch(batchId, body?.reason);
   }
 
   @UseGuards(JwtAuthGuard, RolesGuard)
@@ -314,4 +343,11 @@ export class PaymentsPayoutsController {
   async openDisputes() {
     return this.paymentsPayoutsService.listOpenDisputes();
   }
+}
+
+/** Invite ids from a request body: strings only, deduplicated; undefined = all. */
+function inviteIdList(value: unknown): string[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const ids = [...new Set(value.map((v) => String(v ?? "").trim()).filter(Boolean))];
+  return ids.length ? ids : undefined;
 }

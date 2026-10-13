@@ -230,6 +230,78 @@ describe("PaymentsPayoutsService", () => {
     });
   });
 
+  describe("one-by-one payment", () => {
+    const paidCollab = () => {
+      campaignModel.findById.mockReturnValue({
+        lean: jest.fn().mockResolvedValue({
+          _id: "camp1",
+          brandId: "brand1",
+          campaignType: "paid_collab",
+          pricePerInfluencer: 10000,
+        }),
+      });
+      inviteModel.find.mockReturnValue({
+        lean: jest.fn().mockResolvedValue([{ _id: "i1" }, { _id: "i2" }, { _id: "i3" }]),
+      });
+      appSettingsModel.findOne.mockReturnValue({
+        lean: jest.fn().mockResolvedValue({ platformFeeEnabled: false }),
+      });
+    };
+    const settled = (rows: any[]) =>
+      transactionModel.find.mockReturnValue({
+        select: jest.fn().mockReturnValue({ lean: jest.fn().mockResolvedValue(rows) }),
+        lean: jest.fn().mockResolvedValue(rows),
+      });
+
+    it("charges only the chosen creator", async () => {
+      paidCollab();
+      settled([]);
+      const result = await service.calculatePayment("camp1", "brand1", ["i2"]);
+      expect(result.acceptedCount).toBe(1);
+      expect(result.acceptedInviteIds).toEqual(["i2"]);
+      expect(result.payerTotal).toBe(10000);
+    });
+
+    it("never charges again for a creator whose payment is under review", async () => {
+      paidCollab();
+      settled([
+        { inviteId: "i1", collectionStatus: "verified" },
+        { inviteId: "i2", collectionStatus: "proof_submitted" },
+      ]);
+      const all = await service.calculatePayment("camp1", "brand1");
+      expect(all.acceptedInviteIds).toEqual(["i3"]);
+      expect(all.pendingVerificationInviteIds).toEqual(["i2"]);
+      const onlyPending = await service.calculatePayment("camp1", "brand1", ["i2"]);
+      expect(onlyPending.acceptedCount).toBe(0);
+    });
+
+    it("admin confirms a whole payment batch in one step", async () => {
+      transactionModel.find.mockReturnValue({
+        select: jest.fn().mockReturnValue({
+          lean: jest.fn().mockResolvedValue([
+            { _id: "t1", payerId: "brand1" },
+            { _id: "t2", payerId: "brand1" },
+          ]),
+        }),
+      });
+      const verify = jest
+        .spyOn(service, "verifyCollection")
+        .mockResolvedValue({ success: true } as any);
+      const result = await service.verifyCollectionBatch("batch_camp1_1");
+      expect(verify).toHaveBeenCalledTimes(2);
+      expect(result.count).toBe(2);
+    });
+
+    it("a batch with nothing waiting can't be verified", async () => {
+      transactionModel.find.mockReturnValue({
+        select: jest.fn().mockReturnValue({ lean: jest.fn().mockResolvedValue([]) }),
+      });
+      await expect(service.verifyCollectionBatch("batch_x")).rejects.toThrow(
+        "No payment waiting for verification",
+      );
+    });
+  });
+
   describe("submitPaymentProof", () => {
     it("throws when UTR is missing", async () => {
       await expect(
