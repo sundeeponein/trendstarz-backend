@@ -243,7 +243,7 @@ export const InfluencerSchema = new Schema(
     premiumEnd: { type: Date, default: null },
     // Who granted the current isPremium period — distinguishes an admin's
     // manual grant (PATCH /users/:id/premium) from a real payment
-    // (upgradeSelfPremium / payment.service.ts), so both the admin's View
+    // (payment.service.ts), so both the admin's View
     // User panel and the user's own dashboard can show "Granted by Admin"
     // instead of implying a paid subscription. null once isPremium is false.
     premiumSource: {
@@ -650,7 +650,7 @@ export const BrandSchema = new Schema(
     premiumEnd: { type: Date, default: null },
     // Who granted the current isPremium period — distinguishes an admin's
     // manual grant (PATCH /users/:id/premium) from a real payment
-    // (upgradeSelfPremium / payment.service.ts), so both the admin's View
+    // (payment.service.ts), so both the admin's View
     // User panel and the user's own dashboard can show "Granted by Admin"
     // instead of implying a paid subscription. null once isPremium is false.
     premiumSource: {
@@ -999,7 +999,7 @@ export const PhotographerSchema = new Schema(
     premiumEnd: { type: Date, default: null },
     // Who granted the current isPremium period — distinguishes an admin's
     // manual grant (PATCH /users/:id/premium) from a real payment
-    // (upgradeSelfPremium / payment.service.ts), so both the admin's View
+    // (payment.service.ts), so both the admin's View
     // User panel and the user's own dashboard can show "Granted by Admin"
     // instead of implying a paid subscription. null once isPremium is false.
     premiumSource: {

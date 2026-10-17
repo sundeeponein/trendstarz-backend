@@ -4,6 +4,9 @@ import { PhotographersController } from "./photographers.controller";
 import { PhotographersService } from "./photographers.service";
 import {
   PhotographerSchema,
+  InfluencerSchema,
+  BrandSchema,
+  UserSchema,
   StateSchema,
   DistrictSchema,
 } from "../database/schemas/profile.schemas";
@@ -25,6 +28,9 @@ import { SocialAccountVerificationModule } from "../social-account-verification/
         schema: PhotographerSchema,
         collection: "photographers",
       },
+      { name: "Influencer", schema: InfluencerSchema, collection: "influencers" },
+      { name: "Brand", schema: BrandSchema, collection: "brands" },
+      { name: "User", schema: UserSchema, collection: "users" },
       {
         name: "CampaignInvite",
         schema: CampaignInviteSchema,

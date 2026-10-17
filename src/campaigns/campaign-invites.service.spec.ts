@@ -1829,7 +1829,6 @@ describe("CampaignInvitesService – platform events", () => {
       await service.create("brand1", {
         campaignId: "camp1",
         influencerId: "inf1",
-        selectedPlatform: "Instagram",
       });
 
       const [event] = eventsOfType("creator_invited");
@@ -1841,11 +1840,41 @@ describe("CampaignInvitesService – platform events", () => {
         influencerId: "inf1",
         inviteId: "inv-new",
         recipientRole: "influencer",
-        platform: "Instagram",
+        // The creator picks the platform when accepting; the sender can't set it.
+        platform: null,
         dedupeKey: "creator_invited:inv-new",
         metadata: expect.objectContaining({ campaignLiveAtInvite: true }),
       });
       expect(event.timestamp).toEqual(new Date("2026-06-10T10:00:00Z"));
+    });
+
+    it("ignores sender-supplied status, amounts, unlock and payment fields", async () => {
+      campaignModel.findById.mockReturnValue(queryOf(activeCampaign));
+      inviteModel.mockClear();
+
+      await service.create("brand1", {
+        campaignId: "camp1",
+        influencerId: "inf1",
+        status: "completed",
+        agreedAmountPaise: 1,
+        unlocked: true,
+        unlockType: "premium",
+        paymentConfirmedAt: new Date(),
+        platformFeePaidAt: new Date(),
+      });
+
+      const built = inviteModel.mock.calls[0][0];
+      for (const key of [
+        "status",
+        "agreedAmountPaise",
+        "unlocked",
+        "unlockType",
+        "paymentConfirmedAt",
+        "platformFeePaidAt",
+      ]) {
+        expect(built).not.toHaveProperty(key);
+      }
+      expect(built).toMatchObject({ campaignId: "camp1", brandId: "brand1", influencerId: "inf1" });
     });
 
     it("Stage 3B-4: admin attribution comes only from options, never the request body", async () => {

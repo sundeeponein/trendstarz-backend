@@ -22,6 +22,8 @@ export const TransactionSchema = new Schema(
       index: true,
     },
     relatedId: { type: String, default: "" },
+    // UNIT: rupees (may have paise decimals) — unlike payments / campaigntransactions /
+    // platformcredits, which store paise. Same for commissionAmount/gstAmount/netAmount.
     amount: { type: Number, required: true },
     currency: { type: String, default: "INR" },
     commissionAmount: { type: Number, default: 0 },

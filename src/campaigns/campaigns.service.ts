@@ -115,6 +115,39 @@ function persistedOwnerTypeForEvent(campaign: any): "brand" | "photographer" {
     : "brand";
 }
 
+/**
+ * Campaign fields only the server writes (ownership, numbering, moderation,
+ * completion, admin overrides, slot bookkeeping). Create/update copy the host's
+ * request body, so these are removed from it first — a host must not be able
+ * to move a campaign to another account or forge a moderation/admin record.
+ */
+export const SERVER_OWNED_CAMPAIGN_FIELDS = [
+  "_id",
+  "__v",
+  "createdAt",
+  "updatedAt",
+  "brandId",
+  "campaignNumber",
+  "moderationNote",
+  "moderatedBy",
+  "moderatedAt",
+  "completedBy",
+  "completedAt",
+  "adminOverrideAction",
+  "adminOverrideReason",
+  "adminOverrideBy",
+  "adminOverrideAt",
+  "slotUsedAt",
+  "datesChangedAt",
+] as const;
+
+export function withoutServerOwnedCampaignFields(data: any): any {
+  if (!data || typeof data !== "object") return data;
+  const clean = { ...data };
+  for (const field of SERVER_OWNED_CAMPAIGN_FIELDS) delete clean[field];
+  return clean;
+}
+
 @Injectable()
 export class CampaignsService {
   constructor(
@@ -1087,6 +1120,7 @@ export class CampaignsService {
   }
 
   async create(ownerId: string, data: any, requesterRole?: string) {
+    data = withoutServerOwnedCampaignFields(data);
     // Enforce creation limit for owners (brand/photographer)
     const ownerType: CampaignOwnerType = await this.resolveOwnerTypeByProfile(
       ownerId,
@@ -1771,6 +1805,7 @@ export class CampaignsService {
   }
 
   async update(id: string, brandId: string, data: any) {
+    data = withoutServerOwnedCampaignFields(data);
     const campaign = await this.campaignModel.findById(id);
     if (!campaign) throw new NotFoundException("Campaign not found");
     // Allow update if brandId matches ObjectId or brandUsername

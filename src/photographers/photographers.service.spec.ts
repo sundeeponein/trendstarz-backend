@@ -1,9 +1,15 @@
 import { PhotographersService } from "./photographers.service";
 
+// Other-role account models for the cross-role email/phone check: nobody else holds it.
+const noAccount = { exists: jest.fn().mockResolvedValue(null) } as any;
+// The photographer collection is checked too (another photographer may hold the email).
+const withExists = (m: any) =>
+  m && !m.exists ? Object.assign(m, { exists: jest.fn().mockResolvedValue(null) }) : m;
+
 describe("PhotographersService profile update guards", () => {
   const makeService = (photographerModel: any) =>
     new PhotographersService(
-      photographerModel,
+      withExists(photographerModel),
       {} as any,
       {} as any,
       {} as any,
@@ -12,6 +18,9 @@ describe("PhotographersService profile update guards", () => {
       {} as any,
       {} as any,
       { reconcile: jest.fn().mockResolvedValue(0) } as any,
+      noAccount,
+      noAccount,
+      noAccount,
     );
 
   it("resets mobile verification when verified phone is changed", async () => {
@@ -130,6 +139,9 @@ describe("PhotographersService profile update guards", () => {
       {} as any,
       {} as any,
       { reconcile: jest.fn().mockResolvedValue(0) } as any,
+      noAccount,
+      noAccount,
+      noAccount,
     );
 
     const canView = await (service as any).canViewPhotographerContact(
@@ -192,6 +204,9 @@ describe("PhotographersService social accounts on creator save (Stage 3A-0)", ()
       {} as any,
       {} as any,
       verification as any,
+      noAccount,
+      noAccount,
+      noAccount,
     );
     return { service, photographerModel, profileFlagModel, verification };
   };
@@ -312,6 +327,9 @@ describe("PhotographersService creator save records changed sections", () => {
       {} as any,
       {} as any,
       { reconcile: jest.fn().mockResolvedValue(0) } as any,
+      noAccount,
+      noAccount,
+      noAccount,
     );
     await service.updateProfile("photo-1", {
       location: { state: "AP" },
@@ -338,6 +356,9 @@ describe("PhotographersService — 'your social account was updated' notices", (
       {} as any,
       {} as any,
       { reconcile: jest.fn().mockResolvedValue(0) } as any,
+      noAccount,
+      noAccount,
+      noAccount,
     );
 
   it("the own profile returns only unanswered notices", async () => {

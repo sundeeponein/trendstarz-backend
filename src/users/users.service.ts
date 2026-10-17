@@ -48,6 +48,7 @@ import {
   normalizeLocationValue,
   ViewerLocationContext,
 } from "../utils/profile-eligibility.util";
+import { takenAccountFields } from "../utils/account-uniqueness.util";
 
 /** Self-service "Delete Account" grace period — see requestSelfDeletion. */
 export const SELF_DELETION_GRACE_PERIOD_DAYS =
@@ -122,6 +123,38 @@ const PUBLIC_PROFILE_VISIBILITY_BLOCK_FLAG_CODES = [
 
 @Injectable()
 export class UsersService implements OnModuleInit {
+  /** Refuses an email/phone change to a value another account (any role) already uses. */
+  private async assertEmailPhoneFree(update: any, current: any) {
+    const email =
+      Object.prototype.hasOwnProperty.call(update, "email") &&
+      this.normalizeEmail(update.email) !== this.normalizeEmail(current?.email)
+        ? this.normalizeEmail(update.email)
+        : null;
+    const phoneNumber =
+      Object.prototype.hasOwnProperty.call(update, "phoneNumber") &&
+      String(update.phoneNumber ?? "").trim() !==
+        String(current?.phoneNumber ?? "").trim()
+        ? String(update.phoneNumber ?? "").trim()
+        : null;
+    if (!email && !phoneNumber) return;
+    const taken = await takenAccountFields(
+      {
+        influencer: this.influencerModel,
+        brand: this.brandModel,
+        photographer: this.photographerModel,
+        user: this.userModel,
+      },
+      { email, phoneNumber },
+      String(current?._id || ""),
+    );
+    if (taken.length) {
+      throw new BadRequestException({
+        message: "Some fields already exist",
+        duplicateFields: taken,
+      });
+    }
+  }
+
   private normalizePhone(value: any): string {
     return String(value ?? "").replace(/\D/g, "");
   }
@@ -3118,40 +3151,6 @@ export class UsersService implements OnModuleInit {
     return { message: "User not found", id };
   }
 
-  async upgradeSelfPremium(
-    userId: string,
-    premiumDuration: "1m" | "3m" | "1y",
-  ) {
-    const update: any = { isPremium: true };
-    update.premiumDuration = premiumDuration;
-    const now = new Date();
-    update.premiumStart = now;
-    const end = new Date(now);
-    if (premiumDuration === "1m") end.setMonth(end.getMonth() + 1);
-    else if (premiumDuration === "3m") end.setMonth(end.getMonth() + 3);
-    else if (premiumDuration === "1y") end.setFullYear(end.getFullYear() + 1);
-    update.premiumEnd = end;
-    update.premiumSource = "payment";
-    // Try influencer first, then brand
-    const influencer = await this.influencerModel.findByIdAndUpdate(
-      userId,
-      update,
-      { new: true },
-    );
-    if (influencer)
-      return {
-        message: "Premium upgraded",
-        user: influencer,
-        userType: "influencer",
-      };
-    const brand = await this.brandModel.findByIdAndUpdate(userId, update, {
-      new: true,
-    });
-    if (brand)
-      return { message: "Premium upgraded", user: brand, userType: "brand" };
-    return { message: "User not found", id: userId };
-  }
-
   async getInfluencerProfileById(userId: string) {
     let user = await this.influencerModel.findById(userId).lean();
     if (!user || Array.isArray(user)) return null;
@@ -3391,7 +3390,7 @@ export class UsersService implements OnModuleInit {
         update?.payout?.accountHolderName || "",
       ).trim();
     }
-    // NOTE: isPremium is intentionally excluded — it is only set via upgradeSelfPremium or admin setPremium
+    // NOTE: isPremium is intentionally excluded — it is only set by a verified payment (payment.service.ts) or admin setPremium
     const userDoc: any = await this.influencerModel.findById(userId);
     if (!userDoc) return { message: "Influencer not found", userId };
     if (update.collaborationAvailability !== undefined) {
@@ -3432,6 +3431,8 @@ export class UsersService implements OnModuleInit {
         updateData.profileImages.length > 1
       : false;
 
+    // One email/phone per account across all roles (registration checks the same).
+    await this.assertEmailPhoneFree(updateData, userDoc);
     if (Object.prototype.hasOwnProperty.call(updateData, "phoneNumber")) {
       const existingPhone = this.normalizePhone(userDoc.phoneNumber);
       const incomingPhone = this.normalizePhone(updateData.phoneNumber);
@@ -3656,6 +3657,8 @@ export class UsersService implements OnModuleInit {
       );
     }
 
+    // One email/phone per account across all roles (registration checks the same).
+    await this.assertEmailPhoneFree(updateData, existingBrand);
     if (Object.prototype.hasOwnProperty.call(updateData, "phoneNumber")) {
       const existingPhone = this.normalizePhone(existingBrand.phoneNumber);
       const incomingPhone = this.normalizePhone(updateData.phoneNumber);
@@ -3694,7 +3697,7 @@ export class UsersService implements OnModuleInit {
 
     // Remove price if present
     if ("price" in updateData) delete updateData.price;
-    // NOTE: isPremium is intentionally excluded — it is only set via upgradeSelfPremium or admin setPremium
+    // NOTE: isPremium is intentionally excluded — it is only set by a verified payment (payment.service.ts) or admin setPremium
     const shouldClearBrandGallery =
       Array.isArray(updateData.products) && updateData.products.length > 0;
     const brandBefore: any = await this.brandModel

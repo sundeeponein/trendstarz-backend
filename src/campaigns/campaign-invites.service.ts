@@ -1278,8 +1278,11 @@ export class CampaignInvitesService {
       }
     }
 
+    // Allow-list, never `...data`: every other invite field (status, amounts,
+    // unlocked, payment/fee timestamps, terms) is set only by the recipient's
+    // answer and the payment flows — a sender must not be able to pre-fill them.
     const invite = new this.inviteModel({
-      ...data,
+      campaignId: String(campaign._id),
       brandId,
       influencerId: recipientId,
       recipientRole,

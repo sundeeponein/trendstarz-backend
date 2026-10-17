@@ -42,6 +42,7 @@ import {
   ViewerLocationContext,
 } from "../utils/profile-eligibility.util";
 import { idIn } from "../utils/id-match.util";
+import { takenAccountFields } from "../utils/account-uniqueness.util";
 
 const PROFILE_PHOTO_VISIBILITY_BLOCK_FLAG_CODES = [
   "PROFILE_PHOTO_PENDING_REVIEW",
@@ -105,6 +106,10 @@ export class PhotographersService {
     private readonly cloudinaryService: CloudinaryService,
     private readonly plansService: PlansService,
     private readonly socialAccountVerification: SocialAccountVerificationService,
+    // For the one-email-per-account check across roles (assertEmailPhoneFree).
+    @InjectModel("Influencer") private readonly influencerModel: Model<any>,
+    @InjectModel("Brand") private readonly brandModel: Model<any>,
+    @InjectModel("User") private readonly userModel: Model<any>,
   ) {}
 
   /** Brand-safe Collaboration Score fields only — see UsersService's sibling helper. */
@@ -167,6 +172,38 @@ export class PhotographersService {
 
   private isObjectId(value: any): boolean {
     return !!value && Types.ObjectId.isValid(String(value));
+  }
+
+  /** Refuses an email/phone change to a value another account (any role) already uses. */
+  private async assertEmailPhoneFree(update: any, current: any) {
+    const email =
+      Object.prototype.hasOwnProperty.call(update, "email") &&
+      this.normalizeEmail(update.email) !== this.normalizeEmail(current?.email)
+        ? this.normalizeEmail(update.email)
+        : null;
+    const phoneNumber =
+      Object.prototype.hasOwnProperty.call(update, "phoneNumber") &&
+      String(update.phoneNumber ?? "").trim() !==
+        String(current?.phoneNumber ?? "").trim()
+        ? String(update.phoneNumber ?? "").trim()
+        : null;
+    if (!email && !phoneNumber) return;
+    const taken = await takenAccountFields(
+      {
+        influencer: this.influencerModel,
+        brand: this.brandModel,
+        photographer: this.photographerModel,
+        user: this.userModel,
+      },
+      { email, phoneNumber },
+      String(current?._id || ""),
+    );
+    if (taken.length) {
+      throw new BadRequestException({
+        message: "Some fields already exist",
+        duplicateFields: taken,
+      });
+    }
   }
 
   private normalizePhone(value: any): string {
@@ -585,6 +622,8 @@ export class PhotographersService {
       }
     }
 
+    // One email/phone per account across all roles (registration checks the same).
+    await this.assertEmailPhoneFree(update, current);
     if (Object.prototype.hasOwnProperty.call(update, "phoneNumber")) {
       const existingPhone = this.normalizePhone(current.phoneNumber);
       const incomingPhone = this.normalizePhone(update.phoneNumber);

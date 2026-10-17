@@ -21,10 +21,13 @@ describe("UsersService profile update guards", () => {
   }) => {
     const cloudinaryService = overrides?.cloudinaryService || ({} as any);
     const firebaseAdminService = overrides?.firebaseAdminService || ({} as any);
-    const userModel = {} as any;
-    const influencerModel = overrides?.influencerModel || ({} as any);
-    const brandModel = overrides?.brandModel || ({} as any);
-    const photographerModel = overrides?.photographerModel || ({} as any);
+    // `exists` backs the cross-role email/phone check: no other account holds the value.
+    const withExists = (m: any) =>
+      m.exists ? m : Object.assign(m, { exists: jest.fn().mockResolvedValue(null) });
+    const userModel = withExists({} as any);
+    const influencerModel = withExists(overrides?.influencerModel || ({} as any));
+    const brandModel = withExists(overrides?.brandModel || ({} as any));
+    const photographerModel = withExists(overrides?.photographerModel || ({} as any));
     const campaignInviteModel =
       overrides?.campaignInviteModel || ({} as any);
     const campaignModel = overrides?.campaignModel || ({} as any);
@@ -104,6 +107,31 @@ describe("UsersService profile update guards", () => {
     await service.updateInfluencerProfile("inf-1", { email: "new@example.com" });
     expect(doc.set).toHaveBeenCalledWith("isEmailVerified", false);
     expect(doc.save).toHaveBeenCalled();
+  });
+
+  it("refuses an email change to an email another role's account already uses", async () => {
+    const doc: any = {
+      _id: "inf-1",
+      phoneNumber: "9908763880",
+      email: "old@example.com",
+      set: jest.fn(),
+      save: jest.fn(),
+    };
+    const influencerModel = { findById: jest.fn().mockResolvedValue(doc) };
+    // A brand already registered with this email.
+    const brandModel = {
+      exists: jest.fn((q: any) =>
+        Promise.resolve(q.email?.test?.("Taken@Example.com") ? { _id: "b1" } : null),
+      ),
+    };
+    const service = makeService({ influencerModel, brandModel });
+
+    await expect(
+      service.updateInfluencerProfile("inf-1", { email: "taken@example.com" }),
+    ).rejects.toMatchObject({
+      response: { duplicateFields: ["email"] },
+    });
+    expect(doc.save).not.toHaveBeenCalled();
   });
 
   it("resets influencer mobile verification when phone changes and is not locked", async () => {

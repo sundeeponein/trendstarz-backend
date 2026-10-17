@@ -1807,6 +1807,8 @@ export class AuthService {
       existingPhoneInfluencer,
       existingPhoneBrand,
       existingPhoneAdmin,
+      existingEmailPhotographer,
+      existingPhonePhotographer,
     ] = await Promise.all([
       emailRegex ? this.influencerModel.findOne({ email: emailRegex }) : null,
       emailRegex ? this.brandModel.findOne({ email: emailRegex }) : null,
@@ -1823,13 +1825,28 @@ export class AuthService {
       normalizedPhone
         ? this.userModel.findOne({ phoneNumber: normalizedPhone })
         : null,
+      // Photographers too — an email/phone must identify one account across all roles.
+      emailRegex ? this.photographerModel.findOne({ email: emailRegex }) : null,
+      normalizedPhone
+        ? this.photographerModel.findOne({ phoneNumber: normalizedPhone })
+        : null,
     ]);
 
     const duplicateFields: string[] = [];
-    if (existingEmailInfluencer || existingEmailBrand || existingEmailAdmin)
+    if (
+      existingEmailInfluencer ||
+      existingEmailBrand ||
+      existingEmailAdmin ||
+      existingEmailPhotographer
+    )
       duplicateFields.push("email");
     if (existingUsername) duplicateFields.push("username");
-    if (existingPhoneInfluencer || existingPhoneBrand || existingPhoneAdmin)
+    if (
+      existingPhoneInfluencer ||
+      existingPhoneBrand ||
+      existingPhoneAdmin ||
+      existingPhonePhotographer
+    )
       duplicateFields.push("phoneNumber");
 
     if (duplicateFields.length) {
@@ -2054,6 +2071,8 @@ export class AuthService {
       existingPhoneAdmin,
       existingBrandName,
       existingBrandUsername,
+      existingEmailPhotographer,
+      existingPhonePhotographer,
     ] = await Promise.all([
       emailRegex ? this.brandModel.findOne({ email: emailRegex }) : null,
       emailRegex ? this.influencerModel.findOne({ email: emailRegex }) : null,
@@ -2073,12 +2092,27 @@ export class AuthService {
       existingBrandUsernameRegex
         ? this.brandModel.findOne({ brandUsername: existingBrandUsernameRegex })
         : null,
+      // Photographers too — an email/phone must identify one account across all roles.
+      emailRegex ? this.photographerModel.findOne({ email: emailRegex }) : null,
+      normalizedPhone
+        ? this.photographerModel.findOne({ phoneNumber: normalizedPhone })
+        : null,
     ]);
 
     const duplicateFields: string[] = [];
-    if (existingEmailBrand || existingEmailInfluencer || existingEmailAdmin)
+    if (
+      existingEmailBrand ||
+      existingEmailInfluencer ||
+      existingEmailAdmin ||
+      existingEmailPhotographer
+    )
       duplicateFields.push("email");
-    if (existingPhoneBrand || existingPhoneInfluencer || existingPhoneAdmin)
+    if (
+      existingPhoneBrand ||
+      existingPhoneInfluencer ||
+      existingPhoneAdmin ||
+      existingPhonePhotographer
+    )
       duplicateFields.push("phoneNumber");
     if (existingBrandName) duplicateFields.push("brandName");
     if (existingBrandUsername) duplicateFields.push("brandUsername");
