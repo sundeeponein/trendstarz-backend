@@ -5,16 +5,22 @@ import {
   BrandSchema,
   AppSettingsSchema,
   InfluencerSchema,
+  PhotographerSchema,
 } from "../database/schemas/profile.schemas";
 import { CampaignInviteSchema } from "../database/schemas/campaign-invite.schema";
 import { CampaignTransactionSchema } from "../database/schemas/campaign-transaction.schema";
+import { PlatformCreditSchema } from "../database/schemas/platform-credit.schema";
+import { LinkConversionSchema } from "../database/schemas/link-conversion.schema";
 import { PaymentsPayoutsController } from "./payments-payouts.controller";
 import { PaymentsPayoutsService } from "./payments-payouts.service";
 import { PushModule } from "../push/push.module";
 import { NotificationsModule } from "../notifications/notifications.module";
+import { RazorpayService } from "../payment/razorpay.service";
+import { PlatformEventsModule } from "../platform-events/platform-events.module";
 
 @Module({
   imports: [
+    PlatformEventsModule,
     MongooseModule.forFeature([
       { name: "Campaign", schema: CampaignSchema, collection: "campaigns" },
       {
@@ -27,19 +33,34 @@ import { NotificationsModule } from "../notifications/notifications.module";
         schema: CampaignTransactionSchema,
         collection: "campaigntransactions",
       },
+      {
+        name: "PlatformCredit",
+        schema: PlatformCreditSchema,
+        collection: "platform_credits",
+      },
       { name: "Brand", schema: BrandSchema, collection: "brands" },
       { name: "Influencer", schema: InfluencerSchema, collection: "influencers" },
+      {
+        name: "Photographer",
+        schema: PhotographerSchema,
+        collection: "photographers",
+      },
       {
         name: "AppSettings",
         schema: AppSettingsSchema,
         collection: "appsettings",
+      },
+      {
+        name: "LinkConversion",
+        schema: LinkConversionSchema,
+        collection: "linkconversions",
       },
     ]),
     PushModule,
     NotificationsModule,
   ],
   controllers: [PaymentsPayoutsController],
-  providers: [PaymentsPayoutsService],
+  providers: [PaymentsPayoutsService, RazorpayService],
   exports: [PaymentsPayoutsService],
 })
 export class PaymentsPayoutsModule {}

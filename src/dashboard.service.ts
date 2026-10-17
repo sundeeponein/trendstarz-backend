@@ -1,6 +1,13 @@
+import {
+  PROFILE_TRAFFIC_DAILY_COLLECTION,
+  TrafficProfileType,
+  profileTrafficForLastDays,
+} from "./utils/profile-traffic-daily.util";
 import { Injectable, NotFoundException } from "@nestjs/common";
 import { InjectModel } from "@nestjs/mongoose";
 import { Model, Types } from "mongoose";
+import { latePostWindowsByInvite } from "./payments-payouts/campaign-refund.util";
+import { isActivePremium } from "./payments-payouts/fee-rates.util";
 
 @Injectable()
 export class DashboardService {
@@ -9,7 +16,30 @@ export class DashboardService {
     @InjectModel("Campaign") private readonly campaignModel: Model<any>,
     @InjectModel("Brand") private readonly brandModel: Model<any>,
     @InjectModel("Influencer") private readonly influencerModel: Model<any>,
+    @InjectModel("CampaignTransaction")
+    private readonly transactionModel: Model<any>,
   ) {}
+
+  /** Last 30 India days of profile traffic; zeros (never an error) when history is unavailable. */
+  private async last30DaysTraffic(
+    profileType: TrafficProfileType,
+    profileId: unknown,
+  ): Promise<{ impressions: number; clicks: number }> {
+    try {
+      const collection = (this.influencerModel as any)?.db?.collection?.(
+        PROFILE_TRAFFIC_DAILY_COLLECTION,
+      );
+      if (!collection || !profileId) return { impressions: 0, clicks: 0 };
+      return await profileTrafficForLastDays(
+        collection,
+        profileType,
+        profileId,
+        30,
+      );
+    } catch {
+      return { impressions: 0, clicks: 0 };
+    }
+  }
 
   async getInfluencerDashboard(userId: string) {
     const user = (await this.influencerModel.findById(userId).lean()) as any;
@@ -30,6 +60,7 @@ export class DashboardService {
     const newInvites: any[] = [];
     const activeCampaigns: any[] = [];
     const completedCampaigns: any[] = [];
+    const withdrawnCampaigns: any[] = [];
     for (const invite of invites) {
       const st = invite.status as string;
       // Debug: count all raw statuses
@@ -55,6 +86,17 @@ export class DashboardService {
           ...invite.campaignId,
           inviteId: invite._id,
           inviteStatus: st,
+          creatorTermsAccepted: !!invite.termsAcceptance?.creator?.acceptedAt,
+          // Only the creator's own off-platform report (the host's is kept private).
+          openReport:
+            !!invite.reportedIssue?.reportedAt &&
+            !invite.reportedIssue?.resolvedAt &&
+            (invite.reportedIssue?.category !== "offplatform" ||
+              invite.reportedIssue?.reportedByRole === "creator"),
+          cancelRequestStatus:
+            invite.cancelRequest?.requestedByRole === "creator"
+              ? invite.cancelRequest?.status || null
+              : null,
         });
       }
       if (st === "completed" || st === "disputed" || st === "approved") {
@@ -63,7 +105,38 @@ export class DashboardService {
           inviteId: invite._id,
           inviteStatus: st,
           metrics: invite.analytics,
+          selectedPlatform: invite.selectedPlatform,
+          selectedContentType: invite.selectedContentType,
         });
+      }
+      if (st === "withdrawn") {
+        // Auto-closed (campaign reached its accepted-slot limit) reads differently
+        // to the creator than a host explicitly pulling their invite.
+        const autoClosed = /^Auto-closed/i.test(String(invite.withdrawnReason || ""));
+        withdrawnCampaigns.push({
+          ...invite.campaignId,
+          inviteId: invite._id,
+          inviteStatus: st,
+          withdrawnAt: invite.withdrawnAt,
+          withdrawnReason: invite.withdrawnReason,
+          autoClosed,
+          closureAnswered: !!invite.closureAnswers?.creator?.at,
+        });
+      }
+    }
+    // Closed without a post: show the late-post window while the refund is on hold.
+    if (withdrawnCampaigns.length) {
+      try {
+        const windows = await latePostWindowsByInvite(
+          this.transactionModel,
+          withdrawnCampaigns.map((c) => c.inviteId),
+        );
+        for (const c of withdrawnCampaigns) {
+          const w = windows.get(String(c.inviteId));
+          if (w) c.latePostWindow = w;
+        }
+      } catch {
+        /* non-critical: the list still renders without it */
       }
     }
     // Debug: log status counts
@@ -72,10 +145,21 @@ export class DashboardService {
       user: {
         name: user?.name || "",
         isEmailVerified: user?.isEmailVerified ?? false,
-        isPremium: user?.isPremium ?? false,
+        isMobileVerified: user?.isMobileVerified ?? false,
+        isPremium: isActivePremium(user), // expired Premium reads as false
         premiumDuration: user?.premiumDuration ?? null,
         premiumStart: user?.premiumStart ?? null,
         premiumEnd: user?.premiumEnd ?? null,
+        firstRegisteredAt: user?.firstRegisteredAt ?? user?.createdAt ?? null,
+        createdAt: user?.createdAt ?? null,
+        lastLoginAt: user?.lastLoginAt ?? null,
+        lastOpenedAt: user?.lastOpenedAt ?? null,
+        profileCompletion: user?.profileCompletion ?? 0,
+        communityJoined: user?.communityJoined ?? false,
+        communityState: user?.communityState ?? "",
+        communityName: user?.communityName ?? "",
+        communityJoinedAt: user?.communityJoinedAt ?? user?.communityJoinedDate ?? null,
+        communityJoinedDate: user?.communityJoinedDate ?? null,
         categories: user?.categories ?? [],
         socialMedia: user?.socialMedia ?? [],
         location: user?.location ?? {},
@@ -85,11 +169,14 @@ export class DashboardService {
           clicks: user?.profileTraffic?.clicks ?? 0,
           lastImpressionAt: user?.profileTraffic?.lastImpressionAt ?? null,
           lastClickAt: user?.profileTraffic?.lastClickAt ?? null,
+          // From the daily history (profile_traffic_daily) — the dashboard card's "Last 30 days".
+          last30Days: await this.last30DaysTraffic("Influencer", user?._id),
         },
       },
       invites: { ...stats, newInvites, statusDebug },
       activeCampaigns,
       completedCampaigns,
+      withdrawnCampaigns,
     };
   }
 
@@ -112,8 +199,6 @@ export class DashboardService {
     const campaigns = await this.campaignModel.find({
       $or: brandMatchers,
     });
-    // Debug: log all campaign brandId values
-    const allCampaigns = await this.campaignModel.find({}).lean();
     let totalInvites = 0;
     let accepted = 0;
     let completed = 0;
@@ -157,10 +242,21 @@ export class DashboardService {
       brand: {
         brandName: brand?.brandName || "",
         isEmailVerified: brand?.isEmailVerified ?? false,
-        isPremium: brand?.isPremium ?? false,
+        isMobileVerified: brand?.isMobileVerified ?? false,
+        isPremium: isActivePremium(brand), // expired Premium reads as false
         premiumDuration: brand?.premiumDuration ?? null,
         premiumStart: brand?.premiumStart ?? null,
         premiumEnd: brand?.premiumEnd ?? null,
+        firstRegisteredAt: brand?.firstRegisteredAt ?? brand?.createdAt ?? null,
+        createdAt: brand?.createdAt ?? null,
+        lastLoginAt: brand?.lastLoginAt ?? null,
+        lastOpenedAt: brand?.lastOpenedAt ?? null,
+        profileCompletion: brand?.profileCompletion ?? 0,
+        communityJoined: brand?.communityJoined ?? false,
+        communityState: brand?.communityState ?? "",
+        communityName: brand?.communityName ?? "",
+        communityJoinedAt: brand?.communityJoinedAt ?? brand?.communityJoinedDate ?? null,
+        communityJoinedDate: brand?.communityJoinedDate ?? null,
         categories: brand?.categories ?? [],
         socialMedia: brand?.socialMedia ?? [],
         location: brand?.location ?? {},
@@ -170,6 +266,7 @@ export class DashboardService {
           clicks: brand?.profileTraffic?.clicks ?? 0,
           lastImpressionAt: brand?.profileTraffic?.lastImpressionAt ?? null,
           lastClickAt: brand?.profileTraffic?.lastClickAt ?? null,
+          last30Days: await this.last30DaysTraffic("Brand", brand?._id),
         },
       },
       totalCampaigns: campaigns.length, // All campaigns, regardless of status

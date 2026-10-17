@@ -28,3 +28,8 @@ export const ReviewSchema = new Schema(
   },
   { timestamps: true, collection: "reviews" },
 );
+
+// Duplicate guard lookup (reviews.service) and per-profile listing. The unique
+// { inviteId, reviewerType } version waits on cron/auditUniqueConstraints.js.
+ReviewSchema.index({ inviteId: 1, reviewerType: 1 });
+ReviewSchema.index({ targetId: 1, status: 1 });

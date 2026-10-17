@@ -174,4 +174,119 @@ describe("ReviewsService", () => {
       }),
     ).rejects.toThrow(BadRequestException);
   });
+
+  describe("when each side can review", () => {
+    const inviteWith = (status: string) =>
+      inviteModel.findById.mockReturnValue({
+        lean: jest.fn().mockResolvedValue({
+          _id: "inv9",
+          influencerId: "inf9",
+          brandId: "brand9",
+          campaignId: "camp9",
+          status,
+        }),
+      });
+    beforeEach(() => {
+      plansService.checkFeature.mockResolvedValue(true);
+      reviewModel.findOne.mockReturnValue({
+        lean: jest.fn().mockResolvedValue(null),
+      });
+      brandModel.exists.mockResolvedValue(true);
+      reviewModel.create.mockResolvedValue({ _id: "r9" });
+    });
+
+    it.each(["approved", "completed"])(
+      "host can review once the work is finished (%s)",
+      async (status) => {
+        inviteWith(status);
+        await expect(
+          service.writeReview("brand9", "brand", {
+            inviteId: "inv9",
+            rating: 5,
+          }),
+        ).resolves.toEqual(expect.objectContaining({ success: true }));
+      },
+    );
+
+    it.each([
+      "accepted",
+      "payment_confirmed",
+      "working",
+      "submitted",
+      "disputed",
+      "withdrawn",
+    ])("host cannot review unfinished work (%s)", async (status) => {
+      inviteWith(status);
+      await expect(
+        service.writeReview("brand9", "brand", { inviteId: "inv9", rating: 5 }),
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    it.each([
+      "payment_confirmed",
+      "working",
+      "submitted",
+      "completed",
+      "approved",
+    ])(
+      "creator can review the host from payment onwards (%s)",
+      async (status) => {
+        inviteWith(status);
+        await expect(
+          service.writeReview("inf9", "influencer", {
+            inviteId: "inv9",
+            rating: 4,
+          }),
+        ).resolves.toEqual(expect.objectContaining({ success: true }));
+      },
+    );
+
+    it.each(["pending", "accepted", "declined", "withdrawn", "disputed"])(
+      "creator cannot review before payment or after a withdrawal/dispute (%s)",
+      async (status) => {
+        inviteWith(status);
+        await expect(
+          service.writeReview("inf9", "influencer", {
+            inviteId: "inv9",
+            rating: 4,
+          }),
+        ).rejects.toThrow(BadRequestException);
+      },
+    );
+  });
+
+  describe("reading reviews", () => {
+    const reviewsFound = [{ _id: "r1", rating: 5 }];
+    beforeEach(() => {
+      reviewModel.find = jest.fn().mockReturnValue({
+        sort: () => ({ lean: () => Promise.resolve(reviewsFound) }),
+      });
+    });
+
+    it("the reviewed person can always read their own reviews, without a premium plan", async () => {
+      plansService.checkFeature.mockResolvedValue(false);
+      await expect(
+        service.getReviewsForTarget("inf1", "inf1"),
+      ).resolves.toEqual({
+        success: true,
+        reviews: reviewsFound,
+      });
+      expect(plansService.checkFeature).not.toHaveBeenCalled();
+      expect(reviewModel.find).toHaveBeenCalledWith({
+        targetId: "inf1",
+        status: "approved",
+      });
+    });
+
+    it("anyone else needs canReadReviews", async () => {
+      plansService.checkFeature.mockResolvedValue(false);
+      await expect(
+        service.getReviewsForTarget("inf1", "brand1"),
+      ).rejects.toThrow(ForbiddenException);
+      plansService.checkFeature.mockResolvedValue(true);
+      await expect(
+        service.getReviewsForTarget("inf1", "brand1"),
+      ).resolves.toEqual(expect.objectContaining({ success: true }));
+    });
+  });
 });

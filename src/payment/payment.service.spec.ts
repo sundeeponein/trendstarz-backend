@@ -3,6 +3,7 @@ import { getModelToken } from "@nestjs/mongoose";
 import { PaymentService } from "./payment.service";
 import { PlansService } from "../plans/plans.service";
 import { NotificationsService } from "../notifications/notifications.service";
+import { PushService } from "../push/push.service";
 
 describe("PaymentService", () => {
   let service: PaymentService;
@@ -73,6 +74,10 @@ describe("PaymentService", () => {
       createForUser: jest.fn().mockResolvedValue({}),
     };
 
+    const mockPushService = {
+      sendToUser: jest.fn().mockResolvedValue({ sent: 0, failed: 0 }),
+    };
+
     const mockPlansService = {
       findProPlanForUserType: jest
         .fn()
@@ -87,8 +92,20 @@ describe("PaymentService", () => {
         { provide: getModelToken("Influencer"), useValue: mockInfluencerModel },
         { provide: getModelToken("Brand"), useValue: mockBrandModel },
         { provide: getModelToken("Photographer"), useValue: mockPhotographerModel },
+        {
+          // Added to the service after these tests; affiliate conversions are irrelevant here.
+          provide: getModelToken("LinkConversion"),
+          useValue: {
+            find: jest.fn().mockReturnValue({ lean: jest.fn().mockResolvedValue([]) }),
+            findOne: jest.fn().mockReturnValue({ lean: jest.fn().mockResolvedValue(null) }),
+            updateOne: jest.fn().mockResolvedValue({ modifiedCount: 0 }),
+            updateMany: jest.fn().mockResolvedValue({ modifiedCount: 0 }),
+            create: jest.fn().mockResolvedValue({}),
+          },
+        },
         { provide: PlansService, useValue: mockPlansService },
         { provide: NotificationsService, useValue: mockNotificationsService },
+        { provide: PushService, useValue: mockPushService },
       ],
     }).compile();
 
@@ -158,11 +175,19 @@ describe("PaymentService", () => {
   });
 
   describe("createPendingPayment", () => {
+    const PRICE_399 = {
+      baseRupees: 399,
+      discountRupees: 0,
+      finalRupees: 399,
+      discountPercent: 0,
+      discountSource: "none" as const,
+      couponCode: null,
+    };
     it("should create pending payment record", async () => {
       const result = await service.createPendingPayment(
         "user1",
         "txn-new",
-        399,
+        PRICE_399,
         "1m",
       );
       expect(result.success).toBe(true);
@@ -174,7 +199,7 @@ describe("PaymentService", () => {
       const result = await service.createPendingPayment(
         "user1",
         "txn-123",
-        399,
+        PRICE_399,
         "1m",
       );
       expect(result.success).toBe(false);
@@ -182,32 +207,33 @@ describe("PaymentService", () => {
   });
 
   describe("approvePayment", () => {
-    it("should approve pending payment and activate premium", async () => {
-      const payment = {
-        ...mockPayment,
-        status: "pending",
-        save: jest.fn().mockResolvedValue(true),
-      };
-      paymentModel.findById.mockResolvedValue(payment);
+    const claimReturns = (doc: any) => {
+      paymentModel.findOneAndUpdate = jest.fn(() => ({
+        lean: jest.fn().mockResolvedValue(doc),
+      }));
+    };
+
+    it("approves a pending payment with one guarded update and activates premium", async () => {
+      claimReturns({ ...mockPayment, status: "approved" });
       const result = await service.approvePayment("pay1", "admin1");
-      expect(payment.status).toBe("approved");
-      expect(payment.save).toHaveBeenCalled();
       expect(result.success).toBe(true);
+      const [filter, update] = paymentModel.findOneAndUpdate.mock.calls[0];
+      expect(filter).toEqual({ _id: "pay1", status: "pending" });
+      expect(update.$set).toMatchObject({ status: "approved", approvedBy: "admin1" });
     });
 
-    it("should reject if payment not found", async () => {
-      paymentModel.findById.mockResolvedValue(null);
+    it("reports not found when the payment doesn't exist", async () => {
+      claimReturns(null);
+      paymentModel.exists = jest.fn().mockResolvedValue(null);
       const result = await service.approvePayment("bad-id", "admin1");
-      expect(result.success).toBe(false);
+      expect(result).toMatchObject({ success: false, message: "Payment not found" });
     });
 
-    it("should reject if payment not pending", async () => {
-      paymentModel.findById.mockResolvedValue({
-        ...mockPayment,
-        status: "approved",
-      });
+    it("refuses when the payment is no longer pending (e.g. a second click)", async () => {
+      claimReturns(null);
+      paymentModel.exists = jest.fn().mockResolvedValue({ _id: "pay1" });
       const result = await service.approvePayment("pay1", "admin1");
-      expect(result.success).toBe(false);
+      expect(result).toMatchObject({ success: false, message: "Payment is not pending" });
     });
   });
 

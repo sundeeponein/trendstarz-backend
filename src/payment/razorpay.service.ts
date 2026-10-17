@@ -1,23 +1,17 @@
 import { Injectable } from "@nestjs/common";
 import Razorpay from "razorpay";
 import * as crypto from "crypto";
+import axios, { AxiosRequestConfig } from "axios";
 
 /**
- * @future-only RazorpayService
+ * RazorpayService
  *
- * This service is preserved for the automated payment phase.
- * It is NOT wired into any active campaign payment flow.
+ * Active pay-in flow:
+ *  - subscription collections use Razorpay Checkout order + signature verify
+ *  - campaign collections use Razorpay Checkout order + signature verify
  *
- * Current MVP flow: brand pays manually via UPI/QR, admin verifies UTR,
- * admin pays influencer via UPI. All handled in PaymentsPayoutsService.
- *
- * When to activate:
- *  1. Set CampaignTransaction.gateway = 'razorpay'
- *  2. Call createOrder() from PaymentsPayoutsService.submitPaymentProof()
- *  3. Verify webhook signature via verifySignature()
- *  4. Auto-capture: trigger markPayoutPaid() on successful Razorpay webhook
- *
- * Do NOT remove this service. It is registered in PaymentModule.
+ * Payouts remain manual by default. RazorpayX helpers are retained behind
+ * AUTO_PAYOUT_ENABLED for a later operational mode.
  */
 @Injectable()
 export class RazorpayService {
@@ -48,10 +42,8 @@ export class RazorpayService {
   }
 
   /**
-   * @future-only
-   * Create a Razorpay order for automated payment capture.
+   * Create a Razorpay Checkout order.
    * amount must be in paise (₹1 = 100 paise).
-   * NOT USED in MVP — manual UPI flow is active instead.
    */
   async createOrder(
     amountPaise: number,
@@ -75,9 +67,7 @@ export class RazorpayService {
   }
 
   /**
-   * @future-only
-   * Verify the Razorpay payment signature after automated capture.
-   * NOT USED in MVP — manual UTR verification by admin is active instead.
+   * Verify Razorpay Checkout signature after successful payment.
    */
   verifySignature(
     orderId: string,
@@ -94,12 +84,125 @@ export class RazorpayService {
   }
 
   /**
-   * @future-only
    * Fetch Razorpay order details for server-side status verification.
-   * NOT USED in MVP — admin manually confirms UTR instead.
    */
   async fetchOrder(orderId: string): Promise<any> {
     const razorpay = this.getClient();
     return await (razorpay.orders.fetch as any)(orderId);
+  }
+
+  isCheckoutConfigured(): boolean {
+    return !!(process.env.RAZORPAY_KEY_ID && process.env.RAZORPAY_KEY_SECRET);
+  }
+
+  private getRazorpayXCredentials() {
+    const keyId =
+      process.env.RAZORPAYX_KEY_ID || process.env.RAZORPAY_KEY_ID || "";
+    const keySecret =
+      process.env.RAZORPAYX_KEY_SECRET || process.env.RAZORPAY_KEY_SECRET || "";
+    const accountNumber = process.env.RAZORPAYX_ACCOUNT_NUMBER || "";
+    const baseUrl = process.env.RAZORPAYX_BASE_URL || "https://api.razorpay.com/v1";
+    return { keyId, keySecret, accountNumber, baseUrl };
+  }
+
+  isPayoutsConfigured(): boolean {
+    const creds = this.getRazorpayXCredentials();
+    return !!(creds.keyId && creds.keySecret && creds.accountNumber);
+  }
+
+  private async razorpayXPost(path: string, payload: any): Promise<any> {
+    const creds = this.getRazorpayXCredentials();
+    if (!creds.keyId || !creds.keySecret) {
+      throw new Error("Missing RazorpayX API credentials");
+    }
+
+    const auth = Buffer.from(`${creds.keyId}:${creds.keySecret}`).toString(
+      "base64",
+    );
+    const config: AxiosRequestConfig = {
+      headers: {
+        Authorization: `Basic ${auth}`,
+        "Content-Type": "application/json",
+      },
+      timeout: 20000,
+    };
+
+    const { data } = await axios.post(
+      `${creds.baseUrl}${path}`,
+      payload,
+      config,
+    );
+    return data;
+  }
+
+  async createPayoutByUpi(input: {
+    amountPaise: number;
+    recipientName: string;
+    recipientUpiId: string;
+    referenceId: string;
+    narration: string;
+    notes?: Record<string, string>;
+  }): Promise<{
+    payoutId: string;
+    status: string;
+    utr?: string;
+    fundAccountId?: string;
+    contactId?: string;
+  }> {
+    const creds = this.getRazorpayXCredentials();
+    if (!creds.accountNumber) {
+      throw new Error("Missing RAZORPAYX_ACCOUNT_NUMBER");
+    }
+
+    const contact = await this.razorpayXPost("/contacts", {
+      name: input.recipientName || "Recipient",
+      type: "vendor",
+      reference_id: `contact_${input.referenceId}`,
+      notes: input.notes || {},
+    });
+
+    const fundAccount = await this.razorpayXPost("/fund_accounts", {
+      contact_id: contact.id,
+      account_type: "vpa",
+      vpa: {
+        address: input.recipientUpiId,
+      },
+    });
+
+    const payout = await this.razorpayXPost("/payouts", {
+      account_number: creds.accountNumber,
+      fund_account_id: fundAccount.id,
+      amount: input.amountPaise,
+      currency: "INR",
+      mode: "UPI",
+      purpose: "payout",
+      queue_if_low_balance: true,
+      reference_id: input.referenceId,
+      narration: input.narration,
+      notes: input.notes || {},
+    });
+
+    return {
+      payoutId: String(payout?.id || ""),
+      status: String(payout?.status || ""),
+      utr: String(payout?.utr || "") || undefined,
+      fundAccountId: String(fundAccount?.id || "") || undefined,
+      contactId: String(contact?.id || "") || undefined,
+    };
+  }
+
+  verifyWebhookSignature(rawBody: Buffer, signature: string): boolean {
+    const secret =
+      process.env.RAZORPAYX_WEBHOOK_SECRET ||
+      process.env.RAZORPAY_WEBHOOK_SECRET ||
+      "";
+    if (!secret || !signature || !rawBody?.length) return false;
+
+    const expectedSignature = crypto
+      .createHmac("sha256", secret)
+      .update(rawBody)
+      .digest("hex");
+
+    return expectedSignature === signature;
   }
 }

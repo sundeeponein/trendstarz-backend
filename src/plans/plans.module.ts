@@ -1,6 +1,5 @@
 import { Module } from "@nestjs/common";
 import { MongooseModule } from "@nestjs/mongoose";
-import { ScheduleModule } from "@nestjs/schedule";
 import { PlansService } from "./plans.service";
 import { PlansController } from "./plans.controller";
 import { PlansConfigController } from "./plans-config.controller";
@@ -18,7 +17,8 @@ import { CloudinaryService } from "../cloudinary.service";
 
 @Module({
   imports: [
-    ScheduleModule.forRoot(),
+    // The scheduler is registered once, in AppModule. Registering it here as
+    // well made EVERY @Cron job in the app run twice.
     MongooseModule.forFeature([
       { name: "Plan", schema: PlanSchema, collection: "plans" },
       {

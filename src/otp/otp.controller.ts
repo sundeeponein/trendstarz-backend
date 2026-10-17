@@ -1,49 +1,62 @@
-import { Controller, Post, Body } from "@nestjs/common";
-import { randomInt } from "crypto";
-import { DevEmailService } from "../utils/dev-email.service";
-import { SesEmailService } from "../utils/ses-email.service";
+import {
+  Controller,
+  Post,
+  Body,
+  Inject,
+} from "@nestjs/common";
+import { otpTemplate } from "../email/templates/otp.templates";
+import { sendAppEmail } from "../utils/app-email.service";
+import type { SmsProvider } from "../services/smsProvider.service";
+import { OTP_TTL_MS, OtpStoreService } from "./otp-store.service";
 
-const otpStore = new Map<string, { otp: string; expires: number }>();
-const OTP_TTL = 5 * 60 * 1000; // 5 minutes
-
+/**
+ * Email/phone OTP. Codes (hashed), attempt counts, send rate limits and the
+ * one-time verification tokens live in MongoDB via OtpStoreService — so they
+ * survive deploys and work across server instances.
+ */
 @Controller("otp")
 export class OtpController {
   constructor(
-    private readonly devEmailService: DevEmailService,
-    private readonly sesEmailService: SesEmailService,
+    @Inject("SMS_PROVIDER") private readonly smsProvider: SmsProvider,
+    private readonly otpStore: OtpStoreService,
   ) {}
 
   @Post("send")
   async sendOtp(@Body() body: any) {
-    const { type, value } = body;
+    const { type, value } = body || {};
     if (!type || !value) {
       return { error: "Missing type or value" };
     }
-    const otp = randomInt(100000, 999999).toString();
-    otpStore.set(value, { otp, expires: Date.now() + OTP_TTL });
+    const otp = await this.otpStore.issueCode(value);
+    const minutes = OTP_TTL_MS / 60 / 1000;
     if (type === "email") {
-      const subject = "Your TrendStarz OTP";
-      const text = `Your OTP is: ${otp}`;
-      if (process.env.NODE_ENV === "production") {
-        await this.sesEmailService.sendMail(value, subject, text);
-      } else {
-        await this.devEmailService.sendMail(value, subject, text);
-      }
+      const template = otpTemplate({ otp, expiryMinutes: minutes });
+      await sendAppEmail({
+        to: value,
+        subject: template.subject,
+        text: template.text,
+        html: template.html,
+      });
+    } else if (type === "phone") {
+      await this.smsProvider.send(
+        value,
+        `Your TrendStarz OTP is ${otp}. It expires in ${minutes} minutes.`,
+      );
     }
     return { message: `OTP sent to ${type}: ${value}` };
   }
 
   @Post("verify")
-  verifyOtp(@Body() body: any) {
-    const { type, value, otp } = body;
+  async verifyOtp(@Body() body: any) {
+    const { type, value, otp } = body || {};
     if (!type || !value || !otp) {
       return { error: "Missing type, value, or otp" };
     }
-    const stored = otpStore.get(value);
-    if (!stored || stored.otp !== otp || Date.now() > stored.expires) {
-      return { error: "Invalid or expired OTP" };
-    }
-    otpStore.delete(value);
-    return { message: "OTP verified successfully" };
+    const result = await this.otpStore.verifyCode(type, value, otp);
+    if (!result.ok) return { error: result.error };
+    return {
+      message: "OTP verified successfully",
+      verificationToken: result.verificationToken,
+    };
   }
 }

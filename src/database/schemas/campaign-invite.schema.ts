@@ -1,23 +1,28 @@
 import { Schema } from "mongoose";
 
 export const CampaignInviteSchema = new Schema({
-  campaignId: { type: Schema.Types.Mixed, ref: "Campaign", required: true },
+  // Type locked 2026-10-17 to what every stored row already holds (cron/auditIdTypes.js).
+  // campaignId/brandId are 24-hex strings; influencerId is an ObjectId.
+  campaignId: { type: String, ref: "Campaign", required: true },
   influencerId: {
     type: Schema.Types.ObjectId,
     ref: "Influencer",
     required: true,
   },
-  brandId: { type: Schema.Types.Mixed, ref: "Brand", required: true }, // Allow ObjectId or string
+  brandId: { type: String, ref: "Brand", required: true }, // campaign owner (brand or photographer)
   status: {
     type: String,
     enum: [
       "pending",
+      "invited",
+      "counter_sent",
       "accepted",
       "declined",
       "payment_confirmed",
       "working",
       "submitted",
       "completed",
+      "approved",
       "disputed",
       "withdrawn",
     ],
@@ -34,8 +39,44 @@ export const CampaignInviteSchema = new Schema({
   // Influencer's chosen content type when accepting
   selectedPlatform: { type: String },
   selectedContentType: { type: String },
-  agreedAmount: { type: Number },
+  agreedAmount: { type: Number, min: 0 },
+  // Canonical payout amount for payment calculations (paise).
+  agreedAmountPaise: { type: Number, min: 0 },
+  // Counter-offer requested by recipient during acceptance.
+  counterOffer: {
+    status: {
+      type: String,
+      enum: ["none", "sent", "brand_sent", "accepted", "declined"],
+      default: "none",
+    },
+    pricingMode: {
+      type: String,
+      enum: ["flat", "deliverable_based"],
+    },
+    selectedPlatform: { type: String },
+    selectedContentType: { type: String },
+    offeredAmount: { type: Number, min: 0 },
+    offeredAmountPaise: { type: Number, min: 0 },
+    requestedAmount: { type: Number, min: 0 },
+    requestedAmountPaise: { type: Number, min: 0 },
+    message: { type: String },
+    sentAt: { type: Date },
+    resolvedAt: { type: Date },
+    responderId: { type: String },
+  },
   acceptedAt: { type: Date },
+  // When the campaign owner/payment flow confirmed the collaboration and work could begin.
+  paymentConfirmedAt: { type: Date },
+  completedAt: { type: Date },
+  paidOutAt: { type: Date },
+  // Contact preference snapshot at acceptance time.
+  // This keeps existing accepted invites stable even if profile preferences change later.
+  acceptedContact: {
+    whatsapp: { type: Boolean, default: false },
+    email: { type: Boolean, default: false },
+    call: { type: Boolean, default: false },
+  },
+  acceptedContactSnapshotAt: { type: Date },
   // ── Contact unlock (single-rule: brand pays/premium → both sides see contact) ──
   unlocked: { type: Boolean, default: false },
   unlockedAt: { type: Date },
@@ -74,13 +115,126 @@ export const CampaignInviteSchema = new Schema({
   // ── Brand-side actions ──
   remindedAt: { type: Date },
   remindersSent: { type: Number, default: 0 },
+  // Automated "your post is due soon" nudges to the creator, keyed by selectedPostDate — set once each
+  // milestone fires so the cron never re-sends it (independent of the brand-initiated remindedAt above).
+  postingReminder48hSentAt: { type: Date },
+  postingReminder24hSentAt: { type: Date },
   withdrawnAt: { type: Date },
   withdrawnReason: { type: String },
+  // Why it was withdrawn, as an INVITE_WITHDRAWN_REASONS code (set by expireUnsubmittedInvite).
+  withdrawnReasonCode: { type: String },
+  // Barter/location: fixed platform fee (paise) owed when the creator accepted; null/0 = none.
+  platformFeeDue: { type: Number, min: 0, default: null },
+  // When TrendStarZ verified that fee — the collaboration is confirmed from then on.
+  platformFeePaidAt: { type: Date, default: null },
+  // Paid collab: payout fee (%) for the creator's plan, locked when they accepted.
+  recipientFeePercent: { type: Number, default: null },
+  // Admin correction: this creator may submit until at least this time (see submissionWindow).
+  submissionDeadlineExtendedTo: { type: Date },
+  // Admin corrections log (append-only, admin-only — hidden from every query unless
+  // selected with "+adminCorrections"): restore / extend / submit-on-behalf / cancel.
+  adminCorrections: {
+    type: [
+      {
+        _id: false,
+        action: { type: String },
+        reason: { type: String },
+        by: { type: String },
+        at: { type: Date },
+        details: { type: Schema.Types.Mixed },
+      },
+    ],
+    select: false,
+  },
+  // Stage 3B-4: set when an admin sent this invite on the owner's behalf from
+  // the campaign eligibility list (brandId is still the campaign owner).
+  invitedByAdminId: { type: String },
+  invitedByAdminAt: { type: Date },
   reportedIssue: {
     reason: { type: String },
     reportedAt: { type: Date },
     resolvedAt: { type: Date },
+    // Set when the influencer contests the dispute itself; pauses the auto-cancel timer and flags it for admin.
+    adminReviewRequestedAt: { type: Date },
+    // "offplatform" = "Asked to skip posting / deal outside TrendStarZ" (either side).
+    category: { type: String },
+    reportedByRole: { type: String },
+  },
+  // Paid-collaboration terms each side accepted (version + time).
+  termsAcceptance: {
+    host: {
+      acceptedAt: { type: Date },
+      version: { type: String },
+      userId: { type: String },
+    },
+    creator: {
+      acceptedAt: { type: Date },
+      version: { type: String },
+      userId: { type: String },
+    },
+  },
+  // Kept when admin approves a late post: the original deadline and closure stay on record.
+  latePostApproval: {
+    approvedAt: { type: Date },
+    approvedBy: { type: String },
+    postUrl: { type: String },
+    note: { type: String },
+    originalDeadline: { type: Date },
+    withdrawnAt: { type: Date },
+    withdrawnReason: { type: String },
+  },
+  // A refund hold, pending late post or settlement still needs both sides' contact.
+  financialCaseOpen: { type: Boolean },
+  // Admin gave back the campaign invite slot of a paid, closed invite (with a reason).
+  slotRestored: {
+    at: { type: Date },
+    by: { type: String },
+    reason: { type: String },
+  },
+  // Private answers after a no-post closure ("why didn't it happen?") — admin only.
+  closureAnswers: {
+    creator: {
+      answer: { type: String },
+      details: { type: String },
+      link: { type: String },
+      at: { type: Date },
+    },
+    host: {
+      answer: { type: String },
+      details: { type: String },
+      link: { type: String },
+      at: { type: Date },
+    },
+  },
+  // Admin confirmed this closure must not count against the creator's record.
+  missExcused: {
+    at: { type: Date },
+    by: { type: String },
+    reason: { type: String },
+  },
+  // In-platform request to cancel or pause a paid collaboration (admin decides).
+  cancelRequest: {
+    type: { type: String, enum: ["cancel", "pause"] },
+    requestedByRole: { type: String, enum: ["host", "creator"] },
+    requestedBy: { type: String },
+    reason: { type: String },
+    at: { type: Date },
+    status: { type: String, enum: ["pending", "approved", "rejected"] },
+    decidedBy: { type: String },
+    decidedAt: { type: Date },
+    decisionNote: { type: String },
+    compensationAmount: { type: Number, min: 0 }, // paise, approved cancellations only
+    pauseDays: { type: Number },
   },
   createdAt: { type: Date, default: Date.now },
   updatedAt: { type: Date, default: Date.now },
 });
+
+// Query indexes (non-unique, so they build on any existing data).
+// One invite per campaign + recipient is not enforced here yet: the unique
+// version waits on cron/auditUniqueConstraints.js reporting no duplicates,
+// then cron/applyUniqueIndexes.js builds it.
+CampaignInviteSchema.index({ campaignId: 1, influencerId: 1 });
+CampaignInviteSchema.index({ campaignId: 1, status: 1 });
+CampaignInviteSchema.index({ influencerId: 1, status: 1 });
+CampaignInviteSchema.index({ brandId: 1, status: 1 });

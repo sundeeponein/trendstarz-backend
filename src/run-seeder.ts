@@ -13,6 +13,7 @@ const allowedSections = new Set([
   "locations",
   "tiers",
   "socialMediaPlatforms",
+  "whatsappCommunities",
   "users",
   "plans",
 ]);

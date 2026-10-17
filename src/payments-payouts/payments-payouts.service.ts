@@ -1,21 +1,115 @@
 import {
   BadRequestException,
   Injectable,
+  Logger,
   NotFoundException,
+  Optional,
 } from "@nestjs/common";
-import { InjectModel } from "@nestjs/mongoose";
-import { Model } from "mongoose";
+import { InjectConnection, InjectModel } from "@nestjs/mongoose";
+import { Connection, Model, Types } from "mongoose";
+import type { ClientSession } from "mongoose";
+import {
+  createOne,
+  inTransaction,
+  withSession,
+} from "../utils/mongo-transaction.util";
+import { Cron } from "@nestjs/schedule";
 import { sendAppEmail } from "../utils/app-email.service";
+import {
+  paymentProofAdminTemplate,
+  paymentVerifiedInfluencerTemplate,
+  paymentVerifiedBrandTemplate,
+  paymentRejectedTemplate,
+  payoutSentTemplate,
+} from "../email/templates/payment.templates";
 import { PushService } from "../push/push.service";
 import { NotificationsService } from "../notifications/notifications.service";
+import { RazorpayService } from "../payment/razorpay.service";
+import { PlatformEventsService } from "../platform-events/platform-events.service";
+import { PlatformEventActorRole } from "../platform-events/platform-event-types";
+import {
+  REFUND_DUE_FILTER,
+  RISK_WINDOW_DAYS,
+  SETTLEMENT_OPEN,
+  anyId,
+  formatRupees,
+  historyEntry,
+  isLegacyUnconfirmedRefund,
+  isRefundDue,
+  markRefundsOwed,
+  notifyPayer,
+  refundDueAmount,
+  refundState,
+  riskFlags,
+  feeCreditAmount,
+  HOST_NO_POST_RATE,
+  REPLACED_AFTER_NO_POST_DAYS,
+} from "./campaign-refund.util";
+import {
+  currentTermsVersion,
+  termsV2Active,
+} from "../campaigns/paid-collab-terms";
+import {
+  consumeCredit,
+  creditBalance,
+  creditStatement,
+  expireCredit,
+  issueCredit,
+  restoreCreditUse,
+} from "./platform-credit.util";
 
 type FeeSettings = {
   platformFeeEnabled: boolean;
   platformFeePercent: number;
+  gstPercent: number;
+  // Host/payer fees — charged to whoever initiates the payment
+  brandFeePercent: number;
+  influencerFeePercent: number;
+  photographerFeePercent: number;
+  // Recipient/payout fees — deducted from what the recipient receives (default 0)
+  influencerRecipientFeePercent: number;
+  photographerRecipientFeePercent: number;
+  brandRecipientFeePercent: number;
+  /** Premium rates by Free-rate field (null = same as Free) — see fee-rates.util. */
+  premiumRates: Record<string, number | null>;
 };
+
+import {
+  awaitingPlatformFee,
+  isBarterOrLocationCampaign,
+} from "../campaigns/barter-limits.util";
+import { SingleInstance } from "../utils/single-instance";
+import {
+  PREMIUM_RATE_FIELDS,
+  isActivePremium,
+  rateForPlan,
+} from "./fee-rates.util";
+/** GST (paise) on one platform-fee row, rounded to the nearest paisa. */
+export function platformFeeGst(feePaise: number, gstPercent: number): number {
+  const fee = Number(feePaise || 0);
+  const pct = Number(gstPercent || 0);
+  if (!(fee > 0) || !(pct > 0)) return 0;
+  return Math.round((fee * pct) / 100);
+}
 
 @Injectable()
 export class PaymentsPayoutsService {
+  private readonly logger = new Logger(PaymentsPayoutsService.name);
+  private static readonly PAYOUT_SETTLEMENT_MODE = String(
+    process.env.PAYOUT_SETTLEMENT_MODE || "manual",
+  ).toLowerCase();
+  private static readonly AUTO_PAYOUT_ENABLED =
+    PaymentsPayoutsService.PAYOUT_SETTLEMENT_MODE === "razorpayx" &&
+    String(process.env.AUTO_PAYOUT_ENABLED || "false").toLowerCase() === "true";
+  private static readonly AUTO_PAYOUT_RETRY_LIMIT = Math.max(
+    Number(process.env.AUTO_PAYOUT_RETRY_LIMIT || 3),
+    0,
+  );
+  private static readonly AUTO_PAYOUT_RETRY_BACKOFF_MINUTES = Math.max(
+    Number(process.env.AUTO_PAYOUT_RETRY_BACKOFF_MINUTES || 20),
+    1,
+  );
+
   constructor(
     @InjectModel("Campaign") private readonly campaignModel: Model<any>,
     @InjectModel("CampaignInvite") private readonly inviteModel: Model<any>,
@@ -24,9 +118,77 @@ export class PaymentsPayoutsService {
     @InjectModel("AppSettings") private readonly appSettingsModel: Model<any>,
     @InjectModel("Brand") private readonly brandModel: Model<any>,
     @InjectModel("Influencer") private readonly influencerModel: Model<any>,
+    @InjectModel("Photographer") private readonly photographerModel: Model<any>,
+    @InjectModel("LinkConversion") private readonly linkConversionModel: Model<any>,
+    @InjectModel("PlatformCredit")
+    private readonly creditModel: Model<any>,
+    private readonly razorpayService: RazorpayService,
     private readonly pushService: PushService,
     private readonly notificationsService: NotificationsService,
+    private readonly platformEvents: PlatformEventsService,
+    // Optional so unit tests can build the service without a database; without
+    // it, inTransaction() runs the same writes non-atomically.
+    @Optional() @InjectConnection() private readonly connection?: Connection,
   ) {}
+
+  /**
+   * payment_completed PlatformEvent. A collaboration has two money movements, told
+   * apart by metadata.stage:
+   *   - "collection": the payer's (usually the brand's) payment was verified
+   *   - "payout":     the recipient's payout was marked paid
+   * One of each per transaction (deduped — RazorpayX webhooks can be redelivered).
+   */
+  private async recordPaymentCompleted(
+    tx: any,
+    stage: "collection" | "payout",
+    actor: { userId?: unknown; userRole: PlatformEventActorRole },
+    via: string,
+  ): Promise<void> {
+    if (!tx?._id) return;
+    let invite: any = null;
+    try {
+      invite = tx.inviteId
+        ? await this.inviteModel
+            .findById(tx.inviteId)
+            .select(
+              "brandId influencerId campaignId recipientRole selectedPlatform",
+            )
+            .lean()
+        : null;
+    } catch {
+      // Still record the payment with the transaction's own references.
+    }
+    await this.platformEvents.record({
+      eventType: "payment_completed",
+      timestamp:
+        stage === "collection"
+          ? tx.collectedAt || new Date()
+          : tx.paidOutAt || new Date(),
+      userId: actor.userId,
+      userRole: actor.userRole,
+      brandId: invite?.brandId,
+      campaignId: tx.campaignId ?? invite?.campaignId,
+      influencerId: invite?.influencerId,
+      inviteId: tx.inviteId,
+      recipientRole: invite?.recipientRole || null,
+      platform: invite?.selectedPlatform || null,
+      metadata: {
+        stage,
+        via,
+        transactionId: String(tx._id),
+        transactionType: tx.transactionType || null,
+        direction: tx.direction || null,
+        gateway:
+          stage === "collection"
+            ? tx.gateway || null
+            : tx.payoutGatewayProvider || null,
+        agreedAmount: tx.agreedAmount ?? null,
+        payerTotal: tx.payerTotal ?? null,
+        recipientPayout: tx.recipientPayout ?? null,
+      },
+      dedupeKey: `payment_completed:${stage}:${String(tx._id)}`,
+    });
+  }
 
   private roundPercent(amount: number, percent: number): number {
     return Math.round((amount * percent) / 100);
@@ -44,13 +206,193 @@ export class PaymentsPayoutsService {
 
   private async getFeeSettings(): Promise<FeeSettings> {
     const settings: any = await this.appSettingsModel.findOne({}).lean();
+    const globalPercent =
+      typeof settings?.platformFeePercent === "number"
+        ? settings.platformFeePercent
+        : 10;
+    const rolePercent = (field: string) =>
+      typeof settings?.[field] === "number" ? settings[field] : globalPercent;
+    // Creator fees default to 0 (not the global rate) until explicitly enabled.
+    const creatorPercent = (field: string) =>
+      typeof settings?.[field] === "number" ? settings[field] : 0;
     return {
       platformFeeEnabled: !!settings?.platformFeeEnabled,
-      platformFeePercent:
-        typeof settings?.platformFeePercent === "number"
-          ? settings.platformFeePercent
-          : 10,
+      platformFeePercent: globalPercent,
+      gstPercent: typeof settings?.gstPercent === "number" ? settings.gstPercent : 0,
+      brandFeePercent: rolePercent("brandFeePercent"),
+      influencerFeePercent: creatorPercent("influencerFeePercent"),
+      photographerFeePercent: creatorPercent("photographerFeePercent"),
+      influencerRecipientFeePercent: creatorPercent("influencerRecipientFeePercent"),
+      photographerRecipientFeePercent: creatorPercent("photographerRecipientFeePercent"),
+      brandRecipientFeePercent: creatorPercent("brandRecipientFeePercent"),
+      premiumRates: Object.fromEntries(
+        Object.entries(PREMIUM_RATE_FIELDS).map(([free, premium]) => [
+          free,
+          typeof settings?.[premium] === "number" ? settings[premium] : null,
+        ]),
+      ),
     };
+  }
+
+  /**
+   * The payout fee a creator will pay on a paid-collab invite — shown on the
+   * invite before they accept, so the amount they see is what they receive.
+   * `locked` = fixed when they accepted.
+   */
+  async payoutFeePreview(inviteId: string, userId: string) {
+    const invite: any = await this.inviteModel.findById(inviteId).lean();
+    if (!invite) throw new NotFoundException("Invite not found");
+    if (String(invite.influencerId || "") !== String(userId || "")) {
+      throw new NotFoundException("Invite not found");
+    }
+    const campaign: any = await this.campaignModel
+      .findById(invite.campaignId)
+      .select("campaignType")
+      .lean();
+    if (String(campaign?.campaignType || "") !== "paid_collab") {
+      return { feePercent: 0, locked: false };
+    }
+    const feeSettings = await this.getFeeSettings();
+    const locked = typeof invite.recipientFeePercent === "number";
+    const role: "influencer" | "photographer" =
+      String(invite.recipientRole || "").toLowerCase() === "photographer"
+        ? "photographer"
+        : "influencer";
+    const feePercent = !feeSettings.platformFeeEnabled && !locked
+      ? 0
+      : await this.recipientFeePercentForInvite(invite, feeSettings, role);
+    return { feePercent, locked };
+  }
+
+  /** Whether this user's Premium is active right now (false if not found). */
+  private async isPremiumUser(
+    userId: string,
+    role: "brand" | "influencer" | "photographer",
+  ): Promise<boolean> {
+    if (!userId) return false;
+    const model =
+      role === "brand"
+        ? this.brandModel
+        : role === "photographer"
+          ? this.photographerModel
+          : this.influencerModel;
+    try {
+      const user: any = await model
+        .findById(userId)
+        .select("isPremium premiumEnd")
+        .lean();
+      return isActivePremium(user);
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Payout fee (%) for one creator: the rate locked in when they accepted, else
+   * their plan's current rate (Free / Premium).
+   */
+  private async recipientFeePercentForInvite(
+    invite: any,
+    feeSettings: FeeSettings,
+    role: "influencer" | "photographer",
+  ): Promise<number> {
+    if (typeof invite?.recipientFeePercent === "number")
+      return invite.recipientFeePercent;
+    const field =
+      role === "photographer"
+        ? "photographerRecipientFeePercent"
+        : "influencerRecipientFeePercent";
+    const premium = await this.isPremiumUser(String(invite?.influencerId || ""), role);
+    return rateForPlan(
+      Number((feeSettings as any)[field] || 0),
+      feeSettings.premiumRates?.[field],
+      premium,
+    );
+  }
+
+  private getRecipientFeePercent(
+    feeSettings: FeeSettings,
+    recipientRole: "brand" | "influencer" | "photographer",
+  ): number {
+    if (recipientRole === "influencer") return feeSettings.influencerRecipientFeePercent;
+    if (recipientRole === "photographer") return feeSettings.photographerRecipientFeePercent;
+    return feeSettings.brandRecipientFeePercent;
+  }
+
+  private resolveCampaignOwnerRole(
+    campaign: any,
+  ): "brand" | "influencer" | "photographer" {
+    const role = String(
+      campaign?.ownerType || "brand",
+    )
+      .toLowerCase()
+      .trim();
+    if (role === "photographer") return "photographer";
+    if (role === "influencer") return "influencer";
+    return "brand";
+  }
+
+  private getRoleBaseFeePercent(
+    feeSettings: FeeSettings,
+    payerRole: "brand" | "influencer" | "photographer",
+    isPremium = false,
+  ): number {
+    const field =
+      payerRole === "photographer"
+        ? "photographerFeePercent"
+        : payerRole === "influencer"
+          ? "influencerFeePercent"
+          : "brandFeePercent";
+    return rateForPlan(
+      Number((feeSettings as any)[field] || 0),
+      feeSettings.premiumRates?.[field],
+      isPremium,
+    );
+  }
+
+  private async getPayoutReleaseWaitHours(): Promise<number> {
+    const settings: any = await this.appSettingsModel.findOne({}).lean();
+    const configured = Number(settings?.payoutReleaseWaitHours);
+    if (Number.isFinite(configured) && configured >= 0) return configured;
+    const fallback = Number(process.env.PAYOUT_RELEASE_MIN_HOURS || 24);
+    return Number.isFinite(fallback) && fallback >= 0 ? fallback : 24;
+  }
+
+  private async markInvitePayoutReleased(
+    tx: any,
+    paidOutAt?: Date,
+    via: "manual" | "razorpayx_webhook" | "auto_sweep" = "manual",
+  ) {
+    await this.recordPaymentCompleted(
+      tx,
+      "payout",
+      { userRole: via === "manual" ? "admin" : "system" },
+      via,
+    );
+    await this.markInvitePaidOut(tx, paidOutAt);
+  }
+
+  /** The invite side of a payout; pass the session to make it part of the payout's transaction. */
+  private async markInvitePaidOut(
+    tx: any,
+    paidOutAt?: Date,
+    session?: ClientSession,
+  ) {
+    if (!tx?.inviteId) return;
+    // A cancellation compensation is paid on a cancelled (withdrawn) collaboration — it
+    // must stay cancelled, so only the payout time is recorded.
+    const compensation = Number(tx?.compensation?.amount || 0) > 0;
+    await this.inviteModel.updateOne(
+      { _id: tx.inviteId },
+      {
+        $set: {
+          ...(compensation ? {} : { status: "approved" }),
+          paidOutAt: paidOutAt || tx.paidOutAt || new Date(),
+          updatedAt: new Date(),
+        },
+      },
+      withSession({}, session),
+    );
   }
 
   /**
@@ -59,12 +401,16 @@ export class PaymentsPayoutsService {
    */
   private async getEffectiveCommissionPercent(
     userId: string,
-    userType: "brand" | "influencer",
+    userType: "brand" | "influencer" | "photographer",
     globalPercent: number,
   ): Promise<number> {
     try {
       const model =
-        userType === "brand" ? this.brandModel : this.influencerModel;
+        userType === "brand"
+          ? this.brandModel
+          : userType === "photographer"
+            ? this.photographerModel
+            : this.influencerModel;
       const user: any = await model.findById(userId).lean();
 
       if (!user || !user.commissionOverride?.enabled) {
@@ -88,7 +434,10 @@ export class PaymentsPayoutsService {
           return 0; // No commission
         case "discount":
           // discount is a percentage (e.g., 40% off means 40% reduction)
-          return Math.max(0, globalPercent - (globalPercent * override.value) / 100);
+          return Math.max(
+            0,
+            globalPercent - (globalPercent * override.value) / 100,
+          );
         case "fixed":
           // fixed is the actual commission percentage to apply
           return Math.max(0, override.value);
@@ -116,18 +465,746 @@ export class PaymentsPayoutsService {
     }
   }
 
-  async calculatePayment(campaignId: string, payerId: string) {
+  private resolveCompletionTimestamp(invite: any): Date | null {
+    const raw = invite?.completedAt || invite?.updatedAt;
+    if (!raw) return null;
+    const dt = new Date(raw);
+    if (Number.isNaN(dt.getTime())) return null;
+    return dt;
+  }
+
+  private async getRecipientPayoutContact(tx: any): Promise<{
+    name: string;
+    upiId: string;
+    role: "brand" | "influencer" | "photographer";
+  } | null> {
+    const role = String(tx?.recipientRole || "").toLowerCase();
+    const recipientId = String(tx?.recipientId || "");
+    if (!recipientId) return null;
+
+    if (role === "brand") {
+      const brand: any = await this.brandModel
+        .findById(recipientId)
+        .select("brandName payout")
+        .lean();
+      if (!brand) return null;
+      return {
+        name: String(brand?.brandName || "Brand Recipient"),
+        upiId: String(brand?.payout?.upiId || "").trim(),
+        role: "brand",
+      };
+    }
+
+    if (role === "photographer") {
+      const photographer: any = await this.photographerModel
+        .findById(recipientId)
+        .select("name payout")
+        .lean();
+      if (!photographer) return null;
+      return {
+        name: String(photographer?.name || "Photographer"),
+        upiId: String(photographer?.payout?.upiId || "").trim(),
+        role: "photographer",
+      };
+    }
+
+    const influencer: any = await this.influencerModel
+      .findById(recipientId)
+      .select("name payout")
+      .lean();
+    if (!influencer) return null;
+    return {
+      name: String(influencer?.name || "Influencer"),
+      upiId: String(influencer?.payout?.upiId || "").trim(),
+      role: "influencer",
+    };
+  }
+
+  private async getInvitePayoutEligibility(
+    tx: any,
+  ): Promise<{ eligible: boolean; reason?: string }> {
+    if (!tx?.inviteId) {
+      return { eligible: true };
+    }
+
+    const invite: any = await this.inviteModel
+      .findById(tx.inviteId)
+      .select("status completedAt updatedAt")
+      .lean();
+    const inviteStatus = String(invite?.status || "").toLowerCase();
+    if (Number(tx?.compensation?.amount || 0) > 0 && inviteStatus === "withdrawn") {
+      return { eligible: true }; // admin-approved cancellation compensation
+    }
+    if (!new Set(["completed", "approved"]).has(inviteStatus)) {
+      return {
+        eligible: false,
+        reason: "Invite not completed yet",
+      };
+    }
+
+    const completedAt = this.resolveCompletionTimestamp(invite);
+    if (!completedAt) {
+      return {
+        eligible: false,
+        reason: "Invite completion timestamp missing",
+      };
+    }
+
+    const minMs =
+      completedAt.getTime() +
+      (await this.getPayoutReleaseWaitHours()) * 60 * 60 * 1000;
+    if (Date.now() < minMs) {
+      return {
+        eligible: false,
+        reason: `Payout lock active until ${new Date(minMs).toUTCString()}`,
+      };
+    }
+
+    return { eligible: true };
+  }
+
+  private shouldRetryGatewayPayout(tx: any): {
+    allow: boolean;
+    reason?: string;
+  } {
+    const retries = Math.max(Number(tx?.payoutRetryCount || 0), 0);
+    if (retries >= PaymentsPayoutsService.AUTO_PAYOUT_RETRY_LIMIT) {
+      return {
+        allow: false,
+        reason: `Retry limit reached (${PaymentsPayoutsService.AUTO_PAYOUT_RETRY_LIMIT})`,
+      };
+    }
+
+    const lastRetry = tx?.payoutLastRetryAt ? new Date(tx.payoutLastRetryAt) : null;
+    if (lastRetry && !Number.isNaN(lastRetry.getTime())) {
+      const nextAllowedMs =
+        lastRetry.getTime() +
+        PaymentsPayoutsService.AUTO_PAYOUT_RETRY_BACKOFF_MINUTES * 60 * 1000;
+      if (Date.now() < nextAllowedMs) {
+        return {
+          allow: false,
+          reason: `Retry backoff active until ${new Date(nextAllowedMs).toUTCString()}`,
+        };
+      }
+    }
+
+    return { allow: true };
+  }
+
+  private extractRazorpayXPayoutEntity(payload: any): any | null {
+    return (
+      payload?.payload?.payout?.entity ||
+      payload?.payload?.payout?.item ||
+      payload?.payload?.payout ||
+      null
+    );
+  }
+
+  private mapGatewayPayoutState(statusRaw: string):
+    | "processed"
+    | "failed"
+    | "in_progress"
+    | "ignored" {
+    const status = String(statusRaw || "").toLowerCase();
+    if (status === "processed") return "processed";
+    if (["failed", "reversed", "rejected", "cancelled"].includes(status)) {
+      return "failed";
+    }
+    if (["pending", "queued", "processing"].includes(status)) {
+      return "in_progress";
+    }
+    return "ignored";
+  }
+
+  async handleRazorpayXWebhook(rawBody: Buffer, signature: string) {
+    const valid = this.razorpayService.verifyWebhookSignature(rawBody, signature);
+    if (!valid) {
+      throw new BadRequestException("Invalid RazorpayX webhook signature");
+    }
+
+    let payload: any = null;
+    try {
+      payload = JSON.parse(rawBody.toString("utf8") || "{}");
+    } catch {
+      throw new BadRequestException("Malformed RazorpayX webhook payload");
+    }
+
+    const event = String(payload?.event || "");
+    const entity = this.extractRazorpayXPayoutEntity(payload);
+    const payoutId = String(entity?.id || "").trim();
+    if (!payoutId) {
+      return {
+        success: true,
+        message: "Webhook accepted (no payout id)",
+        ignored: true,
+      };
+    }
+
+    const tx = await this.transactionModel.findOne({ payoutTransferId: payoutId });
+    if (!tx) {
+      return {
+        success: true,
+        message: `Webhook accepted (transaction not found for payout ${payoutId})`,
+        ignored: true,
+      };
+    }
+
+    const gatewayStatus = String(entity?.status || "").toLowerCase();
+    const state = this.mapGatewayPayoutState(gatewayStatus);
+
+    tx.payoutGatewayProvider = "razorpayx";
+    tx.payoutTransferStatus = gatewayStatus || event || "unknown";
+    tx.payoutLastRetryAt = new Date();
+    if (entity?.utr) tx.payoutUtr = String(entity.utr);
+
+    if (state === "processed") {
+      tx.payoutStatus = "paid";
+      tx.paidOutAt = tx.paidOutAt || new Date();
+      tx.payoutSettledAt = new Date();
+      tx.payoutFailureReason = "";
+      tx.payoutRetryCount = 0;
+    } else if (state === "failed") {
+      tx.payoutStatus = "pending";
+      tx.payoutFailureReason =
+        String(entity?.status_details?.description || "").trim() ||
+        String(entity?.failure_reason || "").trim() ||
+        `Gateway event: ${event || gatewayStatus || "failed"}`;
+      tx.payoutRetryCount = Math.max(Number(tx.payoutRetryCount || 0), 0) + 1;
+    } else if (state === "in_progress") {
+      tx.payoutStatus = "processing";
+      tx.payoutFailureReason = "";
+    }
+
+    await tx.save();
+    if (tx.payoutStatus === "paid") {
+      await this.markInvitePayoutReleased(
+        tx,
+        tx.paidOutAt,
+        "razorpayx_webhook",
+      );
+    }
+    return {
+      success: true,
+      message: "Webhook processed",
+      payoutId,
+      event,
+      transactionId: String(tx._id),
+      payoutStatus: tx.payoutStatus,
+      payoutTransferStatus: tx.payoutTransferStatus,
+    };
+  }
+
+  private async upsertCampaignPaymentTransactions(
+    campaign: any,
+    payerId: string,
+    calc: any,
+    paymentBatchId: string,
+    mode: "manual_proof" | "gateway_order",
+    payload?: {
+      gateway?: "manual_upi" | "razorpay";
+      gatewayOrderId?: string;
+      utrNumber?: string;
+      paymentProofUrl?: string;
+    },
+  ): Promise<any[]> {
+    if (calc?.isPlatformFee) {
+      return this.upsertPlatformFeeTransactions(
+        campaign,
+        payerId,
+        calc,
+        paymentBatchId,
+        mode,
+        payload,
+      );
+    }
+    const acceptedInvites = await this.inviteModel
+      .find({ _id: { $in: calc.acceptedInviteIds } })
+      .lean();
+    const policySettings: any = await this.appSettingsModel.findOne({}).lean();
+
+    const saved: any[] = [];
+    for (const invite of acceptedInvites) {
+      const inviteAgreedAmount = Number(
+        invite?.agreedAmountPaise || calc.pricePerInfluencer || 0,
+      );
+      if (!inviteAgreedAmount || inviteAgreedAmount <= 0) {
+        throw new BadRequestException(
+          `Invite ${String(invite?._id?.toString() ?? "")} has no valid agreed payout amount.`,
+        );
+      }
+      const isPayToJoin = calc.campaignType === "pay_to_join";
+      const influencerId = String(invite.influencerId);
+      const inviteRecipientRole: "influencer" | "photographer" =
+        String(invite?.recipientRole || "")
+          .trim()
+          .toLowerCase() === "photographer"
+          ? "photographer"
+          : "influencer";
+      // Payer role: for pay_to_join the creator pays; for regular campaigns use
+      // the campaign owner's actual role (brand or photographer or influencer).
+      const campaignOwnerRole = this.resolveCampaignOwnerRole(campaign);
+      const invitePayerRole: "brand" | "influencer" | "photographer" =
+        isPayToJoin ? inviteRecipientRole : campaignOwnerRole;
+      const invitePayerUserId = isPayToJoin
+        ? String(invite.influencerId || "")
+        : String(campaign.brandId || "");
+      const inviteBaseFeePercent = calc.feeSettings
+        ? this.getRoleBaseFeePercent(
+            calc.feeSettings,
+            invitePayerRole,
+            await this.isPremiumUser(invitePayerUserId, invitePayerRole),
+          )
+        : Number(calc.platformFeePercent || 0);
+      let inviteEffectiveFeePercent = inviteBaseFeePercent;
+      if (calc.platformFeeEnabled && invitePayerUserId && calc.feeSettings) {
+        inviteEffectiveFeePercent = await this.getEffectiveCommissionPercent(
+          invitePayerUserId,
+          invitePayerRole,
+          inviteBaseFeePercent,
+        );
+      }
+      const inviteFee = calc.platformFeeEnabled
+        ? this.roundPercent(inviteAgreedAmount, inviteEffectiveFeePercent)
+        : 0;
+      // Recipient-side payout fee: role-specific, default 0%, scaffolded for future 1-4%.
+      const inviteRecipientFeeRoleForPayout:
+        | "brand"
+        | "influencer"
+        | "photographer" = isPayToJoin ? "brand" : inviteRecipientRole;
+      const inviteRecipientFeePercent = !calc.feeSettings
+        ? 0
+        : isPayToJoin
+          ? this.getRecipientFeePercent(
+              calc.feeSettings,
+              inviteRecipientFeeRoleForPayout,
+            )
+          : await this.recipientFeePercentForInvite(
+              invite,
+              calc.feeSettings,
+              inviteRecipientRole,
+            );
+      const inviteRecipientFee = calc.platformFeeEnabled
+        ? this.roundPercent(inviteAgreedAmount, inviteRecipientFeePercent)
+        : 0;
+      // GST on this row's commission (paid collab only) — the same rule as calculatePayment.
+      const inviteGst = isPayToJoin
+        ? 0
+        : platformFeeGst(
+            inviteFee,
+            Number(calc.gstPercent ?? calc.feeSettings?.gstPercent ?? 0),
+          );
+      const invitePayerTotal = isPayToJoin
+        ? inviteAgreedAmount
+        : inviteAgreedAmount + inviteFee + inviteGst;
+      const inviteRecipientPayout = isPayToJoin
+        ? Math.max(inviteAgreedAmount - inviteFee, 0)
+        : Math.max(inviteAgreedAmount - inviteRecipientFee, 0);
+      const recipientId =
+        calc.campaignType === "pay_to_join"
+          ? String(campaign.brandId)
+          : influencerId;
+
+      const existing = await this.transactionModel.findOne({
+        campaignId: String(campaign._id || ""),
+        inviteId: invite._id,
+        payerId,
+      });
+
+      const txDirection = isPayToJoin
+        ? (`${inviteRecipientRole}_to_brand` as const)
+        : (`${campaignOwnerRole}_to_${inviteRecipientRole}` as const);
+      const txData: any = {
+        transactionType:
+          calc.campaignType === "pay_to_join" ? "pay_to_join" : "paid_collab",
+        direction: txDirection,
+        campaignId: String(campaign._id || ""),
+        inviteId: invite._id,
+        payerId,
+        payerRole: invitePayerRole,
+        recipientId,
+        recipientRole:
+          calc.campaignType === "pay_to_join" ? "brand" : inviteRecipientRole,
+        agreedAmount: inviteAgreedAmount,
+        platformFee: inviteFee,
+        gstAmount: inviteGst,
+        payerTotal: invitePayerTotal,
+        recipientFee: inviteRecipientFee,
+        recipientPayout: inviteRecipientPayout,
+        paymentBatchId,
+        gateway: payload?.gateway || "manual_upi",
+      };
+
+      // Refund policy is fixed when the payment is made (terms v2 = fee credit).
+      txData.refundPolicy =
+        !isPayToJoin && termsV2Active(policySettings)
+          ? "fee_credit"
+          : "full_refund";
+      txData.creditApplied = 0;
+
+      if (mode === "manual_proof") {
+        txData.utrNumber = payload?.utrNumber || "";
+        txData.paymentProofUrl = payload?.paymentProofUrl || undefined;
+        txData.collectionStatus = "proof_submitted";
+      } else {
+        txData.gatewayOrderId = payload?.gatewayOrderId || paymentBatchId;
+        txData.gatewayOrderIds = [
+          ...((existing?.gatewayOrderIds as string[]) || []),
+          txData.gatewayOrderId,
+        ];
+        txData.gatewayOrderAmount = calc.amountDueRazorpay ?? null;
+        txData.utrNumber = undefined;
+        txData.paymentProofUrl = undefined;
+        txData.collectionStatus = "awaiting_payment";
+      }
+
+      // TrendStarZ credit pays (part of) this row's platform fee — UPI payments only.
+      const row = await this.saveRowApplyingCredit(
+        existing,
+        txData,
+        mode === "manual_proof" && !isPayToJoin && inviteFee > 0
+          ? {
+              payerId: String(payerId),
+              wanted: inviteFee,
+              campaignId: String(campaign._id || ""),
+              totalAfter: (r, used) => Math.max(Number(r.payerTotal || 0) - used, 0),
+            }
+          : null,
+      );
+      saved.push(row);
+    }
+
+    return saved;
+  }
+
+  /**
+   * Saves one payment row and applies the host's TrendStarZ credit to it, as ONE
+   * transaction: give back credit an earlier (rejected) attempt used, save the
+   * row, spend credit, stamp creditApplied/payerTotal. A failure part-way can no
+   * longer leave credit spent without being applied to a payment.
+   */
+  private async saveRowApplyingCredit(
+    existing: any,
+    txData: Record<string, any>,
+    credit: {
+      payerId: string;
+      wanted: number;
+      campaignId: string;
+      totalAfter: (row: any, used: number) => number;
+    } | null,
+  ) {
+    return inTransaction(this.connection, async (session) => {
+      let row: any;
+      if (existing) {
+        // A resubmission: give back credit the earlier (rejected) attempt used first.
+        await restoreCreditUse(this.creditModel, String(existing._id), "system", session);
+        Object.assign(existing, txData);
+        row = await existing.save(withSession({}, session));
+      } else {
+        row = await createOne(this.transactionModel, txData, session);
+      }
+      if (credit && credit.wanted > 0) {
+        const used = await consumeCredit(
+          this.creditModel,
+          {
+            ownerId: credit.payerId,
+            wanted: credit.wanted,
+            transactionId: String(row._id),
+            campaignId: credit.campaignId,
+          },
+          session,
+        );
+        if (used > 0) {
+          const payerTotal = credit.totalAfter(row, used);
+          await this.transactionModel.updateOne(
+            { _id: row._id },
+            { $set: { creditApplied: used, payerTotal } },
+            withSession({}, session),
+          );
+          row.creditApplied = used;
+          row.payerTotal = payerTotal;
+        }
+      }
+      return row;
+    });
+  }
+
+  /**
+   * Barter/location payment: the fixed platform fee owed for each accepted creator
+   * (snapshotted on the invite at acceptance), not yet paid or under review.
+   */
+  private async calculatePlatformFee(
+    campaign: any,
+    payerId: string,
+    inviteIds?: string[],
+  ) {
+    const campaignId = String(campaign._id);
+    const invites: any[] = await this.inviteModel
+      .find({
+        campaignId: { $in: [campaign._id, campaignId] },
+        status: { $in: ["accepted", "working"] },
+        platformFeeDue: { $gt: 0 },
+        platformFeePaidAt: null,
+      })
+      .lean();
+    const pending = await this.transactionModel
+      .find({
+        campaignId,
+        transactionType: "platform_fee",
+        collectionStatus: { $in: ["verified", "proof_submitted"] },
+      })
+      .select("feeInviteId")
+      .lean();
+    const pendingVerificationInviteIds = new Set(
+      (pending as any[]).map((t) => String(t.feeInviteId || "")).filter(Boolean),
+    );
+    const selected =
+      Array.isArray(inviteIds) && inviteIds.length
+        ? new Set(inviteIds.map((id) => String(id)))
+        : null;
+    const due = invites.filter((inv) => {
+      const id = String(inv._id);
+      if (!awaitingPlatformFee(inv) || pendingVerificationInviteIds.has(id))
+        return false;
+      return !selected || selected.has(id);
+    });
+    const { gstPercent } = await this.getFeeSettings();
+    const fee = due.reduce((sum, inv) => sum + Number(inv.platformFeeDue || 0), 0);
+    // GST per creator row, rounded per row — the stored rows add up to exactly this.
+    const gstAmount = due.reduce(
+      (sum, inv) => sum + platformFeeGst(Number(inv.platformFeeDue || 0), gstPercent),
+      0,
+    );
+    const credit = await this.creditPreview(payerId, fee, fee, false);
+    return {
+      campaignId,
+      campaignType: campaign.campaignType,
+      isPlatformFee: true,
+      gstPercent,
+      gstAmount,
+      // What the host pays. Credit only applies to UPI payments (as for commission).
+      amountDueRazorpay: fee + gstAmount,
+      amountDueUpi: Math.max(fee + gstAmount - credit.creditToApply, 0),
+      acceptedCount: due.length,
+      acceptedInviteIds: due.map((i) => String(i._id)),
+      pendingVerificationInviteIds: [...pendingVerificationInviteIds],
+      pricePerInfluencer: 0,
+      agreedAmount: 0,
+      platformFee: fee,
+      payerTotal: fee,
+      recipientFee: 0,
+      recipientPayoutTotal: 0,
+      platformFeeEnabled: true,
+      ...credit,
+      trustLabels: [
+        "Fixed TrendStarZ platform fee per confirmed creator",
+        "Contact and shipping details unlock once verified",
+        "Fee comes back as TrendStarZ credit if the creator doesn't show up",
+      ],
+    };
+  }
+
+  /** One platform_fee transaction per creator (see feeInviteId on the schema). */
+  private async upsertPlatformFeeTransactions(
+    campaign: any,
+    payerId: string,
+    calc: any,
+    paymentBatchId: string,
+    mode: "manual_proof" | "gateway_order",
+    payload?: {
+      gateway?: "manual_upi" | "razorpay";
+      gatewayOrderId?: string;
+      utrNumber?: string;
+      paymentProofUrl?: string;
+    },
+  ): Promise<any[]> {
+    const invites: any[] = await this.inviteModel
+      .find({ _id: { $in: calc.acceptedInviteIds } })
+      .lean();
+    const campaignId = String(campaign._id || "");
+    const payerRole = this.resolveCampaignOwnerRole(campaign);
+    const gstPercent = Number(calc.gstPercent || 0);
+    const saved: any[] = [];
+    for (const invite of invites) {
+      const fee = Number(invite.platformFeeDue || 0);
+      if (!(fee > 0)) continue;
+      const gst = platformFeeGst(fee, gstPercent);
+      const recipientRole: "influencer" | "photographer" =
+        String(invite?.recipientRole || "").toLowerCase() === "photographer"
+          ? "photographer"
+          : "influencer";
+      // A retry (e.g. a rejected proof) reuses the creator's existing fee row — never a second charge.
+      const existing = await this.transactionModel.findOne({
+        campaignId,
+        transactionType: "platform_fee",
+        feeInviteId: { $in: [invite._id, String(invite._id)] },
+        payerId,
+      });
+      const txData: any = {
+        transactionType: "platform_fee",
+        direction: `${payerRole}_to_${recipientRole}`,
+        campaignId,
+        // Placeholder, never the real invite — keeps fee rows out of inviteId lookups.
+        inviteId: existing?.inviteId ?? new Types.ObjectId(),
+        feeInviteId: invite._id,
+        payerId,
+        payerRole,
+        recipientId: String(invite.influencerId),
+        recipientRole,
+        agreedAmount: 0,
+        platformFee: fee,
+        gstAmount: gst,
+        payerTotal: fee + gst,
+        recipientFee: 0,
+        recipientPayout: 0,
+        payoutStatus: "skipped",
+        paymentBatchId,
+        gateway: payload?.gateway || "manual_upi",
+      };
+      if (mode === "manual_proof") {
+        txData.utrNumber = payload?.utrNumber || "";
+        txData.paymentProofUrl = payload?.paymentProofUrl || undefined;
+        txData.collectionStatus = "proof_submitted";
+      } else {
+        txData.gatewayOrderId = payload?.gatewayOrderId || paymentBatchId;
+        txData.gatewayOrderIds = [
+          ...((existing?.gatewayOrderIds as string[]) || []),
+          txData.gatewayOrderId,
+        ];
+        txData.gatewayOrderAmount = calc.amountDueRazorpay;
+        txData.utrNumber = undefined;
+        txData.paymentProofUrl = undefined;
+        txData.collectionStatus = "awaiting_payment";
+      }
+      const row = await this.saveRowApplyingCredit(
+        existing,
+        txData,
+        mode === "manual_proof"
+          ? {
+              payerId: String(payerId),
+              wanted: fee,
+              campaignId,
+              totalAfter: (_r, used) => Math.max(fee + gst - used, 0),
+            }
+          : null,
+      );
+      saved.push(row);
+    }
+    return saved;
+  }
+
+  /**
+   * Admin: give a host their platform fee back as TrendStarZ credit when the
+   * creator didn't show up (closed as a no-show, not excused). Once per fee.
+   */
+  async refundPlatformFeeAsCredit(transactionId: string, adminId: string) {
+    const tx: any = await this.transactionModel.findById(transactionId);
+    if (!tx || tx.transactionType !== "platform_fee") {
+      throw new NotFoundException("Platform fee payment not found");
+    }
+    if (tx.collectionStatus !== "verified") {
+      throw new BadRequestException("Only a verified platform fee can be refunded.");
+    }
+    if (tx.feeCreditedAt) {
+      throw new BadRequestException("This fee was already refunded as credit.");
+    }
+    const invite: any = await this.inviteModel
+      .findById(tx.feeInviteId)
+      .select("status withdrawnReasonCode missExcused")
+      .lean();
+    const noShow =
+      invite?.status === "withdrawn" &&
+      ["expired_unsubmitted", "location_no_show"].includes(
+        String(invite?.withdrawnReasonCode || ""),
+      ) &&
+      !invite?.missExcused?.at;
+    if (!noShow) {
+      throw new BadRequestException(
+        "A fee is refunded as credit only when the creator was a no-show.",
+      );
+    }
+    // Everything the host paid for this fee — GST and any credit used included.
+    const amount =
+      Number(tx.platformFee || 0) + Number(tx.gstAmount || 0);
+    // Claim the fee first (guarded) and issue the credit in the same transaction,
+    // so a double click or two admins can never credit the same fee twice.
+    const now = new Date();
+    await inTransaction(this.connection, async (session) => {
+      const claimed = await this.transactionModel
+        .findOneAndUpdate(
+          { _id: tx._id, feeCreditedAt: null },
+          { $set: { feeCreditedAt: now } },
+          withSession({ new: true }, session),
+        )
+        .lean();
+      if (!claimed) {
+        throw new BadRequestException("This fee was already refunded as credit.");
+      }
+      await issueCredit(
+        this.creditModel,
+        {
+          ownerId: String(tx.payerId),
+          ownerRole: tx.payerRole,
+          amount,
+          transactionId: String(tx._id),
+          campaignId: String(tx.campaignId || ""),
+          reason: "Platform fee refunded — creator no-show",
+          createdBy: String(adminId || "admin"),
+        },
+        session,
+      );
+    });
+    return { success: true, amount, creditedAt: now };
+  }
+
+  /** What credit would pay on this payment (shown before paying; applied on submit). */
+  private async creditPreview(
+    payerId: string,
+    fee: number,
+    payerTotal: number,
+    isPayToJoin: boolean,
+  ) {
+    const creditAvailable = isPayToJoin
+      ? 0
+      : await creditBalance(this.creditModel, payerId).catch(() => 0);
+    const creditToApply = Math.min(
+      creditAvailable,
+      Math.max(0, Number(fee || 0)),
+    );
+    return {
+      creditAvailable,
+      creditToApply,
+      payerTotalAfterCredit: Math.max(
+        Number(payerTotal || 0) - creditToApply,
+        0,
+      ),
+    };
+  }
+
+  /**
+   * What the host pays now. `inviteIds` limits it to those creators (one-by-one
+   * payment); omitted = every accepted creator not yet paid. Creators whose
+   * payment proof is already waiting for admin verification are never charged
+   * again.
+   */
+  async calculatePayment(
+    campaignId: string,
+    payerId: string,
+    inviteIds?: string[],
+  ) {
     const campaign: any = await this.campaignModel.findById(campaignId).lean();
     if (!campaign) throw new NotFoundException("Campaign not found");
 
     await this.assertCampaignOwner(campaign, payerId);
 
-    const pricePerInfluencer = Number(campaign.pricePerInfluencer || 0);
-    if (!pricePerInfluencer || pricePerInfluencer <= 0) {
-      throw new BadRequestException("pricePerInfluencer must be set in paise");
+    // Barter/location: no creator payment — a fixed TrendStarZ platform fee per confirmed creator.
+    if (isBarterOrLocationCampaign(campaign)) {
+      return this.calculatePlatformFee(campaign, payerId, inviteIds);
     }
 
-    const acceptedInvites = await this.inviteModel
+    const pricePerInfluencer = Number(campaign.pricePerInfluencer || 0);
+
+    // Fetch all accepted invites
+    const allAcceptedInvites = await this.inviteModel
       .find({
         campaignId,
         status: {
@@ -143,12 +1220,44 @@ export class PaymentsPayoutsService {
       })
       .lean();
 
+    // Already paid (verified) or paid and waiting for admin verification.
+    const settledTransactions = await this.transactionModel
+      .find({
+        campaignId,
+        collectionStatus: { $in: ["verified", "proof_submitted"] },
+      })
+      .select("inviteId collectionStatus")
+      .lean();
+
+    const paidInviteIds = new Set<string>();
+    const pendingVerificationInviteIds = new Set<string>();
+    for (const tx of settledTransactions as any[]) {
+      const id = String(tx.inviteId || "");
+      if (!id) continue;
+      if (tx.collectionStatus === "verified") paidInviteIds.add(id);
+      else pendingVerificationInviteIds.add(id);
+    }
+
+    const selected =
+      Array.isArray(inviteIds) && inviteIds.length
+        ? new Set(inviteIds.map((id) => String(id)))
+        : null;
+    // Only unpaid invites (and only the chosen ones, when the host picked creators).
+    const acceptedInvites = allAcceptedInvites.filter((inv: any) => {
+      const id = String(inv._id);
+      if (paidInviteIds.has(id) || pendingVerificationInviteIds.has(id))
+        return false;
+      return !selected || selected.has(id);
+    });
+
     const acceptedCount = acceptedInvites.length;
     if (acceptedCount === 0) {
       return {
         campaignId,
         campaignType: campaign.campaignType || "paid_collab",
         acceptedCount: 0,
+        acceptedInviteIds: [],
+        pendingVerificationInviteIds: [...pendingVerificationInviteIds],
         pricePerInfluencer,
         agreedAmount: 0,
         platformFee: 0,
@@ -157,47 +1266,129 @@ export class PaymentsPayoutsService {
       };
     }
 
-    const agreedAmount = pricePerInfluencer * acceptedCount;
-    const { platformFeeEnabled, platformFeePercent } =
-      await this.getFeeSettings();
-
-    // Get effective commission percent after any overrides for the brand (payer)
-    const effectiveCommissionPercent = await this.getEffectiveCommissionPercent(
-      String(campaign.brandId),
-      "brand",
-      platformFeePercent,
+    const inviteAgreedAmounts = acceptedInvites.map((invite: any) => {
+      const fromInvite = Number(invite?.agreedAmountPaise || 0);
+      if (Number.isFinite(fromInvite) && fromInvite > 0) return fromInvite;
+      const fallback = Number(pricePerInfluencer || 0);
+      if (Number.isFinite(fallback) && fallback > 0) return fallback;
+      return 0;
+    });
+    const agreedAmount = inviteAgreedAmounts.reduce(
+      (sum, value) => sum + value,
+      0,
     );
-
-    const fee = platformFeeEnabled
-      ? this.roundPercent(agreedAmount, effectiveCommissionPercent)
-      : 0;
+    if (!agreedAmount || agreedAmount <= 0) {
+      throw new BadRequestException(
+        "No valid accepted payout amounts found. Set campaign payout or invite agreed amount.",
+      );
+    }
+    const feeSettings = await this.getFeeSettings();
+    const { platformFeeEnabled } = feeSettings;
+    const settingsForTerms: any = await this.appSettingsModel.findOne({}).lean();
 
     const campaignType = campaign.campaignType || "paid_collab";
+    const isPayToJoin = campaignType === "pay_to_join";
+
+    // Determine payer: campaign owner for regular campaigns; creator for pay_to_join.
+    const creatorRole: "influencer" | "photographer" =
+      String(campaign.inviteRecipientRole || acceptedInvites[0]?.recipientRole || "influencer")
+        .toLowerCase() === "photographer"
+        ? "photographer"
+        : "influencer";
+
+    const campaignOwnerRole = this.resolveCampaignOwnerRole(campaign);
+    const payerUserId = isPayToJoin
+      ? String(acceptedInvites[0]?.influencerId || "")
+      : String(campaign.brandId);
+    const payerUserType: "brand" | "influencer" | "photographer" = isPayToJoin
+      ? creatorRole
+      : campaignOwnerRole;
+
+    const baseFeePercent = this.getRoleBaseFeePercent(
+      feeSettings,
+      payerUserType,
+      await this.isPremiumUser(payerUserId, payerUserType),
+    );
+    const effectiveCommissionPercent = payerUserId
+      ? await this.getEffectiveCommissionPercent(payerUserId, payerUserType, baseFeePercent)
+      : baseFeePercent;
+
+    // Commission per creator, rounded per row exactly like the stored transactions,
+    // so the total charged always equals the sum of the rows.
+    const rowFees = inviteAgreedAmounts.map((amount) =>
+      platformFeeEnabled ? this.roundPercent(amount, effectiveCommissionPercent) : 0,
+    );
+    const fee = !platformFeeEnabled
+      ? 0
+      : isPayToJoin
+        ? this.roundPercent(agreedAmount, effectiveCommissionPercent)
+        : rowFees.reduce((sum, f) => sum + f, 0);
+    // GST is charged on TrendStarZ's commission only, never on the creator's amount.
+    const gstPercent = Number(feeSettings.gstPercent || 0);
+    const gstAmount = isPayToJoin
+      ? 0
+      : rowFees.reduce((sum, f) => sum + platformFeeGst(f, gstPercent), 0);
+
+    // Recipient-side payout fee: role-specific, default 0%, scaffolded for future 1-4%.
+    const recipientRoleForPayout: "brand" | "influencer" | "photographer" = isPayToJoin
+      ? "brand"
+      : creatorRole;
+    const recipientFeePercent = this.getRecipientFeePercent(feeSettings, recipientRoleForPayout);
+    // Paid collab: each creator's own rate (locked at acceptance, Free/Premium), per row.
+    let recipientFee = 0;
+    if (platformFeeEnabled && isPayToJoin) {
+      recipientFee = this.roundPercent(agreedAmount, recipientFeePercent);
+    } else if (platformFeeEnabled) {
+      for (let i = 0; i < acceptedInvites.length; i++) {
+        const pct = await this.recipientFeePercentForInvite(
+          acceptedInvites[i],
+          feeSettings,
+          creatorRole,
+        );
+        recipientFee += this.roundPercent(inviteAgreedAmounts[i], pct);
+      }
+    }
+
     let payerTotal = agreedAmount;
     let recipientPayoutTotal = agreedAmount;
 
-    if (campaignType === "pay_to_join") {
+    if (isPayToJoin) {
       payerTotal = agreedAmount;
       recipientPayoutTotal = Math.max(agreedAmount - fee, 0);
     } else {
       payerTotal = agreedAmount + fee;
-      recipientPayoutTotal = agreedAmount;
+      recipientPayoutTotal = Math.max(agreedAmount - recipientFee, 0);
     }
 
+    const credit = await this.creditPreview(payerId, fee, payerTotal, isPayToJoin);
     return {
       campaignId,
       campaignType,
       acceptedCount,
+      gstPercent,
+      gstAmount,
+      // What the host pays: agreed + commission + GST on commission (credit: UPI only).
+      amountDueRazorpay: payerTotal + gstAmount,
+      amountDueUpi: Math.max(payerTotal + gstAmount - credit.creditToApply, 0),
       acceptedInviteIds: acceptedInvites.map((i: any) => String(i._id)),
+      acceptedInviteAgreedAmounts: inviteAgreedAmounts,
+      pendingVerificationInviteIds: [...pendingVerificationInviteIds],
       pricePerInfluencer,
       agreedAmount,
       platformFee: fee,
       payerTotal,
+      recipientFee,
+      recipientFeePercent,
       recipientPayoutTotal,
       platformFeeEnabled,
-      platformFeePercent: effectiveCommissionPercent, // Use effective percent instead of global
+      platformFeePercent: effectiveCommissionPercent,
+      feeSettings,
+      // TrendStarZ credit pays only the platform fee (UPI payments).
+      ...credit,
+      termsVersion: currentTermsVersion(settingsForTerms),
+      termsV2Active: termsV2Active(settingsForTerms),
       trustLabels: [
-        "You pay only for accepted influencers",
+        "You pay only for accepted recipients",
         "Payment secured by TrendStarz",
         "Released after campaign approval",
       ],
@@ -207,7 +1398,13 @@ export class PaymentsPayoutsService {
   async submitPaymentProof(
     campaignId: string,
     payerId: string,
-    body: { utrNumber: string; paymentProofUrl?: string },
+    body: {
+      utrNumber: string;
+      paymentProofUrl?: string;
+      acceptTerms?: boolean;
+      /** Pay only for these creators (one-by-one); omitted = all unpaid. */
+      inviteIds?: string[];
+    },
   ) {
     const utrNumber = (body.utrNumber || "").trim();
     if (!utrNumber) {
@@ -218,91 +1415,43 @@ export class PaymentsPayoutsService {
     if (!campaign) throw new NotFoundException("Campaign not found");
     await this.assertCampaignOwner(campaign, payerId);
 
-    const calc = await this.calculatePayment(campaignId, payerId);
+    const calc = await this.calculatePayment(
+      campaignId,
+      payerId,
+      body?.inviteIds,
+    );
     if (!calc.acceptedCount) {
-      throw new BadRequestException(
-        "No accepted influencers found for payment",
-      );
+      throw new BadRequestException("No accepted recipients found for payment");
     }
-
-    const acceptedInvites = await this.inviteModel
-      .find({ _id: { $in: calc.acceptedInviteIds } })
-      .lean();
-
-    const agreedSplit = this.splitEvenly(
-      calc.agreedAmount,
-      acceptedInvites.length,
-    );
-    const feeSplit = this.splitEvenly(calc.platformFee, acceptedInvites.length);
-    const payerSplit = this.splitEvenly(
-      calc.payerTotal,
-      acceptedInvites.length,
-    );
-    const payoutSplit = this.splitEvenly(
-      calc.recipientPayoutTotal,
-      acceptedInvites.length,
-    );
+    await this.recordHostTermsAcceptance(calc, payerId, body?.acceptTerms);
     const paymentBatchId = `batch_${campaignId}_${Date.now()}`;
 
-    const saved: any[] = [];
-
-    for (let i = 0; i < acceptedInvites.length; i++) {
-      const invite = acceptedInvites[i];
-      const influencerId = String(invite.influencerId);
-      const recipientId =
-        calc.campaignType === "pay_to_join"
-          ? String(campaign.brandId)
-          : influencerId;
-
-      const existing = await this.transactionModel.findOne({
-        campaignId,
-        inviteId: invite._id,
-        payerId,
-      });
-
-      const txData = {
-        transactionType:
-          calc.campaignType === "pay_to_join" ? "pay_to_join" : "paid_collab",
-        direction:
-          calc.campaignType === "pay_to_join"
-            ? "influencer_to_brand"
-            : "brand_to_influencer",
-        campaignId,
-        inviteId: invite._id,
-        payerId,
-        payerRole: calc.campaignType === "pay_to_join" ? "influencer" : "brand",
-        recipientId,
-        recipientRole:
-          calc.campaignType === "pay_to_join" ? "brand" : "influencer",
-        agreedAmount: agreedSplit[i],
-        platformFee: feeSplit[i],
-        payerTotal: payerSplit[i],
-        recipientPayout: payoutSplit[i],
-        paymentBatchId,
+    const saved = await this.upsertCampaignPaymentTransactions(
+      campaign,
+      payerId,
+      calc,
+      paymentBatchId,
+      "manual_proof",
+      {
+        gateway: "manual_upi",
         utrNumber,
-        paymentProofUrl: body.paymentProofUrl || undefined,
-        collectionStatus: "proof_submitted",
-      };
-
-      if (existing) {
-        Object.assign(existing, txData);
-        saved.push(await existing.save());
-      } else {
-        const created = await this.transactionModel.create(txData);
-        saved.push(created);
-      }
-    }
+        paymentProofUrl: body.paymentProofUrl,
+      },
+    );
 
     // Fire-and-forget admin alert
     const adminEmail = process.env.ADMIN_EMAIL || "support@trendstarz.in";
     const adminUrl =
-      (process.env.FRONTEND_URL || "https://trendstarz.com") +
+      (process.env.FRONTEND_URL || "https://trendstarz.in") +
       "/admin/payments";
     sendAppEmail({
       to: adminEmail,
-      subject: `[TrendStarZ] New payment proof — ${campaign.title || campaignId}`,
-      text: `A brand has submitted a UTR reference for campaign "${campaign.title || campaignId}".\n\nUTR: ${utrNumber}\nInfluencers: ${saved.length}\n\nReview: ${adminUrl}`,
-      html: `<p>A brand has submitted a UTR reference for campaign <strong>${campaign.title || campaignId}</strong>.</p><p><strong>UTR:</strong> ${utrNumber}<br/><strong>Influencers:</strong> ${saved.length}</p><p><a href="${adminUrl}">Review in admin panel</a></p>`,
+      ...paymentProofAdminTemplate({
+        campaignTitle: campaign.title || campaignId,
+        utrNumber,
+        recipientCount: saved.length,
+        adminUrl,
+      }),
     }).catch((err: unknown) => {
       console.error(
         "[PaymentsPayoutsService] Failed to send admin UTR alert:",
@@ -318,26 +1467,197 @@ export class PaymentsPayoutsService {
     };
   }
 
+  async createRazorpayOrderForCampaign(
+    campaignId: string,
+    payerId: string,
+    acceptTerms?: boolean,
+    inviteIds?: string[],
+  ) {
+    const campaign: any = await this.campaignModel.findById(campaignId).lean();
+    if (!campaign) throw new NotFoundException("Campaign not found");
+    await this.assertCampaignOwner(campaign, payerId);
+
+    const calc = await this.calculatePayment(campaignId, payerId, inviteIds);
+    if (!calc.acceptedCount) {
+      throw new BadRequestException("No accepted recipients found for payment");
+    }
+    await this.recordHostTermsAcceptance(calc, payerId, acceptTerms);
+
+    // GST-inclusive — the same total the payment window shows (credit isn't used here).
+    const feeCalc: any = calc;
+    const amountPaise = Number(feeCalc.amountDueRazorpay ?? calc.payerTotal ?? 0);
+    if (!Number.isFinite(amountPaise) || amountPaise <= 0) {
+      throw new BadRequestException("Invalid campaign payable amount");
+    }
+
+    const order = await this.razorpayService.createOrder(amountPaise, {
+      userId: payerId,
+      premiumDuration: "1m",
+    });
+
+    const saved = await this.upsertCampaignPaymentTransactions(
+      campaign,
+      payerId,
+      calc,
+      order.orderId,
+      "gateway_order",
+      {
+        gateway: "razorpay",
+        gatewayOrderId: order.orderId,
+      },
+    );
+
+    return {
+      success: true,
+      order,
+      count: saved.length,
+      transactions: saved,
+    };
+  }
+
+  async verifyRazorpayCampaignPayment(
+    campaignId: string,
+    payerId: string,
+    body: { orderId: string; paymentId: string; signature: string },
+  ) {
+    const orderId = String(body?.orderId || "").trim();
+    const paymentId = String(body?.paymentId || "").trim();
+    const signature = String(body?.signature || "").trim();
+    if (!orderId || !paymentId || !signature) {
+      throw new BadRequestException("orderId, paymentId and signature are required");
+    }
+
+    const campaign: any = await this.campaignModel.findById(campaignId).lean();
+    if (!campaign) throw new NotFoundException("Campaign not found");
+    await this.assertCampaignOwner(campaign, payerId);
+
+    const valid = this.razorpayService.verifySignature(
+      orderId,
+      paymentId,
+      signature,
+    );
+    if (!valid) {
+      throw new BadRequestException("Invalid Razorpay payment signature");
+    }
+
+    const txs = await this.transactionModel.find({
+      campaignId,
+      payerId,
+      $or: [{ paymentBatchId: orderId }, { gatewayOrderIds: orderId }],
+      gateway: "razorpay",
+    });
+    if (!Array.isArray(txs) || !txs.length) {
+      throw new NotFoundException("No Razorpay campaign transactions found for this order");
+    }
+
+    // The rows must add up to what this order charged (rows created before
+    // gatewayOrderAmount existed are not checked).
+    const checkedRows = txs.filter((t: any) => Number(t.gatewayOrderAmount || 0) > 0);
+    if (checkedRows.length) {
+      const rowsTotal = checkedRows.reduce(
+        (sum: number, t: any) => sum + Number(t.payerTotal || 0),
+        0,
+      );
+      const orderAmount = Number(checkedRows[0].gatewayOrderAmount || 0);
+      if (rowsTotal !== orderAmount) {
+        this.logger.error(
+          `Razorpay order ${orderId}: rows total ${rowsTotal} ≠ order amount ${orderAmount}`,
+        );
+        throw new BadRequestException(
+          "Payment amount mismatch — TrendStarZ will review this payment.",
+        );
+      }
+    }
+
+    const results: any[] = [];
+    for (const tx of txs) {
+      tx.gatewayOrderId = orderId;
+      tx.gatewayPaymentId = paymentId;
+      tx.gatewaySignature = signature;
+      tx.gatewayVerifiedAt = new Date();
+      await tx.save();
+
+      const verified = await this.verifyCollectionById(String(tx._id), "Razorpay auto-verified", true);
+      results.push(verified?.transaction || tx);
+    }
+
+    return {
+      success: true,
+      message: "Razorpay payment verified and campaign collection marked as verified.",
+      count: results.length,
+      transactions: results,
+    };
+  }
+
   async listForAdmin(status?: string) {
     const filter: any = {};
     if (status === "awaiting") filter.collectionStatus = "awaiting_payment";
     if (status === "verified") filter.collectionStatus = "verified";
-    if (status === "payout_pending") filter.payoutStatus = "pending";
+    if (status === "payout_pending")
+      filter.payoutStatus = { $in: ["pending", "processing"] };
     if (status === "paid") filter.payoutStatus = "paid";
+    if (status === "refund_due") Object.assign(filter, REFUND_DUE_FILTER);
+    if (status === "refund_on_hold") filter.refundStatus = "on_hold";
+    if (status === "refunded") filter.refundStatus = "sent";
+    if (status === "settlement") filter["settlement.status"] = SETTLEMENT_OPEN;
 
     const rows = await this.transactionModel
       .find(filter)
       .sort({ createdAt: -1 })
       .lean();
 
+    const inviteIds = new Set<string>();
+    for (const r of rows as any[]) {
+      if (r.inviteId) inviteIds.add(String(r.inviteId));
+    }
+    // Platform fees: whether the creator was a no-show (fee can go back as credit).
+    const feeInviteIds = (rows as any[])
+      .filter((r) => r.transactionType === "platform_fee" && r.feeInviteId)
+      .map((r) => String(r.feeInviteId));
+    const feeInvites: any[] = feeInviteIds.length
+      ? await this.inviteModel
+          .find({ _id: { $in: feeInviteIds } })
+          .select("status withdrawnReasonCode missExcused")
+          .lean()
+      : [];
+    const noShowFeeInviteIds = new Set(
+      feeInvites
+        .filter(
+          (inv) =>
+            inv.status === "withdrawn" &&
+            ["expired_unsubmitted", "location_no_show"].includes(
+              String(inv.withdrawnReasonCode || ""),
+            ) &&
+            !inv?.missExcused?.at,
+        )
+        .map((inv) => String(inv._id)),
+    );
+
+    const invites = inviteIds.size
+      ? await this.inviteModel
+          .find({ _id: { $in: Array.from(inviteIds) } })
+          .select(
+            "status unlocked unlockType agreedAmount agreedAmountPaise counterOffer acceptedAt completedAt updatedAt",
+          )
+          .lean()
+      : [];
+    const inviteMap = new Map<string, any>();
+    for (const inv of invites as any[]) {
+      inviteMap.set(String(inv._id), inv);
+    }
+
     // Enrich rows with recipient + payer profile info so the admin UI can
     // prefill the "Mark Payout Paid" popup (name, UPI ID, mobile) without
     // an extra round-trip per row.
     const influencerIds = new Set<string>();
+    const photographerIds = new Set<string>();
     const brandIds = new Set<string>();
     for (const r of rows as any[]) {
       if (r.recipientRole === "influencer" && r.recipientId) {
         influencerIds.add(String(r.recipientId));
+      }
+      if (r.recipientRole === "photographer" && r.recipientId) {
+        photographerIds.add(String(r.recipientId));
       }
       if (r.recipientRole === "brand" && r.recipientId) {
         brandIds.add(String(r.recipientId));
@@ -345,15 +1665,24 @@ export class PaymentsPayoutsService {
       if (r.payerRole === "influencer" && r.payerId) {
         influencerIds.add(String(r.payerId));
       }
+      if (r.payerRole === "photographer" && r.payerId) {
+        photographerIds.add(String(r.payerId));
+      }
       if (r.payerRole === "brand" && r.payerId) {
         brandIds.add(String(r.payerId));
       }
     }
 
-    const [influencers, brands] = await Promise.all([
+    const [influencers, photographers, brands] = await Promise.all([
       influencerIds.size
         ? this.influencerModel
             .find({ _id: { $in: Array.from(influencerIds) } })
+            .select("name email phoneNumber payout")
+            .lean()
+        : Promise.resolve([] as any[]),
+      photographerIds.size
+        ? this.photographerModel
+            .find({ _id: { $in: Array.from(photographerIds) } })
             .select("name email phoneNumber payout")
             .lean()
         : Promise.resolve([] as any[]),
@@ -367,6 +1696,8 @@ export class PaymentsPayoutsService {
 
     const inflMap = new Map<string, any>();
     for (const i of influencers) inflMap.set(String(i._id), i);
+    const photographerMap = new Map<string, any>();
+    for (const p of photographers) photographerMap.set(String(p._id), p);
     const brandMap = new Map<string, any>();
     for (const b of brands) brandMap.set(String(b._id), b);
 
@@ -416,6 +1747,21 @@ export class PaymentsPayoutsService {
           lastConfirmedAt: b.payout?.lastConfirmedAt || null,
         };
       }
+      if (role === "photographer") {
+        const p = photographerMap.get(sid);
+        if (!p) return { id: sid, role: "photographer", name: "" };
+        return {
+          id: sid,
+          role: "photographer",
+          name: p.name || "",
+          email: p.email || "",
+          mobile: p.phoneNumber || "",
+          payoutUpiId: p.payout?.upiId || "",
+          payoutMobile: p.payout?.mobile || "",
+          payoutName: p.payout?.accountHolderName || "",
+          lastConfirmedAt: p.payout?.lastConfirmedAt || null,
+        };
+      }
       return null;
     };
 
@@ -423,32 +1769,89 @@ export class PaymentsPayoutsService {
       ...r,
       recipient: buildContact(r.recipientRole, r.recipientId),
       payer: buildContact(r.payerRole, r.payerId),
+      feeRefundable:
+        r.transactionType === "platform_fee" &&
+        r.collectionStatus === "verified" &&
+        !r.feeCreditedAt &&
+        noShowFeeInviteIds.has(String(r.feeInviteId || "")),
+      inviteSnapshot: r.inviteId
+        ? (() => {
+            const inv = inviteMap.get(String(r.inviteId));
+            if (!inv) return null;
+            return {
+              id: String(inv._id),
+              status: String(inv.status || ""),
+              unlocked: !!inv.unlocked,
+              unlockType: String(inv.unlockType || ""),
+              agreedAmount: Number(inv.agreedAmount || 0),
+              agreedAmountPaise: Number(inv.agreedAmountPaise || 0),
+              counterOfferStatus: String(inv?.counterOffer?.status || ""),
+              counterOfferedAmount: Number(inv?.counterOffer?.offeredAmount || 0),
+              counterOfferedAmountPaise: Number(
+                inv?.counterOffer?.offeredAmountPaise || 0,
+              ),
+              counterRequestedAmount: Number(inv?.counterOffer?.requestedAmount || 0),
+              counterRequestedAmountPaise: Number(
+                inv?.counterOffer?.requestedAmountPaise || 0,
+              ),
+              counterResolvedAt: inv?.counterOffer?.resolvedAt || null,
+              acceptedAt: inv?.acceptedAt || null,
+              completedAt: inv?.completedAt || null,
+              updatedAt: inv?.updatedAt || null,
+            };
+          })()
+        : null,
     }));
 
     return { success: true, data: enriched };
   }
 
-  async getAdminSummary() {
-    const rows = await this.transactionModel.find({}).lean();
+  async getAdminSummary(since?: Date) {
+    const rows = await this.transactionModel
+      .find(since ? { createdAt: { $gte: since } } : {})
+      .lean();
+    const sum = (list: any[], pick: (r: any) => number) =>
+      list.reduce((total: number, r: any) => total + (pick(r) || 0), 0);
     const verified = rows.filter((r: any) => r.collectionStatus === "verified");
     const paid = rows.filter((r: any) => r.payoutStatus === "paid");
-    const pending = rows.filter((r: any) => r.payoutStatus === "pending");
+    const pending = rows.filter((r: any) =>
+      ["pending", "processing"].includes(String(r.payoutStatus || "")),
+    );
+    // Refund money states are kept apart: only "sent" is money that actually left.
+    const onHoldRows = rows.filter((r: any) => r.refundStatus === "on_hold");
+    const refundDueRows = rows.filter((r: any) => isRefundDue(r));
+    const sentRows = rows.filter((r: any) => r.refundStatus === "sent");
+    const legacyRows = rows.filter((r: any) => isLegacyUnconfirmedRefund(r));
+    const settlementRows = rows.filter(
+      (r: any) => r.settlement?.status === SETTLEMENT_OPEN,
+    );
+    const repaidRows = rows.filter(
+      (r: any) => Number(r.settlement?.hostRepaidAmount || 0) > 0,
+    );
+    // Pay-to-join keeps its existing workflow: "refund to brand" still counts as refunded.
+    const payToJoinRefundRows = rows.filter(
+      (r: any) =>
+        r.transactionType === "pay_to_join" &&
+        r.resolveOutcome === "refund_to_brand",
+    );
 
-    const collected = verified.reduce(
-      (sum: number, r: any) => sum + Number(r.payerTotal || 0),
-      0,
+    const collected = sum(verified, (r) => Number(r.payerTotal || 0));
+    const hostRepayments = sum(repaidRows, (r) =>
+      Number(r.settlement?.hostRepaidAmount || 0),
     );
-    const fees = verified.reduce(
-      (sum: number, r: any) => sum + Number(r.platformFee || 0),
-      0,
+    const fees = sum(verified, (r) => Number(r.platformFee || 0));
+    const pendingPayouts = sum(pending, (r) => Number(r.recipientPayout || 0));
+    const paidOut = sum(paid, (r) => Number(r.recipientPayout || 0));
+    const refundSent = sum(sentRows, (r) =>
+      Number(r.refundAmount ?? r.payerTotal ?? 0),
     );
-    const pendingPayouts = pending.reduce(
-      (sum: number, r: any) => sum + Number(r.recipientPayout || 0),
-      0,
-    );
-    const paidOut = paid.reduce(
-      (sum: number, r: any) => sum + Number(r.recipientPayout || 0),
-      0,
+    const refunded =
+      refundSent + sum(payToJoinRefundRows, (r) => Number(r.payerTotal || 0));
+    const refundDue = sum(refundDueRows, refundDueAmount);
+    const refundOnHold = sum(onHoldRows, refundDueAmount);
+    const legacyUnconfirmed = sum(legacyRows, refundDueAmount);
+    const settlementPending = sum(settlementRows, (r) =>
+      Number(r.settlement?.amount || 0),
     );
 
     return {
@@ -458,57 +1861,310 @@ export class PaymentsPayoutsService {
         fees,
         pendingPayouts,
         paidOut,
-        netBalance: collected - paidOut - pendingPayouts,
+        /** Money actually transferred back (UTR recorded). */
+        refunded,
+        /** Classified as owed — not yet transferred. */
+        refundDue,
+        refundDueCount: refundDueRows.length,
+        /** Under the 7-day review — not owed yet. */
+        refundOnHold,
+        refundOnHoldCount: onHoldRows.length,
+        /** Old "refund to host" rows whose real payment history is unconfirmed. */
+        legacyUnconfirmed,
+        legacyUnconfirmedCount: legacyRows.length,
+        /** Host repayments still awaited after a refund was sent and the post verified. */
+        settlementPending,
+        settlementPendingCount: settlementRows.length,
+        hostRepayments,
+        /** TrendStarZ credit issued as fee refunds (terms v2). */
+        feeCreditIssued: sum(
+          rows.filter((r: any) => r.feeCredit?.status === "issued"),
+          (r) => Number(r.feeCredit?.amount || 0),
+        ),
+        feeCreditInReview: sum(
+          rows.filter((r: any) => r.feeCredit?.status === "needs_review"),
+          (r) => Number(r.feeCredit?.amount || 0),
+        ),
+        netBalance:
+          collected +
+          hostRepayments -
+          paidOut -
+          pendingPayouts -
+          refunded -
+          refundDue -
+          refundOnHold -
+          legacyUnconfirmed,
+      },
+    };
+  }
+
+  getGatewayReadiness() {
+    const hasRazorpayKeys = !!(
+      process.env.RAZORPAY_KEY_ID && process.env.RAZORPAY_KEY_SECRET
+    );
+    const hasRazorpayX = this.razorpayService.isPayoutsConfigured();
+    const payoutSettlementMode = PaymentsPayoutsService.PAYOUT_SETTLEMENT_MODE;
+    const autoPayoutEnabled = PaymentsPayoutsService.AUTO_PAYOUT_ENABLED;
+
+    const missing: string[] = [];
+    if (!process.env.RAZORPAY_KEY_ID) missing.push("RAZORPAY_KEY_ID");
+    if (!process.env.RAZORPAY_KEY_SECRET) missing.push("RAZORPAY_KEY_SECRET");
+    if (!process.env.RAZORPAYX_KEY_ID && !process.env.RAZORPAY_KEY_ID) {
+      missing.push("RAZORPAYX_KEY_ID or RAZORPAY_KEY_ID");
+    }
+    if (!process.env.RAZORPAYX_KEY_SECRET && !process.env.RAZORPAY_KEY_SECRET) {
+      missing.push("RAZORPAYX_KEY_SECRET or RAZORPAY_KEY_SECRET");
+    }
+    if (!process.env.RAZORPAYX_ACCOUNT_NUMBER) {
+      missing.push("RAZORPAYX_ACCOUNT_NUMBER");
+    }
+
+    return {
+      success: true,
+      data: {
+        requiredAccounts: {
+          razorpayPaymentGateway:
+            "Required for subscription and campaign collection checkout",
+          razorpayX:
+            "Optional; not used while payout settlement mode is manual",
+        },
+        registrationSubscriptions: {
+          manual: {
+            enabled: true,
+            path: "/api/payment",
+            verification: "Admin approval in /admin/payments premium tab",
+          },
+          razorpay: {
+            enabled: hasRazorpayKeys,
+            path: "/api/monetization/subscriptions/order + /api/monetization/razorpay/verify",
+            requires: ["RAZORPAY_KEY_ID", "RAZORPAY_KEY_SECRET"],
+          },
+        },
+        collaborationCampaignPayments: {
+          collectionPayIn: {
+            manual: {
+              enabled: true,
+              path: "/api/campaign-transactions/:campaignId/submit-proof",
+            },
+            razorpay: {
+              enabled: hasRazorpayKeys,
+              path: "/api/campaign-transactions/:campaignId/razorpay/order + /api/campaign-transactions/:campaignId/razorpay/verify",
+              requires: ["RAZORPAY_KEY_ID", "RAZORPAY_KEY_SECRET"],
+            },
+          },
+          payoutTransferOut: {
+            manual: {
+              enabled: true,
+              path: "/api/campaign-transactions/:id/mark-paid",
+              settlementMode: "manual",
+              verification: "Admin reviews completed campaign, sends payout manually, then enters UTR.",
+            },
+            razorpayAuto: {
+              enabled: autoPayoutEnabled && hasRazorpayX,
+              path: "/api/campaign-transactions/admin/auto-payout/run + cron + /api/campaign-transactions/webhooks/razorpayx",
+              requires: [
+                "PAYOUT_SETTLEMENT_MODE=razorpayx",
+                "AUTO_PAYOUT_ENABLED=true",
+                "RAZORPAYX_KEY_ID",
+                "RAZORPAYX_KEY_SECRET",
+                "RAZORPAYX_ACCOUNT_NUMBER",
+                "RAZORPAYX_WEBHOOK_SECRET",
+              ],
+            },
+          },
+        },
+        autoPayout: {
+          enabled: autoPayoutEnabled,
+          settlementMode: payoutSettlementMode,
+          gatewayConfigured: hasRazorpayX,
+          cron: process.env.AUTO_PAYOUT_CRON || "0 */10 * * * *",
+          retryLimit: Number(process.env.AUTO_PAYOUT_RETRY_LIMIT || 3),
+          retryBackoffMinutes: Number(
+            process.env.AUTO_PAYOUT_RETRY_BACKOFF_MINUTES || 20,
+          ),
+        },
+        missingConfig: missing,
       },
     };
   }
 
   async verifyCollection(transactionId: string, notes?: string) {
-    const tx = await this.transactionModel.findById(transactionId);
-    if (!tx) throw new NotFoundException("Transaction not found");
-    tx.collectionStatus = "verified";
-    tx.collectedAt = new Date();
-    if (notes) tx.adminNotes = notes;
+    return this.verifyCollectionById(transactionId, notes, false);
+  }
 
-    if (tx.workStatus === "approved") {
-      tx.payoutStatus = "processing";
-    } else if (!tx.payoutStatus) {
-      tx.payoutStatus = "pending";
-    }
-    if (tx.payoutStatus === "pending" && tx.workStatus === "approved") {
-      tx.payoutStatus = "processing";
-    }
-
-    await tx.save();
-
-    // Brand pays → unlock contact for the linked invite (paid_collab payment path).
-    // Also advance invite status to payment_confirmed if still in accepted.
-    let paymentConfirmedInfluencerId: string | null = null;
-    let paymentConfirmedCampaignId: string | null = null;
-    if (tx.inviteId && tx.transactionType === "paid_collab") {
-      const update: any = {
-        unlocked: true,
-        unlockedAt: new Date(),
-        unlockType: "paid_collab_payment",
-        updatedAt: new Date(),
-      };
-      const invite: any = await this.inviteModel
-        .findById(tx.inviteId)
-        .select("status influencerId campaignId")
+  // Best-effort: if this brand originally joined through a referral tracking link,
+  // record that they've now converted to a paying campaign customer. Never blocks payment.
+  private async recordCampaignPaymentConversion(payerId: string, amount: number, campaignTransactionId: any): Promise<void> {
+    try {
+      const signup: any = await this.linkConversionModel
+        .findOne({ userId: payerId, conversionType: "signup" })
         .lean();
-      if (invite && invite.status === "accepted") {
-        update.status = "payment_confirmed";
-        paymentConfirmedInfluencerId = String(invite.influencerId || "");
-        paymentConfirmedCampaignId = String(invite.campaignId || "");
+      if (!signup) return;
+      await this.linkConversionModel.updateOne(
+        { trackingLinkId: signup.trackingLinkId, userId: signup.userId, conversionType: "campaign_payment" },
+        {
+          $setOnInsert: {
+            trackingLinkId: signup.trackingLinkId,
+            userId: signup.userId,
+            userType: signup.userType,
+            conversionType: "campaign_payment",
+            amount,
+            campaignTransactionId,
+            convertedAt: new Date(),
+          },
+        },
+        { upsert: true },
+      );
+    } catch (err) {
+      console.error("Failed to record campaign payment conversion:", err);
+    }
+  }
+
+  private async verifyCollectionById(
+    transactionId: string,
+    notes?: string,
+    allowGatewayVerification = false,
+  ) {
+    // One transaction: the row turns verified AND the invite it pays for is
+    // confirmed/unlocked, or neither (no verified payment with a locked invite).
+    const outcome = await inTransaction(this.connection, async (session) => {
+      const current: any = await this.transactionModel
+        .findById(transactionId, null, withSession({}, session))
+        .lean();
+      if (!current) throw new NotFoundException("Transaction not found");
+      if (
+        !allowGatewayVerification &&
+        String(current.gateway || "manual_upi") !== "manual_upi"
+      ) {
+        throw new BadRequestException(
+          "This collection is configured for Razorpay verification. Manual collection verification is disabled.",
+        );
       }
-      await this.inviteModel.findByIdAndUpdate(tx.inviteId, { $set: update });
+      // Idempotent: a repeat verify (double click, Razorpay callback + webhook)
+      // must not re-run the invite changes, events or emails.
+      if (current.collectionStatus === "verified") {
+        return { tx: current, alreadyVerified: true, confirmedInvite: null };
+      }
+
+      const now = new Date();
+      const tx: any = await this.transactionModel
+        .findOneAndUpdate(
+          { _id: current._id, collectionStatus: { $ne: "verified" } },
+          {
+            $set: {
+              collectionStatus: "verified",
+              collectedAt: now,
+              ...(notes ? { adminNotes: notes } : {}),
+              payoutStatus:
+                current.workStatus === "approved"
+                  ? "processing"
+                  : current.payoutStatus || "pending",
+            },
+          },
+          withSession({ new: true }, session),
+        )
+        .lean();
+      if (!tx) {
+        throw new BadRequestException(
+          "This payment changed meanwhile. Reload and try again.",
+        );
+      }
+
+      // Brand pays → unlock contact for the linked invite (paid_collab payment path),
+      // and advance it to payment_confirmed if it is still accepted.
+      let confirmedInvite: any = null;
+      if (tx.inviteId && tx.transactionType === "paid_collab") {
+        confirmedInvite = await this.inviteModel
+          .findOneAndUpdate(
+            { _id: tx.inviteId, status: "accepted" },
+            {
+              $set: {
+                status: "payment_confirmed",
+                paymentConfirmedAt: now,
+                unlocked: true,
+                unlockedAt: now,
+                unlockType: "paid_collab_payment",
+                updatedAt: now,
+              },
+            },
+            withSession({ new: true }, session),
+          )
+          .select("influencerId campaignId recipientRole")
+          .lean();
+        if (!confirmedInvite) {
+          await this.inviteModel.updateOne(
+            { _id: tx.inviteId },
+            {
+              $set: {
+                unlocked: true,
+                unlockedAt: now,
+                unlockType: "paid_collab_payment",
+                updatedAt: now,
+              },
+            },
+            withSession({}, session),
+          );
+        }
+      }
+
+      // Platform fee verified → the barter/location collaboration is confirmed:
+      // unlock contact/shipping details and start the creator's posting window.
+      if (tx.transactionType === "platform_fee" && tx.feeInviteId) {
+        await this.inviteModel.updateOne(
+          { _id: tx.feeInviteId, platformFeePaidAt: null },
+          {
+            $set: {
+              platformFeePaidAt: now,
+              unlocked: true,
+              unlockedAt: now,
+              unlockType: "platform_fee",
+              updatedAt: now,
+            },
+          },
+          withSession({}, session),
+        );
+      }
+      return { tx, alreadyVerified: false, confirmedInvite };
+    });
+
+    const tx: any = outcome.tx;
+    if (outcome.alreadyVerified) {
+      return { success: true, transaction: tx, alreadyVerified: true };
     }
 
-    // Notify influencer as soon as payment is confirmed so they can start posting.
-    if (paymentConfirmedInfluencerId) {
+    await this.recordPaymentCompleted(
+      tx,
+      "collection",
+      { userId: tx.payerId, userRole: tx.payerRole },
+      allowGatewayVerification ? "razorpay" : "manual_verification",
+    );
+
+    if (tx.payerRole === "brand") {
+      await this.recordCampaignPaymentConversion(String(tx.payerId), tx.payerTotal, tx._id);
+    }
+
+    const confirmed: any = outcome.confirmedInvite;
+    const paymentConfirmedRecipientId: string | null = confirmed
+      ? String(confirmed.influencerId || "")
+      : null;
+    const paymentConfirmedRecipientRole: "influencer" | "photographer" =
+      String(confirmed?.recipientRole || "")
+        .trim()
+        .toLowerCase() === "photographer"
+        ? "photographer"
+        : "influencer";
+    const paymentConfirmedCampaignId: string | null = confirmed
+      ? String(confirmed.campaignId || "")
+      : null;
+
+    // Notify recipient as soon as payment is confirmed so they can start posting.
+    if (paymentConfirmedRecipientId) {
       Promise.all([
-        this.influencerModel
-          .findById(paymentConfirmedInfluencerId)
+        (paymentConfirmedRecipientRole === "photographer"
+          ? this.photographerModel
+          : this.influencerModel
+        )
+          .findById(paymentConfirmedRecipientId)
           .select("email name username")
           .lean(),
         paymentConfirmedCampaignId
@@ -520,38 +2176,52 @@ export class PaymentsPayoutsService {
       ])
         .then(([inf, campaign]: any[]) => {
           if (!inf?.email) return;
-          const name = inf.name || inf.username || "Influencer";
+          const name = inf.name || inf.username || "Creator";
           const campaignTitle = campaign?.title || "your campaign";
           const dashboardUrl =
-            (process.env.FRONTEND_URL || "https://trendstarz.com") +
-            "/influencer-dashboard";
+            (process.env.FRONTEND_URL || "https://trendstarz.in") +
+            (paymentConfirmedRecipientRole === "photographer"
+              ? "/photographer-dashboard"
+              : "/influencer-dashboard");
           return sendAppEmail({
             to: inf.email,
-            subject: "[TrendStarZ] Verified - you can start posting",
-            text: `Hi ${name},\n\nGood news! Brand payment has been verified for "${campaignTitle}".\nYou can now start creating and posting your content.\n\nOpen dashboard: ${dashboardUrl}`,
-            html: `<p>Hi <strong>${name}</strong>,</p><p>Good news! Brand payment has been verified for <strong>"${campaignTitle}"</strong>.</p><p>You can now start creating and posting your content.</p><p><a href="${dashboardUrl}">Open your dashboard</a></p>`,
+            ...paymentVerifiedInfluencerTemplate({
+              recipientName: name,
+              campaignTitle,
+              dashboardUrl,
+            }),
           });
         })
         .catch((err: unknown) => {
           console.error(
-            "[PaymentsPayoutsService] Failed to send payment-confirmed email to influencer:",
+            "[PaymentsPayoutsService] Failed to send payment-confirmed email to recipient:",
             err,
           );
         });
 
       // Web push
-      this.pushService.sendToUser(paymentConfirmedInfluencerId, {
-        title: "Payment verified ✅",
-        body: `You can now start posting for your campaign.`,
-        url: "/influencer-dashboard",
-      }).catch(() => { /* non-critical */ });
+      this.pushService
+        .sendToUser(paymentConfirmedRecipientId, {
+          title: "Payment verified ✅",
+          body: `You can now start posting for your campaign.`,
+          url:
+            paymentConfirmedRecipientRole === "photographer"
+              ? "/photographer-dashboard"
+              : "/influencer-dashboard",
+        }, 'payment')
+        .catch(() => {
+          /* non-critical */
+        });
       this.notificationsService
         .createForUser({
-          userId: paymentConfirmedInfluencerId,
-          userRole: "influencer",
+          userId: paymentConfirmedRecipientId,
+          userRole: paymentConfirmedRecipientRole,
           title: "Payment Verified",
           body: "Brand payment was verified. You can start working on the campaign.",
-          url: "/influencer-dashboard",
+          url:
+            paymentConfirmedRecipientRole === "photographer"
+              ? "/photographer-dashboard"
+              : "/influencer-dashboard",
         })
         .catch(() => {
           /* non-critical */
@@ -568,14 +2238,14 @@ export class PaymentsPayoutsService {
           if (!brand?.email) return;
           const name = brand.brandName || "Brand";
           const adminUrl =
-            (process.env.FRONTEND_URL || "https://trendstarz.com") +
+            (process.env.FRONTEND_URL || "https://trendstarz.in") +
             "/campaigns";
           sendAppEmail({
             to: brand.email,
-            subject:
-              "[TrendStarZ] Payment verified — influencers can now begin work",
-            text: `Hi ${name},\n\nYour campaign payment has been verified. Influencers have been notified and can now begin creating content.\n\nMonitor progress: ${adminUrl}`,
-            html: `<p>Hi <strong>${name}</strong>,</p><p>Your campaign payment has been verified! Influencers have been notified and can now begin creating content.</p><p><a href="${adminUrl}">Monitor campaign progress</a></p>`,
+            ...paymentVerifiedBrandTemplate({
+              brandName: name,
+              dashboardUrl: adminUrl,
+            }),
           }).catch((err: unknown) => {
             console.error(
               "[PaymentsPayoutsService] Failed to send verification email to brand:",
@@ -587,13 +2257,22 @@ export class PaymentsPayoutsService {
           /* ignore */
         });
 
+      this.pushService
+        .sendToUser(String(tx.payerId), {
+          title: "Payment Verified",
+          body: "Your campaign payment is verified and influencers can now start work.",
+          url: "/campaigns",
+        }, 'payment')
+        .catch(() => {
+          /* non-critical */
+        });
       this.notificationsService
         .createForUser({
           userId: String(tx.payerId),
           userRole: "brand",
           title: "Payment Verified",
           body: "Your campaign payment is verified and influencers can now start work.",
-          url: "/campaign-management",
+          url: "/campaigns",
         })
         .catch(() => {
           /* non-critical */
@@ -603,31 +2282,73 @@ export class PaymentsPayoutsService {
     return { success: true, transaction: tx };
   }
 
-  async rejectCollection(transactionId: string, reason: string) {
-    const tx = await this.transactionModel.findById(transactionId);
-    if (!tx) throw new NotFoundException("Transaction not found");
-    tx.collectionStatus = "failed";
-    tx.adminNotes = reason || "Payment proof rejected";
-    await tx.save();
+  async rejectCollection(
+    transactionId: string,
+    reason: string,
+    notifyPayer = true,
+  ) {
+    // One transaction: the row fails AND the credit it used goes back to the host.
+    const tx: any = await inTransaction(this.connection, async (session) => {
+      const current: any = await this.transactionModel
+        .findById(transactionId, null, withSession({}, session))
+        .lean();
+      if (!current) throw new NotFoundException("Transaction not found");
+      // Money already confirmed received — rejecting it now would hide a real payment.
+      if (current.collectionStatus === "verified") {
+        throw new BadRequestException(
+          "This payment is already verified and can't be rejected. Use a refund instead.",
+        );
+      }
+      const updated: any = await this.transactionModel
+        .findOneAndUpdate(
+          { _id: current._id, collectionStatus: { $ne: "verified" } },
+          {
+            $set: {
+              collectionStatus: "failed",
+              adminNotes: reason || "Payment proof rejected",
+            },
+          },
+          withSession({ new: true }, session),
+        )
+        .lean();
+      if (!updated) {
+        throw new BadRequestException(
+          "This payment was verified meanwhile. Reload and try again.",
+        );
+      }
+      await restoreCreditUse(
+        this.creditModel,
+        String(updated._id),
+        "admin",
+        session,
+      );
+      return updated;
+    });
 
-    // Fire-and-forget: notify brand their UTR was rejected
-    if (tx.payerId) {
+    if (notifyPayer) this.notifyPaymentRejected(tx.payerId, reason);
+    return { success: true, transaction: tx };
+  }
+
+  /** Fire-and-forget: tell the host their payment proof (UTR) was rejected. */
+  private notifyPaymentRejected(payerId: unknown, reason: string) {
+    if (payerId) {
       this.brandModel
-        .findById(tx.payerId)
+        .findById(payerId)
         .select("email brandName")
         .lean()
         .then((brand: any) => {
           if (!brand?.email) return;
           const name = brand.brandName || "Brand";
           const payUrl =
-            (process.env.FRONTEND_URL || "https://trendstarz.com") +
+            (process.env.FRONTEND_URL || "https://trendstarz.in") +
             "/campaigns";
           sendAppEmail({
             to: brand.email,
-            subject:
-              "[TrendStarZ] Action required — payment proof could not be verified",
-            text: `Hi ${name},\n\nUnfortunately, your payment proof could not be verified.\n\nReason: ${reason || "No reason provided."}\n\nPlease resubmit with a valid UTR reference: ${payUrl}`,
-            html: `<p>Hi <strong>${name}</strong>,</p><p>Unfortunately, your payment proof could not be verified.</p><p><strong>Reason:</strong> ${reason || "No reason provided."}</p><p>Please <a href="${payUrl}">log in and resubmit</a> with a valid UTR reference.</p>`,
+            ...paymentRejectedTemplate({
+              brandName: name,
+              reason,
+              resubmitUrl: payUrl,
+            }),
           }).catch((err: unknown) => {
             console.error(
               "[PaymentsPayoutsService] Failed to send rejection email to brand:",
@@ -639,8 +2360,44 @@ export class PaymentsPayoutsService {
           /* ignore */
         });
     }
+  }
 
-    return { success: true, transaction: tx };
+  /**
+   * One payment = one batch (paymentBatchId): the host paid for 1, 2 or 3
+   * creators with one UTR/order, so the admin confirms or rejects it as a whole.
+   */
+  private async pendingBatchTransactions(batchId: string) {
+    const id = String(batchId || "").trim();
+    if (!id) throw new BadRequestException("Payment batch is required");
+    const txs: any[] = await this.transactionModel
+      .find({ paymentBatchId: id, collectionStatus: "proof_submitted" })
+      .select("_id payerId")
+      .lean();
+    if (!txs.length) {
+      throw new NotFoundException(
+        "No payment waiting for verification in this batch",
+      );
+    }
+    return txs;
+  }
+
+  async verifyCollectionBatch(batchId: string, notes?: string) {
+    const txs = await this.pendingBatchTransactions(batchId);
+    const results: any[] = [];
+    for (const tx of txs) {
+      results.push(await this.verifyCollection(String(tx._id), notes));
+    }
+    return { success: true, count: results.length, results };
+  }
+
+  async rejectCollectionBatch(batchId: string, reason: string) {
+    const txs = await this.pendingBatchTransactions(batchId);
+    for (const tx of txs) {
+      await this.rejectCollection(String(tx._id), reason, false);
+    }
+    // One email for the whole payment, not one per creator.
+    this.notifyPaymentRejected(txs[0].payerId, reason);
+    return { success: true, count: txs.length };
   }
 
   async markPayoutPaid(
@@ -654,6 +2411,15 @@ export class PaymentsPayoutsService {
   ) {
     const tx = await this.transactionModel.findById(transactionId);
     if (!tx) throw new NotFoundException("Transaction not found");
+
+    const eligibility = await this.getInvitePayoutEligibility(tx);
+    if (!eligibility.eligible) {
+      throw new BadRequestException(
+        eligibility.reason ||
+          "Payout can be released only after campaign/collaboration is marked completed.",
+      );
+    }
+
     if (tx.collectionStatus !== "verified") {
       throw new BadRequestException(
         "Collection must be verified before payout",
@@ -664,32 +2430,89 @@ export class PaymentsPayoutsService {
         "Cannot mark payout as paid while a dispute is open. Resolve the dispute first.",
       );
     }
-    tx.payoutStatus = "paid";
-    tx.paidOutAt = new Date();
-    tx.payoutUtr = body.payoutUtr;
-    if (body.payoutProofUrl) tx.payoutProofUrl = body.payoutProofUrl;
-    if (body.payoutUpiId) tx.payoutUpiId = body.payoutUpiId;
-    if (body.notes) tx.adminNotes = body.notes;
-    await tx.save();
+    const payoutBlock = this.payoutBlockedReason(tx);
+    if (payoutBlock) throw new BadRequestException(payoutBlock);
+    // One transaction: claim the row (guarded, so two admins or a retry can't both
+    // pay it), record the payout details, and move the invite to paid.
+    const paidOut: any = await inTransaction(
+      this.connection,
+      async (session) => {
+        const now = new Date();
+        const claimed: any = await this.transactionModel
+          .findOneAndUpdate(
+            {
+              _id: tx._id,
+              payoutStatus: { $in: ["pending", "processing"] },
+              "settlement.status": { $ne: SETTLEMENT_OPEN },
+              $or: [
+                { refundStatus: { $nin: ["on_hold", "owed", "sent"] } },
+                { "compensation.amount": { $gt: 0 } },
+              ],
+            },
+            {
+              $set: {
+                payoutStatus: "paid",
+                paidOutAt: now,
+                payoutSettledAt: now,
+                payoutUtr: body.payoutUtr,
+                ...(body.payoutProofUrl
+                  ? { payoutProofUrl: body.payoutProofUrl }
+                  : {}),
+                ...(body.payoutUpiId ? { payoutUpiId: body.payoutUpiId } : {}),
+                ...(body.notes ? { adminNotes: body.notes } : {}),
+                payoutGatewayProvider: "manual_upi",
+                payoutTransferStatus: "processed",
+                payoutInitiatedAt: tx.payoutInitiatedAt || now,
+                payoutFailureReason: "",
+              },
+            },
+            withSession({ new: true }, session),
+          )
+          .lean();
+        if (!claimed) {
+          throw new BadRequestException(
+            "This payout changed meanwhile (already paid or under refund). Reload and try again.",
+          );
+        }
+        await this.markInvitePaidOut(claimed, now, session);
+        return claimed;
+      },
+    );
+    await this.recordPaymentCompleted(
+      paidOut,
+      "payout",
+      { userRole: "admin" },
+      "manual",
+    );
 
     // Fire-and-forget: notify influencer their payout has been sent
-    if (tx.recipientId && tx.recipientRole === "influencer") {
-      this.influencerModel
-        .findById(tx.recipientId)
+    if (
+      paidOut.recipientId &&
+      (paidOut.recipientRole === "influencer" ||
+        paidOut.recipientRole === "photographer")
+    ) {
+      (paidOut.recipientRole === "photographer"
+        ? this.photographerModel
+        : this.influencerModel
+      )
+        .findById(paidOut.recipientId)
         .select("email name username")
         .lean()
         .then((inf: any) => {
           if (!inf?.email) return;
-          const name = inf.name || inf.username || "Influencer";
+          const name = inf.name || inf.username || "Creator";
           const amount =
-            tx.recipientPayout != null
-              ? `₹${(tx.recipientPayout / 100).toFixed(2)}`
+            paidOut.recipientPayout != null
+              ? `₹${(paidOut.recipientPayout / 100).toFixed(2)}`
               : "your payout";
           sendAppEmail({
             to: inf.email,
-            subject: "[TrendStarZ] Your payout has been sent!",
-            text: `Hi ${name},\n\nGreat news! ${amount} has been sent to your UPI account (${tx.payoutUpiId || "on file"}).\n\nUTR Reference: ${tx.payoutUtr}\n\nThank you for collaborating with TrendStarZ!`,
-            html: `<p>Hi <strong>${name}</strong>,</p><p>Great news! <strong>${amount}</strong> has been sent to your UPI account (<strong>${tx.payoutUpiId || "on file"}</strong>).</p><p><strong>UTR Reference:</strong> ${tx.payoutUtr}</p><p>Thank you for collaborating with TrendStarZ!</p>`,
+            ...payoutSentTemplate({
+              recipientName: name,
+              amount,
+              upiId: paidOut.payoutUpiId || null,
+              payoutUtr: paidOut.payoutUtr,
+            }),
           }).catch((err: unknown) => {
             console.error(
               "[PaymentsPayoutsService] Failed to send payout email:",
@@ -702,12 +2525,219 @@ export class PaymentsPayoutsService {
         });
     }
 
-    return { success: true, transaction: tx };
+    return { success: true, transaction: paidOut };
+  }
+
+  async runAutoPayoutSweep(triggeredByUserId: string) {
+    if (!PaymentsPayoutsService.AUTO_PAYOUT_ENABLED) {
+      return {
+        success: false,
+        message:
+          "Auto payout is disabled. Current payout settlement mode is manual.",
+        processed: 0,
+        queued: 0,
+        skipped: 0,
+        failed: 0,
+      };
+    }
+
+    if (!this.razorpayService.isPayoutsConfigured()) {
+      throw new BadRequestException(
+        "RazorpayX payout credentials are missing. Configure RAZORPAYX_KEY_ID, RAZORPAYX_KEY_SECRET, and RAZORPAYX_ACCOUNT_NUMBER.",
+      );
+    }
+
+    const candidates = await this.transactionModel
+      .find({
+        collectionStatus: "verified",
+        payoutStatus: { $in: ["pending", "processing"] },
+        disputeStatus: { $ne: "open" },
+        gateway: "razorpay",
+        refundStatus: { $nin: ["on_hold", "owed", "sent"] },
+        "settlement.status": { $ne: SETTLEMENT_OPEN },
+      })
+      .sort({ createdAt: 1 })
+      .limit(200);
+
+    let processed = 0;
+    let queued = 0;
+    let skipped = 0;
+    let failed = 0;
+    const details: Array<{ txId: string; status: string; message: string }> = [];
+
+    for (const tx of candidates) {
+      const txId = String(tx._id);
+
+      const transferStatus = String(tx?.payoutTransferStatus || "").toLowerCase();
+      if (["queued", "pending", "processing"].includes(transferStatus)) {
+        skipped += 1;
+        details.push({
+          txId,
+          status: "skipped",
+          message: "Existing gateway payout is already in progress",
+        });
+        continue;
+      }
+
+      if (transferStatus === "failed") {
+        const retry = this.shouldRetryGatewayPayout(tx);
+        if (!retry.allow) {
+          skipped += 1;
+          details.push({
+            txId,
+            status: "skipped",
+            message: retry.reason || "Retry blocked",
+          });
+          continue;
+        }
+      }
+
+      const eligibility = await this.getInvitePayoutEligibility(tx);
+      if (!eligibility.eligible) {
+        skipped += 1;
+        details.push({
+          txId,
+          status: "skipped",
+          message: eligibility.reason || "Not eligible for payout yet",
+        });
+        continue;
+      }
+
+      if (Number(tx.recipientPayout || 0) <= 0) {
+        skipped += 1;
+        details.push({
+          txId,
+          status: "skipped",
+          message: "Recipient payout amount is zero",
+        });
+        continue;
+      }
+
+      const recipient = await this.getRecipientPayoutContact(tx);
+      if (!recipient?.upiId) {
+        skipped += 1;
+        details.push({
+          txId,
+          status: "skipped",
+          message: "Recipient UPI ID is missing",
+        });
+        continue;
+      }
+
+      try {
+        const referenceId = `tsz_${txId.slice(-8)}_${Date.now()}`;
+        const payout = await this.razorpayService.createPayoutByUpi({
+          amountPaise: Number(tx.recipientPayout || 0),
+          recipientName: recipient.name,
+          recipientUpiId: recipient.upiId,
+          referenceId,
+          narration: "TrendStarz payout",
+          notes: {
+            txId,
+            recipientRole: recipient.role,
+            initiatedBy: String(triggeredByUserId || "system"),
+          },
+        });
+
+        tx.payoutGatewayProvider = "razorpayx";
+        tx.payoutTransferId = payout.payoutId;
+        tx.payoutTransferStatus = payout.status;
+        tx.payoutInitiatedAt = new Date();
+        tx.payoutUpiId = tx.payoutUpiId || recipient.upiId;
+        tx.payoutFailureReason = "";
+        tx.payoutRetryCount = 0;
+        tx.payoutLastRetryAt = new Date();
+
+        const status = String(payout.status || "").toLowerCase();
+        if (status === "processed") {
+          tx.payoutStatus = "paid";
+          tx.paidOutAt = new Date();
+          tx.payoutSettledAt = tx.paidOutAt;
+          if (payout.utr) tx.payoutUtr = payout.utr;
+          processed += 1;
+          details.push({
+            txId,
+            status: "processed",
+            message: `Gateway payout processed (${payout.payoutId})`,
+          });
+        } else if (["queued", "pending", "processing"].includes(status)) {
+          tx.payoutStatus = "processing";
+          queued += 1;
+          details.push({
+            txId,
+            status: "queued",
+            message: `Gateway payout queued (${payout.payoutId})`,
+          });
+        } else {
+          tx.payoutStatus = "pending";
+          tx.payoutFailureReason = `Gateway status: ${payout.status || "unknown"}`;
+          failed += 1;
+          details.push({
+            txId,
+            status: "failed",
+            message: tx.payoutFailureReason,
+          });
+        }
+
+        await tx.save();
+        if (tx.payoutStatus === "paid") {
+          await this.markInvitePayoutReleased(tx, tx.paidOutAt, "auto_sweep");
+        }
+      } catch (error: any) {
+        tx.payoutStatus = "pending";
+        tx.payoutGatewayProvider = "razorpayx";
+        tx.payoutFailureReason =
+          error?.response?.data?.error?.description ||
+          error?.message ||
+          "Gateway payout failed";
+        tx.payoutTransferStatus = "failed";
+        tx.payoutRetryCount = Math.max(Number(tx.payoutRetryCount || 0), 0) + 1;
+        tx.payoutLastRetryAt = new Date();
+        await tx.save();
+
+        failed += 1;
+        details.push({
+          txId,
+          status: "failed",
+          message: tx.payoutFailureReason,
+        });
+      }
+    }
+
+    return {
+      success: true,
+      message: "Auto payout sweep completed",
+      processed,
+      queued,
+      skipped,
+      failed,
+      totalCandidates: candidates.length,
+      details,
+    };
+  }
+
+  @Cron(process.env.AUTO_PAYOUT_CRON || "0 */10 * * * *")
+  @SingleInstance()
+  async runAutoPayoutSweepCron() {
+    if (!PaymentsPayoutsService.AUTO_PAYOUT_ENABLED) return;
+    try {
+      const res = await this.runAutoPayoutSweep("system-cron");
+      this.logger.log(
+        `Auto payout cron completed: processed=${res?.processed || 0}, queued=${res?.queued || 0}, skipped=${res?.skipped || 0}, failed=${res?.failed || 0}`,
+      );
+    } catch (error: any) {
+      this.logger.error(
+        `Auto payout cron failed: ${error?.message || error}`,
+      );
+    }
   }
 
   async listMine(userId: string, role: string) {
-    const normalizedRole =
-      role === "brand" || role === "BRAND" ? "brand" : "influencer";
+    const normalizedRole = ["brand", "influencer", "photographer"].includes(
+      String(role || "").toLowerCase(),
+    )
+      ? String(role || "").toLowerCase()
+      : "influencer";
     const rows = await this.transactionModel
       .find({ $or: [{ payerId: userId }, { recipientId: userId }] })
       .sort({ createdAt: -1 })
@@ -716,6 +2746,7 @@ export class PaymentsPayoutsService {
     // Collect IDs to look up in bulk
     const campaignIds = new Set<string>();
     const influencerIds = new Set<string>();
+    const photographerIds = new Set<string>();
     const brandIds = new Set<string>();
     for (const r of rows as any[]) {
       if (r.campaignId) campaignIds.add(String(r.campaignId));
@@ -723,12 +2754,16 @@ export class PaymentsPayoutsService {
         influencerIds.add(String(r.recipientId));
       if (r.payerRole === "influencer" && r.payerId)
         influencerIds.add(String(r.payerId));
+      if (r.recipientRole === "photographer" && r.recipientId)
+        photographerIds.add(String(r.recipientId));
+      if (r.payerRole === "photographer" && r.payerId)
+        photographerIds.add(String(r.payerId));
       if (r.recipientRole === "brand" && r.recipientId)
         brandIds.add(String(r.recipientId));
       if (r.payerRole === "brand" && r.payerId) brandIds.add(String(r.payerId));
     }
 
-    const [campaigns, influencers, brands] = await Promise.all([
+    const [campaigns, influencers, photographers, brands] = await Promise.all([
       campaignIds.size
         ? this.campaignModel
             .find({ _id: { $in: Array.from(campaignIds) } })
@@ -738,6 +2773,12 @@ export class PaymentsPayoutsService {
       influencerIds.size
         ? this.influencerModel
             .find({ _id: { $in: Array.from(influencerIds) } })
+            .select("name username")
+            .lean()
+        : Promise.resolve([] as any[]),
+      photographerIds.size
+        ? this.photographerModel
+            .find({ _id: { $in: Array.from(photographerIds) } })
             .select("name username")
             .lean()
         : Promise.resolve([] as any[]),
@@ -753,12 +2794,15 @@ export class PaymentsPayoutsService {
     for (const c of campaigns) campaignMap.set(String(c._id), c);
     const inflMap = new Map<string, any>();
     for (const i of influencers) inflMap.set(String(i._id), i);
+    const photographerMap = new Map<string, any>();
+    for (const p of photographers) photographerMap.set(String(p._id), p);
     const brandMap = new Map<string, any>();
     for (const b of brands) brandMap.set(String(b._id), b);
 
     const getPartyName = (role: string, id: any): string => {
       const sid = String(id);
       if (role === "influencer") return inflMap.get(sid)?.name || "";
+      if (role === "photographer") return photographerMap.get(sid)?.name || "";
       if (role === "brand")
         return brandMap.get(sid)?.name || brandMap.get(sid)?.brandName || "";
       return "";
@@ -781,6 +2825,26 @@ export class PaymentsPayoutsService {
       return getPartyLogo("brand", brandId);
     };
 
+    // Which closures this user already answered privately (host / creator question).
+    const closedInviteIds = (rows as any[])
+      .filter((r) => r.noPostClosure && r.inviteId)
+      .flatMap((r) => anyId(r.inviteId).$in);
+    const answeredInvites: any[] = closedInviteIds.length
+      ? await this.inviteModel
+          .find({
+            _id: {
+              $in: closedInviteIds.filter(
+                (id) => typeof id !== "string" || /^[a-f0-9]{24}$/i.test(id),
+              ),
+            },
+          })
+          .select("closureAnswers")
+          .lean()
+      : [];
+    const answersByInvite = new Map(
+      answeredInvites.map((i: any) => [String(i._id), i.closureAnswers]),
+    );
+
     const enriched = (rows as any[]).map((r: any) => {
       const campaign = campaignMap.get(String(r.campaignId));
       // "other party" from the current user's perspective
@@ -788,8 +2852,23 @@ export class PaymentsPayoutsService {
         normalizedRole === "influencer" ? r.payerRole : r.recipientRole;
       const otherId =
         normalizedRole === "influencer" ? r.payerId : r.recipientId;
+      const isPayer = String(r.payerId) === String(userId);
+      const answers = answersByInvite.get(String(r.inviteId));
+      const answered = !!(isPayer ? answers?.host?.at : answers?.creator?.at);
+      // Admin-only audit fields never go to the host or creator.
+      const publicRow = { ...r };
+      for (const key of [
+        "refundHistory",
+        "refundOwedBy",
+        "refundSentBy",
+        "settlement",
+        "latePost",
+      ]) {
+        delete publicRow[key];
+      }
       return {
-        ...r,
+        ...publicRow,
+        refundView: this.publicRefundView(r, isPayer, answered),
         campaignTitle: campaign?.title || "",
         campaignType: r.transactionType || campaign?.campaignType || "",
         otherPartyName: getPartyName(otherRole, otherId),
@@ -829,7 +2908,7 @@ export class PaymentsPayoutsService {
   async raiseDispute(
     txId: string,
     userId: string,
-    userRole: "brand" | "influencer",
+    userRole: "brand" | "influencer" | "photographer",
     reason: string,
   ) {
     if (!reason?.trim()) {
@@ -842,7 +2921,9 @@ export class PaymentsPayoutsService {
     const isBrand = userRole === "brand" && String(tx.payerId) === userId;
     const isInfluencer =
       userRole === "influencer" && String(tx.recipientId) === userId;
-    if (!isBrand && !isInfluencer) {
+    const isPhotographer =
+      userRole === "photographer" && String(tx.recipientId) === userId;
+    if (!isBrand && !isInfluencer && !isPhotographer) {
       throw new BadRequestException("You are not a party to this transaction");
     }
     if (tx.disputeStatus === "open") {
@@ -856,30 +2937,61 @@ export class PaymentsPayoutsService {
       );
     }
 
-    tx.disputeStatus = "open";
-    tx.disputeReason = reason.trim();
-    tx.disputedBy = userId;
-    tx.disputedByRole = userRole;
-    tx.disputedAt = new Date();
-    // Freeze payout — admin must explicitly release after review
-    if (tx.payoutStatus !== "paid") {
-      tx.payoutStatus = "frozen";
+    // Guarded on the state just read: a second raise, or a payout landing in
+    // between, makes this match nothing instead of overwriting it.
+    const updated: any = await this.transactionModel
+      .findOneAndUpdate(
+        {
+          _id: tx._id,
+          disputeStatus: { $nin: ["open", "resolved"] },
+          payoutStatus: tx.payoutStatus,
+        },
+        {
+          $set: {
+            disputeStatus: "open",
+            disputeReason: reason.trim(),
+            disputedBy: userId,
+            disputedByRole: userRole,
+            disputedAt: new Date(),
+            // Freeze payout — admin must explicitly release after review
+            ...(tx.payoutStatus !== "paid" ? { payoutStatus: "frozen" } : {}),
+            workStatus: "disputed",
+          },
+        },
+        { new: true },
+      )
+      .lean();
+    if (!updated) {
+      throw new BadRequestException(
+        "This transaction changed meanwhile. Reload and try again.",
+      );
     }
-    if (tx.workStatus !== "disputed") {
-      tx.workStatus = "disputed";
-    }
-    await tx.save();
 
     const counterpartId =
       userRole === "brand" ? String(tx.recipientId) : String(tx.payerId);
-    const counterpartRole = userRole === "brand" ? "influencer" : "brand";
+    const counterpartRole = userRole === "brand" ? tx.recipientRole : "brand";
+    const disputeRaisedUrl =
+      counterpartRole === "brand"
+        ? "/transactions"
+        : counterpartRole === "photographer"
+          ? "/photographer-dashboard"
+          : "/influencer-dashboard";
+    this.pushService
+      .sendToUser(counterpartId, {
+        title: "Dispute Raised",
+        body: "A dispute was raised on a campaign transaction involving you.",
+        url: disputeRaisedUrl,
+      }, 'payment')
+      .catch(() => {
+        /* non-critical */
+      });
     this.notificationsService
       .createForUser({
         userId: counterpartId,
         userRole: counterpartRole,
         title: "Dispute Raised",
         body: "A dispute was raised on a campaign transaction involving you.",
-        url: counterpartRole === "brand" ? "/transactions" : "/influencer-dashboard",
+        url: disputeRaisedUrl,
       })
       .catch(() => {
         /* non-critical */
@@ -888,7 +3000,7 @@ export class PaymentsPayoutsService {
     return {
       success: true,
       message: "Dispute raised. Payout is frozen pending admin review.",
-      transaction: tx,
+      transaction: updated,
     };
   }
 
@@ -903,46 +3015,81 @@ export class PaymentsPayoutsService {
     outcome: "release_to_influencer" | "refund_to_brand",
     notes?: string,
   ) {
-    const tx = await this.transactionModel.findById(txId);
-    if (!tx) throw new NotFoundException("Transaction not found");
-    if (tx.disputeStatus !== "open") {
-      throw new BadRequestException("No open dispute on this transaction");
-    }
     if (!["release_to_influencer", "refund_to_brand"].includes(outcome)) {
       throw new BadRequestException(
         "Invalid outcome. Use release_to_influencer or refund_to_brand",
       );
     }
-
-    tx.disputeStatus = "resolved";
-    tx.resolveOutcome = outcome;
-    tx.resolvedBy = adminId;
-    tx.resolvedAt = new Date();
-    if (notes) tx.adminNotes = notes;
-
-    if (outcome === "release_to_influencer") {
-      // Work was valid — release payout flow
-      tx.payoutStatus = "processing";
-      tx.workStatus = "approved";
-    } else {
-      // Non-delivery / invalid — mark as refunded
-      tx.payoutStatus = "skipped";
-      tx.workStatus = "disputed"; // keep for audit
-    }
-
-    await tx.save();
-
-    // If releasing to influencer — also mark the invite as completed
-    if (outcome === "release_to_influencer" && tx.inviteId) {
-      await this.inviteModel.findByIdAndUpdate(tx.inviteId, {
-        $set: { status: "completed" },
-      });
-    }
+    // One transaction: the dispute closes (guarded, so two admins can't both
+    // decide), the refund rows move to owed / the invite completes, together.
+    const tx: any = await inTransaction(this.connection, async (session) => {
+      const now = new Date();
+      const resolved: any = await this.transactionModel
+        .findOneAndUpdate(
+          { _id: txId, disputeStatus: "open" },
+          {
+            $set: {
+              disputeStatus: "resolved",
+              resolveOutcome: outcome,
+              resolvedBy: adminId,
+              resolvedAt: now,
+              ...(notes ? { adminNotes: notes } : {}),
+              ...(outcome === "release_to_influencer"
+                ? // Work was valid — release payout flow
+                  { payoutStatus: "processing", workStatus: "approved" }
+                : // Non-delivery / invalid — refund; keep workStatus for audit
+                  { payoutStatus: "skipped", workStatus: "disputed" }),
+            },
+          },
+          withSession({ new: true }, session),
+        )
+        .lean();
+      if (!resolved) {
+        const exists = await this.transactionModel
+          .findById(txId, null, withSession({}, session))
+          .select("_id")
+          .lean();
+        if (!exists) throw new NotFoundException("Transaction not found");
+        throw new BadRequestException("No open dispute on this transaction");
+      }
+      if (outcome === "refund_to_brand") {
+        await markRefundsOwed(
+          this.transactionModel,
+          resolved.inviteId,
+          now,
+          { by: adminId, byRole: "admin" },
+          `Admin resolved the payment dispute for the payer. ${notes || ""}`.trim(),
+          session,
+        );
+      }
+      // Releasing to the creator also completes the invite.
+      if (outcome === "release_to_influencer" && resolved.inviteId) {
+        await this.inviteModel.updateOne(
+          { _id: resolved.inviteId },
+          { $set: { status: "completed" } },
+          withSession({}, session),
+        );
+      }
+      return resolved;
+    });
 
     const resolutionMessage =
       outcome === "release_to_influencer"
         ? "Dispute resolved. Payout released to influencer."
         : "Dispute resolved. Payment will be refunded to brand.";
+    const recipientUrl =
+      tx.recipientRole === "photographer"
+        ? "/photographer-dashboard"
+        : "/influencer-dashboard";
+    this.pushService
+      .sendToUser(String(tx.payerId), {
+        title: "Dispute Resolved",
+        body: resolutionMessage,
+        url: "/transactions",
+      }, 'payment')
+      .catch(() => {
+        /* non-critical */
+      });
     this.notificationsService
       .createForUser({
         userId: String(tx.payerId),
@@ -954,13 +3101,22 @@ export class PaymentsPayoutsService {
       .catch(() => {
         /* non-critical */
       });
+    this.pushService
+      .sendToUser(String(tx.recipientId), {
+        title: "Dispute Resolved",
+        body: resolutionMessage,
+        url: recipientUrl,
+      }, 'payment')
+      .catch(() => {
+        /* non-critical */
+      });
     this.notificationsService
       .createForUser({
         userId: String(tx.recipientId),
-        userRole: "influencer",
+        userRole: tx.recipientRole,
         title: "Dispute Resolved",
         body: resolutionMessage,
-        url: "/influencer-dashboard",
+        url: recipientUrl,
       })
       .catch(() => {
         /* non-critical */
@@ -976,6 +3132,952 @@ export class PaymentsPayoutsService {
     };
   }
 
+  /**
+   * Admin sent the payer's refund by UPI: record the UTR, transfer date and amount (default
+   * the full amount paid, fee included) and tell the payer. Only a row whose refund is
+   * OWED, with no late post waiting and no open report — and the update is guarded on that
+   * state, so a concurrent late-post approval can't also win.
+   */
+  async markRefundSent(
+    transactionId: string,
+    adminId: string,
+    body: {
+      refundUtr?: string;
+      refundAmount?: number;
+      transferDate?: string;
+      notes?: string;
+    },
+  ) {
+    const refundUtr = String(body?.refundUtr || "").trim();
+    if (!refundUtr) {
+      throw new BadRequestException("Enter the refund UTR / reference.");
+    }
+    const tx: any = await this.transactionModel.findById(transactionId).lean();
+    if (!tx) throw new NotFoundException("Transaction not found");
+    if (!isRefundDue(tx)) {
+      throw new BadRequestException(
+        tx.refundStatus === "sent"
+          ? "This refund is already marked as sent."
+          : tx.refundStatus === "on_hold"
+            ? "This refund is still on hold (7-day review). It can be sent once it is owed."
+            : "No refund is owed on this payment.",
+      );
+    }
+    if (tx.latePost?.status === "pending") {
+      throw new BadRequestException(
+        "A late post is waiting for review. Approve or reject it first.",
+      );
+    }
+    if (await this.hasOpenReport(tx.inviteId)) {
+      throw new BadRequestException(
+        "This collaboration has an open report. Resolve it on the Disputes page first.",
+      );
+    }
+    const due = refundDueAmount(tx);
+    const requested = Number(body?.refundAmount);
+    const refundAmount =
+      Number.isFinite(requested) && requested > 0 ? Math.round(requested) : due;
+    if (refundAmount > due) {
+      throw new BadRequestException(
+        `Refund can't be more than the ${formatRupees(due)} the payer paid.`,
+      );
+    }
+    const now = new Date();
+    let transferDate = now;
+    if (body?.transferDate) {
+      transferDate = new Date(body.transferDate);
+      if (Number.isNaN(transferDate.getTime())) {
+        throw new BadRequestException("Invalid transfer date.");
+      }
+      if (transferDate.getTime() > now.getTime() + 60 * 60 * 1000) {
+        throw new BadRequestException(
+          "The transfer date can't be in the future.",
+        );
+      }
+    }
+    const note = String(body?.notes || "").trim();
+
+    // One transaction: refund marked sent, the case closed on the invite, and the
+    // fee credit decided/issued — a crash can't leave a sent refund without its credit.
+    const { updated, credit } = await inTransaction(
+      this.connection,
+      async (session) => {
+        const updated: any = await this.transactionModel
+          .findOneAndUpdate(
+            { _id: tx._id, ...REFUND_DUE_FILTER },
+            {
+              $set: {
+                refundStatus: "sent",
+                refundOwedAt: tx.refundOwedAt || tx.resolvedAt || now,
+                refundAmount,
+                refundUtr,
+                refundTransferDate: transferDate,
+                refundSentAt: now,
+                refundSentBy: adminId,
+                ...(note ? { refundNote: note } : {}),
+              },
+              $push: {
+                refundHistory: historyEntry(
+                  "refund_sent",
+                  { by: adminId, byRole: "admin" },
+                  {
+                    from: "owed",
+                    to: "sent",
+                    amount: refundAmount,
+                    utr: refundUtr,
+                    transferDate,
+                    note,
+                  },
+                  now,
+                ),
+              },
+            },
+            withSession({ new: true }, session),
+          )
+          .lean();
+        if (!updated) {
+          throw new BadRequestException(
+            "This refund changed meanwhile (already sent, or a post was approved). Reload and try again.",
+          );
+        }
+        await this.setFinancialCaseOpen(
+          anyId(updated.inviteId),
+          false,
+          session,
+        );
+        const credit = await this.settleFeeCredit(updated, adminId, session);
+        return { updated, credit };
+      },
+    );
+
+    const campaign: any = await this.campaignModel
+      .findById(updated.campaignId)
+      .select("title")
+      .lean()
+      .catch(() => null);
+    notifyPayer(
+      {
+        pushService: this.pushService,
+        notificationsService: this.notificationsService,
+      },
+      updated,
+      "Refund sent",
+      `${formatRupees(refundAmount)} for "${campaign?.title || "your campaign"}" was refunded to you (UTR ${refundUtr}).` +
+        (credit.status === "issued"
+          ? ` The platform fee of ${formatRupees(credit.amount)} was added as TrendStarZ credit (valid 12 months).`
+          : credit.status === "needs_review"
+            ? " The platform fee will be reviewed by TrendStarZ before it is added as credit."
+            : ""),
+    );
+    return { success: true, transaction: updated, feeCredit: credit };
+  }
+
+  /**
+   * Settlement: the host repaid after a post was verified post-refund. Records the UTR and
+   * puts the creator's payout back in the payout queue.
+   */
+  async recordHostRepayment(
+    transactionId: string,
+    adminId: string,
+    body: { utr?: string; amount?: number; repaidAt?: string; notes?: string },
+  ) {
+    const utr = String(body?.utr || "").trim();
+    if (!utr) throw new BadRequestException("Enter the host's repayment UTR.");
+    const tx: any = await this.transactionModel.findById(transactionId).lean();
+    if (!tx) throw new NotFoundException("Transaction not found");
+    if (tx.settlement?.status !== SETTLEMENT_OPEN) {
+      throw new BadRequestException(
+        "No settlement is waiting on this payment.",
+      );
+    }
+    const amount = Number(body?.amount);
+    const repaid =
+      Number.isFinite(amount) && amount > 0
+        ? Math.round(amount)
+        : Number(tx.settlement?.amount || 0);
+    if (repaid < Number(tx.settlement?.amount || 0)) {
+      throw new BadRequestException(
+        `The host must repay ${formatRupees(Number(tx.settlement?.amount || 0))} before the creator is paid. Record an exception instead if TrendStarZ decided otherwise.`,
+      );
+    }
+    const now = new Date();
+    const repaidAt = body?.repaidAt ? new Date(body.repaidAt) : now;
+    if (Number.isNaN(repaidAt.getTime())) {
+      throw new BadRequestException("Invalid repayment date.");
+    }
+    return this.closeSettlement(tx, adminId, now, {
+      status: "repaid",
+      set: {
+        "settlement.hostRepaymentUtr": utr,
+        "settlement.hostRepaidAmount": repaid,
+        "settlement.hostRepaidAt": repaidAt,
+      },
+      history: { amount: repaid, utr, note: String(body?.notes || "").trim() },
+      creatorBody:
+        "The host's repayment was received. Your payout is being processed.",
+    });
+  }
+
+  /** Settlement exception: TrendStarZ pays the creator without the host's repayment. */
+  async approveSettlementException(
+    transactionId: string,
+    adminId: string,
+    body: { reason?: string },
+  ) {
+    const reason = String(body?.reason || "").trim();
+    if (reason.length < 10) {
+      throw new BadRequestException(
+        "Write why TrendStarZ pays without the host's repayment (at least 10 characters).",
+      );
+    }
+    const tx: any = await this.transactionModel.findById(transactionId).lean();
+    if (!tx) throw new NotFoundException("Transaction not found");
+    if (tx.settlement?.status !== SETTLEMENT_OPEN) {
+      throw new BadRequestException(
+        "No settlement is waiting on this payment.",
+      );
+    }
+    return this.closeSettlement(tx, adminId, new Date(), {
+      status: "exception_approved",
+      set: { "settlement.exceptionReason": reason },
+      history: { note: reason },
+      creatorBody: "TrendStarZ approved your payout. It is being processed.",
+    });
+  }
+
+  private async closeSettlement(
+    tx: any,
+    adminId: string,
+    now: Date,
+    opts: {
+      status: "repaid" | "exception_approved";
+      set: Record<string, unknown>;
+      history: Record<string, unknown>;
+      creatorBody: string;
+    },
+  ) {
+    const updated: any = await inTransaction(
+      this.connection,
+      async (session) => {
+        const updated: any = await this.transactionModel
+          .findOneAndUpdate(
+            {
+              _id: tx._id,
+              "settlement.status": SETTLEMENT_OPEN,
+              payoutStatus: { $ne: "paid" },
+            },
+            {
+              $set: {
+                ...opts.set,
+                "settlement.status": opts.status,
+                "settlement.closedAt": now,
+                "settlement.closedBy": adminId,
+                payoutStatus: "processing",
+                workStatus: "approved",
+              },
+              $push: {
+                refundHistory: historyEntry(
+                  opts.status === "repaid"
+                    ? "settlement_host_repaid"
+                    : "settlement_exception_approved",
+                  { by: adminId, byRole: "admin" },
+                  opts.history,
+                  now,
+                ),
+              },
+            },
+            withSession({ new: true }, session),
+          )
+          .lean();
+        if (!updated) {
+          throw new BadRequestException(
+            "This settlement changed meanwhile. Reload and try again.",
+          );
+        }
+        await this.setFinancialCaseOpen(
+          anyId(updated.inviteId),
+          false,
+          session,
+        );
+        return updated;
+      },
+    );
+    const recipientId = String(updated.recipientId || "");
+    if (recipientId) {
+      const role =
+        updated.recipientRole === "photographer"
+          ? "photographer"
+          : "influencer";
+      const url = `/${role}-dashboard`;
+      this.pushService
+        .sendToUser(
+          recipientId,
+          { title: "Payout update", body: opts.creatorBody, url },
+          "payment",
+        )
+        .catch(() => undefined);
+      this.notificationsService
+        .createForUser({
+          userId: recipientId,
+          userRole: role,
+          title: "Payout update",
+          body: opts.creatorBody,
+          url,
+        })
+        .catch(() => undefined);
+    }
+    return { success: true, transaction: updated };
+  }
+
+  // ── TrendStarZ fee credit (terms v2) ────────────────────────────────────────
+
+  /** No-post refunds this payer had in the last 90 days (any refund state but cancelled). */
+  private async recentNoPostRefunds(payerId: unknown, excludeId?: unknown) {
+    const since = new Date(Date.now() - RISK_WINDOW_DAYS * 24 * 60 * 60 * 1000);
+    const rows: any[] = await this.transactionModel
+      .find({
+        payerId: anyId(payerId),
+        transactionType: "paid_collab",
+        createdAt: { $gte: since },
+        refundStatus: { $in: ["on_hold", "owed", "sent"] },
+      })
+      .select("_id")
+      .lean();
+    return rows.filter((r) => String(r._id) !== String(excludeId)).length;
+  }
+
+  /**
+   * After a terms-v2 refund is sent: return the platform fee as 12-month credit — or, when
+   * the host already had 2+ no-post refunds in 90 days, park it for admin review.
+   */
+  private async settleFeeCredit(
+    tx: any,
+    adminId: string,
+    session?: ClientSession,
+  ): Promise<{ status: string; amount: number }> {
+    const amount = feeCreditAmount(tx);
+    if (!amount || tx?.feeCredit?.status) {
+      return { status: tx?.feeCredit?.status || "none", amount };
+    }
+    const prior = await this.recentNoPostRefunds(tx.payerId, tx._id);
+    if (prior >= 2) {
+      await this.transactionModel.updateOne(
+        { _id: tx._id, "feeCredit.status": null },
+        {
+          $set: { feeCredit: { status: "needs_review", amount } },
+          $push: {
+            refundHistory: historyEntry(
+              "fee_credit_needs_review",
+              { byRole: "system" },
+              { amount, note: `${prior} other no-post refunds in 90 days` },
+            ),
+          },
+        },
+        withSession({}, session),
+      );
+      return { status: "needs_review", amount };
+    }
+    return this.issueFeeCreditFor(
+      tx,
+      adminId,
+      "Platform fee returned on a no-post refund",
+      session,
+    );
+  }
+
+  private async issueFeeCreditFor(
+    tx: any,
+    adminId: string,
+    reason: string,
+    session?: ClientSession,
+  ) {
+    const amount = feeCreditAmount(tx);
+    // Claim first so a double click can't issue two lots.
+    const claimed = await this.transactionModel
+      .findOneAndUpdate(
+        {
+          _id: tx._id,
+          refundStatus: "sent",
+          "feeCredit.status": { $in: [null, "needs_review"] },
+          "settlement.status": { $ne: SETTLEMENT_OPEN },
+        },
+        { $set: { "feeCredit.status": "issued", "feeCredit.amount": amount } },
+        withSession({ new: true }, session),
+      )
+      .lean();
+    if (!claimed) {
+      throw new BadRequestException(
+        "Credit can't be issued now (already decided, refund not sent, or a settlement is open).",
+      );
+    }
+    const lot: any = await issueCredit(
+      this.creditModel,
+      {
+        ownerId: String(tx.payerId),
+        ownerRole: tx.payerRole,
+        amount,
+        transactionId: String(tx._id),
+        campaignId: String(tx.campaignId || ""),
+        reason,
+        createdBy: adminId || "system",
+      },
+      session,
+    );
+    const now = new Date();
+    await this.transactionModel.updateOne(
+      { _id: tx._id },
+      {
+        $set: {
+          "feeCredit.issuedAt": now,
+          "feeCredit.ledgerEntryId": lot?._id ? String(lot._id) : null,
+          "feeCredit.reviewedBy": adminId || null,
+        },
+        $push: {
+          refundHistory: historyEntry(
+            "fee_credit_issued",
+            adminId ? { by: adminId, byRole: "admin" } : { byRole: "system" },
+            { amount },
+            now,
+          ),
+        },
+      },
+      withSession({}, session),
+    );
+    return { status: "issued", amount };
+  }
+
+  /** Admin issues a fee credit that was parked for review. */
+  async approveFeeCredit(transactionId: string, adminId: string) {
+    const tx: any = await this.transactionModel.findById(transactionId).lean();
+    if (!tx) throw new NotFoundException("Transaction not found");
+    if (tx.feeCredit?.status !== "needs_review") {
+      throw new BadRequestException(
+        "This fee credit is not waiting for review.",
+      );
+    }
+    // The claim, the ledger lot and the row update commit together.
+    const res = await inTransaction(this.connection, (session) =>
+      this.issueFeeCreditFor(
+        tx,
+        adminId,
+        "Platform fee returned on a no-post refund (admin reviewed)",
+        session,
+      ),
+    );
+    notifyPayer(
+      {
+        pushService: this.pushService,
+        notificationsService: this.notificationsService,
+      },
+      tx,
+      "TrendStarZ credit added",
+      `${formatRupees(res.amount)} was added to your TrendStarZ credit (valid 12 months, usable for platform fees).`,
+    );
+    return { success: true, ...res };
+  }
+
+  /** Admin withholds a fee credit that was parked for review (reason recorded). */
+  async withholdFeeCredit(
+    transactionId: string,
+    adminId: string,
+    reason?: string,
+  ) {
+    const note = String(reason || "").trim();
+    if (note.length < 10) {
+      throw new BadRequestException(
+        "Write why the credit is withheld (at least 10 characters).",
+      );
+    }
+    const updated = await this.transactionModel
+      .findOneAndUpdate(
+        { _id: transactionId, "feeCredit.status": "needs_review" },
+        {
+          $set: {
+            "feeCredit.status": "withheld",
+            "feeCredit.reviewedBy": adminId,
+            "feeCredit.reviewedAt": new Date(),
+            "feeCredit.note": note,
+          },
+          $push: {
+            refundHistory: historyEntry(
+              "fee_credit_withheld",
+              { by: adminId, byRole: "admin" },
+              { note },
+            ),
+          },
+        },
+        { new: true },
+      )
+      .lean();
+    if (!updated) {
+      throw new BadRequestException(
+        "This fee credit is not waiting for review.",
+      );
+    }
+    return { success: true };
+  }
+
+  /** The signed-in host's credit balance and ledger. */
+  async myCredit(userId: string) {
+    return {
+      success: true,
+      data: await creditStatement(this.creditModel, userId),
+    };
+  }
+
+  /** Admin: any owner's credit balance and ledger. */
+  async adminCredit(ownerId: string) {
+    return {
+      success: true,
+      data: await creditStatement(this.creditModel, ownerId),
+    };
+  }
+
+  @Cron("0 30 1 * * *")
+  @SingleInstance()
+  async expireCreditCron() {
+    try {
+      const res = await expireCredit(this.creditModel);
+      if (res.expired) {
+        this.logger.log(
+          `Credit expired: ${res.expired} paise across ${res.lots} lots`,
+        );
+      }
+    } catch (err: any) {
+      this.logger.error(`expireCredit failed: ${err?.message || err}`);
+    }
+  }
+
+  /**
+   * Hourly: refunds whose 7-day hold ended move to OWED — unless a late post is waiting or
+   * the collaboration has an open report (those wait for an admin decision).
+   */
+  async expireRefundHolds(now = new Date()) {
+    const due: any[] = await this.transactionModel
+      .find({ refundStatus: "on_hold", refundHoldUntil: { $lte: now } })
+      .select("_id inviteId latePost")
+      .lean();
+    let moved = 0;
+    let waiting = 0;
+    for (const row of due) {
+      if (
+        row.latePost?.status === "pending" ||
+        (await this.hasOpenReport(row.inviteId))
+      ) {
+        waiting += 1;
+        continue;
+      }
+      const updated: any = await this.transactionModel
+        .findOneAndUpdate(
+          {
+            _id: row._id,
+            refundStatus: "on_hold",
+            refundHoldUntil: { $lte: now },
+            "latePost.status": { $ne: "pending" },
+          },
+          {
+            $set: { refundStatus: "owed", refundOwedAt: now },
+            $push: {
+              refundHistory: historyEntry(
+                "hold_expired_refund_owed",
+                { byRole: "system" },
+                { from: "on_hold", to: "owed" },
+                now,
+              ),
+            },
+          },
+          { new: true },
+        )
+        .lean();
+      if (!updated) continue;
+      moved += 1;
+      await this.setFinancialCaseOpen(anyId(updated.inviteId), false);
+    }
+    return { success: true, moved, waiting };
+  }
+
+  @Cron("0 15 * * * *")
+  @SingleInstance()
+  async expireRefundHoldsCron() {
+    try {
+      const res = await this.expireRefundHolds();
+      if (res.moved || res.waiting) {
+        this.logger.log(
+          `Refund holds: moved to owed=${res.moved}, waiting on review=${res.waiting}`,
+        );
+      }
+    } catch (err: any) {
+      this.logger.error(`expireRefundHolds failed: ${err?.message || err}`);
+    }
+  }
+
+  /**
+   * Admin Refunds queue: on hold / owed / sent / settlement / legacy, with risk flags,
+   * the creator's social handles, any late post and the audit trail.
+   */
+  async listRefunds(state?: string) {
+    const states = [
+      "on_hold",
+      "owed",
+      "sent",
+      "settlement",
+      "legacy_unconfirmed",
+    ];
+    const filter: any = {
+      $or: [
+        { refundStatus: { $in: ["on_hold", "owed", "sent"] } },
+        {
+          "settlement.status": {
+            $in: [SETTLEMENT_OPEN, "repaid", "exception_approved"],
+          },
+        },
+        {
+          transactionType: "paid_collab",
+          collectionStatus: "verified",
+          refundStatus: { $in: [null, "none"] },
+          $or: [
+            { resolveOutcome: "refund_to_brand" },
+            { payoutStatus: "skipped" },
+          ],
+        },
+      ],
+    };
+    const rows: any[] = await this.transactionModel
+      .find(filter)
+      .sort({ updatedAt: -1 })
+      .limit(500)
+      .lean();
+    const view = rows
+      .map((r) => ({ row: r, state: refundState(r) }))
+      .filter((x) => x.state !== "none" && x.state !== "cancelled")
+      .filter((x) => !state || !states.includes(state) || x.state === state);
+
+    // Risk flags: refund rows (any state but cancelled) of the last 90 days.
+    const since = new Date(Date.now() - RISK_WINDOW_DAYS * 24 * 60 * 60 * 1000);
+    const recent: any[] = await this.transactionModel
+      .find({
+        transactionType: "paid_collab",
+        createdAt: { $gte: since },
+        $or: [
+          { refundStatus: { $in: ["on_hold", "owed", "sent"] } },
+          { resolveOutcome: "refund_to_brand" },
+        ],
+      })
+      .select("_id payerId recipientId createdAt")
+      .lean();
+
+    const inviteIds = view.flatMap((x) => [
+      x.row.inviteId,
+      String(x.row.inviteId),
+    ]);
+    const campaignIds = [...new Set(view.map((x) => String(x.row.campaignId)))];
+    const recipients = view.map((x) => String(x.row.recipientId));
+    const payers = view.map((x) => String(x.row.payerId));
+    const [invites, campaigns, influencers, photographers, brands] =
+      await Promise.all([
+        this.inviteModel
+          .find({
+            _id: {
+              $in: inviteIds.filter((id) => /^[a-f0-9]{24}$/i.test(String(id))),
+            },
+          })
+          .select(
+            "status withdrawnAt withdrawnReason selectedPlatform selectedPostDate reportedIssue latePostApproval termsAcceptance",
+          )
+          .lean(),
+        this.campaignModel
+          .find({
+            _id: {
+              $in: campaignIds.filter((id) => /^[a-f0-9]{24}$/i.test(id)),
+            },
+          })
+          .select("title campaignNumber")
+          .lean(),
+        this.influencerModel
+          .find({
+            _id: {
+              $in: [...recipients, ...payers].filter((id) =>
+                /^[a-f0-9]{24}$/i.test(id),
+              ),
+            },
+          })
+          .select(
+            "name username socialMedia.platform socialMedia.platformKey socialMedia.handle",
+          )
+          .lean(),
+        this.photographerModel
+          .find({
+            _id: {
+              $in: [...recipients, ...payers].filter((id) =>
+                /^[a-f0-9]{24}$/i.test(id),
+              ),
+            },
+          })
+          .select(
+            "name username socialMedia.platform socialMedia.platformKey socialMedia.handle",
+          )
+          .lean(),
+        this.brandModel
+          .find({
+            _id: { $in: payers.filter((id) => /^[a-f0-9]{24}$/i.test(id)) },
+          })
+          .select("brandName brandUsername")
+          .lean(),
+      ]);
+    const byId = (list: any[]) =>
+      new Map(list.map((d: any) => [String(d._id), d]));
+    const inviteMap = byId(invites);
+    const replaced = await this.replacedAfterNoPost(
+      view.map((x) => x.row),
+      inviteMap,
+    );
+    const noPostRate = await this.hostNoPostRates(
+      view.map((x) => x.row.payerId),
+    );
+    const campaignMap = byId(campaigns);
+    const peopleMap = new Map([...byId(influencers), ...byId(photographers)]);
+    const brandMap = byId(brands);
+
+    const data = view.map(({ row, state: rowState }) => {
+      const invite: any = inviteMap.get(String(row.inviteId));
+      const creator: any = peopleMap.get(String(row.recipientId));
+      const host: any =
+        brandMap.get(String(row.payerId)) || peopleMap.get(String(row.payerId));
+      const openReport =
+        !!invite?.reportedIssue?.reportedAt &&
+        !invite?.reportedIssue?.resolvedAt;
+      return {
+        _id: row._id,
+        state: rowState,
+        campaignId: row.campaignId,
+        campaignTitle: campaignMap.get(String(row.campaignId))?.title || "",
+        campaignNumber:
+          campaignMap.get(String(row.campaignId))?.campaignNumber || null,
+        inviteId: row.inviteId,
+        inviteStatus: invite?.status || null,
+        withdrawnAt: invite?.withdrawnAt || null,
+        withdrawnReason: invite?.withdrawnReason || null,
+        selectedPlatform: invite?.selectedPlatform || null,
+        hostName: host?.brandName || host?.name || "",
+        hostRole: row.payerRole,
+        creatorName: creator?.name || creator?.username || "",
+        creatorRole: row.recipientRole,
+        creatorSocial: (creator?.socialMedia || [])
+          .filter((s: any) => s?.handle)
+          .map((s: any) => ({
+            platform: s.platform,
+            platformKey: s.platformKey,
+            handle: s.handle,
+          })),
+        agreedAmount: row.agreedAmount,
+        platformFee: row.platformFee,
+        payerTotal: row.payerTotal,
+        refundAmount: row.refundAmount ?? null,
+        refundHoldUntil: row.refundHoldUntil || null,
+        refundOwedAt: row.refundOwedAt || null,
+        refundUtr: row.refundUtr || null,
+        refundTransferDate: row.refundTransferDate || null,
+        refundSentAt: row.refundSentAt || null,
+        latePost: row.latePost?.status ? row.latePost : null,
+        settlement: row.settlement?.status ? row.settlement : null,
+        openReport,
+        reportCategory: invite?.reportedIssue?.category || null,
+        reportReason: openReport ? invite?.reportedIssue?.reason || "" : null,
+        termsAcceptance: invite?.termsAcceptance || null,
+        flags:
+          rowState === "legacy_unconfirmed"
+            ? []
+            : riskFlags(row, recent, {
+                replacedAfterNoPost: replaced.has(String(row._id)),
+                hostNoPostRate: noPostRate.get(String(row.payerId)) === true,
+              }),
+        refundPolicy: row.refundPolicy || "full_refund",
+        cashRefundDue: refundDueAmount(row),
+        feeCredit: row.feeCredit?.status ? row.feeCredit : null,
+        feeCreditAmount: feeCreditAmount(row),
+        creditApplied: Number(row.creditApplied || 0),
+        compensation: row.compensation?.amount ? row.compensation : null,
+        closureAnswers: invite?.closureAnswers || null,
+        slotRestored: invite?.slotRestored?.at ? invite.slotRestored : null,
+        missExcused: invite?.missExcused?.at ? invite.missExcused : null,
+        paidSlot: !!invite?.paymentConfirmedAt,
+        history: row.refundHistory || [],
+      };
+    });
+    return { success: true, data };
+  }
+
+  /**
+   * "Replaced after no-post": the host invited another creator to the same campaign within
+   * 7 days after this paid no-post closure. A signal for review, not proof.
+   */
+  private async replacedAfterNoPost(
+    rows: any[],
+    inviteMap: Map<string, any>,
+  ): Promise<Set<string>> {
+    const out = new Set<string>();
+    const closures = rows
+      .map((r) => ({ row: r, invite: inviteMap.get(String(r.inviteId)) }))
+      .filter((x) => x.invite?.withdrawnAt);
+    if (!closures.length) return out;
+    const campaignIds = [
+      ...new Set(closures.map((x) => String(x.row.campaignId))),
+    ];
+    const later: any[] = await this.inviteModel
+      .find({
+        campaignId: {
+          $in: campaignIds.flatMap((id) => anyId(id).$in),
+        },
+      })
+      .select("_id campaignId createdAt")
+      .lean();
+    const windowMs = REPLACED_AFTER_NO_POST_DAYS * 24 * 60 * 60 * 1000;
+    for (const { row, invite } of closures) {
+      const closedAt = new Date(invite.withdrawnAt).getTime();
+      const hit = later.some(
+        (i) =>
+          String(i.campaignId) === String(row.campaignId) &&
+          String(i._id) !== String(row.inviteId) &&
+          new Date(i.createdAt).getTime() > closedAt &&
+          new Date(i.createdAt).getTime() <= closedAt + windowMs,
+      );
+      if (hit) out.add(String(row._id));
+    }
+    return out;
+  }
+
+  /** Host no-post rate: 2+ no-post closures among the host's last 5 paid collaborations. */
+  private async hostNoPostRates(
+    payerIds: unknown[],
+  ): Promise<Map<string, boolean>> {
+    const out = new Map<string, boolean>();
+    for (const payerId of [...new Set(payerIds.map((p) => String(p)))]) {
+      const last: any[] = await this.transactionModel
+        .find({
+          payerId: anyId(payerId),
+          transactionType: "paid_collab",
+          collectionStatus: "verified",
+        })
+        .sort({ createdAt: -1 })
+        .limit(HOST_NO_POST_RATE.window)
+        .select("refundStatus noPostClosure")
+        .lean();
+      const noPost = last.filter(
+        (r) =>
+          r.noPostClosure ||
+          ["on_hold", "owed", "sent"].includes(String(r.refundStatus)),
+      ).length;
+      out.set(payerId, noPost >= HOST_NO_POST_RATE.threshold);
+    }
+    return out;
+  }
+
+  /** What the payer / recipient may see about a refund (no admin ids, no audit). */
+  private publicRefundView(tx: any, isPayer: boolean, answered = false) {
+    const state = refundState(tx);
+    if (state === "none") return null;
+    if (state === "legacy_unconfirmed") return { state: "under_review" };
+    if (state === "cancelled") return { state: "cancelled" };
+    // The private "what happened?" question is open while the refund is not yet sent.
+    const canAnswerClosure =
+      !answered &&
+      (state === "on_hold" || state === "owed") &&
+      !!tx.noPostClosure;
+    if (!isPayer) {
+      return {
+        state: state === "settlement" ? "pending_settlement" : "closed_no_post",
+        latePostStatus: tx.latePost?.status || null,
+        inviteId: tx.inviteId ? String(tx.inviteId) : null,
+        canAnswerClosure,
+      };
+    }
+    return {
+      state,
+      inviteId: tx.inviteId ? String(tx.inviteId) : null,
+      canAnswerClosure,
+      refundPolicy: tx.refundPolicy || "full_refund",
+      creditAmount: feeCreditAmount(tx),
+      creditStatus: tx.feeCredit?.status || null,
+      amount:
+        state === "sent"
+          ? Number(tx.refundAmount ?? tx.payerTotal ?? 0)
+          : refundDueAmount(tx),
+      holdUntil: tx.refundHoldUntil || null,
+      utr: state === "sent" ? tx.refundUtr || null : null,
+      transferDate:
+        state === "sent" ? tx.refundTransferDate || tx.refundSentAt : null,
+      settlementAmount:
+        state === "settlement" ? Number(tx.settlement?.amount || 0) : null,
+    };
+  }
+
+  /** A payout must never be released while the payer's refund is in progress or sent. */
+  private payoutBlockedReason(tx: any): string | null {
+    if (!["pending", "processing"].includes(String(tx?.payoutStatus))) {
+      return tx?.payoutStatus === "paid"
+        ? "This payout is already paid."
+        : `This payout can't be paid (status: ${tx?.payoutStatus}).`;
+    }
+    // An approved cancellation can pay the creator a compensation next to the host's refund.
+    const compensated = Number(tx?.compensation?.amount || 0) > 0;
+    if (
+      !compensated &&
+      ["on_hold", "owed", "sent"].includes(String(tx?.refundStatus))
+    ) {
+      return "A refund to the host is in progress or was sent for this collaboration. Resolve it in Payments → Refunds first.";
+    }
+    if (tx?.settlement?.status === SETTLEMENT_OPEN) {
+      return "Waiting for the host's repayment (settlement). Record the repayment or an exception first.";
+    }
+    return null;
+  }
+
+  private async hasOpenReport(inviteId: unknown): Promise<boolean> {
+    if (!inviteId) return false;
+    const invite: any = await this.inviteModel
+      .findOne({ _id: anyId(inviteId) })
+      .select("reportedIssue")
+      .lean()
+      .catch(() => null);
+    return (
+      !!invite?.reportedIssue?.reportedAt && !invite?.reportedIssue?.resolvedAt
+    );
+  }
+
+  /**
+   * The host must accept the paid-collaboration terms when paying for a paid collab
+   * (pay-to-join keeps its existing flow). Stored per invite with the terms version.
+   */
+  private async recordHostTermsAcceptance(
+    calc: any,
+    payerId: string,
+    acceptTerms?: boolean,
+  ) {
+    if (calc?.campaignType === "pay_to_join") return;
+    // A platform fee isn't a paid collaboration — the paid-collab terms don't apply.
+    if (calc?.isPlatformFee) return;
+    if (acceptTerms !== true) {
+      throw new BadRequestException(
+        "Please accept the paid-collaboration terms before paying.",
+      );
+    }
+    const ids = (calc?.acceptedInviteIds || []).filter(Boolean);
+    if (!ids.length) return;
+    const settings: any = await this.appSettingsModel.findOne({}).lean();
+    await this.inviteModel.updateMany(
+      { _id: { $in: ids } },
+      {
+        $set: {
+          "termsAcceptance.host": {
+            acceptedAt: new Date(),
+            version: currentTermsVersion(settings),
+            userId: String(payerId),
+          },
+        },
+      },
+    );
+  }
+
   /** Admin — list all open disputes (frozen transactions). */
   async listOpenDisputes() {
     const rows = await this.transactionModel
@@ -983,5 +4085,30 @@ export class PaymentsPayoutsService {
       .sort({ disputedAt: 1 })
       .lean();
     return { success: true, data: rows, total: rows.length };
+  }
+
+  /** Marks whether a refund/late-post/settlement case still needs both sides' contact. */
+  private async setFinancialCaseOpen(
+    inviteId: unknown,
+    open: boolean,
+    session?: ClientSession,
+  ) {
+    // Inside a transaction a failed write aborts it, so let the error surface there.
+    if (session) {
+      await this.inviteModel.updateOne(
+        { _id: inviteId },
+        { $set: { financialCaseOpen: open } },
+        { session },
+      );
+      return;
+    }
+    try {
+      await this.inviteModel.updateOne(
+        { _id: inviteId },
+        { $set: { financialCaseOpen: open } },
+      );
+    } catch {
+      /* non-critical: only affects contact visibility */
+    }
   }
 }

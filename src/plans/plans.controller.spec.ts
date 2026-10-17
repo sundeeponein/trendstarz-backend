@@ -1,3 +1,4 @@
+import { getConnectionToken } from "@nestjs/mongoose";
 import { Test, TestingModule } from "@nestjs/testing";
 import { BadRequestException } from "@nestjs/common";
 import { PlansController } from "./plans.controller";
@@ -29,6 +30,8 @@ describe("PlansController", () => {
     const module: TestingModule = await Test.createTestingModule({
       controllers: [PlansController],
       providers: [
+        // JwtAuthGuard reads account status through Nest's Mongoose connection.
+        { provide: getConnectionToken(), useValue: { models: {} } },
         { provide: PlansService, useValue: mockPlansService },
         { provide: ImageCleanupService, useValue: imageCleanupService },
       ],

@@ -5,7 +5,7 @@ export async function sendEmailBrevo({ to, subject, text, html }: { to: string; 
   if (!apiKey) throw new Error('BREVO_API_KEY not set');
 
   const payload = {
-    sender: { name: 'Trendstarz', email: process.env.BREVO_FROM || 'noreply@trendstarz.com' },
+    sender: { name: 'TrendStarz', email: process.env.BREVO_FROM || 'noreply@trendstarz.com' },
     to: [{ email: to }],
     subject,
     htmlContent: html || text,
