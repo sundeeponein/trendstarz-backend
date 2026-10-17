@@ -78,6 +78,7 @@ import {
   awaitingPlatformFee,
   isBarterOrLocationCampaign,
 } from "../campaigns/barter-limits.util";
+import { SingleInstance } from "../utils/single-instance";
 import {
   PREMIUM_RATE_FIELDS,
   isActivePremium,
@@ -2716,6 +2717,7 @@ export class PaymentsPayoutsService {
   }
 
   @Cron(process.env.AUTO_PAYOUT_CRON || "0 */10 * * * *")
+  @SingleInstance()
   async runAutoPayoutSweepCron() {
     if (!PaymentsPayoutsService.AUTO_PAYOUT_ENABLED) return;
     try {
@@ -3632,6 +3634,7 @@ export class PaymentsPayoutsService {
   }
 
   @Cron("0 30 1 * * *")
+  @SingleInstance()
   async expireCreditCron() {
     try {
       const res = await expireCredit(this.creditModel);
@@ -3694,6 +3697,7 @@ export class PaymentsPayoutsService {
   }
 
   @Cron("0 15 * * * *")
+  @SingleInstance()
   async expireRefundHoldsCron() {
     try {
       const res = await this.expireRefundHolds();

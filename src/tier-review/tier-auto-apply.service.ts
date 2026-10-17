@@ -8,6 +8,7 @@ import { SocialAccountVerificationService } from "../social-account-verification
 import { recordSocialEdit } from "../utils/admin-social-edit.util";
 import { tierRangeText } from "../utils/tier-ranges.util";
 import { AUTO_TIER, autoTierDecision } from "./tier-auto-apply";
+import { SingleInstance } from "../utils/single-instance";
 
 const PROFILE_URL: Record<string, string> = {
   Influencer: "/influencer-profile",
@@ -36,6 +37,7 @@ export class TierAutoApplyService {
   ) {}
 
   @Cron("0 3 * * *", { timeZone: "Asia/Kolkata", name: "youtubeTierAutoApply" })
+  @SingleInstance()
   async nightly(): Promise<void> {
     try {
       const applied = await this.run(new Date());

@@ -12,6 +12,7 @@ import {
   accountKey,
   planYoutubeObservationRun,
 } from "./youtube-observation-schedule";
+import { SingleInstance } from "../utils/single-instance";
 
 /**
  * Stage 3D-1a — scheduled YouTube observation + statistics retention.
@@ -86,6 +87,7 @@ export class YoutubeObservationSchedulerService {
   }
 
   @Cron("30 2 * * *", { timeZone: "Asia/Kolkata", name: "youtubeObservation" })
+  @SingleInstance()
   async dailyCron(): Promise<void> {
     try {
       const summary = await this.run(new Date());

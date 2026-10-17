@@ -73,6 +73,7 @@ import {
   termsV2EffectiveAt,
 } from "./paid-collab-terms";
 import { reverseIssuedCredit } from "../payments-payouts/platform-credit.util";
+import { SingleInstance } from "../utils/single-instance";
 
 function detectPlatform(url: string): string {
   if (!url) return "other";
@@ -962,6 +963,7 @@ export class CampaignInvitesService {
   }
 
   @Cron(CronExpression.EVERY_HOUR)
+  @SingleInstance()
   async autoApproveStaleSubmissionsCron() {
     await this.autoApproveStaleSubmissions();
   }
@@ -2304,6 +2306,7 @@ export class CampaignInvitesService {
    * cause a duplicate send (2h tolerance band on each side of the milestone).
    */
   @Cron(CronExpression.EVERY_HOUR)
+  @SingleInstance()
   async sendPostingRemindersCron() {
     await this.sendPostingReminders();
   }
@@ -4937,6 +4940,7 @@ export class CampaignInvitesService {
   }
 
   @Cron(CronExpression.EVERY_HOUR)
+  @SingleInstance()
   async autoCancelExpiredDisputesCron() {
     try {
       await this.autoCancelExpiredDisputes();
@@ -5375,6 +5379,7 @@ export class CampaignInvitesService {
   }
 
   @Cron(CronExpression.EVERY_HOUR)
+  @SingleInstance()
   async autoExpireUnsubmittedInvitesCron() {
     try {
       await this.autoExpireUnsubmittedInvites();

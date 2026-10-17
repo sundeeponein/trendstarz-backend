@@ -89,6 +89,7 @@ import { AvailabilityModule } from "./availability/availability.module";
 import { PlatformDataQualityModule } from "./platform-data-quality/platform-data-quality.module";
 import { PlatformMetricsModule } from "./platform-metrics/platform-metrics.module";
 import { DataIntegrityModule } from "./data-integrity/data-integrity.module";
+import { CronLockInitializer } from "./utils/single-instance";
 
 @Module({
   imports: [
@@ -233,6 +234,8 @@ import { DataIntegrityModule } from "./data-integrity/data-integrity.module";
   providers: [
     AppService,
     AuthService,
+    // Connects @SingleInstance() job locks to the database before any job fires.
+    CronLockInitializer,
     EarlyAccessAssignmentService,
     PendingUserCleanupService,
     PendingUploadCleanupService,

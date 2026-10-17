@@ -5,6 +5,7 @@ import { Model } from "mongoose";
 import { FirebaseAdminService } from "../utils/firebase-admin.service";
 import { sendAppEmail } from "../utils/app-email.service";
 import { registrationReminderTemplate } from "../email/templates/auth.templates";
+import { SingleInstance } from "../utils/single-instance";
 
 @Injectable()
 export class PendingUserCleanupService {
@@ -629,6 +630,7 @@ export class PendingUserCleanupService {
   }
 
   @Cron(CronExpression.EVERY_DAY_AT_3AM)
+  @SingleInstance()
   async runScheduledCleanup() {
     try {
       await this.runCleanupNow("system_cron");
@@ -641,6 +643,7 @@ export class PendingUserCleanupService {
   }
 
   @Cron(CronExpression.EVERY_DAY_AT_7AM)
+  @SingleInstance()
   async runScheduledVerificationReminders() {
     try {
       await this.sendVerificationReminders("system_cron");
@@ -653,6 +656,7 @@ export class PendingUserCleanupService {
   }
 
   @Cron(CronExpression.EVERY_DAY_AT_4AM)
+  @SingleInstance()
   async runScheduledPendingUnverifiedReport() {
     try {
       const report = await this.getPendingUnverifiedReport(7, 25);
@@ -679,6 +683,7 @@ export class PendingUserCleanupService {
   }
 
   @Cron(CronExpression.EVERY_DAY_AT_5AM)
+  @SingleInstance()
   async runScheduledFirebaseEmailSync() {
     try {
       const result = await this.syncFirebaseVerifiedEmails("system_cron");

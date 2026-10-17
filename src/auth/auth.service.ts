@@ -40,6 +40,7 @@ import { CloudinaryFolders } from "../cloudinary-folders";
 import { WORKFLOW_TIMING_DEFAULTS } from "../utils/workflow-timing.util";
 import { withoutServerOwnedProfileFields } from "../utils/server-owned-profile-fields.util";
 import { isActivePremium } from "../payments-payouts/fee-rates.util";
+import { SingleInstance } from "../utils/single-instance";
 
 type AnyUserDoc = {
   email: string;
@@ -256,6 +257,7 @@ export class AuthService {
    *   If you've already verified, please ignore this message.
    */
   @Cron(CronExpression.EVERY_5_MINUTES)
+  @SingleInstance()
   async sendEmailVerificationWhatsappRemindersCron() {
     try {
       await this.sendEmailVerificationWhatsappReminders();

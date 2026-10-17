@@ -4,6 +4,7 @@ import { Cron, CronExpression } from "@nestjs/schedule";
 import { Model } from "mongoose";
 import { CollaborationScoreService } from "./collaboration-score.service";
 import { CollaborationScoreSettingsService } from "./collaboration-score-settings.service";
+import { SingleInstance } from "../utils/single-instance";
 
 type EligibleProfile = { userId: string; userType: "Influencer" | "Brand" | "Photographer" };
 
@@ -31,6 +32,7 @@ export class CollaborationScoreNightlyService {
   ) {}
 
   @Cron(CronExpression.EVERY_HOUR)
+  @SingleInstance()
   async nightlyReauditCron(): Promise<void> {
     try {
       await this.maybeRunNightlyReaudit();

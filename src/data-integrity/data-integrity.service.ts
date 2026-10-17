@@ -21,6 +21,7 @@ export const EXPLAINABLE_CHECKS = [
   "invite_payment_agree",
 ];
 import { sendAppEmail } from "../utils/app-email.service";
+import { SingleInstance } from "../utils/single-instance";
 
 const RUNS = "data_integrity_runs";
 const KEEP_DAYS = 180;
@@ -127,6 +128,7 @@ export class DataIntegrityService implements OnModuleInit {
   }
 
   @Cron("45 2 * * *", { timeZone: "Asia/Kolkata", name: "dataIntegrityNightly" })
+  @SingleInstance()
   async nightly() {
     try {
       const previous = await this.latest();

@@ -2,6 +2,7 @@ import { Injectable } from "@nestjs/common";
 import { InjectModel } from "@nestjs/mongoose";
 import { Cron, CronExpression } from "@nestjs/schedule";
 import { Model } from "mongoose";
+import { SingleInstance } from "../utils/single-instance";
 
 type UserType = "influencer" | "brand";
 
@@ -509,6 +510,7 @@ export class EarlyAccessAssignmentService {
   }
 
   @Cron(CronExpression.EVERY_DAY_AT_1AM)
+  @SingleInstance()
   async runScheduledEarlyAccessAutoAssign() {
     try {
       await this.autoAssignEarlyAccess("system_auto_refill");

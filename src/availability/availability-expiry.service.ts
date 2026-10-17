@@ -5,6 +5,7 @@ import { Connection } from "mongoose";
 import { NotificationsService } from "../notifications/notifications.service";
 import { PushService } from "../push/push.service";
 import { notAvailableEndsAt } from "../utils/collaboration-availability.util";
+import { SingleInstance } from "../utils/single-instance";
 
 /** Creator collections whose "not available" periods end (role → collection, profile page). */
 const CREATOR_COLLECTIONS = [
@@ -49,6 +50,7 @@ export class AvailabilityExpiryService {
   ) {}
 
   @Cron("0 10 * * *", { timeZone: "Asia/Kolkata", name: "availabilityExpiry" })
+  @SingleInstance()
   async runDaily(): Promise<void> {
     try {
       const reset = await this.resetEnded();

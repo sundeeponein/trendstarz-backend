@@ -4,6 +4,7 @@ import { Cron, CronExpression } from "@nestjs/schedule";
 import { Model } from "mongoose";
 import { CloudinaryService } from "../cloudinary.service";
 import { CloudinaryFolders } from "../cloudinary-folders";
+import { SingleInstance } from "../utils/single-instance";
 
 // Folders scanned for orphaned pre-registration uploads, paired with the
 // Cloudinary resource type they hold. Verification docs can be PDF (raw) or
@@ -185,6 +186,7 @@ export class PendingUploadCleanupService {
   }
 
   @Cron(CronExpression.EVERY_DAY_AT_6AM)
+  @SingleInstance()
   async runScheduledCleanup() {
     try {
       await this.runCleanupNow("system_cron");

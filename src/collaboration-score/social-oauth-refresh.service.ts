@@ -3,6 +3,7 @@ import { InjectModel } from "@nestjs/mongoose";
 import { Cron, CronExpression } from "@nestjs/schedule";
 import { Model } from "mongoose";
 import { MetaOAuthService } from "../meta-oauth/meta-oauth.service";
+import { SingleInstance } from "../utils/single-instance";
 
 /**
  * Meta long-lived tokens expire after ~60 days. Runs daily, refreshes
@@ -23,6 +24,7 @@ export class SocialOAuthRefreshService {
   ) {}
 
   @Cron(CronExpression.EVERY_DAY_AT_3AM)
+  @SingleInstance()
   async refreshExpiringConnectionsCron(): Promise<void> {
     try {
       await this.refreshExpiringConnections();

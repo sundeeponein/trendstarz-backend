@@ -60,6 +60,7 @@ import {
 import { CampaignInvitesService } from "./campaign-invites.service";
 import { settingHours } from "../utils/workflow-timing.util";
 import { idIn } from "../utils/id-match.util";
+import { SingleInstance } from "../utils/single-instance";
 
 const VALID_TRANSITIONS: Record<string, string[]> = {
   draft: ["pending", "pending_review", "active", "needs_changes"],
@@ -176,6 +177,7 @@ export class CampaignsService {
   // has ended and none of its invites still have active work in flight, close it
   // out automatically so campaigns don't sit in Active/EXPIRED indefinitely.
   @Cron(CronExpression.EVERY_HOUR)
+  @SingleInstance()
   async autoCompleteExpiredCampaignsCron() {
     await this.autoCompleteExpiredCampaigns();
   }

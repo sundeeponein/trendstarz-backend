@@ -49,6 +49,7 @@ import {
   ViewerLocationContext,
 } from "../utils/profile-eligibility.util";
 import { takenAccountFields } from "../utils/account-uniqueness.util";
+import { SingleInstance } from "../utils/single-instance";
 
 /** Self-service "Delete Account" grace period — see requestSelfDeletion. */
 export const SELF_DELETION_GRACE_PERIOD_DAYS =
@@ -3003,6 +3004,7 @@ export class UsersService implements OnModuleInit {
    * which is a genuine hard delete for explicit GDPR/DPDP erasure requests.
    */
   @Cron(CronExpression.EVERY_DAY_AT_1AM)
+  @SingleInstance()
   async cleanupExpiredSelfDeletionRequestsCron() {
     try {
       const result = await this.cleanupExpiredSelfDeletionRequests();

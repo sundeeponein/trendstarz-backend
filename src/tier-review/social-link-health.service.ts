@@ -13,6 +13,7 @@ import { SocialProfileType } from "../database/schemas/social-account-verificati
 import { SocialAccountVerificationService } from "../social-account-verification/social-account-verification.service";
 import { recordSocialEdit } from "../utils/admin-social-edit.util";
 import { socialHandleKey } from "../utils/social-account.util";
+import { SingleInstance } from "../utils/single-instance";
 
 /**
  * Keeps creators' social links working for hosts:
@@ -132,6 +133,7 @@ export class SocialLinkHealthService {
   // ── 1. YouTube permanent links + rename sync ──────────────────────────────
 
   @Cron("15 3 * * *", { timeZone: "Asia/Kolkata", name: "youtubeLinkSync" })
+  @SingleInstance()
   async nightly(): Promise<void> {
     try {
       const res = await this.syncYoutubeLinks();

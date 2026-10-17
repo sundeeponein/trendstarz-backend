@@ -4,6 +4,7 @@ import { InjectModel } from "@nestjs/mongoose";
 import { Model } from "mongoose";
 import { PlansService } from "./plans.service";
 import { CloudinaryService } from "../cloudinary.service";
+import { SingleInstance } from "../utils/single-instance";
 
 @Injectable()
 export class ImageCleanupService {
@@ -210,6 +211,7 @@ export class ImageCleanupService {
 
   /** Runs daily at 2 AM */
   @Cron(CronExpression.EVERY_DAY_AT_2AM)
+  @SingleInstance()
   async runCleanup() {
     this.logger.log("[ImageCleanup] Starting daily image cleanup job");
 
