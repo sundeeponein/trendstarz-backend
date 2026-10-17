@@ -14,6 +14,7 @@ import * as dotenv from "dotenv";
 import helmet from "helmet";
 dotenv.config();
 import * as path from 'path';
+import { RejectOperatorKeysInterceptor } from "./utils/reject-operator-keys.interceptor";
 // Removed manual mongoose connection logic. Use only MongooseModule.forRoot in AppModule.
 
 async function bootstrap() {
@@ -67,8 +68,12 @@ async function bootstrap() {
   // Set global API prefix for all routes
   app.setGlobalPrefix("api");
 
+  // Refuse `$`-prefixed keys in bodies/queries (Mongo operator injection) — see the interceptor.
   // Standardize API responses
-  app.useGlobalInterceptors(new ResponseInterceptor());
+  app.useGlobalInterceptors(
+    new RejectOperatorKeysInterceptor(),
+    new ResponseInterceptor(),
+  );
 
   // Validate and strip unknown fields from all request bodies globally.
   app.useGlobalPipes(

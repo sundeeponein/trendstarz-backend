@@ -38,6 +38,7 @@ import { consumeOtpVerificationToken } from "../otp/otp.controller";
 import { CloudinaryService } from "../cloudinary.service";
 import { CloudinaryFolders } from "../cloudinary-folders";
 import { WORKFLOW_TIMING_DEFAULTS } from "../utils/workflow-timing.util";
+import { withoutServerOwnedProfileFields } from "../utils/server-owned-profile-fields.util";
 
 type AnyUserDoc = {
   email: string;
@@ -1937,10 +1938,22 @@ export class AuthService {
         ]
       : [];
 
+    // Phone counts as verified only with a valid OTP token from /otp/verify (same as
+    // photographer signup) — never because the signup form says so.
+    const mobileOtpVerified = consumeOtpVerificationToken(
+      "phone",
+      normalizedPhone || data.phoneNumber,
+      data?.mobileOtpVerificationToken,
+    );
     const influencer = new this.influencerModel({
-      ...data,
+      // Signup form minus server-owned fields (status, Premium, verification…).
+      ...withoutServerOwnedProfileFields(data),
       email: normalizedEmail || data.email,
       phoneNumber: normalizedPhone || data.phoneNumber,
+      isMobileVerified: mobileOtpVerified,
+      mobileVerified: mobileOtpVerified,
+      mobileVerifiedAt: mobileOtpVerified ? new Date() : null,
+      mobileVerificationMethod: mobileOtpVerified ? "OTP" : "",
       password: hashedPassword,
       firstRegisteredAt: new Date(),
       categories: normalizedCategoryNames,
@@ -2166,7 +2179,8 @@ export class AuthService {
           .slice(0, 1)
       : [];
     const brand = new this.brandModel({
-      ...data,
+      // Signup form minus server-owned fields (status, Premium, verification…).
+      ...withoutServerOwnedProfileFields(data),
       email: normalizedEmail || data.email,
       phoneNumber: normalizedPhone || data.phoneNumber,
       password: hashedPassword,
@@ -2379,7 +2393,8 @@ export class AuthService {
     };
 
     const photographer = new this.photographerModel({
-      ...data,
+      // Signup form minus server-owned fields (status, Premium, verification…).
+      ...withoutServerOwnedProfileFields(data),
       username: normalizedUsername,
       email: normalizedEmail || data.email,
       phoneNumber: normalizedPhone || data.phoneNumber,

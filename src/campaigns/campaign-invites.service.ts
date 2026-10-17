@@ -3945,10 +3945,25 @@ export class CampaignInvitesService {
       );
     }
 
+    // Only the creator-entered fields — never `...data`, which would let the body
+    // overwrite inviteId/campaignId or pre-fill review/dispute fields.
+    const count = (v: unknown) => {
+      const n = Number(v);
+      return v == null || v === "" || !Number.isFinite(n) || n < 0
+        ? undefined
+        : Math.round(n);
+    };
     const normalizedSubmissionData = {
-      ...data,
+      postUrl: String(data.postUrl || "").trim(),
+      postType: data.postType ? String(data.postType) : undefined,
+      captionUsed: data.captionUsed ? String(data.captionUsed) : undefined,
       postScreenshotUrl: String(data.postScreenshotUrl || "").trim(),
       insightsScreenshotUrl: String(data.insightsScreenshotUrl || "").trim(),
+      viewsCount: count(data.viewsCount),
+      likesCount: count(data.likesCount),
+      commentsCount: count(data.commentsCount),
+      sharesCount: count(data.sharesCount),
+      reachCount: count(data.reachCount),
     };
 
     let submission: any;

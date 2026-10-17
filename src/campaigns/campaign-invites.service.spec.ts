@@ -1073,6 +1073,29 @@ describe("CampaignInvitesService – submitPost() insights lock", () => {
     expect(result.success).toBe(true);
   });
 
+  it("a submission can't be redirected or pre-reviewed through the request body", async () => {
+    const invite = acceptedInvite({ insightsUnlocksAt: new Date(Date.now() - 1000) });
+    inviteModel.findById.mockResolvedValue(invite);
+    submissionModel.findOne.mockResolvedValue(null);
+    submissionModel.create.mockResolvedValue({ _id: "sub1" });
+
+    await service.submitPost("inv1", "inf1", {
+      postUrl: "https://instagram.com/p/abc",
+      likesCount: -5,
+      inviteId: "someone-elses-invite",
+      campaignId: "other-campaign",
+      brandFeedback: "Approved",
+      reviewedAt: new Date(),
+    } as any);
+
+    const created = submissionModel.create.mock.calls[0][0];
+    expect(created.inviteId).toBe("inv1");
+    expect(created).not.toHaveProperty("brandFeedback");
+    expect(created).not.toHaveProperty("reviewedAt");
+    expect(created.campaignId).not.toBe("other-campaign");
+    expect(created.likesCount).toBeUndefined(); // negative counts are dropped
+  });
+
   it("allows postUrl submission without insights when still locked", async () => {
     const future = new Date(Date.now() + 24 * 60 * 60 * 1000);
     const invite = acceptedInvite({ insightsUnlocksAt: future });
