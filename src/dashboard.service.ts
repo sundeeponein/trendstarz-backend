@@ -7,6 +7,7 @@ import { Injectable, NotFoundException } from "@nestjs/common";
 import { InjectModel } from "@nestjs/mongoose";
 import { Model, Types } from "mongoose";
 import { latePostWindowsByInvite } from "./payments-payouts/campaign-refund.util";
+import { isActivePremium } from "./payments-payouts/fee-rates.util";
 
 @Injectable()
 export class DashboardService {
@@ -145,7 +146,7 @@ export class DashboardService {
         name: user?.name || "",
         isEmailVerified: user?.isEmailVerified ?? false,
         isMobileVerified: user?.isMobileVerified ?? false,
-        isPremium: user?.isPremium ?? false,
+        isPremium: isActivePremium(user), // expired Premium reads as false
         premiumDuration: user?.premiumDuration ?? null,
         premiumStart: user?.premiumStart ?? null,
         premiumEnd: user?.premiumEnd ?? null,
@@ -242,7 +243,7 @@ export class DashboardService {
         brandName: brand?.brandName || "",
         isEmailVerified: brand?.isEmailVerified ?? false,
         isMobileVerified: brand?.isMobileVerified ?? false,
-        isPremium: brand?.isPremium ?? false,
+        isPremium: isActivePremium(brand), // expired Premium reads as false
         premiumDuration: brand?.premiumDuration ?? null,
         premiumStart: brand?.premiumStart ?? null,
         premiumEnd: brand?.premiumEnd ?? null,

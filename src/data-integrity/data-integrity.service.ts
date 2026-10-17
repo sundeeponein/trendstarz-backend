@@ -14,7 +14,12 @@ import {
 } from "./integrity-checks";
 
 /** Checks whose findings point at one record an admin can explain. */
-export const EXPLAINABLE_CHECKS = ["unexplained_premium", "unpaid_unlocks"];
+export const EXPLAINABLE_CHECKS = [
+  "unexplained_premium",
+  "unpaid_unlocks",
+  "premium_sources_agree",
+  "invite_payment_agree",
+];
 import { sendAppEmail } from "../utils/app-email.service";
 
 const RUNS = "data_integrity_runs";

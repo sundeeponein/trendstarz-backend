@@ -9,6 +9,7 @@ import mongoose, { Types } from "mongoose";
 import { CampaignTransactionSchema } from "./campaign-transaction.schema";
 import { CampaignInviteSchema } from "./campaign-invite.schema";
 import { PaymentSchema } from "./payment.schema";
+import { BrandSchema, InfluencerSchema, PhotographerSchema } from "./profile.schemas";
 import { idIn, idsIn } from "../../utils/id-match.util";
 import { anyId } from "../../payments-payouts/campaign-refund.util";
 import { ACTIVE_INVITE_STATUSES } from "../../campaigns/reinvite-rule.util";
@@ -103,6 +104,23 @@ describe("data rules (real MongoDB)", () => {
       await expect(
         Payment.create({ userType: "Brand", transactionId: "t-neg", amount: -1, premiumDuration: "1m" }),
       ).rejects.toThrow(/amount/);
+    });
+  });
+
+  describe("account status", () => {
+    it("every profile type can store the self-deletion grace status (Settings → Delete account)", async () => {
+      for (const [name, schema] of [
+        ["Influencer", InfluencerSchema],
+        ["Brand", BrandSchema],
+        ["Photographer", PhotographerSchema],
+      ] as const) {
+        const M = db.conn.model(name, schema as any, name.toLowerCase() + "s");
+        const doc: any = new M({
+          name: "A", brandName: "A", email: `${name}@x.com`, password: "x", phoneNumber: "1", username: `u_${name}`,
+          status: "deletion_pending", isDeleted: true,
+        });
+        await expect(doc.validate()).resolves.toBeUndefined();
+      }
     });
   });
 

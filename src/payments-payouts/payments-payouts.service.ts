@@ -8,7 +8,11 @@ import {
 import { InjectConnection, InjectModel } from "@nestjs/mongoose";
 import { Connection, Model, Types } from "mongoose";
 import type { ClientSession } from "mongoose";
-import { inTransaction, withSession } from "../utils/mongo-transaction.util";
+import {
+  createOne,
+  inTransaction,
+  withSession,
+} from "../utils/mongo-transaction.util";
 import { Cron } from "@nestjs/schedule";
 import { sendAppEmail } from "../utils/app-email.service";
 import {
@@ -852,37 +856,75 @@ export class PaymentsPayoutsService {
         txData.collectionStatus = "awaiting_payment";
       }
 
+      // TrendStarZ credit pays (part of) this row's platform fee — UPI payments only.
+      const row = await this.saveRowApplyingCredit(
+        existing,
+        txData,
+        mode === "manual_proof" && !isPayToJoin && inviteFee > 0
+          ? {
+              payerId: String(payerId),
+              wanted: inviteFee,
+              campaignId: String(campaign._id || ""),
+              totalAfter: (r, used) => Math.max(Number(r.payerTotal || 0) - used, 0),
+            }
+          : null,
+      );
+      saved.push(row);
+    }
+
+    return saved;
+  }
+
+  /**
+   * Saves one payment row and applies the host's TrendStarZ credit to it, as ONE
+   * transaction: give back credit an earlier (rejected) attempt used, save the
+   * row, spend credit, stamp creditApplied/payerTotal. A failure part-way can no
+   * longer leave credit spent without being applied to a payment.
+   */
+  private async saveRowApplyingCredit(
+    existing: any,
+    txData: Record<string, any>,
+    credit: {
+      payerId: string;
+      wanted: number;
+      campaignId: string;
+      totalAfter: (row: any, used: number) => number;
+    } | null,
+  ) {
+    return inTransaction(this.connection, async (session) => {
       let row: any;
       if (existing) {
         // A resubmission: give back credit the earlier (rejected) attempt used first.
-        await restoreCreditUse(this.creditModel, String(existing._id));
+        await restoreCreditUse(this.creditModel, String(existing._id), "system", session);
         Object.assign(existing, txData);
-        row = await existing.save();
+        row = await existing.save(withSession({}, session));
       } else {
-        row = await this.transactionModel.create(txData);
+        row = await createOne(this.transactionModel, txData, session);
       }
-      // TrendStarZ credit pays (part of) this row's platform fee — UPI payments only.
-      if (mode === "manual_proof" && !isPayToJoin && inviteFee > 0) {
-        const used = await consumeCredit(this.creditModel, {
-          ownerId: String(payerId),
-          wanted: inviteFee,
-          transactionId: String(row._id),
-          campaignId: String(campaign._id || ""),
-        });
+      if (credit && credit.wanted > 0) {
+        const used = await consumeCredit(
+          this.creditModel,
+          {
+            ownerId: credit.payerId,
+            wanted: credit.wanted,
+            transactionId: String(row._id),
+            campaignId: credit.campaignId,
+          },
+          session,
+        );
         if (used > 0) {
-          const payerTotal = Math.max(Number(row.payerTotal || 0) - used, 0);
+          const payerTotal = credit.totalAfter(row, used);
           await this.transactionModel.updateOne(
             { _id: row._id },
             { $set: { creditApplied: used, payerTotal } },
+            withSession({}, session),
           );
           row.creditApplied = used;
           row.payerTotal = payerTotal;
         }
       }
-      saved.push(row);
-    }
-
-    return saved;
+      return row;
+    });
   }
 
   /**
@@ -1032,31 +1074,18 @@ export class PaymentsPayoutsService {
         txData.paymentProofUrl = undefined;
         txData.collectionStatus = "awaiting_payment";
       }
-      let row: any;
-      if (existing) {
-        await restoreCreditUse(this.creditModel, String(existing._id));
-        Object.assign(existing, txData);
-        row = await existing.save();
-      } else {
-        row = await this.transactionModel.create(txData);
-      }
-      if (mode === "manual_proof") {
-        const used = await consumeCredit(this.creditModel, {
-          ownerId: String(payerId),
-          wanted: fee,
-          transactionId: String(row._id),
-          campaignId,
-        });
-        if (used > 0) {
-          const payerTotal = Math.max(fee + gst - used, 0);
-          await this.transactionModel.updateOne(
-            { _id: row._id },
-            { $set: { creditApplied: used, payerTotal } },
-          );
-          row.creditApplied = used;
-          row.payerTotal = payerTotal;
-        }
-      }
+      const row = await this.saveRowApplyingCredit(
+        existing,
+        txData,
+        mode === "manual_proof"
+          ? {
+              payerId: String(payerId),
+              wanted: fee,
+              campaignId,
+              totalAfter: (_r, used) => Math.max(fee + gst - used, 0),
+            }
+          : null,
+      );
       saved.push(row);
     }
     return saved;
@@ -1095,20 +1124,34 @@ export class PaymentsPayoutsService {
     // Everything the host paid for this fee — GST and any credit used included.
     const amount =
       Number(tx.platformFee || 0) + Number(tx.gstAmount || 0);
-    await issueCredit(this.creditModel, {
-      ownerId: String(tx.payerId),
-      ownerRole: tx.payerRole,
-      amount,
-      transactionId: String(tx._id),
-      campaignId: String(tx.campaignId || ""),
-      reason: "Platform fee refunded — creator no-show",
-      createdBy: String(adminId || "admin"),
-    });
+    // Claim the fee first (guarded) and issue the credit in the same transaction,
+    // so a double click or two admins can never credit the same fee twice.
     const now = new Date();
-    await this.transactionModel.updateOne(
-      { _id: tx._id, feeCreditedAt: null },
-      { $set: { feeCreditedAt: now } },
-    );
+    await inTransaction(this.connection, async (session) => {
+      const claimed = await this.transactionModel
+        .findOneAndUpdate(
+          { _id: tx._id, feeCreditedAt: null },
+          { $set: { feeCreditedAt: now } },
+          withSession({ new: true }, session),
+        )
+        .lean();
+      if (!claimed) {
+        throw new BadRequestException("This fee was already refunded as credit.");
+      }
+      await issueCredit(
+        this.creditModel,
+        {
+          ownerId: String(tx.payerId),
+          ownerRole: tx.payerRole,
+          amount,
+          transactionId: String(tx._id),
+          campaignId: String(tx.campaignId || ""),
+          reason: "Platform fee refunded — creator no-show",
+          createdBy: String(adminId || "admin"),
+        },
+        session,
+      );
+    });
     return { success: true, amount, creditedAt: now };
   }
 

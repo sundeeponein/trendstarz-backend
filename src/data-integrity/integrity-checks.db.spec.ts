@@ -39,14 +39,18 @@ describe("data integrity checks (real MongoDB)", () => {
     const inv = new Types.ObjectId();
     await db.collection("campaigns").insertOne({ brandId: new Types.ObjectId().toHexString(), slotUsedAt: new Date(), pricePerInfluencer: 100000 });
     await db.collection("campaigninvites").insertOne({ _id: inv, campaignId: camp, brandId: new Types.ObjectId().toHexString(), influencerId: new Types.ObjectId(), status: "accepted", unlocked: true, unlockType: "paid_collab_payment" });
-    await db.collection("campaigntransactions").insertOne({ campaignId: camp, inviteId: inv, payerId: new Types.ObjectId().toHexString(), recipientId: new Types.ObjectId().toHexString(), payerTotal: 100000, collectionStatus: "verified" });
+    await db.collection("campaigntransactions").insertOne({ transactionType: "paid_collab", campaignId: camp, inviteId: inv, payerId: new Types.ObjectId().toHexString(), recipientId: new Types.ObjectId().toHexString(), payerTotal: 100000, collectionStatus: "verified", payoutStatus: "paid" });
+    await db.collection("campaigninvites").updateOne({ _id: inv }, { $set: { status: "approved", paidOutAt: new Date() } });
+    const premiumUser = new Types.ObjectId();
+    await db.collection("brands").insertOne({ _id: premiumUser, email: "p@x.com", isPremium: true, premiumSource: "admin", premiumEnd: new Date(Date.now() + 86400000) });
+    await db.collection("subscriptions").insertOne({ userId: premiumUser, userType: "BRAND", status: "active", endDate: new Date(Date.now() + 86400000) });
     await db.collection("payments").insertOne({ amount: 499, amountPaise: 49900, status: "approved" });
     await db.collection("influencers").insertOne({ email: "a@x.com", isPremium: true, premiumSource: "admin" });
     await db.collection("brands").insertOne({ email: "b@x.com" });
 
     const checks = await runIntegrityChecks(db);
     expect(checks.filter((c) => c.status === "warn")).toEqual([]);
-    expect(checks).toHaveLength(9);
+    expect(checks).toHaveLength(11);
   });
 
   it("flags each kind of problem in its own check", async () => {
@@ -81,6 +85,20 @@ describe("data integrity checks (real MongoDB)", () => {
     expect(c.unexplained_premium.samples[0]).toContain(String(premium.insertedId));
     expect(c.unpaid_unlocks.count).toBe(1);
     expect(c.shared_emails.samples[0]).toContain("free@x.com");
+  });
+
+  it("catches Premium removed from a profile while its subscription stays active, and invite/payment drift", async () => {
+    const alice = new Types.ObjectId();
+    await db.collection("influencers").insertOne({ _id: alice, email: "alice@x.com", isPremium: false });
+    await db.collection("subscriptions").insertOne({ userId: alice, userType: "INFLUENCER", status: "active", endDate: new Date(Date.now() + 86400000) });
+    const inv = new Types.ObjectId();
+    await db.collection("campaigninvites").insertOne({ _id: inv, campaignId: "c", brandId: "b", influencerId: new Types.ObjectId(), status: "approved" });
+    await db.collection("campaigntransactions").insertOne({ transactionType: "paid_collab", inviteId: inv, payoutStatus: "paid", collectionStatus: "verified" });
+
+    const c = await byKey();
+    expect(c.premium_sources_agree.count).toBe(1);
+    expect(c.premium_sources_agree.samples[0]).toContain("alice@x.com");
+    expect(c.invite_payment_agree.samples[0]).toContain("no payout time");
   });
 
   it("an admin can explain a flagged record: it stops counting, the record is untouched", async () => {

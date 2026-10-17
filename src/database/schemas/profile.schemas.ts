@@ -473,7 +473,9 @@ export const InfluencerSchema = new Schema(
     },
     status: {
       type: String,
-      enum: ["pending", "accepted", "declined", "deleted"],
+      // deletion_pending = the user asked to delete their account and is in the
+      // grace period (see UsersService.selfDeleteAccount / JwtAuthGuard).
+      enum: ["pending", "accepted", "declined", "deleted", "deletion_pending"],
       default: "pending",
     },
     resetToken: { type: String, default: null },
@@ -752,7 +754,9 @@ export const BrandSchema = new Schema(
     },
     status: {
       type: String,
-      enum: ["pending", "accepted", "declined", "deleted"],
+      // deletion_pending = the user asked to delete their account and is in the
+      // grace period (see UsersService.selfDeleteAccount / JwtAuthGuard).
+      enum: ["pending", "accepted", "declined", "deleted", "deletion_pending"],
       default: "pending",
     },
     // Growth: 1 free contact-unlock per brand before requiring premium/payment
@@ -941,7 +945,9 @@ export const PhotographerSchema = new Schema(
     deletedAt: { type: Date },
     status: {
       type: String,
-      enum: ["pending", "accepted", "declined", "deleted"],
+      // deletion_pending = the user asked to delete their account and is in the
+      // grace period (see UsersService.selfDeleteAccount / JwtAuthGuard).
+      enum: ["pending", "accepted", "declined", "deleted", "deletion_pending"],
       default: "pending",
     },
     signupAttribution: {

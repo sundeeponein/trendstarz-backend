@@ -1,5 +1,6 @@
 import type { Db } from "mongodb";
 import { ACTIVE_INVITE_STATUSES } from "../campaigns/reinvite-rule.util";
+import { isActivePremium } from "../payments-payouts/fee-rates.util";
 
 /**
  * Read-only checks for the data rules the platform relies on (2026-10-17
@@ -306,6 +307,89 @@ async function unlockedWithoutPayment(
   );
 }
 
+const COLLECTION_BY_USER_TYPE: Record<string, string> = {
+  INFLUENCER: "influencers",
+  BRAND: "brands",
+  PHOTOGRAPHER: "photographers",
+};
+
+/**
+ * Premium lives in two places: the subscriptions collection (what plan features
+ * use) and isPremium/premiumEnd on the profile (what the app shows). An active
+ * subscription on a profile that isn't Premium means the user gets features
+ * the app says they don't have — e.g. Premium removed directly in the database.
+ */
+async function premiumSourcesAgree(
+  db: Db,
+  explained: ExplainedSet,
+  now = new Date(),
+): Promise<IntegrityCheck> {
+  const subs = await db
+    .collection("subscriptions")
+    .find({ status: "active", endDate: { $gte: now } }, { projection: { userId: 1, userType: 1, endDate: 1 } })
+    .toArray();
+  const found: Array<{ ref: string; text: string }> = [];
+  for (const sub of subs as any[]) {
+    const col = COLLECTION_BY_USER_TYPE[String(sub.userType)] || "influencers";
+    const user: any = await db
+      .collection(col)
+      .findOne({ _id: sub.userId }, { projection: { email: 1, isPremium: 1, premiumEnd: 1 } });
+    if (!isActivePremium(user, now)) {
+      found.push({
+        ref: `subscriptions:${sub._id}`,
+        text: `${col}:${sub.userId} ${user?.email || "(no profile)"} — subscription active until ${new Date(sub.endDate).toISOString().slice(0, 10)}, profile not Premium`,
+      });
+    }
+  }
+  return explainableCheck(
+    "premium_sources_agree",
+    "Subscriptions and profiles agree on Premium",
+    "An active subscription belongs to a profile that isn't Premium, so plan features stay on while the app shows Free. Use the admin Premium toggle (it ends the subscription too) instead of editing the profile directly.",
+    found,
+    explained,
+  );
+}
+
+/**
+ * The invite and its payment row are updated in separate steps in a few flows;
+ * this catches them drifting apart (e.g. a crash between the two writes).
+ */
+async function invitePaymentAgree(
+  db: Db,
+  explained: ExplainedSet,
+): Promise<IntegrityCheck> {
+  const txs = await db
+    .collection("campaigntransactions")
+    .find(
+      {
+        transactionType: "paid_collab",
+        $or: [{ payoutStatus: "paid" }, { collectionStatus: "verified" }],
+      },
+      { projection: { inviteId: 1, payoutStatus: 1, collectionStatus: 1 } },
+    )
+    .toArray();
+  const found: Array<{ ref: string; text: string }> = [];
+  for (const tx of txs as any[]) {
+    const inv: any = await db
+      .collection("campaigninvites")
+      .findOne({ _id: tx.inviteId }, { projection: { status: 1, paidOutAt: 1 } });
+    let problem = "";
+    if (!inv) problem = "payment row points at an invite that doesn't exist";
+    else if (tx.payoutStatus === "paid" && !inv.paidOutAt) problem = "creator paid out but the invite has no payout time";
+    else if (tx.collectionStatus === "verified" && inv.status === "accepted") problem = "host payment verified but the invite is still 'accepted'";
+    if (problem) {
+      found.push({ ref: `campaigntransactions:${tx._id}`, text: `tx ${tx._id} (invite ${tx.inviteId}): ${problem}` });
+    }
+  }
+  return explainableCheck(
+    "invite_payment_agree",
+    "Invites and their payments agree",
+    "An invite and its payment row disagree about where the collaboration is. Check the collaboration in Payments; if the record is right as it stands, mark it as explained.",
+    found,
+    explained,
+  );
+}
+
 async function sharedEmails(db: Db): Promise<IntegrityCheck> {
   const rows = await db
     .collection("influencers")
@@ -344,6 +428,8 @@ export async function runIntegrityChecks(db: Db): Promise<IntegrityCheck[]> {
     slotRacePairs(db),
     unexplainedPremium(db, explained),
     unlockedWithoutPayment(db, explained),
+    premiumSourcesAgree(db, explained),
+    invitePaymentAgree(db, explained),
     sharedEmails(db),
   ]);
 }

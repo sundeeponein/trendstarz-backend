@@ -207,32 +207,33 @@ describe("PaymentService", () => {
   });
 
   describe("approvePayment", () => {
-    it("should approve pending payment and activate premium", async () => {
-      const payment = {
-        ...mockPayment,
-        status: "pending",
-        save: jest.fn().mockResolvedValue(true),
-      };
-      paymentModel.findById.mockResolvedValue(payment);
+    const claimReturns = (doc: any) => {
+      paymentModel.findOneAndUpdate = jest.fn(() => ({
+        lean: jest.fn().mockResolvedValue(doc),
+      }));
+    };
+
+    it("approves a pending payment with one guarded update and activates premium", async () => {
+      claimReturns({ ...mockPayment, status: "approved" });
       const result = await service.approvePayment("pay1", "admin1");
-      expect(payment.status).toBe("approved");
-      expect(payment.save).toHaveBeenCalled();
       expect(result.success).toBe(true);
+      const [filter, update] = paymentModel.findOneAndUpdate.mock.calls[0];
+      expect(filter).toEqual({ _id: "pay1", status: "pending" });
+      expect(update.$set).toMatchObject({ status: "approved", approvedBy: "admin1" });
     });
 
-    it("should reject if payment not found", async () => {
-      paymentModel.findById.mockResolvedValue(null);
+    it("reports not found when the payment doesn't exist", async () => {
+      claimReturns(null);
+      paymentModel.exists = jest.fn().mockResolvedValue(null);
       const result = await service.approvePayment("bad-id", "admin1");
-      expect(result.success).toBe(false);
+      expect(result).toMatchObject({ success: false, message: "Payment not found" });
     });
 
-    it("should reject if payment not pending", async () => {
-      paymentModel.findById.mockResolvedValue({
-        ...mockPayment,
-        status: "approved",
-      });
+    it("refuses when the payment is no longer pending (e.g. a second click)", async () => {
+      claimReturns(null);
+      paymentModel.exists = jest.fn().mockResolvedValue({ _id: "pay1" });
       const result = await service.approvePayment("pay1", "admin1");
-      expect(result.success).toBe(false);
+      expect(result).toMatchObject({ success: false, message: "Payment is not pending" });
     });
   });
 

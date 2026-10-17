@@ -179,15 +179,22 @@ export class PaymentService {
    * Approve a pending payment, activate premium and subscription
    */
   async approvePayment(paymentId: string, adminId: string) {
-    const payment = await this.paymentModel.findById(paymentId);
-    if (!payment) return { success: false, message: "Payment not found" };
-    if (payment.status !== "pending") {
-      return { success: false, message: "Payment is not pending" };
+    // Guarded claim: only one approval can move a payment out of "pending", so a
+    // double click or two admins can't activate Premium twice.
+    const payment: any = await this.paymentModel
+      .findOneAndUpdate(
+        { _id: paymentId, status: "pending" },
+        { $set: { status: "approved", approvedBy: adminId, approvedAt: new Date() } },
+        { new: true },
+      )
+      .lean();
+    if (!payment) {
+      const exists = await this.paymentModel.exists({ _id: paymentId });
+      return {
+        success: false,
+        message: exists ? "Payment is not pending" : "Payment not found",
+      };
     }
-    payment.status = "approved";
-    payment.approvedBy = adminId;
-    payment.approvedAt = new Date();
-    await payment.save();
 
     // Activate premium for user
     await this.confirmUpgrade(payment.userId, payment.premiumDuration);
@@ -266,6 +273,17 @@ export class PaymentService {
 
   // approvePayment is now obsolete (instant approval)
 
+  /** save() guarded by doc.$where; false when the payment changed meanwhile. */
+  private async saveIfStill(payment: any): Promise<boolean> {
+    try {
+      await payment.save();
+      return true;
+    } catch (err: any) {
+      if (err?.name === "DocumentNotFoundError") return false;
+      throw err;
+    }
+  }
+
   async rejectPayment(paymentId: string, rejectionReason: string) {
     const payment = await this.paymentModel.findById(paymentId);
     if (!payment) return { success: false, message: "Payment not found" };
@@ -275,7 +293,11 @@ export class PaymentService {
 
     payment.status = "rejected";
     payment.approvalNotes = rejectionReason;
-    await payment.save();
+    // Lands only if still pending — an approval at the same moment wins cleanly.
+    (payment as any).$where = { status: "pending" };
+    if (!(await this.saveIfStill(payment))) {
+      return { success: false, message: "Payment is not pending" };
+    }
 
     return { success: true, message: "Payment rejected." };
   }
@@ -300,7 +322,15 @@ export class PaymentService {
     payment.approvalNotes = payment.approvalNotes
       ? `${payment.approvalNotes}\nRefund: ${payment.refundReason}`
       : `Refund: ${payment.refundReason}`;
-    await payment.save();
+    // Lands only if still approved and not refunded — a double click refunds once.
+    (payment as any).$where = {
+      status: "approved",
+      refundStatus: { $ne: "processed" },
+      paymentStatus: { $ne: "refunded" },
+    };
+    if (!(await this.saveIfStill(payment))) {
+      return { success: false, message: "Payment is already refunded" };
+    }
 
     await this.plansService.subscriptionModel.updateMany(
       {

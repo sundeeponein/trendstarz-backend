@@ -2914,15 +2914,16 @@ export class UsersService implements OnModuleInit {
     }
 
     const publicIds = this.prepareSoftDeletedMediaSnapshot(user, userType);
-    await this.removeStoredMedia(publicIds);
 
-    // Soft delete
+    // Soft delete — saved BEFORE any media is removed, so a failed save can
+    // never leave an active account with its images already gone.
     user.isDeleted = true;
     user.deletedAt = new Date();
     user.status = status;
     user.featuredInMarketing = false;
     await user.save();
     invalidateAccountStatusCache(id);
+    await this.removeStoredMedia(publicIds);
 
     return {
       message:

@@ -39,6 +39,7 @@ import { CloudinaryService } from "../cloudinary.service";
 import { CloudinaryFolders } from "../cloudinary-folders";
 import { WORKFLOW_TIMING_DEFAULTS } from "../utils/workflow-timing.util";
 import { withoutServerOwnedProfileFields } from "../utils/server-owned-profile-fields.util";
+import { isActivePremium } from "../payments-payouts/fee-rates.util";
 
 type AnyUserDoc = {
   email: string;
@@ -1618,7 +1619,7 @@ export class AuthService {
           lastLoginAt: now,
           lastOpenedAt: influencer.lastOpenedAt || null,
           profileImage: profileImageUrl,
-          isPremium: !!influencer.isPremium,
+          isPremium: isActivePremium(influencer),
           premiumEnd: influencer.premiumEnd || null,
           // Admin-issued temporary password → the app must force a password change.
           mustChangePassword: !!influencer.mustChangePassword,
@@ -1687,7 +1688,7 @@ export class AuthService {
           lastLoginAt: now,
           lastOpenedAt: brand.lastOpenedAt || null,
           brandLogo: brandLogoArr,
-          isPremium: !!brand.isPremium,
+          isPremium: isActivePremium(brand),
           premiumEnd: brand.premiumEnd || null,
           // Admin-issued temporary password → the app must force a password change.
           mustChangePassword: !!brand.mustChangePassword,
@@ -1767,7 +1768,7 @@ export class AuthService {
           lastLoginAt: now,
           lastOpenedAt: photographer.lastOpenedAt || null,
           profileImage: profileImageUrl,
-          isPremium: !!photographer.isPremium,
+          isPremium: isActivePremium(photographer),
           premiumEnd: photographer.premiumEnd || null,
           // Admin-issued temporary password → the app must force a password change.
           mustChangePassword: !!photographer.mustChangePassword,
