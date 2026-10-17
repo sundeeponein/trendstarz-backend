@@ -37,6 +37,18 @@ const LEGACY_NO_SHOW_REASONS = [
   "Campaign ended by host before submission.",
 ];
 
+/**
+ * True for a closed no-show that still holds the creator's slot — the same rule
+ * as the withdrawn branch of slotHoldingInviteMatch below. An admin can excuse it.
+ */
+export function isUnexcusedNoShow(invite: any): boolean {
+  if (String(invite?.status || "") !== "withdrawn") return false;
+  if (invite?.missExcused?.at) return false;
+  const code = invite?.withdrawnReasonCode;
+  if (code) return NO_SHOW_REASON_CODES.includes(String(code));
+  return LEGACY_NO_SHOW_REASONS.includes(String(invite?.withdrawnReason || ""));
+}
+
 /** Mongo match for invites that hold a creator's monthly slot right now. */
 export function slotHoldingInviteMatch(now: Date = new Date()) {
   return {

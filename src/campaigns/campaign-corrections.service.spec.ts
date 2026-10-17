@@ -99,6 +99,38 @@ describe("CampaignCorrectionsService", () => {
     );
   });
 
+  describe("excuse a no-show (any campaign type, paid or not)", () => {
+    beforeEach(() => {
+      invitesService.adminExcuseMiss = jest.fn().mockResolvedValue({ success: true });
+    });
+
+    it("allows it only for a closed no-show that isn't excused yet", () => {
+      expect(service.checkExcuseMiss(invite).allowed).toBe(true); // legacy no-show text
+      expect(service.checkExcuseMiss({ ...invite, withdrawnReasonCode: "location_no_show" }).allowed).toBe(true);
+      expect(service.checkExcuseMiss({ ...invite, withdrawnReasonCode: "host_cancelled" }).allowed).toBe(false);
+      expect(service.checkExcuseMiss({ ...invite, status: "completed" }).allowed).toBe(false);
+      expect(service.checkExcuseMiss({ ...invite, missExcused: { at: new Date() } }).why).toMatch(/Already/);
+    });
+
+    it("excuses it with the admin's reason and logs the correction", async () => {
+      await service.excuseMiss("inv1", { reason: "Host asked the creator not to post" }, "admin1");
+      expect(invitesService.adminExcuseMiss).toHaveBeenCalledWith(
+        "inv1",
+        "admin1",
+        "Host asked the creator not to post",
+      );
+    });
+
+    it("refuses without a proper reason or when not a no-show", async () => {
+      await expect(service.excuseMiss("inv1", { reason: "no" }, "admin1")).rejects.toThrow(/reason/);
+      invite.status = "completed";
+      await expect(
+        service.excuseMiss("inv1", { reason: "Host asked the creator not to post" }, "admin1"),
+      ).rejects.toThrow(/no-show/);
+      expect(invitesService.adminExcuseMiss).not.toHaveBeenCalled();
+    });
+  });
+
   it("every action needs a reason", async () => {
     await expect(
       service.restoreParticipation(

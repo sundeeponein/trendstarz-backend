@@ -16,6 +16,7 @@ import {
   submissionWindow,
 } from "./campaign-deadlines.util";
 import { idIn } from "../utils/id-match.util";
+import { isUnexcusedNoShow } from "./creator-monthly-slots.util";
 
 /**
  * Admin campaign corrections — guided fixes a host asks support for, instead of
@@ -274,6 +275,15 @@ export class CampaignCorrectionsService {
     return ok();
   }
 
+  /** A closed no-show the creator still "pays" for with a monthly slot. */
+  checkExcuseMiss(invite: any): ActionCheck {
+    if (invite?.missExcused?.at) return no("Already excused.");
+    if (!isUnexcusedNoShow(invite)) {
+      return no("Only a closed no-show (accepted, then nothing posted) can be excused.");
+    }
+    return ok();
+  }
+
   checkCancel(invite: any, txs: any[]): ActionCheck {
     if (!OPEN_WORK.includes(invite.status)) {
       return no(
@@ -379,6 +389,7 @@ export class CampaignCorrectionsService {
             }
           : null,
         corrections: invite.adminCorrections || [],
+        missExcused: invite.missExcused?.at ? invite.missExcused : null,
         actions: {
           restore: await this.checkRestore(invite, campaign, itxs),
           extendDeadline: this.checkExtendDeadline(invite, campaign),
@@ -388,6 +399,7 @@ export class CampaignCorrectionsService {
             graceHours,
           ),
           cancel: this.checkCancel(invite, itxs),
+          excuseMiss: this.checkExcuseMiss(invite),
         },
       });
     }
@@ -653,6 +665,25 @@ export class CampaignCorrectionsService {
       `You can now submit your post for "${campaign.title || "this campaign"}" until ${until.toUTCString()}.`,
     );
     return { success: true, submissionClosesAt: until };
+  }
+
+  /**
+   * The no-show must not count against the creator (e.g. the host told them not
+   * to post): frees their monthly slot and clears it from their record. Works
+   * for every campaign type — paid or not.
+   */
+  async excuseMiss(
+    inviteId: string,
+    body: { reason?: string },
+    adminId: string,
+  ) {
+    const reason = this.assertReason(body?.reason);
+    const invite = await this.loadInvite(inviteId);
+    const check = this.checkExcuseMiss(invite);
+    if (!check.allowed) throw new BadRequestException(check.why);
+    await this.invitesService.adminExcuseMiss(String(invite._id), adminId, reason);
+    await this.appendLog(invite._id, this.logEntry("excuse_miss", reason, adminId));
+    return { success: true };
   }
 
   /** Records the post link the host confirmed, through the normal submit flow (host review → payout). */

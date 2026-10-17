@@ -69,7 +69,16 @@ export class CampaignCorrectionsController {
     return this.service.submitOnBehalf(inviteId, body, this.adminId(req));
   }
 
-  @Post("invites/:inviteId/cancel")
+  @Post("invites/:inviteId/excuse-miss")
+  excuseMiss(
+    @Param("inviteId") inviteId: string,
+    @Body() body: { reason?: string },
+    @Req() req: any,
+  ) {
+    return this.service.excuseMiss(inviteId, body, this.adminId(req));
+  }
+
+    @Post("invites/:inviteId/cancel")
   cancel(
     @Param("inviteId") inviteId: string,
     @Body() body: { reason?: string },

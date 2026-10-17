@@ -15,6 +15,10 @@ import { anyId } from "../../payments-payouts/campaign-refund.util";
 import { ACTIVE_INVITE_STATUSES } from "../../campaigns/reinvite-rule.util";
 import { CampaignInvitesService } from "../../campaigns/campaign-invites.service";
 import {
+  isUnexcusedNoShow,
+  slotHoldingInviteMatch,
+} from "../../campaigns/creator-monthly-slots.util";
+import {
   DB_TEST_TIMEOUT_MS,
   startTestDb,
   TestDb,
@@ -152,6 +156,32 @@ describe("data rules (real MongoDB)", () => {
       await Invite.create({ ...key, status: "withdrawn" });
       await Invite.create({ ...key, status: "pending" }); // re-invite after withdrawal
       await expect(Invite.create({ ...key, status: "pending" })).rejects.toMatchObject({ code: 11000 });
+    });
+  });
+
+  describe("creator monthly slots", () => {
+    it("the admin 'excuse' rule and the slot count agree on which closed invites hold a slot", async () => {
+      const creator = new Types.ObjectId();
+      const rows = [
+        { withdrawnReasonCode: "expired_unsubmitted" },
+        { withdrawnReasonCode: "location_no_show" },
+        { withdrawnReasonCode: "expired_unsubmitted", missExcused: { at: new Date() } },
+        { withdrawnReasonCode: "host_cancelled" },
+        { withdrawnReason: "Posting deadline and grace period expired with no submission." },
+        { withdrawnReason: "Withdrawn by host" },
+      ].map((r) => ({ campaignId: new Types.ObjectId().toHexString(), brandId: "b", influencerId: creator, status: "withdrawn", ...r }));
+      await db.conn.collection("campaigninvites").insertMany(rows);
+
+      const holding = await db.conn
+        .collection("campaigninvites")
+        .find({ influencerId: creator, ...slotHoldingInviteMatch() })
+        .toArray();
+      const holdingIds = new Set(holding.map((d: any) => String(d._id)));
+      const all = await db.conn.collection("campaigninvites").find({ influencerId: creator }).toArray();
+      for (const inv of all) {
+        expect(isUnexcusedNoShow(inv)).toBe(holdingIds.has(String(inv._id)));
+      }
+      expect(holdingIds.size).toBe(3);
     });
   });
 
