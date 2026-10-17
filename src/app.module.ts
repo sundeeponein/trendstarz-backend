@@ -88,6 +88,7 @@ import { TierReviewModule } from "./tier-review/tier-review.module";
 import { AvailabilityModule } from "./availability/availability.module";
 import { PlatformDataQualityModule } from "./platform-data-quality/platform-data-quality.module";
 import { PlatformMetricsModule } from "./platform-metrics/platform-metrics.module";
+import { DataIntegrityModule } from "./data-integrity/data-integrity.module";
 
 @Module({
   imports: [
@@ -195,6 +196,7 @@ import { PlatformMetricsModule } from "./platform-metrics/platform-metrics.modul
     PlatformEventsModule,
     PlatformDataQualityModule,
     PlatformMetricsModule,
+    DataIntegrityModule,
     SocialAccountVerificationModule,
     SocialAccountObservationModule,
     SocialAccountComparisonModule,

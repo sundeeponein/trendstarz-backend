@@ -34,7 +34,7 @@ import {
   validateSocialHandle,
 } from "../utils/social-handle.util";
 import { mergeSocialMediaEntries } from "../utils/social-account.util";
-import { consumeOtpVerificationToken } from "../otp/otp.controller";
+import { OtpStoreService } from "../otp/otp-store.service";
 import { CloudinaryService } from "../cloudinary.service";
 import { CloudinaryFolders } from "../cloudinary-folders";
 import { WORKFLOW_TIMING_DEFAULTS } from "../utils/workflow-timing.util";
@@ -743,6 +743,7 @@ export class AuthService {
     private readonly firebaseAdminService: FirebaseAdminService,
     private readonly cloudinaryService: CloudinaryService,
     private readonly whatsAppService: WhatsAppService,
+    private readonly otpStore: OtpStoreService,
   ) {}
 
   // Generates the next sequential, role-prefixed human-readable ID (e.g.
@@ -1940,7 +1941,7 @@ export class AuthService {
 
     // Phone counts as verified only with a valid OTP token from /otp/verify (same as
     // photographer signup) — never because the signup form says so.
-    const mobileOtpVerified = consumeOtpVerificationToken(
+    const mobileOtpVerified = await this.otpStore.consumeVerificationToken(
       "phone",
       normalizedPhone || data.phoneNumber,
       data?.mobileOtpVerificationToken,
@@ -2362,7 +2363,7 @@ export class AuthService {
       : [];
     const normalizedSocialMedia = normalizeSocialMediaList(data?.socialMedia);
     this.validateCreatorSocialMediaRates(normalizedSocialMedia);
-    const mobileOtpVerified = consumeOtpVerificationToken(
+    const mobileOtpVerified = await this.otpStore.consumeVerificationToken(
       "phone",
       normalizedPhone || data.phoneNumber,
       data?.mobileOtpVerificationToken,

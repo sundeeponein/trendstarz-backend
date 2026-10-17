@@ -38,7 +38,7 @@ import {
   sectionsProjection,
 } from "../utils/creator-update.util";
 import { invalidateAccountStatusCache } from "../auth/jwt-auth.guard";
-import { consumeOtpVerificationToken } from "../otp/otp.controller";
+import { OtpStoreService } from "../otp/otp-store.service";
 import {
   applyDiscoverableProfileFilter,
   applySearchEligibilityFilter,
@@ -1009,6 +1009,7 @@ export class UsersService implements OnModuleInit {
     @InjectModel("CampaignTransaction")
     private readonly campaignTransactionModel: Model<any>,
     private readonly socialAccountVerification: SocialAccountVerificationService,
+    private readonly otpStore: OtpStoreService,
   ) {}
 
   /**
@@ -1878,7 +1879,7 @@ export class UsersService implements OnModuleInit {
         (dto as any).promotionalPrice = (dto as any).price;
         delete (dto as any).price;
       }
-      const mobileOtpVerified = consumeOtpVerificationToken(
+      const mobileOtpVerified = await this.otpStore.consumeVerificationToken(
         "phone",
         (dto as any).phoneNumber,
         (dto as any).mobileOtpVerificationToken,

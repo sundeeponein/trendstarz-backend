@@ -11,6 +11,7 @@ import * as bcrypt from "bcryptjs";
 import { FirebaseAdminService } from "../utils/firebase-admin.service";
 import { CloudinaryService } from "../cloudinary.service";
 import { WhatsAppService } from "../whatsapp/whatsapp.service";
+import { OtpStoreService } from "../otp/otp-store.service";
 
 // Mock external dependencies
 jest.mock("bcryptjs");
@@ -153,6 +154,10 @@ describe("AuthService", () => {
             sendOtp: jest.fn(),
             sendCustomTemplateMessage: jest.fn(),
           },
+        },
+        {
+          provide: OtpStoreService,
+          useValue: { consumeVerificationToken: jest.fn().mockResolvedValue(false) },
         },
       ],
     }).compile();

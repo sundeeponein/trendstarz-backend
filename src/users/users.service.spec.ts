@@ -1,5 +1,8 @@
 import { UsersService } from "./users.service";
 
+// OTP verification tokens: none valid unless a test says otherwise.
+const noOtpStore = { consumeVerificationToken: jest.fn().mockResolvedValue(false) } as any;
+
 describe("UsersService profile update guards", () => {
   const makeService = (overrides?: {
     influencerModel?: any;
@@ -62,6 +65,7 @@ describe("UsersService profile update guards", () => {
       overrides?.campaignTransactionModel || ({} as any),
       overrides?.socialAccountVerification ||
         ({ reconcile: jest.fn().mockResolvedValue(0) } as any),
+      noOtpStore,
     );
   };
 
@@ -623,6 +627,7 @@ describe("UsersService social accounts on creator save (Stage 3A-0)", () => {
       {} as any, // campaignTransactionModel
       models.socialAccountVerification ||
         ({ reconcile: jest.fn().mockResolvedValue(0) } as any),
+      noOtpStore,
     );
 
   const storedEntry = () => ({
@@ -872,6 +877,7 @@ describe("UsersService creator saves vs per-account verification (Stage 3A-1)", 
       {} as any, // reviewModel
       {} as any, // campaignTransactionModel
       models.socialAccountVerification,
+      noOtpStore,
     );
 
   const stored = () => ({
@@ -1097,6 +1103,7 @@ describe("UsersService creator saves vs platform observation (Stage 3A-2)", () =
       {} as any,
       {} as any,
       { reconcile: jest.fn().mockResolvedValue(0) } as any,
+      noOtpStore,
     );
 
     await service.updateInfluencerProfile("inf-1", {
@@ -1154,6 +1161,7 @@ describe("UsersService creator saves record changed sections", () => {
       {} as any,
       {} as any,
       { reconcile: jest.fn().mockResolvedValue(0) } as any,
+      noOtpStore,
     );
 
   const influencerDoc = (over: Record<string, any> = {}) => {

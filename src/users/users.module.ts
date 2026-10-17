@@ -27,10 +27,12 @@ import { MonetizationModule } from "../monetization/monetization.module";
 import { FirebaseAdminService } from "../utils/firebase-admin.service";
 import { MetaOAuthService } from "../meta-oauth/meta-oauth.service";
 import { PhotographersModule } from "../photographers/photographers.module";
+import { OtpModule } from "../otp/otp.module";
 
 @Module({
   imports: [
     SocialAccountVerificationModule,
+    OtpModule,
     MongooseModule.forFeature([
       { name: "User", schema: UserSchema, collection: "users" },
       {
