@@ -318,7 +318,7 @@ export class PaymentsPayoutsService {
     campaign: any,
   ): "brand" | "influencer" | "photographer" {
     const role = String(
-      campaign?.ownerType || campaign?.createdByRole || "brand",
+      campaign?.ownerType || "brand",
     )
       .toLowerCase()
       .trim();

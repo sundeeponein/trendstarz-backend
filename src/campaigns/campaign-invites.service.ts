@@ -382,19 +382,6 @@ export class CampaignInvitesService {
     }, 0);
     if (slotTotal > 0) return slotTotal;
 
-    if (role === "photographer") {
-      const photographerLimit = Number(
-        campaign?.maxPhotographers ||
-          campaign?.maxPhotoVideoGraphers ||
-          campaign?.maxPhotovideographers ||
-          campaign?.maxPhotoVideographers ||
-          0,
-      );
-      if (Number.isFinite(photographerLimit) && photographerLimit > 0) {
-        return Math.round(photographerLimit);
-      }
-    }
-
     const legacyLimit = Number(campaign?.maxInfluencers || 0);
     return Number.isFinite(legacyLimit) && legacyLimit > 0
       ? Math.round(legacyLimit)
@@ -416,7 +403,6 @@ export class CampaignInvitesService {
     return role === "photographer"
       ? [
           { recipientRole: "photographer" },
-          { photographerId: { $exists: true, $ne: null } },
         ]
       : [
           { recipientRole: "influencer" },
@@ -899,17 +885,11 @@ export class CampaignInvitesService {
 
   private async attachRecipientProfile(invite: any, campaignType?: unknown) {
     const role = this.normalizeRecipientRole(
-      invite?.recipientRole ||
-        invite?.role ||
-        (invite?.photographerId && !invite?.influencerId
-          ? "photographer"
-          : "influencer"),
+      invite?.recipientRole || invite?.role || "influencer",
     );
     const recipientId = String(
       invite?.influencerId?._id ||
         invite?.influencerId ||
-        invite?.photographerId?._id ||
-        invite?.photographerId ||
         invite?.recipientId ||
         "",
     ).trim();
@@ -1446,7 +1426,7 @@ export class CampaignInvitesService {
 
   private isCollaborationCampaign(campaign: any): boolean {
     const ownerType = String(
-      campaign?.ownerType || campaign?.createdByRole || "",
+      campaign?.ownerType || "",
     )
       .trim()
       .toLowerCase();
@@ -1580,7 +1560,7 @@ export class CampaignInvitesService {
       .trim()
       .toLowerCase();
     const ownerType = String(
-      campaign?.ownerType || campaign?.createdByRole || "",
+      campaign?.ownerType || "",
     )
       .trim()
       .toLowerCase();
@@ -1648,7 +1628,7 @@ export class CampaignInvitesService {
   ): boolean {
     const campaign = invite?.campaignId || {};
     const ownerType = String(
-      campaign?.ownerType || campaign?.createdByRole || "",
+      campaign?.ownerType || "",
     )
       .trim()
       .toLowerCase();
@@ -2677,9 +2657,6 @@ export class CampaignInvitesService {
         recipient = fallbackRecipient;
         // Self-heal legacy rows where recipientRole was saved incorrectly.
         invite.recipientRole = fallbackRole;
-        if (fallbackRole === "photographer") {
-          invite.photographerId = invite.influencerId;
-        }
       }
     }
     if (!recipient) {
@@ -2744,7 +2721,7 @@ export class CampaignInvitesService {
       const campaign: any = await this.campaignModel
         .findById(invite.campaignId)
         .select(
-          "status ownerType createdByRole requestKind startDate endDate timelineStart timelineEnd socialMedia platforms campaignMode minInfluencerTier minInfluencers maxInfluencers maxPhotographers maxPhotoVideoGraphers maxPhotovideographers maxPhotoVideographers inviteSlots acceptanceDeadline campaignType productShippingRequired productPaymentMode",
+          "status ownerType requestKind startDate endDate timelineStart timelineEnd socialMedia platforms campaignMode minInfluencerTier minInfluencers maxInfluencers inviteSlots acceptanceDeadline campaignType productShippingRequired productPaymentMode",
         )
         .lean();
       if (!campaign) throw new NotFoundException("Campaign not found");
@@ -3159,7 +3136,7 @@ export class CampaignInvitesService {
       const campaignForClose: any = await this.campaignModel
         .findById(invite.campaignId)
         .select(
-          "maxInfluencers maxPhotographers maxPhotoVideoGraphers maxPhotovideographers maxPhotoVideographers inviteSlots",
+          "maxInfluencers inviteSlots",
         )
         .lean();
       const closeAt = this.getRoleAcceptanceCloseAt(
@@ -3354,7 +3331,7 @@ export class CampaignInvitesService {
 
       const recipientRole = this.normalizeRecipientRole(invite?.recipientRole);
       const recipientId = String(
-        invite?.influencerId || invite?.photographerId || "",
+        invite?.influencerId || "",
       );
       const msg = `Creator sent a revised offer of ₹${revisedRupees.toLocaleString("en-IN")}. You can accept or decline.`;
       this.pushService
@@ -3404,7 +3381,7 @@ export class CampaignInvitesService {
       this.assertCampaignNotEnded(campaign, "accept the counter offer");
       const recipientRole = this.normalizeRecipientRole(invite?.recipientRole);
       const recipientIdForEligibility = String(
-        invite?.influencerId || invite?.photographerId || "",
+        invite?.influencerId || "",
       );
       await this.profileVerificationService.assertCampaignEligible(
         recipientIdForEligibility,
@@ -3507,7 +3484,7 @@ export class CampaignInvitesService {
 
     const recipientRole = this.normalizeRecipientRole(invite?.recipientRole);
     const recipientId = String(
-      invite?.influencerId || invite?.photographerId || "",
+      invite?.influencerId || "",
     );
     const body =
       action === "accept"

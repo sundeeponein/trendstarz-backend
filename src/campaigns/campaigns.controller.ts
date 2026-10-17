@@ -152,7 +152,7 @@ export class CampaignsController {
         failures: [{ photographerId: "", reason: "Campaign not found" }],
       };
     }
-      const ownerType = String(campaign?.ownerType || campaign?.createdByRole || "brand");
+      const ownerType = String(campaign?.ownerType || "brand");
     const expectedRole = String(campaign?.inviteRecipientRole || "influencer");
       if (
         !["brand", "influencer"].includes(ownerType) ||

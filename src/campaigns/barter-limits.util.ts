@@ -62,7 +62,7 @@ export function barterLimitsFrom(limits: unknown) {
 
 /**
  * Caps a barter/location campaign's accepted-creator numbers (maxInfluencers,
- * minInfluencers, per-role inviteSlots, maxPhotographers) at `cap`. Mutates and
+ * minInfluencers, per-role inviteSlots) at `cap`. Mutates and
  * returns `target`; no-op for other campaign types or an unlimited cap.
  */
 export function capBarterAcceptance<T extends Record<string, any>>(
@@ -78,15 +78,6 @@ export function capBarterAcceptance<T extends Record<string, any>>(
   (target as any).maxInfluencers = clamp(campaign?.maxInfluencers ?? cap);
   if (campaign?.minInfluencers !== undefined)
     (target as any).minInfluencers = clamp(campaign.minInfluencers);
-  for (const key of [
-    "maxPhotographers",
-    "maxPhotoVideoGraphers",
-    "maxPhotovideographers",
-    "maxPhotoVideographers",
-  ]) {
-    if (campaign?.[key] !== undefined && campaign?.[key] !== null)
-      (target as any)[key] = clamp(campaign[key]);
-  }
   if (Array.isArray(campaign?.inviteSlots)) {
     (target as any).inviteSlots = campaign.inviteSlots.map((slot: any) => ({
       ...(slot?.toObject ? slot.toObject() : slot),

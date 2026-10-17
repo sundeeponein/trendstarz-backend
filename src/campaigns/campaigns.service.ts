@@ -109,7 +109,7 @@ type InfluencerFeedScope = "campaign" | "collaboration";
 
 /** Campaign owner role for PlatformEvents — Campaign.ownerType is "brand" | "photographer". */
 function persistedOwnerTypeForEvent(campaign: any): "brand" | "photographer" {
-  return String(campaign?.ownerType || campaign?.createdByRole || "brand") ===
+  return String(campaign?.ownerType || "brand") ===
     "photographer"
     ? "photographer"
     : "brand";
@@ -1284,7 +1284,7 @@ export class CampaignsService {
     photographerOwnerIds?: Set<string>,
   ): boolean {
     const ownerType = String(
-      campaign?.ownerType || campaign?.createdByRole || "",
+      campaign?.ownerType || "",
     )
       .trim()
       .toLowerCase();
@@ -1880,7 +1880,7 @@ export class CampaignsService {
 
     if (data?.campaignType && data.campaignType !== campaign.campaignType) {
       const campaignOwnerType: "brand" | "photographer" =
-        String(campaign.ownerType || campaign.createdByRole || "brand") ===
+        String(campaign.ownerType || "brand") ===
         "photographer"
           ? "photographer"
           : "brand";
@@ -1894,7 +1894,7 @@ export class CampaignsService {
     }
 
     const campaignOwnerType: CampaignOwnerType =
-      String(campaign.ownerType || campaign.createdByRole || "brand") ===
+      String(campaign.ownerType || "brand") ===
       "photographer"
         ? "photographer"
         : "brand";

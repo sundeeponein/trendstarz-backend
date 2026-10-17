@@ -698,9 +698,8 @@ export class AdminListsController {
       .trim()
       .toLowerCase();
     if (normalizedOwnerType === "photographer") {
-      // Photographer queue should include explicit ownerType plus legacy rows keyed by createdByRole.
       ownerAndConditions.push({
-        $or: [{ ownerType: "photographer" }, { createdByRole: "photographer" }],
+        ownerType: "photographer",
       });
     } else if (normalizedOwnerType === "brand") {
       // Brand queue should include legacy rows where ownerType was not persisted.
@@ -848,7 +847,7 @@ export class AdminListsController {
             },
           })
           .select(
-            "_id campaignId influencerId photographerId recipientRole status selectedPlatform selectedContentType selectedPostDate updatedAt acceptedAt paymentConfirmedAt agreedAmount agreedAmountPaise counterOffer",
+            "_id campaignId influencerId recipientRole status selectedPlatform selectedContentType selectedPostDate updatedAt acceptedAt paymentConfirmedAt agreedAmount agreedAmountPaise counterOffer",
           )
           .lean()
       : [];
@@ -909,7 +908,7 @@ export class AdminListsController {
       inviteStatsByCampaign.set(key, prev);
 
       const recipientId = String(
-        (invite as any)?.influencerId || (invite as any)?.photographerId || "",
+        (invite as any)?.influencerId || "",
       ).trim();
       if (!recipientId) continue;
       const recipientRole = String(invite?.recipientRole || "influencer")
