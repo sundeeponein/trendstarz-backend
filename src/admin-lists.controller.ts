@@ -11,12 +11,21 @@ import {
   Req,
   UseGuards,
   BadRequestException,
+  NotFoundException,
+  Optional,
 } from "@nestjs/common";
 import { JwtAuthGuard } from "./auth/jwt-auth.guard";
 import { RolesGuard } from "./auth/roles.guard";
 // Removed direct model imports; use @InjectModel for all models
-import { InjectModel } from "@nestjs/mongoose";
-import { Model } from "mongoose";
+import { InjectConnection, InjectModel } from "@nestjs/mongoose";
+import { Connection, Model } from "mongoose";
+import { inTransaction, withSession } from "./utils/mongo-transaction.util";
+import {
+  countNameUsage,
+  MasterListKind,
+  NameHolderModels,
+  renameEverywhere,
+} from "./admin/master-list-names.util";
 import * as fs from "fs";
 import * as path from "path";
 import {
@@ -221,6 +230,7 @@ export class AdminListsController {
     private readonly assetFolderBackfillService: AssetFolderBackfillService,
     private readonly campaignsService: CampaignsService,
     private readonly platformEvents: PlatformEventsService,
+    @Optional() @InjectConnection() private readonly connection?: Connection,
   ) {
     // Load plans-config.json on initialization
     this.loadPlansConfig();
@@ -1579,12 +1589,85 @@ export class AdminListsController {
     return { message: "User not found", id };
   }
 
+  private nameHolderModels(): NameHolderModels {
+    return {
+      influencer: this.influencerModel,
+      brand: this.brandModel,
+      photographer: this.photographerModel,
+      campaign: this.campaignModel,
+      user: this.userModel,
+      district: this.districtModel,
+      whatsappCommunity: this.whatsappCommunityModel,
+    };
+  }
+
+  /**
+   * Categories/languages/states are stored on profiles and campaigns by name,
+   * so a rename is carried to every holder in the same transaction as the
+   * list change (see admin/master-list-names.util.ts).
+   */
+  private async updateNamedListItem(
+    kind: MasterListKind,
+    model: Model<any>,
+    id: string,
+    body: Record<string, unknown>,
+  ) {
+    const before: any = await model.findById(id).lean();
+    if (!before) throw new NotFoundException("Item not found");
+    if (body?.name !== undefined) {
+      const name = String(body.name ?? "").trim();
+      if (!name) throw new BadRequestException("Name can't be empty.");
+      body = { ...body, name };
+    }
+    const newName = body?.name as string | undefined;
+    return inTransaction(this.connection, async (session) => {
+      const updated = await model.findByIdAndUpdate(
+        id,
+        body,
+        withSession({ new: true }, session),
+      );
+      if (newName && newName !== before.name) {
+        await renameEverywhere(
+          this.nameHolderModels(),
+          kind,
+          String(before.name || ""),
+          newName,
+          before.role,
+          session,
+        );
+      }
+      return updated;
+    });
+  }
+
+  /** Deleting a name that profiles/campaigns still hold would orphan it — hide it instead. */
+  private async deleteNamedListItem(
+    kind: MasterListKind,
+    model: Model<any>,
+    id: string,
+  ) {
+    const item: any = await model.findById(id).lean();
+    if (!item) throw new NotFoundException("Item not found");
+    const usage = await countNameUsage(
+      this.nameHolderModels(),
+      kind,
+      String(item.name || ""),
+      item.role,
+    );
+    if (usage.total > 0) {
+      throw new BadRequestException(
+        `"${item.name}" is still used on ${usage.total} profile(s)/campaign(s)/record(s). Hide it instead (turn off "Show in frontend"), or rename it.`,
+      );
+    }
+    return model.findByIdAndDelete(id);
+  }
+
   @Patch("states/:id")
   async patchState(
     @Param("id") id: string,
     @Body() body: Record<string, unknown>,
   ) {
-    return this.stateModel.findByIdAndUpdate(id, body, { new: true });
+    return this.updateNamedListItem("state", this.stateModel, id, body);
   }
 
   @Patch("categories/:id")
@@ -1592,7 +1675,7 @@ export class AdminListsController {
     @Param("id") id: string,
     @Body() body: Record<string, unknown>,
   ) {
-    return this.categoryModel.findByIdAndUpdate(id, body, { new: true });
+    return this.updateNamedListItem("category", this.categoryModel, id, body);
   }
 
   @Patch("languages/:id")
@@ -1600,7 +1683,7 @@ export class AdminListsController {
     @Param("id") id: string,
     @Body() body: Record<string, unknown>,
   ) {
-    return this.languageModel.findByIdAndUpdate(id, body, { new: true });
+    return this.updateNamedListItem("language", this.languageModel, id, body);
   }
 
   @Patch("social-media/:id")
@@ -1665,11 +1748,11 @@ export class AdminListsController {
     @Param("id") id: string,
     @Body() body: Record<string, unknown>,
   ) {
-    return this.categoryModel.findByIdAndUpdate(id, body, { new: true });
+    return this.updateNamedListItem("category", this.categoryModel, id, body);
   }
   @Delete("categories/:id")
   async deleteCategory(@Param("id") id: string) {
-    return this.categoryModel.findByIdAndDelete(id);
+    return this.deleteNamedListItem("category", this.categoryModel, id);
   }
 
   // States
@@ -1690,11 +1773,11 @@ export class AdminListsController {
     @Param("id") id: string,
     @Body() body: Record<string, unknown>,
   ) {
-    return this.stateModel.findByIdAndUpdate(id, body, { new: true });
+    return this.updateNamedListItem("state", this.stateModel, id, body);
   }
   @Delete("states/:id")
   async deleteState(@Param("id") id: string) {
-    return this.stateModel.findByIdAndDelete(id);
+    return this.deleteNamedListItem("state", this.stateModel, id);
   }
 
   // Districts
@@ -1763,11 +1846,11 @@ export class AdminListsController {
     @Param("id") id: string,
     @Body() body: Record<string, unknown>,
   ) {
-    return this.languageModel.findByIdAndUpdate(id, body, { new: true });
+    return this.updateNamedListItem("language", this.languageModel, id, body);
   }
   @Delete("languages/:id")
   async deleteLanguage(@Param("id") id: string) {
-    return this.languageModel.findByIdAndDelete(id);
+    return this.deleteNamedListItem("language", this.languageModel, id);
   }
 
   // Social Media

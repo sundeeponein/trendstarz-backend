@@ -496,6 +496,30 @@ describe("CampaignInvitesService – create() gating", () => {
     },
   );
 
+  describe("saveIfUnchanged (answer races)", () => {
+    it("saves with a filter on the state as read; a missing/default value also matches missing", async () => {
+      const invite: any = { save: jest.fn().mockResolvedValue("saved") };
+      await expect(
+        (service as any).saveIfUnchanged(invite, {
+          status: "counter_sent",
+          "counterOffer.status": "none",
+        }),
+      ).resolves.toBe("saved");
+      expect(invite.$where).toEqual({
+        status: "counter_sent",
+        "counterOffer.status": { $in: [null, "none"] },
+      });
+    });
+
+    it("turns a lost race into a clear 400", async () => {
+      const err = Object.assign(new Error("gone"), { name: "DocumentNotFoundError" });
+      const invite: any = { save: jest.fn().mockRejectedValue(err) };
+      await expect(
+        (service as any).saveIfUnchanged(invite, { status: "pending" }),
+      ).rejects.toThrow(/answered meanwhile/);
+    });
+  });
+
   it("re-invites a creator whose only earlier invite was withdrawn", async () => {
     mockCampaignLean({ status: "active", ownerType: "brand" });
     inviteModel.find.mockReturnValue({

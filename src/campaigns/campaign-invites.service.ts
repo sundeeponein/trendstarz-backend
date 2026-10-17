@@ -2565,6 +2565,34 @@ export class CampaignInvitesService {
     return { success: true, status: invite.status };
   }
 
+  /**
+   * save() that only lands if the invite is still in `readState` (the status
+   * fields it was read with) — so two answers to the same invite/counter, sent
+   * at once, can't both win. The loser gets a clear 400 instead of overwriting.
+   */
+  private async saveIfUnchanged(invite: any, readState: Record<string, unknown>) {
+    // Mongoose fills schema defaults on load, so a field missing in the database
+    // reads back as its default ("pending" / "none"): match missing as well.
+    const where: Record<string, unknown> = {};
+    for (const [path, value] of Object.entries(readState)) {
+      where[path] =
+        value == null || value === "none" || value === "pending"
+          ? { $in: [null, value ?? null] }
+          : value;
+    }
+    invite.$where = where;
+    try {
+      return await invite.save();
+    } catch (err: any) {
+      if (err?.name === "DocumentNotFoundError") {
+        throw new BadRequestException(
+          "This invite was answered meanwhile. Reload and try again.",
+        );
+      }
+      throw err;
+    }
+  }
+
   async respond(
     inviteId: string,
     influencerId: string,
@@ -2600,6 +2628,11 @@ export class CampaignInvitesService {
     const counterState = String(
       invite?.counterOffer?.status || "",
     ).toLowerCase();
+    // State as read — the final save only lands if the invite is still in it.
+    const readState = {
+      status: invite.status,
+      "counterOffer.status": invite?.counterOffer?.status ?? null,
+    };
     const isRecipientResolvingBrandCounter =
       inviteStatus === "counter_sent" &&
       counterState === "brand_sent" &&
@@ -3033,7 +3066,7 @@ export class CampaignInvitesService {
     }
 
     invite.status = status;
-    const updated = await invite.save();
+    const updated = await this.saveIfUnchanged(invite, readState);
 
     if (status === "counter_sent") {
       await this.platformEvents.record({
@@ -3261,6 +3294,11 @@ export class CampaignInvitesService {
     }
     const counter = invite?.counterOffer || {};
     const counterStatus = String(counter?.status || "");
+    // State as read — saves below only land if the invite is still in it.
+    const readState = {
+      status: invite.status,
+      "counterOffer.status": invite?.counterOffer?.status ?? null,
+    };
     if (action === "counter") {
       if (counterStatus !== "sent") {
         throw new BadRequestException(
@@ -3290,7 +3328,7 @@ export class CampaignInvitesService {
         sentAt: new Date(),
         responderId: String(requesterId || ""),
       };
-      const updatedCounter = await invite.save();
+      const updatedCounter = await this.saveIfUnchanged(invite, readState);
 
       await this.platformEvents.record({
         eventType: "counter_offer_sent",
@@ -3402,7 +3440,7 @@ export class CampaignInvitesService {
       };
     }
 
-    const updated = await invite.save();
+    const updated = await this.saveIfUnchanged(invite, readState);
 
     if (action === "accept") {
       const ownerRoleForEvent = await this.ownerRoleFor(requesterId);
