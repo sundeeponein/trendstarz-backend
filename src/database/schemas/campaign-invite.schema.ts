@@ -227,3 +227,12 @@ export const CampaignInviteSchema = new Schema({
   createdAt: { type: Date, default: Date.now },
   updatedAt: { type: Date, default: Date.now },
 });
+
+// Query indexes (non-unique, so they build on any existing data).
+// One invite per campaign + recipient is not enforced here yet: the unique
+// version waits on cron/auditUniqueConstraints.js reporting no duplicates,
+// then cron/applyUniqueIndexes.js builds it.
+CampaignInviteSchema.index({ campaignId: 1, influencerId: 1 });
+CampaignInviteSchema.index({ campaignId: 1, status: 1 });
+CampaignInviteSchema.index({ influencerId: 1, status: 1 });
+CampaignInviteSchema.index({ brandId: 1, status: 1 });

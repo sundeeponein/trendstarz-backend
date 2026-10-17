@@ -40,7 +40,11 @@
     "backfill:platform-events:apply": "node cron/backfillPlatformEvents.js --apply",
     "audit:id-types": "node cron/auditIdTypes.js",
     "backfill:social-account-identity": "node cron/backfillSocialAccountIdentity.js",
-    "backfill:social-account-identity:apply": "node cron/backfillSocialAccountIdentity.js --apply"
+    "backfill:social-account-identity:apply": "node cron/backfillSocialAccountIdentity.js --apply",
+    "audit:unique-constraints": "node cron/uniqueConstraints.js",
+    "apply:unique-constraints": "node cron/uniqueConstraints.js --apply",
+    "backfill:payment-amount-paise": "node cron/backfillPaymentAmountPaise.js",
+    "backfill:payment-amount-paise:apply": "node cron/backfillPaymentAmountPaise.js --apply"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.115.0",

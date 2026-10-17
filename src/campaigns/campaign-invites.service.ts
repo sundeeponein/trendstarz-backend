@@ -54,6 +54,7 @@ import {
 import { inviteWithdrawnEvent } from "../platform-events/invite-withdrawn.event";
 import { settingHours } from "../utils/workflow-timing.util";
 import { idIn } from "../utils/id-match.util";
+import { reinviteBlockReason } from "./reinvite-rule.util";
 import { tierChangesSinceInvite } from "./tier-change-since-invite.util";
 import {
   RefundActor,
@@ -1168,6 +1169,13 @@ export class CampaignInvitesService {
       recipientRole,
       "recipient",
     );
+    // Same re-invite rule the invite pickers apply (was UI-only before).
+    const priorInvites = await this.inviteModel
+      .find({ campaignId: idIn(campaign._id), influencerId: recipientId })
+      .select("status")
+      .lean();
+    const reinviteBlock = reinviteBlockReason(priorInvites as any[]);
+    if (reinviteBlock) throw new BadRequestException(reinviteBlock);
     // Enforce invite limits for brands (admin-manageable)
     const caps = await this.plansService.getUserPlanCapabilities(brandId);
     const capFeatures = Array.isArray(caps?.features) ? caps.features : [];
@@ -1300,7 +1308,18 @@ export class CampaignInvitesService {
       invitedByAdminId: options.invitedByAdminId ?? undefined,
       invitedByAdminAt: options.invitedByAdminId ? new Date() : undefined,
     });
-    const saved = await invite.save();
+    let saved: any;
+    try {
+      saved = await invite.save();
+    } catch (err: any) {
+      // uniq_active_invite_per_recipient (cron/uniqueConstraints.js) caught a parallel send.
+      if (err?.code === 11000) {
+        throw new BadRequestException(
+          "This creator has already been invited to this campaign.",
+        );
+      }
+      throw err;
+    }
 
     const senderRole: PlatformEventActorRole =
       String(campaign?.ownerType || "") === "photographer"

@@ -3,7 +3,14 @@
  * the PlatformCredit model so both the payments and the invites services can use them.
  * Lots are consumed earliest-expiry first with guarded decrements, so two payments can't
  * spend the same credit.
+ *
+ * The write helpers take an optional session so a caller can make the ledger
+ * movement part of the same transaction as the payment row it belongs to
+ * (see utils/mongo-transaction.util.ts).
  */
+import type { ClientSession } from "mongoose";
+import { createOne, withSession } from "../utils/mongo-transaction.util";
+
 export const CREDIT_VALIDITY_MONTHS = 12;
 
 export function creditExpiry(from: Date): Date {
@@ -43,22 +50,27 @@ export function issueCredit(
     createdBy?: string;
     now?: Date;
   },
+  session?: ClientSession,
 ) {
   const now = input.now || new Date();
   const amount = Math.round(Number(input.amount || 0));
   if (amount <= 0) return Promise.resolve(null);
-  return model.create({
-    ownerId: String(input.ownerId),
-    ownerRole: input.ownerRole,
-    type: "issued",
-    amount,
-    remaining: amount,
-    expiresAt: creditExpiry(now),
-    transactionId: input.transactionId,
-    campaignId: input.campaignId,
-    reason: input.reason,
-    createdBy: input.createdBy || "system",
-  });
+  return createOne(
+    model,
+    {
+      ownerId: String(input.ownerId),
+      ownerRole: input.ownerRole,
+      type: "issued",
+      amount,
+      remaining: amount,
+      expiresAt: creditExpiry(now),
+      transactionId: input.transactionId,
+      campaignId: input.campaignId,
+      reason: input.reason,
+      createdBy: input.createdBy || "system",
+    },
+    session,
+  );
 }
 
 /**
@@ -74,18 +86,23 @@ export async function consumeCredit(
     campaignId?: string;
     now?: Date;
   },
+  session?: ClientSession,
 ): Promise<number> {
   const now = input.now || new Date();
   let left = Math.max(0, Math.round(Number(input.wanted || 0)));
   let used = 0;
   if (!left) return 0;
   const lots: any[] = await model
-    .find({
-      ownerId: String(input.ownerId),
-      type: "issued",
-      remaining: { $gt: 0 },
-      expiresAt: { $gt: now },
-    })
+    .find(
+      {
+        ownerId: String(input.ownerId),
+        type: "issued",
+        remaining: { $gt: 0 },
+        expiresAt: { $gt: now },
+      },
+      null,
+      withSession({}, session),
+    )
     .sort({ expiresAt: 1 })
     .lean();
   for (const lot of lots) {
@@ -96,19 +113,23 @@ export async function consumeCredit(
       .findOneAndUpdate(
         { _id: lot._id, remaining: { $gte: take }, expiresAt: { $gt: now } },
         { $inc: { remaining: -take } },
-        { new: true },
+        withSession({ new: true }, session),
       )
       .lean();
     if (!updated) continue; // spent meanwhile — try the next lot
-    await model.create({
-      ownerId: String(input.ownerId),
-      type: "used",
-      amount: take,
-      lotId: lot._id,
-      transactionId: String(input.transactionId),
-      campaignId: input.campaignId,
-      reason: "Applied to platform fee",
-    });
+    await createOne(
+      model,
+      {
+        ownerId: String(input.ownerId),
+        type: "used",
+        amount: take,
+        lotId: lot._id,
+        transactionId: String(input.transactionId),
+        campaignId: input.campaignId,
+        reason: "Applied to platform fee",
+      },
+      session,
+    );
     left -= take;
     used += take;
   }
@@ -120,13 +141,18 @@ export async function restoreCreditUse(
   model: any,
   transactionId: string,
   createdBy = "system",
+  session?: ClientSession,
 ): Promise<number> {
   const uses: any[] = await model
-    .find({
-      transactionId: String(transactionId),
-      type: "used",
-      restoredAt: null,
-    })
+    .find(
+      {
+        transactionId: String(transactionId),
+        type: "used",
+        restoredAt: null,
+      },
+      null,
+      withSession({}, session),
+    )
     .lean();
   let restored = 0;
   for (const use of uses) {
@@ -134,23 +160,28 @@ export async function restoreCreditUse(
       .findOneAndUpdate(
         { _id: use._id, restoredAt: null },
         { $set: { restoredAt: new Date() } },
-        { new: true },
+        withSession({ new: true }, session),
       )
       .lean();
     if (!claimed) continue;
     await model.updateOne(
       { _id: use.lotId },
       { $inc: { remaining: use.amount } },
+      withSession({}, session),
     );
-    await model.create({
-      ownerId: use.ownerId,
-      type: "restored",
-      amount: use.amount,
-      lotId: use.lotId,
-      transactionId: String(transactionId),
-      reason: "Payment rejected — credit returned",
-      createdBy,
-    });
+    await createOne(
+      model,
+      {
+        ownerId: use.ownerId,
+        type: "restored",
+        amount: use.amount,
+        lotId: use.lotId,
+        transactionId: String(transactionId),
+        reason: "Payment rejected — credit returned",
+        createdBy,
+      },
+      session,
+    );
     restored += use.amount;
   }
   return restored;
@@ -165,9 +196,14 @@ export async function reverseIssuedCredit(
   transactionId: string,
   createdBy: string,
   reason: string,
+  session?: ClientSession,
 ): Promise<{ reversed: number; alreadyUsed: number }> {
   const lots: any[] = await model
-    .find({ transactionId: String(transactionId), type: "issued" })
+    .find(
+      { transactionId: String(transactionId), type: "issued" },
+      null,
+      withSession({}, session),
+    )
     .lean();
   let reversed = 0;
   let alreadyUsed = 0;
@@ -176,21 +212,25 @@ export async function reverseIssuedCredit(
       .findOneAndUpdate(
         { _id: lot._id, remaining: { $gt: 0 } },
         { $set: { remaining: 0 } },
-        { new: false },
+        withSession({ new: false }, session),
       )
       .lean();
     const unused = Number(fresh?.remaining || 0);
     alreadyUsed += Number(lot.amount || 0) - unused;
     if (unused > 0) {
-      await model.create({
-        ownerId: lot.ownerId,
-        type: "reversed",
-        amount: unused,
-        lotId: lot._id,
-        transactionId: String(transactionId),
-        reason,
-        createdBy,
-      });
+      await createOne(
+        model,
+        {
+          ownerId: lot.ownerId,
+          type: "reversed",
+          amount: unused,
+          lotId: lot._id,
+          transactionId: String(transactionId),
+          reason,
+          createdBy,
+        },
+        session,
+      );
       reversed += unused;
     }
   }

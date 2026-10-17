@@ -742,7 +742,7 @@ describe("CollaborationScoreService", () => {
     it("only queries collab_score_reanalysis payments for that user, converting paise to rupees", async () => {
       const selectMock = jest.fn().mockReturnValue({
         lean: jest.fn().mockResolvedValue([
-          { amount: 4900, paymentStatus: "captured", status: "approved", createdAt: new Date(), archivedAt: null },
+          { amount: 4900, gatewayProvider: "razorpay", paymentStatus: "captured", status: "approved", createdAt: new Date(), archivedAt: null },
         ]),
       });
       paymentModel.find.mockReturnValue({ sort: jest.fn().mockReturnValue({ select: selectMock }) });

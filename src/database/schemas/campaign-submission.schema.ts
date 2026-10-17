@@ -90,3 +90,6 @@ export interface CampaignSubmission extends Document {
   daysLate?: number;
   createdAt: Date;
 }
+
+CampaignSubmissionSchema.index({ inviteId: 1 });
+CampaignSubmissionSchema.index({ campaignId: 1 });

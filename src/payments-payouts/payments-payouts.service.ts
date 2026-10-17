@@ -3,9 +3,12 @@ import {
   Injectable,
   Logger,
   NotFoundException,
+  Optional,
 } from "@nestjs/common";
-import { InjectModel } from "@nestjs/mongoose";
-import { Model, Types } from "mongoose";
+import { InjectConnection, InjectModel } from "@nestjs/mongoose";
+import { Connection, Model, Types } from "mongoose";
+import type { ClientSession } from "mongoose";
+import { inTransaction, withSession } from "../utils/mongo-transaction.util";
 import { Cron } from "@nestjs/schedule";
 import { sendAppEmail } from "../utils/app-email.service";
 import {
@@ -118,6 +121,9 @@ export class PaymentsPayoutsService {
     private readonly pushService: PushService,
     private readonly notificationsService: NotificationsService,
     private readonly platformEvents: PlatformEventsService,
+    // Optional so unit tests can build the service without a database; without
+    // it, inTransaction() runs the same writes non-atomically.
+    @Optional() @InjectConnection() private readonly connection?: Connection,
   ) {}
 
   /**
@@ -358,6 +364,15 @@ export class PaymentsPayoutsService {
       { userRole: via === "manual" ? "admin" : "system" },
       via,
     );
+    await this.markInvitePaidOut(tx, paidOutAt);
+  }
+
+  /** The invite side of a payout; pass the session to make it part of the payout's transaction. */
+  private async markInvitePaidOut(
+    tx: any,
+    paidOutAt?: Date,
+    session?: ClientSession,
+  ) {
     if (!tx?.inviteId) return;
     // A cancellation compensation is paid on a cancelled (withdrawn) collaboration — it
     // must stay cancelled, so only the payout time is recorded.
@@ -371,6 +386,7 @@ export class PaymentsPayoutsService {
           updatedAt: new Date(),
         },
       },
+      withSession({}, session),
     );
   }
 
@@ -1965,31 +1981,112 @@ export class PaymentsPayoutsService {
     notes?: string,
     allowGatewayVerification = false,
   ) {
-    const tx = await this.transactionModel.findById(transactionId);
-    if (!tx) throw new NotFoundException("Transaction not found");
+    // One transaction: the row turns verified AND the invite it pays for is
+    // confirmed/unlocked, or neither (no verified payment with a locked invite).
+    const outcome = await inTransaction(this.connection, async (session) => {
+      const current: any = await this.transactionModel
+        .findById(transactionId, null, withSession({}, session))
+        .lean();
+      if (!current) throw new NotFoundException("Transaction not found");
+      if (
+        !allowGatewayVerification &&
+        String(current.gateway || "manual_upi") !== "manual_upi"
+      ) {
+        throw new BadRequestException(
+          "This collection is configured for Razorpay verification. Manual collection verification is disabled.",
+        );
+      }
+      // Idempotent: a repeat verify (double click, Razorpay callback + webhook)
+      // must not re-run the invite changes, events or emails.
+      if (current.collectionStatus === "verified") {
+        return { tx: current, alreadyVerified: true, confirmedInvite: null };
+      }
 
-    if (
-      !allowGatewayVerification &&
-      String(tx.gateway || "manual_upi") !== "manual_upi"
-    ) {
-      throw new BadRequestException(
-        "This collection is configured for Razorpay verification. Manual collection verification is disabled.",
-      );
-    }
-    tx.collectionStatus = "verified";
-    tx.collectedAt = new Date();
-    if (notes) tx.adminNotes = notes;
+      const now = new Date();
+      const tx: any = await this.transactionModel
+        .findOneAndUpdate(
+          { _id: current._id, collectionStatus: { $ne: "verified" } },
+          {
+            $set: {
+              collectionStatus: "verified",
+              collectedAt: now,
+              ...(notes ? { adminNotes: notes } : {}),
+              payoutStatus:
+                current.workStatus === "approved"
+                  ? "processing"
+                  : current.payoutStatus || "pending",
+            },
+          },
+          withSession({ new: true }, session),
+        )
+        .lean();
+      if (!tx) {
+        throw new BadRequestException(
+          "This payment changed meanwhile. Reload and try again.",
+        );
+      }
 
-    if (tx.workStatus === "approved") {
-      tx.payoutStatus = "processing";
-    } else if (!tx.payoutStatus) {
-      tx.payoutStatus = "pending";
-    }
-    if (tx.payoutStatus === "pending" && tx.workStatus === "approved") {
-      tx.payoutStatus = "processing";
-    }
+      // Brand pays → unlock contact for the linked invite (paid_collab payment path),
+      // and advance it to payment_confirmed if it is still accepted.
+      let confirmedInvite: any = null;
+      if (tx.inviteId && tx.transactionType === "paid_collab") {
+        confirmedInvite = await this.inviteModel
+          .findOneAndUpdate(
+            { _id: tx.inviteId, status: "accepted" },
+            {
+              $set: {
+                status: "payment_confirmed",
+                paymentConfirmedAt: now,
+                unlocked: true,
+                unlockedAt: now,
+                unlockType: "paid_collab_payment",
+                updatedAt: now,
+              },
+            },
+            withSession({ new: true }, session),
+          )
+          .select("influencerId campaignId recipientRole")
+          .lean();
+        if (!confirmedInvite) {
+          await this.inviteModel.updateOne(
+            { _id: tx.inviteId },
+            {
+              $set: {
+                unlocked: true,
+                unlockedAt: now,
+                unlockType: "paid_collab_payment",
+                updatedAt: now,
+              },
+            },
+            withSession({}, session),
+          );
+        }
+      }
 
-    await tx.save();
+      // Platform fee verified → the barter/location collaboration is confirmed:
+      // unlock contact/shipping details and start the creator's posting window.
+      if (tx.transactionType === "platform_fee" && tx.feeInviteId) {
+        await this.inviteModel.updateOne(
+          { _id: tx.feeInviteId, platformFeePaidAt: null },
+          {
+            $set: {
+              platformFeePaidAt: now,
+              unlocked: true,
+              unlockedAt: now,
+              unlockType: "platform_fee",
+              updatedAt: now,
+            },
+          },
+          withSession({}, session),
+        );
+      }
+      return { tx, alreadyVerified: false, confirmedInvite };
+    });
+
+    const tx: any = outcome.tx;
+    if (outcome.alreadyVerified) {
+      return { success: true, transaction: tx, alreadyVerified: true };
+    }
 
     await this.recordPaymentCompleted(
       tx,
@@ -2002,55 +2099,19 @@ export class PaymentsPayoutsService {
       await this.recordCampaignPaymentConversion(String(tx.payerId), tx.payerTotal, tx._id);
     }
 
-    // Brand pays → unlock contact for the linked invite (paid_collab payment path).
-    // Also advance invite status to payment_confirmed if still in accepted.
-    let paymentConfirmedRecipientId: string | null = null;
-    let paymentConfirmedRecipientRole: "influencer" | "photographer" =
-      "influencer";
-    let paymentConfirmedCampaignId: string | null = null;
-    if (tx.inviteId && tx.transactionType === "paid_collab") {
-      const update: any = {
-        unlocked: true,
-        unlockedAt: new Date(),
-        unlockType: "paid_collab_payment",
-        updatedAt: new Date(),
-      };
-      const invite: any = await this.inviteModel
-        .findById(tx.inviteId)
-        .select("status influencerId campaignId recipientRole")
-        .lean();
-      if (invite && invite.status === "accepted") {
-        update.status = "payment_confirmed";
-        update.paymentConfirmedAt = new Date();
-        paymentConfirmedRecipientId = String(invite.influencerId || "");
-        paymentConfirmedRecipientRole =
-          String(invite?.recipientRole || "")
-            .trim()
-            .toLowerCase() === "photographer"
-            ? "photographer"
-            : "influencer";
-        paymentConfirmedCampaignId = String(invite.campaignId || "");
-      }
-      await this.inviteModel.findByIdAndUpdate(tx.inviteId, { $set: update });
-    }
-
-    // Platform fee verified → the barter/location collaboration is confirmed:
-    // unlock contact/shipping details and start the creator's posting window.
-    if (tx.transactionType === "platform_fee" && tx.feeInviteId) {
-      const now = new Date();
-      await this.inviteModel.updateOne(
-        { _id: tx.feeInviteId, platformFeePaidAt: null },
-        {
-          $set: {
-            platformFeePaidAt: now,
-            unlocked: true,
-            unlockedAt: now,
-            unlockType: "platform_fee",
-            updatedAt: now,
-          },
-        },
-      );
-    }
+    const confirmed: any = outcome.confirmedInvite;
+    const paymentConfirmedRecipientId: string | null = confirmed
+      ? String(confirmed.influencerId || "")
+      : null;
+    const paymentConfirmedRecipientRole: "influencer" | "photographer" =
+      String(confirmed?.recipientRole || "")
+        .trim()
+        .toLowerCase() === "photographer"
+        ? "photographer"
+        : "influencer";
+    const paymentConfirmedCampaignId: string | null = confirmed
+      ? String(confirmed.campaignId || "")
+      : null;
 
     // Notify recipient as soon as payment is confirmed so they can start posting.
     if (paymentConfirmedRecipientId) {
@@ -2182,13 +2243,43 @@ export class PaymentsPayoutsService {
     reason: string,
     notifyPayer = true,
   ) {
-    const tx = await this.transactionModel.findById(transactionId);
-    if (!tx) throw new NotFoundException("Transaction not found");
-    tx.collectionStatus = "failed";
-    tx.adminNotes = reason || "Payment proof rejected";
-    await tx.save();
-    // Credit used on this rejected payment goes back to the host.
-    await restoreCreditUse(this.creditModel, String(tx._id), "admin");
+    // One transaction: the row fails AND the credit it used goes back to the host.
+    const tx: any = await inTransaction(this.connection, async (session) => {
+      const current: any = await this.transactionModel
+        .findById(transactionId, null, withSession({}, session))
+        .lean();
+      if (!current) throw new NotFoundException("Transaction not found");
+      // Money already confirmed received — rejecting it now would hide a real payment.
+      if (current.collectionStatus === "verified") {
+        throw new BadRequestException(
+          "This payment is already verified and can't be rejected. Use a refund instead.",
+        );
+      }
+      const updated: any = await this.transactionModel
+        .findOneAndUpdate(
+          { _id: current._id, collectionStatus: { $ne: "verified" } },
+          {
+            $set: {
+              collectionStatus: "failed",
+              adminNotes: reason || "Payment proof rejected",
+            },
+          },
+          withSession({ new: true }, session),
+        )
+        .lean();
+      if (!updated) {
+        throw new BadRequestException(
+          "This payment was verified meanwhile. Reload and try again.",
+        );
+      }
+      await restoreCreditUse(
+        this.creditModel,
+        String(updated._id),
+        "admin",
+        session,
+      );
+      return updated;
+    });
 
     if (notifyPayer) this.notifyPaymentRejected(tx.payerId, reason);
     return { success: true, transaction: tx };
@@ -2297,67 +2388,86 @@ export class PaymentsPayoutsService {
     }
     const payoutBlock = this.payoutBlockedReason(tx);
     if (payoutBlock) throw new BadRequestException(payoutBlock);
-    // Claim the row atomically so two admins (or a retry) can't both pay it.
-    const claimed = await this.transactionModel
-      .findOneAndUpdate(
-        {
-          _id: tx._id,
-          payoutStatus: { $in: ["pending", "processing"] },
-          "settlement.status": { $ne: SETTLEMENT_OPEN },
-          $or: [
-            { refundStatus: { $nin: ["on_hold", "owed", "sent"] } },
-            { "compensation.amount": { $gt: 0 } },
-          ],
-        },
-        { $set: { payoutStatus: "paid", paidOutAt: new Date() } },
-        { new: false },
-      )
-      .lean();
-    if (!claimed) {
-      throw new BadRequestException(
-        "This payout changed meanwhile (already paid or under refund). Reload and try again.",
-      );
-    }
-    tx.payoutStatus = "paid";
-    tx.paidOutAt = new Date();
-    tx.payoutSettledAt = tx.paidOutAt;
-    tx.payoutUtr = body.payoutUtr;
-    if (body.payoutProofUrl) tx.payoutProofUrl = body.payoutProofUrl;
-    if (body.payoutUpiId) tx.payoutUpiId = body.payoutUpiId;
-    if (body.notes) tx.adminNotes = body.notes;
-    tx.payoutGatewayProvider = "manual_upi";
-    tx.payoutTransferStatus = "processed";
-    tx.payoutInitiatedAt = tx.payoutInitiatedAt || new Date();
-    tx.payoutFailureReason = "";
-    await tx.save();
-    await this.markInvitePayoutReleased(tx, tx.paidOutAt);
+    // One transaction: claim the row (guarded, so two admins or a retry can't both
+    // pay it), record the payout details, and move the invite to paid.
+    const paidOut: any = await inTransaction(
+      this.connection,
+      async (session) => {
+        const now = new Date();
+        const claimed: any = await this.transactionModel
+          .findOneAndUpdate(
+            {
+              _id: tx._id,
+              payoutStatus: { $in: ["pending", "processing"] },
+              "settlement.status": { $ne: SETTLEMENT_OPEN },
+              $or: [
+                { refundStatus: { $nin: ["on_hold", "owed", "sent"] } },
+                { "compensation.amount": { $gt: 0 } },
+              ],
+            },
+            {
+              $set: {
+                payoutStatus: "paid",
+                paidOutAt: now,
+                payoutSettledAt: now,
+                payoutUtr: body.payoutUtr,
+                ...(body.payoutProofUrl
+                  ? { payoutProofUrl: body.payoutProofUrl }
+                  : {}),
+                ...(body.payoutUpiId ? { payoutUpiId: body.payoutUpiId } : {}),
+                ...(body.notes ? { adminNotes: body.notes } : {}),
+                payoutGatewayProvider: "manual_upi",
+                payoutTransferStatus: "processed",
+                payoutInitiatedAt: tx.payoutInitiatedAt || now,
+                payoutFailureReason: "",
+              },
+            },
+            withSession({ new: true }, session),
+          )
+          .lean();
+        if (!claimed) {
+          throw new BadRequestException(
+            "This payout changed meanwhile (already paid or under refund). Reload and try again.",
+          );
+        }
+        await this.markInvitePaidOut(claimed, now, session);
+        return claimed;
+      },
+    );
+    await this.recordPaymentCompleted(
+      paidOut,
+      "payout",
+      { userRole: "admin" },
+      "manual",
+    );
 
     // Fire-and-forget: notify influencer their payout has been sent
     if (
-      tx.recipientId &&
-      (tx.recipientRole === "influencer" || tx.recipientRole === "photographer")
+      paidOut.recipientId &&
+      (paidOut.recipientRole === "influencer" ||
+        paidOut.recipientRole === "photographer")
     ) {
-      (tx.recipientRole === "photographer"
+      (paidOut.recipientRole === "photographer"
         ? this.photographerModel
         : this.influencerModel
       )
-        .findById(tx.recipientId)
+        .findById(paidOut.recipientId)
         .select("email name username")
         .lean()
         .then((inf: any) => {
           if (!inf?.email) return;
           const name = inf.name || inf.username || "Creator";
           const amount =
-            tx.recipientPayout != null
-              ? `₹${(tx.recipientPayout / 100).toFixed(2)}`
+            paidOut.recipientPayout != null
+              ? `₹${(paidOut.recipientPayout / 100).toFixed(2)}`
               : "your payout";
           sendAppEmail({
             to: inf.email,
             ...payoutSentTemplate({
               recipientName: name,
               amount,
-              upiId: tx.payoutUpiId || null,
-              payoutUtr: tx.payoutUtr,
+              upiId: paidOut.payoutUpiId || null,
+              payoutUtr: paidOut.payoutUtr,
             }),
           }).catch((err: unknown) => {
             console.error(
@@ -2371,7 +2481,7 @@ export class PaymentsPayoutsService {
         });
     }
 
-    return { success: true, transaction: tx };
+    return { success: true, transaction: paidOut };
   }
 
   async runAutoPayoutSweep(triggeredByUserId: string) {
@@ -2782,19 +2892,35 @@ export class PaymentsPayoutsService {
       );
     }
 
-    tx.disputeStatus = "open";
-    tx.disputeReason = reason.trim();
-    tx.disputedBy = userId;
-    tx.disputedByRole = userRole;
-    tx.disputedAt = new Date();
-    // Freeze payout — admin must explicitly release after review
-    if (tx.payoutStatus !== "paid") {
-      tx.payoutStatus = "frozen";
+    // Guarded on the state just read: a second raise, or a payout landing in
+    // between, makes this match nothing instead of overwriting it.
+    const updated: any = await this.transactionModel
+      .findOneAndUpdate(
+        {
+          _id: tx._id,
+          disputeStatus: { $nin: ["open", "resolved"] },
+          payoutStatus: tx.payoutStatus,
+        },
+        {
+          $set: {
+            disputeStatus: "open",
+            disputeReason: reason.trim(),
+            disputedBy: userId,
+            disputedByRole: userRole,
+            disputedAt: new Date(),
+            // Freeze payout — admin must explicitly release after review
+            ...(tx.payoutStatus !== "paid" ? { payoutStatus: "frozen" } : {}),
+            workStatus: "disputed",
+          },
+        },
+        { new: true },
+      )
+      .lean();
+    if (!updated) {
+      throw new BadRequestException(
+        "This transaction changed meanwhile. Reload and try again.",
+      );
     }
-    if (tx.workStatus !== "disputed") {
-      tx.workStatus = "disputed";
-    }
-    await tx.save();
 
     const counterpartId =
       userRole === "brand" ? String(tx.recipientId) : String(tx.payerId);
@@ -2829,7 +2955,7 @@ export class PaymentsPayoutsService {
     return {
       success: true,
       message: "Dispute raised. Payout is frozen pending admin review.",
-      transaction: tx,
+      transaction: updated,
     };
   }
 
@@ -2844,50 +2970,63 @@ export class PaymentsPayoutsService {
     outcome: "release_to_influencer" | "refund_to_brand",
     notes?: string,
   ) {
-    const tx = await this.transactionModel.findById(txId);
-    if (!tx) throw new NotFoundException("Transaction not found");
-    if (tx.disputeStatus !== "open") {
-      throw new BadRequestException("No open dispute on this transaction");
-    }
     if (!["release_to_influencer", "refund_to_brand"].includes(outcome)) {
       throw new BadRequestException(
         "Invalid outcome. Use release_to_influencer or refund_to_brand",
       );
     }
-
-    tx.disputeStatus = "resolved";
-    tx.resolveOutcome = outcome;
-    tx.resolvedBy = adminId;
-    tx.resolvedAt = new Date();
-    if (notes) tx.adminNotes = notes;
-
-    if (outcome === "release_to_influencer") {
-      // Work was valid — release payout flow
-      tx.payoutStatus = "processing";
-      tx.workStatus = "approved";
-    } else {
-      // Non-delivery / invalid — mark as refunded
-      tx.payoutStatus = "skipped";
-      tx.workStatus = "disputed"; // keep for audit
-    }
-
-    await tx.save();
-    if (outcome === "refund_to_brand") {
-      await markRefundsOwed(
-        this.transactionModel,
-        tx.inviteId,
-        tx.resolvedAt || new Date(),
-        { by: adminId, byRole: "admin" },
-        `Admin resolved the payment dispute for the payer. ${notes || ""}`.trim(),
-      );
-    }
-
-    // If releasing to influencer — also mark the invite as completed
-    if (outcome === "release_to_influencer" && tx.inviteId) {
-      await this.inviteModel.findByIdAndUpdate(tx.inviteId, {
-        $set: { status: "completed" },
-      });
-    }
+    // One transaction: the dispute closes (guarded, so two admins can't both
+    // decide), the refund rows move to owed / the invite completes, together.
+    const tx: any = await inTransaction(this.connection, async (session) => {
+      const now = new Date();
+      const resolved: any = await this.transactionModel
+        .findOneAndUpdate(
+          { _id: txId, disputeStatus: "open" },
+          {
+            $set: {
+              disputeStatus: "resolved",
+              resolveOutcome: outcome,
+              resolvedBy: adminId,
+              resolvedAt: now,
+              ...(notes ? { adminNotes: notes } : {}),
+              ...(outcome === "release_to_influencer"
+                ? // Work was valid — release payout flow
+                  { payoutStatus: "processing", workStatus: "approved" }
+                : // Non-delivery / invalid — refund; keep workStatus for audit
+                  { payoutStatus: "skipped", workStatus: "disputed" }),
+            },
+          },
+          withSession({ new: true }, session),
+        )
+        .lean();
+      if (!resolved) {
+        const exists = await this.transactionModel
+          .findById(txId, null, withSession({}, session))
+          .select("_id")
+          .lean();
+        if (!exists) throw new NotFoundException("Transaction not found");
+        throw new BadRequestException("No open dispute on this transaction");
+      }
+      if (outcome === "refund_to_brand") {
+        await markRefundsOwed(
+          this.transactionModel,
+          resolved.inviteId,
+          now,
+          { by: adminId, byRole: "admin" },
+          `Admin resolved the payment dispute for the payer. ${notes || ""}`.trim(),
+          session,
+        );
+      }
+      // Releasing to the creator also completes the invite.
+      if (outcome === "release_to_influencer" && resolved.inviteId) {
+        await this.inviteModel.updateOne(
+          { _id: resolved.inviteId },
+          { $set: { status: "completed" } },
+          withSession({}, session),
+        );
+      }
+      return resolved;
+    });
 
     const resolutionMessage =
       outcome === "release_to_influencer"
@@ -3013,46 +3152,58 @@ export class PaymentsPayoutsService {
     }
     const note = String(body?.notes || "").trim();
 
-    const updated: any = await this.transactionModel
-      .findOneAndUpdate(
-        { _id: tx._id, ...REFUND_DUE_FILTER },
-        {
-          $set: {
-            refundStatus: "sent",
-            refundOwedAt: tx.refundOwedAt || tx.resolvedAt || now,
-            refundAmount,
-            refundUtr,
-            refundTransferDate: transferDate,
-            refundSentAt: now,
-            refundSentBy: adminId,
-            ...(note ? { refundNote: note } : {}),
-          },
-          $push: {
-            refundHistory: historyEntry(
-              "refund_sent",
-              { by: adminId, byRole: "admin" },
-              {
-                from: "owed",
-                to: "sent",
-                amount: refundAmount,
-                utr: refundUtr,
-                transferDate,
-                note,
+    // One transaction: refund marked sent, the case closed on the invite, and the
+    // fee credit decided/issued — a crash can't leave a sent refund without its credit.
+    const { updated, credit } = await inTransaction(
+      this.connection,
+      async (session) => {
+        const updated: any = await this.transactionModel
+          .findOneAndUpdate(
+            { _id: tx._id, ...REFUND_DUE_FILTER },
+            {
+              $set: {
+                refundStatus: "sent",
+                refundOwedAt: tx.refundOwedAt || tx.resolvedAt || now,
+                refundAmount,
+                refundUtr,
+                refundTransferDate: transferDate,
+                refundSentAt: now,
+                refundSentBy: adminId,
+                ...(note ? { refundNote: note } : {}),
               },
-              now,
-            ),
-          },
-        },
-        { new: true },
-      )
-      .lean();
-    if (!updated) {
-      throw new BadRequestException(
-        "This refund changed meanwhile (already sent, or a post was approved). Reload and try again.",
-      );
-    }
-    await this.setFinancialCaseOpen(anyId(updated.inviteId), false);
-    const credit = await this.settleFeeCredit(updated, adminId);
+              $push: {
+                refundHistory: historyEntry(
+                  "refund_sent",
+                  { by: adminId, byRole: "admin" },
+                  {
+                    from: "owed",
+                    to: "sent",
+                    amount: refundAmount,
+                    utr: refundUtr,
+                    transferDate,
+                    note,
+                  },
+                  now,
+                ),
+              },
+            },
+            withSession({ new: true }, session),
+          )
+          .lean();
+        if (!updated) {
+          throw new BadRequestException(
+            "This refund changed meanwhile (already sent, or a post was approved). Reload and try again.",
+          );
+        }
+        await this.setFinancialCaseOpen(
+          anyId(updated.inviteId),
+          false,
+          session,
+        );
+        const credit = await this.settleFeeCredit(updated, adminId, session);
+        return { updated, credit };
+      },
+    );
 
     const campaign: any = await this.campaignModel
       .findById(updated.campaignId)
@@ -3160,42 +3311,52 @@ export class PaymentsPayoutsService {
       creatorBody: string;
     },
   ) {
-    const updated: any = await this.transactionModel
-      .findOneAndUpdate(
-        {
-          _id: tx._id,
-          "settlement.status": SETTLEMENT_OPEN,
-          payoutStatus: { $ne: "paid" },
-        },
-        {
-          $set: {
-            ...opts.set,
-            "settlement.status": opts.status,
-            "settlement.closedAt": now,
-            "settlement.closedBy": adminId,
-            payoutStatus: "processing",
-            workStatus: "approved",
-          },
-          $push: {
-            refundHistory: historyEntry(
-              opts.status === "repaid"
-                ? "settlement_host_repaid"
-                : "settlement_exception_approved",
-              { by: adminId, byRole: "admin" },
-              opts.history,
-              now,
-            ),
-          },
-        },
-        { new: true },
-      )
-      .lean();
-    if (!updated) {
-      throw new BadRequestException(
-        "This settlement changed meanwhile. Reload and try again.",
-      );
-    }
-    await this.setFinancialCaseOpen(anyId(updated.inviteId), false);
+    const updated: any = await inTransaction(
+      this.connection,
+      async (session) => {
+        const updated: any = await this.transactionModel
+          .findOneAndUpdate(
+            {
+              _id: tx._id,
+              "settlement.status": SETTLEMENT_OPEN,
+              payoutStatus: { $ne: "paid" },
+            },
+            {
+              $set: {
+                ...opts.set,
+                "settlement.status": opts.status,
+                "settlement.closedAt": now,
+                "settlement.closedBy": adminId,
+                payoutStatus: "processing",
+                workStatus: "approved",
+              },
+              $push: {
+                refundHistory: historyEntry(
+                  opts.status === "repaid"
+                    ? "settlement_host_repaid"
+                    : "settlement_exception_approved",
+                  { by: adminId, byRole: "admin" },
+                  opts.history,
+                  now,
+                ),
+              },
+            },
+            withSession({ new: true }, session),
+          )
+          .lean();
+        if (!updated) {
+          throw new BadRequestException(
+            "This settlement changed meanwhile. Reload and try again.",
+          );
+        }
+        await this.setFinancialCaseOpen(
+          anyId(updated.inviteId),
+          false,
+          session,
+        );
+        return updated;
+      },
+    );
     const recipientId = String(updated.recipientId || "");
     if (recipientId) {
       const role =
@@ -3247,6 +3408,7 @@ export class PaymentsPayoutsService {
   private async settleFeeCredit(
     tx: any,
     adminId: string,
+    session?: ClientSession,
   ): Promise<{ status: string; amount: number }> {
     const amount = feeCreditAmount(tx);
     if (!amount || tx?.feeCredit?.status) {
@@ -3266,6 +3428,7 @@ export class PaymentsPayoutsService {
             ),
           },
         },
+        withSession({}, session),
       );
       return { status: "needs_review", amount };
     }
@@ -3273,10 +3436,16 @@ export class PaymentsPayoutsService {
       tx,
       adminId,
       "Platform fee returned on a no-post refund",
+      session,
     );
   }
 
-  private async issueFeeCreditFor(tx: any, adminId: string, reason: string) {
+  private async issueFeeCreditFor(
+    tx: any,
+    adminId: string,
+    reason: string,
+    session?: ClientSession,
+  ) {
     const amount = feeCreditAmount(tx);
     // Claim first so a double click can't issue two lots.
     const claimed = await this.transactionModel
@@ -3288,7 +3457,7 @@ export class PaymentsPayoutsService {
           "settlement.status": { $ne: SETTLEMENT_OPEN },
         },
         { $set: { "feeCredit.status": "issued", "feeCredit.amount": amount } },
-        { new: true },
+        withSession({ new: true }, session),
       )
       .lean();
     if (!claimed) {
@@ -3296,15 +3465,19 @@ export class PaymentsPayoutsService {
         "Credit can't be issued now (already decided, refund not sent, or a settlement is open).",
       );
     }
-    const lot: any = await issueCredit(this.creditModel, {
-      ownerId: String(tx.payerId),
-      ownerRole: tx.payerRole,
-      amount,
-      transactionId: String(tx._id),
-      campaignId: String(tx.campaignId || ""),
-      reason,
-      createdBy: adminId || "system",
-    });
+    const lot: any = await issueCredit(
+      this.creditModel,
+      {
+        ownerId: String(tx.payerId),
+        ownerRole: tx.payerRole,
+        amount,
+        transactionId: String(tx._id),
+        campaignId: String(tx.campaignId || ""),
+        reason,
+        createdBy: adminId || "system",
+      },
+      session,
+    );
     const now = new Date();
     await this.transactionModel.updateOne(
       { _id: tx._id },
@@ -3323,6 +3496,7 @@ export class PaymentsPayoutsService {
           ),
         },
       },
+      withSession({}, session),
     );
     return { status: "issued", amount };
   }
@@ -3336,10 +3510,14 @@ export class PaymentsPayoutsService {
         "This fee credit is not waiting for review.",
       );
     }
-    const res = await this.issueFeeCreditFor(
-      tx,
-      adminId,
-      "Platform fee returned on a no-post refund (admin reviewed)",
+    // The claim, the ledger lot and the row update commit together.
+    const res = await inTransaction(this.connection, (session) =>
+      this.issueFeeCreditFor(
+        tx,
+        adminId,
+        "Platform fee returned on a no-post refund (admin reviewed)",
+        session,
+      ),
     );
     notifyPayer(
       {
@@ -3863,7 +4041,20 @@ export class PaymentsPayoutsService {
   }
 
   /** Marks whether a refund/late-post/settlement case still needs both sides' contact. */
-  private async setFinancialCaseOpen(inviteId: unknown, open: boolean) {
+  private async setFinancialCaseOpen(
+    inviteId: unknown,
+    open: boolean,
+    session?: ClientSession,
+  ) {
+    // Inside a transaction a failed write aborts it, so let the error surface there.
+    if (session) {
+      await this.inviteModel.updateOne(
+        { _id: inviteId },
+        { $set: { financialCaseOpen: open } },
+        { session },
+      );
+      return;
+    }
     try {
       await this.inviteModel.updateOne(
         { _id: inviteId },

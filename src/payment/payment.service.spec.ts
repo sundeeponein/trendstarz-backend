@@ -175,11 +175,19 @@ describe("PaymentService", () => {
   });
 
   describe("createPendingPayment", () => {
+    const PRICE_399 = {
+      baseRupees: 399,
+      discountRupees: 0,
+      finalRupees: 399,
+      discountPercent: 0,
+      discountSource: "none" as const,
+      couponCode: null,
+    };
     it("should create pending payment record", async () => {
       const result = await service.createPendingPayment(
         "user1",
         "txn-new",
-        399,
+        PRICE_399,
         "1m",
       );
       expect(result.success).toBe(true);
@@ -191,7 +199,7 @@ describe("PaymentService", () => {
       const result = await service.createPendingPayment(
         "user1",
         "txn-123",
-        399,
+        PRICE_399,
         "1m",
       );
       expect(result.success).toBe(false);

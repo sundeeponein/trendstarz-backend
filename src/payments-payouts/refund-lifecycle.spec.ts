@@ -536,7 +536,6 @@ describe("Refund lifecycle (PaymentsPayoutsService)", () => {
       });
       expect(tx.payerTotal).toBe(calc.payerTotal - 3000);
       expect(credits.get("lot").remaining).toBe(0);
-      saveable();
       await service.rejectCollection(String(tx._id), "Wrong UTR");
       expect(credits.get("lot").remaining).toBe(3000);
     });

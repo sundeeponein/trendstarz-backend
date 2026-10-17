@@ -13,6 +13,21 @@ import {
 import { JwtAuthGuard } from "../auth/jwt-auth.guard";
 import { RolesGuard } from "../auth/roles.guard";
 import { PaymentService } from "./payment.service";
+import {
+  assertDisplayedPriceMatches,
+  billingCycleFor,
+  computeSubscriptionPrice,
+  SubscriptionPrice,
+} from "../plans/subscription-price.util";
+
+const USER_TYPE_BY_ROLE: Record<
+  string,
+  "Influencer" | "Brand" | "Photographer"
+> = {
+  influencer: "Influencer",
+  brand: "Brand",
+  photographer: "Photographer",
+};
 
 @Controller("payment")
 export class PaymentController {
@@ -42,8 +57,10 @@ export class PaymentController {
     body: {
       transactionId: string;
       premiumDuration: "1m" | "3m" | "1y";
-      userType: "Influencer" | "Brand" | "Photographer";
+      userType?: "Influencer" | "Brand" | "Photographer";
       paymentMethod?: "upi" | "qr";
+      couponCode?: string;
+      // The total the page showed — checked against the server price, never charged.
       finalAmount?: number;
     },
     @Req() req: any,
@@ -55,96 +72,32 @@ export class PaymentController {
     if (!["1m", "3m", "1y"].includes(body.premiumDuration))
       throw new BadRequestException("Invalid premium duration");
 
-    // Use finalAmount from frontend if provided, else fetch from plan config
-    let amount = body.finalAmount;
-    let discount = 0;
-    if (typeof amount !== "number") {
-      // Fetch plan from DB (synced from plans-config.json)
-      const plan =
-        await this.paymentService.plansService.findProPlanForUserType(
-          body.userType,
-        );
-      const billingCycle =
-        body.premiumDuration === "1m"
-          ? "monthly"
-          : body.premiumDuration === "3m"
-            ? "quarterly"
-            : "yearly";
-      amount = plan?.price?.[billingCycle];
-      if (typeof amount !== "number") {
-        throw new BadRequestException("Plan price not found");
-      }
-
-      // Check for discount offers (cross-plan discount)
-      // Influencer Pro: discountOnBrandPro, Brand Pro: discountOnInfluencerPro
-      if (body.userType === "Brand") {
-        // Check if user has active Influencer Pro subscription
-        const influencerProPlan =
-          await this.paymentService.plansService.planModel
-            .findOne({ code: "influencer-pro", isActive: true })
-            .lean();
-        if (influencerProPlan) {
-          // Find discount offer in Brand Pro (robust: check both keys)
-          const brandProPlan = plan;
-          const discountOffer = (brandProPlan.offers || []).find(
-            (o: any) =>
-              ["discountOnInfluencerPro", "discountOnBrandPro"].includes(
-                o.key,
-              ) && o.value > 0,
-          );
-          if (discountOffer) {
-            // Check if user has active Influencer Pro
-            const activeSub =
-              await this.paymentService.plansService.subscriptionModel.findOne({
-                userId,
-                planCode: "influencer-pro",
-                status: "active",
-              });
-            if (activeSub) {
-              discount = discountOffer.value;
-            }
-          }
-        }
-      } else if (body.userType === "Influencer") {
-        // Check if user has active Brand Pro subscription
-        const brandProPlan = await this.paymentService.plansService.planModel
-          .findOne({ code: "brand-pro", isActive: true })
-          .lean();
-        if (brandProPlan) {
-          // Find discount offer in Influencer Pro (robust: check both keys)
-          const influencerProPlan = plan;
-          const discountOffer = (influencerProPlan.offers || []).find(
-            (o: any) =>
-              ["discountOnBrandPro", "discountOnInfluencerPro"].includes(
-                o.key,
-              ) && o.value > 0,
-          );
-          if (discountOffer) {
-            // Check if user has active Brand Pro
-            const activeSub =
-              await this.paymentService.plansService.subscriptionModel.findOne({
-                userId,
-                planCode: "brand-pro",
-                status: "active",
-              });
-            if (activeSub) {
-              discount = discountOffer.value;
-            }
-          }
-        }
-      }
-      if (discount > 0) {
-        amount = Math.round(amount * (1 - discount / 100));
-      }
+    // The plan (and so the price) follows the signed-in account, not the request body.
+    const userType =
+      USER_TYPE_BY_ROLE[String(req.user?.role || "").toLowerCase()] ||
+      body.userType ||
+      "Influencer";
+    const plan =
+      await this.paymentService.plansService.findProPlanForUserType(userType);
+    const billingCycle = billingCycleFor(body.premiumDuration);
+    let price: SubscriptionPrice;
+    try {
+      price = computeSubscriptionPrice(plan, billingCycle, body.couponCode);
+      assertDisplayedPriceMatches(body.finalAmount, price);
+    } catch (e: any) {
+      throw new BadRequestException(e?.message || "Invalid price");
+    }
+    if (price.baseRupees <= 0) {
+      throw new BadRequestException("Plan price not found");
     }
 
     return this.paymentService.createPendingPayment(
       userId,
       body.transactionId,
-      amount,
+      price,
       body.premiumDuration,
       body.paymentMethod || "upi",
-      body.userType || "Influencer",
+      userType,
     );
   }
 
@@ -242,7 +195,10 @@ export class PaymentController {
     @Query("page") page: string = "1",
     @Query("limit") limit: string = "50",
   ) {
-    if (!status || !["approved", "rejected", "pending", "refunded"].includes(status)) {
+    if (
+      !status ||
+      !["approved", "rejected", "pending", "refunded"].includes(status)
+    ) {
       throw new BadRequestException("Invalid status");
     }
     return this.paymentService.getPaymentsByStatus(

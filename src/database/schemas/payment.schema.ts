@@ -12,7 +12,11 @@ export const PaymentSchema = new Schema(
     transactionId: { type: String, required: true, unique: true },
     orderId: { type: String, index: true },
     paymentId: { type: String, index: true },
-    amount: { type: Number, required: true }, // in paise (e.g., 39900 for ₹399)
+    // LEGACY unit depends on the gateway: Razorpay rows paise, manual UPI rows rupees.
+    // Read amounts through payment/payment-amount.util.ts, never this field directly.
+    amount: { type: Number, required: true },
+    // Always paise. Set on every new row; older rows via cron/backfillPaymentAmountPaise.js.
+    amountPaise: { type: Number },
     premiumDuration: { type: String, enum: ['1m', '3m', '1y'], required: true },
     purpose: {
       type: String,
@@ -69,6 +73,8 @@ export const PaymentSchema = new Schema(
   { timestamps: true },
 );
 
+PaymentSchema.index({ userId: 1, createdAt: -1 });
+
 export interface Payment extends Document {
   userId: string;
   userType: 'Influencer' | 'Brand' | 'Photographer';
@@ -76,6 +82,7 @@ export interface Payment extends Document {
   orderId?: string;
   paymentId?: string;
   amount: number;
+  amountPaise?: number;
   premiumDuration: '1m' | '3m' | '1y';
   purpose: 'subscription' | 'invite_unlock' | 'campaign_payment' | 'collab_score_reanalysis';
   paymentStatus: 'created' | 'authorized' | 'captured' | 'failed' | 'refunded';

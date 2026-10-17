@@ -29,6 +29,7 @@ import {
   hashSnapshot,
 } from "./collaboration-score-sync.util";
 import { COLLABORATION_AUDIT_PLATFORMS } from "../database/schemas/collaboration-audit.schema";
+import { paymentAmountRupees } from "../payment/payment-amount.util";
 
 type CollaborationScoreUserType = "Influencer" | "Brand" | "Photographer";
 type AuditTrigger = "USER" | "ADMIN" | "SYSTEM_NIGHTLY" | "SYSTEM_CONNECT";
@@ -693,6 +694,7 @@ export class CollaborationScoreService {
       userType,
       transactionId: `rzp_reanalysis_${Date.now()}`,
       amount: amountPaise,
+      amountPaise,
       premiumDuration: "1m",
       status: "pending",
       paymentMethod: "razorpay",
@@ -865,11 +867,11 @@ export class CollaborationScoreService {
         purpose: "collab_score_reanalysis",
       })
       .sort({ createdAt: -1 })
-      .select("amount paymentStatus status createdAt archivedAt")
+      .select("amount amountPaise gatewayProvider paymentMethod paymentStatus status createdAt archivedAt")
       .lean();
     return {
       payments: payments.map((p: any) => ({
-        amountRupees: Math.round((p.amount || 0) / 100),
+        amountRupees: Math.round(paymentAmountRupees(p)),
         paymentStatus: p.paymentStatus,
         status: p.status,
         createdAt: p.createdAt,

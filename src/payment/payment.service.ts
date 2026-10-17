@@ -5,6 +5,8 @@ import { Payment } from "../database/schemas/payment.schema";
 import { PlansService } from "../plans/plans.service";
 import { NotificationsService } from "../notifications/notifications.service";
 import { PushService } from "../push/push.service";
+import { paymentAmountPaise, paymentAmountRupees } from "./payment-amount.util";
+import { SubscriptionPrice } from "../plans/subscription-price.util";
 
 @Injectable()
 export class PaymentService {
@@ -114,7 +116,7 @@ export class PaymentService {
   async createPendingPayment(
     userId: string,
     transactionId: string,
-    amount: number,
+    price: SubscriptionPrice,
     premiumDuration: "1m" | "3m" | "1y",
     paymentMethod: "upi" | "qr" = "upi",
     userType: "Influencer" | "Brand" | "Photographer" = "Influencer",
@@ -151,10 +153,18 @@ export class PaymentService {
       userType,
       userSnapshot,
       transactionId,
-      amount,
+      amount: price.finalRupees, // legacy unit for manual rows (rupees)
+      amountPaise: price.finalRupees * 100,
       premiumDuration,
       paymentMethod,
       status: "pending",
+      metadata: {
+        baseAmountPaise: price.baseRupees * 100,
+        discountPaise: price.discountRupees * 100,
+        discountPercent: price.discountPercent,
+        discountSource: price.discountSource,
+        couponCode: price.couponCode,
+      },
     });
 
     await payment.save();
@@ -181,7 +191,7 @@ export class PaymentService {
 
     // Activate premium for user
     await this.confirmUpgrade(payment.userId, payment.premiumDuration);
-    await this.recordPremiumConversion(String(payment.userId), payment.amount, payment._id);
+    await this.recordPremiumConversion(String(payment.userId), paymentAmountPaise(payment), payment._id);
     try {
       const plan = await this.plansService.findProPlanForUserType(payment.userType);
       await this.plansService.activateSubscription(
@@ -285,7 +295,7 @@ export class PaymentService {
     payment.paymentStatus = "refunded";
     payment.refundedBy = adminId as any;
     payment.refundedAt = refundedAt;
-    payment.refundAmount = Number(payment.amount || 0);
+    payment.refundAmount = Number(payment.amount || 0); // same unit as amount (legacy)
     payment.refundReason = reason || "Refund marked by admin";
     payment.approvalNotes = payment.approvalNotes
       ? `${payment.approvalNotes}\nRefund: ${payment.refundReason}`
@@ -378,15 +388,10 @@ export class PaymentService {
         ...this.subscriptionPurposeFilter(),
         ...(since ? { createdAt: { $gte: since } } : {}),
       })
-      .select("amount status refundStatus paymentStatus gatewayProvider paymentMethod")
+      .select("amount amountPaise status refundStatus paymentStatus gatewayProvider paymentMethod")
       .lean();
 
-    const amountInRupees = (row: any) => {
-      const amount = Number(row?.amount || 0);
-      return row?.gatewayProvider === "razorpay" || row?.paymentMethod === "razorpay"
-        ? amount / 100
-        : amount;
-    };
+    const amountInRupees = paymentAmountRupees;
 
     const pending = rows
       .filter((row: any) => row.status === "pending")

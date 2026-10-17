@@ -10,6 +10,12 @@ import { RazorpayService } from "../payment/razorpay.service";
 import { PaymentService } from "../payment/payment.service";
 import { PlansService } from "../plans/plans.service";
 import { CampaignInvitesService } from "../campaigns/campaign-invites.service";
+import { paymentAmountPaise } from "../payment/payment-amount.util";
+import {
+  assertDisplayedPriceMatches,
+  computeSubscriptionPrice,
+  SubscriptionPrice,
+} from "../plans/subscription-price.util";
 
 type UserRole = "brand" | "influencer" | "photographer";
 
@@ -88,10 +94,16 @@ export class MonetizationService {
     userRole: UserRole;
     planId: string;
     billingCycle: "monthly" | "quarterly" | "yearly";
+    couponCode?: string;
+    // The total the page showed — checked against the server price, never charged.
     finalAmount?: number;
   }) {
     const plan: any = await this.plansService.planModel.findById(input.planId).lean();
     if (!plan) throw new NotFoundException("Plan not found");
+    // The plan must be for the buyer's own account type (its price differs per role).
+    if (String(plan.userType || "").toUpperCase() !== String(input.userRole || "").toUpperCase()) {
+      throw new BadRequestException("This plan is not available for your account type.");
+    }
 
     const premiumDuration =
       input.billingCycle === "yearly"
@@ -99,16 +111,18 @@ export class MonetizationService {
         : input.billingCycle === "quarterly"
           ? "3m"
           : "1m";
-    const basePrice = Number(plan?.price?.[input.billingCycle] ?? 0);
-    if (basePrice <= 0) throw new BadRequestException("Invalid plan amount");
-    // Frontend computes the discounted total (plan offer % and/or coupon) the same way
-    // the manual UPI flow does — accept it here too, but never above the plan's base price.
-    const amount =
-      typeof input.finalAmount === "number" && input.finalAmount >= 0 && input.finalAmount <= basePrice
-        ? input.finalAmount
-        : basePrice;
-
-    const amountPaise = Math.round(amount * 100);
+    let price: SubscriptionPrice;
+    try {
+      price = computeSubscriptionPrice(plan, input.billingCycle, input.couponCode);
+      assertDisplayedPriceMatches(input.finalAmount, price);
+    } catch (e: any) {
+      throw new BadRequestException(e?.message || "Invalid price");
+    }
+    if (price.baseRupees <= 0 || price.finalRupees <= 0) {
+      throw new BadRequestException("Invalid plan amount");
+    }
+    const amount = price.finalRupees;
+    const amountPaise = amount * 100;
 
     // Retrying/refreshing the payment page calls this again — drop any earlier pending
     // razorpay order for this user's subscription so it doesn't pile up as orphaned
@@ -130,6 +144,7 @@ export class MonetizationService {
       userType: input.userRole === "brand" ? "Brand" : input.userRole === "photographer" ? "Photographer" : "Influencer",
       transactionId: `rzp_sub_${Date.now()}`,
       amount: amountPaise,
+      amountPaise,
       premiumDuration,
       status: "pending",
       paymentMethod: "razorpay",
@@ -140,6 +155,11 @@ export class MonetizationService {
       metadata: {
         planId: input.planId,
         billingCycle: input.billingCycle,
+        baseAmountPaise: price.baseRupees * 100,
+        discountPaise: price.discountRupees * 100,
+        discountPercent: price.discountPercent,
+        discountSource: price.discountSource,
+        couponCode: price.couponCode,
       },
     });
 
@@ -207,6 +227,7 @@ export class MonetizationService {
       userType: input.payerRole === "brand" ? "Brand" : input.payerRole === "photographer" ? "Photographer" : "Influencer",
       transactionId: `rzp_unlock_${Date.now()}`,
       amount: Math.round(grossAmount * 100),
+      amountPaise: Math.round(grossAmount * 100),
       premiumDuration: "1m",
       status: "pending",
       paymentMethod: "razorpay",
@@ -386,7 +407,7 @@ export class MonetizationService {
       // isPremium there (not the subscriptions collection) drives the
       // Pro badge and all visibility gating.
       await this.paymentService.confirmUpgrade(input.userId, premiumDuration);
-      await this.recordPremiumConversion(input.userId, payment.amount, payment._id);
+      await this.recordPremiumConversion(input.userId, paymentAmountPaise(payment), payment._id);
     }
 
     return { success: true, paymentId: input.paymentId };

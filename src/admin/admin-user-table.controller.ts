@@ -22,6 +22,7 @@ import { RolesGuard } from "../auth/roles.guard";
 import { InjectModel } from "@nestjs/mongoose";
 import { Model, Types } from "mongoose";
 import { Payment } from "../database/schemas/payment.schema";
+import { idsIn } from "../utils/id-match.util";
 import { EarlyAccessAssignmentService } from "./early-access-assignment.service";
 import { FirebaseAdminService } from "../utils/firebase-admin.service";
 import { AuthService } from "../auth/auth.service";
@@ -89,7 +90,7 @@ export class AdminUserTableController {
       .aggregate([
         {
           $match: {
-            userId: { $in: userIds },
+            userId: idsIn(userIds),
             status: "approved",
           },
         },
@@ -125,7 +126,7 @@ export class AdminUserTableController {
       .aggregate([
         {
           $match: {
-            userId: { $in: userIds },
+            userId: idsIn(userIds),
             status: "pending",
           },
         },

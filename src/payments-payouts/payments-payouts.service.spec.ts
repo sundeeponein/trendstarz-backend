@@ -6,6 +6,7 @@ import { PushService } from "../push/push.service";
 import { NotificationsService } from "../notifications/notifications.service";
 import { PlatformEventsService } from "../platform-events/platform-events.service";
 import { RazorpayService } from "../payment/razorpay.service";
+import { FakeCollection } from "./fake-collection.fixture-spec";
 
 describe("PaymentsPayoutsService", () => {
   let service: PaymentsPayoutsService;
@@ -17,6 +18,18 @@ describe("PaymentsPayoutsService", () => {
   let influencerModel: any;
   let photographerModel: any;
   let razorpayService: any;
+  /**
+   * Backs the transaction model with an in-memory collection, for the money
+   * transitions that now use guarded findOneAndUpdate (inside inTransaction)
+   * instead of mutating a loaded document and calling save().
+   */
+  const useFakeTx = (rows: any[]) => {
+    const fake = new FakeCollection(rows);
+    transactionModel.findById = fake.findById;
+    transactionModel.findOneAndUpdate = fake.findOneAndUpdate;
+    transactionModel.updateOne = fake.updateOne;
+    return fake;
+  };
   let platformEvents: { record: jest.Mock };
 
   beforeEach(async () => {
@@ -29,6 +42,10 @@ describe("PaymentsPayoutsService", () => {
       findById: jest.fn(),
       findOne: jest.fn(),
       findByIdAndUpdate: jest.fn(),
+      // Default: the invite is not in "accepted" (guarded confirm matches nothing).
+      findOneAndUpdate: jest.fn(() => ({
+        select: jest.fn().mockReturnValue({ lean: jest.fn().mockResolvedValue(null) }),
+      })),
       updateOne: jest.fn().mockResolvedValue({}),
       updateMany: jest.fn().mockResolvedValue({}),
     };
@@ -579,12 +596,12 @@ describe("PaymentsPayoutsService", () => {
         payerId: "brand1",
         payerRole: "brand",
         payoutStatus: "skipped",
-        save: jest.fn().mockResolvedValue(undefined),
       };
-      transactionModel.findById.mockResolvedValue(tx);
+      const txs = useFakeTx([tx]);
       inviteModel.updateOne.mockClear();
       await service.verifyCollection("t1");
-      expect(tx.payoutStatus).toBe("skipped"); // never a creator payout
+      expect(txs.get("t1").collectionStatus).toBe("verified");
+      expect(txs.get("t1").payoutStatus).toBe("skipped"); // never a creator payout
       const [filter, update] = inviteModel.updateOne.mock.calls.find(
         (c: any[]) => c[1]?.$set?.platformFeePaidAt,
       );
@@ -697,24 +714,47 @@ describe("PaymentsPayoutsService", () => {
         collectionStatus: "proof_submitted",
         workStatus: "approved",
         payoutStatus: "pending",
-        save: jest.fn().mockResolvedValue(true),
       };
-      transactionModel.findById.mockResolvedValue(tx);
+      const txs = useFakeTx([tx]);
 
       const result = await service.verifyCollection("tx1", "ok");
 
       expect(result.success).toBe(true);
-      expect(tx.collectionStatus).toBe("verified");
-      expect(tx.payoutStatus).toBe("processing");
-      expect(tx.adminNotes).toBe("ok");
-      expect(tx.save).toHaveBeenCalled();
+      expect(txs.get("tx1")).toMatchObject({
+        collectionStatus: "verified",
+        payoutStatus: "processing",
+        adminNotes: "ok",
+      });
+    });
+
+    it("is idempotent: a second verify changes nothing and records no second event", async () => {
+      const txs = useFakeTx([
+        { _id: "tx1", collectionStatus: "proof_submitted", payerId: "b1", payerRole: "brand" },
+      ]);
+      await service.verifyCollection("tx1");
+      const firstCollectedAt = txs.get("tx1").collectedAt;
+      platformEvents.record.mockClear();
+      const again: any = await service.verifyCollection("tx1");
+      expect(again.alreadyVerified).toBe(true);
+      expect(txs.get("tx1").collectedAt).toEqual(firstCollectedAt);
+      expect(platformEvents.record).not.toHaveBeenCalled();
     });
 
     it("throws when transaction does not exist", async () => {
-      transactionModel.findById.mockResolvedValue(null);
+      useFakeTx([]);
       await expect(service.verifyCollection("bad-id")).rejects.toThrow(
         NotFoundException,
       );
+    });
+  });
+
+  describe("rejectCollection", () => {
+    it("refuses to reject a payment that is already verified", async () => {
+      const txs = useFakeTx([{ _id: "tx1", collectionStatus: "verified" }]);
+      await expect(service.rejectCollection("tx1", "wrong")).rejects.toThrow(
+        /already verified/,
+      );
+      expect(txs.get("tx1").collectionStatus).toBe("verified");
     });
   });
 
@@ -731,14 +771,14 @@ describe("PaymentsPayoutsService", () => {
     });
 
     it("marks payout as paid when collection is verified", async () => {
-      const tx: any = {
-        _id: "tx2",
-        collectionStatus: "verified",
-        payoutStatus: "pending",
-        inviteId: "inv1",
-        save: jest.fn().mockResolvedValue(true),
-      };
-      transactionModel.findById.mockResolvedValue(tx);
+      const txs = useFakeTx([
+        {
+          _id: "tx2",
+          collectionStatus: "verified",
+          payoutStatus: "pending",
+          inviteId: "inv1",
+        },
+      ]);
       inviteModel.findById.mockReturnValue({
         select: jest.fn().mockReturnValue({
           lean: jest.fn().mockResolvedValue({
@@ -757,13 +797,13 @@ describe("PaymentsPayoutsService", () => {
       });
 
       expect(result.success).toBe(true);
+      const tx = txs.get("tx2");
       expect(tx.payoutStatus).toBe("paid");
       expect(tx.payoutUtr).toBe("PAYOUT123");
       expect(tx.payoutUpiId).toBe("user@upi");
       expect(tx.payoutProofUrl).toBe("https://payout-proof");
       expect(tx.adminNotes).toBe("done");
       expect(tx.paidOutAt).toBeInstanceOf(Date);
-      expect(tx.save).toHaveBeenCalled();
       expect(inviteModel.updateOne).toHaveBeenCalledWith(
         { _id: "inv1" },
         expect.objectContaining({
@@ -772,6 +812,7 @@ describe("PaymentsPayoutsService", () => {
             paidOutAt: tx.paidOutAt,
           }),
         }),
+        {},
       );
     });
 
@@ -945,6 +986,7 @@ describe("PaymentsPayoutsService", () => {
             paidOutAt: tx.paidOutAt,
           }),
         }),
+        {},
       );
     });
   });
@@ -1065,9 +1107,8 @@ describe("PaymentsPayoutsService", () => {
         payerRole: "brand",
         collectionStatus: "proof_submitted",
         payerTotal: 1180,
-        save: jest.fn().mockResolvedValue(true),
       };
-      transactionModel.findById.mockResolvedValue(tx);
+      const txs = useFakeTx([tx]);
       inviteModel.findById.mockReturnValue(
         inviteLookup({
           status: "completed",
@@ -1090,7 +1131,7 @@ describe("PaymentsPayoutsService", () => {
         campaignId: "camp1",
         inviteId: "inv1",
         platform: "Instagram",
-        timestamp: tx.collectedAt,
+        timestamp: txs.get("tx1").collectedAt,
         dedupeKey: "payment_completed:collection:tx1",
         metadata: expect.objectContaining({
           stage: "collection",
@@ -1101,7 +1142,7 @@ describe("PaymentsPayoutsService", () => {
     });
 
     it("records nothing when the transaction does not exist", async () => {
-      transactionModel.findById.mockResolvedValue(null);
+      useFakeTx([]);
       await expect(service.verifyCollection("bad")).rejects.toThrow(
         NotFoundException,
       );
@@ -1109,14 +1150,14 @@ describe("PaymentsPayoutsService", () => {
     });
 
     it("records the payout stage when an admin marks the payout paid", async () => {
-      const tx: any = {
-        _id: "tx2",
-        collectionStatus: "verified",
-        payoutStatus: "pending",
-        inviteId: "inv1",
-        save: jest.fn().mockResolvedValue(true),
-      };
-      transactionModel.findById.mockResolvedValue(tx);
+      const txs = useFakeTx([
+        {
+          _id: "tx2",
+          collectionStatus: "verified",
+          payoutStatus: "pending",
+          inviteId: "inv1",
+        },
+      ]);
       inviteModel.findById.mockReturnValue(
         inviteLookup({
           status: "completed",
@@ -1131,7 +1172,7 @@ describe("PaymentsPayoutsService", () => {
 
       expect(paymentEvents()[0]).toMatchObject({
         userRole: "admin",
-        timestamp: tx.paidOutAt,
+        timestamp: txs.get("tx2").paidOutAt,
         dedupeKey: "payment_completed:payout:tx2",
         metadata: expect.objectContaining({ stage: "payout", via: "manual" }),
       });
@@ -1221,13 +1262,12 @@ describe("PaymentsPayoutsService", () => {
         payerId: "inf1",
         payerRole: "influencer",
         collectionStatus: "proof_submitted",
-        save: jest.fn().mockResolvedValue(true),
       };
-      transactionModel.findById.mockResolvedValue(tx);
+      const txs = useFakeTx([tx]);
 
       const result = await service.verifyCollection("tx9");
       expect(result.success).toBe(true);
-      expect(tx.collectionStatus).toBe("verified");
+      expect(txs.get("tx9").collectionStatus).toBe("verified");
     });
   });
 });

@@ -100,17 +100,28 @@ export class ReviewsService {
       }
     }
 
-    const review = await this.reviewModel.create({
-      reviewerId,
-      reviewerType,
-      targetId,
-      targetType,
-      campaignId: String(invite.campaignId),
-      inviteId: data.inviteId,
-      rating: data.rating,
-      comment: data.comment || "",
-      status: "pending",
-    });
+    let review: any;
+    try {
+      review = await this.reviewModel.create({
+        reviewerId,
+        reviewerType,
+        targetId,
+        targetType,
+        campaignId: String(invite.campaignId),
+        inviteId: data.inviteId,
+        rating: data.rating,
+        comment: data.comment || "",
+        status: "pending",
+      });
+    } catch (err: any) {
+      // uniq_review_per_invite_side (cron/uniqueConstraints.js) caught a double submit.
+      if (err?.code === 11000) {
+        throw new BadRequestException(
+          "You have already submitted a review for this campaign",
+        );
+      }
+      throw err;
+    }
 
     return { success: true, review };
   }

@@ -1,4 +1,4 @@
-import { Schema, Types, model } from "mongoose";
+import { Schema, model } from "mongoose";
 import { WORKFLOW_TIMING_DEFAULTS } from "../../utils/workflow-timing.util";
 
 const ProfileVerificationFields = {
@@ -1266,7 +1266,7 @@ export const DistrictModel = model("District", DistrictSchema);
 export const WhatsAppCommunitySchema = new Schema(
   {
     state: { type: String, required: true, trim: true },
-    stateKey: { type: String, required: true, trim: true, index: true },
+    stateKey: { type: String, required: true, trim: true },
     communityName: { type: String, required: true, trim: true },
     communityLink: { type: String, required: true, trim: true },
     qrCode: { type: String, default: "", trim: true },
@@ -1542,63 +1542,3 @@ export const CounterSchema = new Schema({
   seq: { type: Number, default: 1000 },
 });
 export const CounterModel = model("Counter", CounterSchema);
-
-// Campaign Invite schema
-export const CampaignInviteSchema = new Schema(
-  {
-    campaignId: {
-      type: Schema.Types.Mixed, // Allow ObjectId or string for legacy compatibility
-      ref: "Campaign",
-      required: true,
-      index: true,
-    },
-    brandId: {
-      type: Schema.Types.Mixed, // Allow ObjectId or string for minimal brand profiles
-      ref: "Brand",
-      required: true,
-      index: true,
-    },
-    influencerId: {
-      type: Types.ObjectId,
-      ref: "Influencer",
-      required: true,
-      index: true,
-    },
-    recipientRole: {
-      type: String,
-      enum: ["influencer", "photographer"],
-      default: "influencer",
-      index: true,
-    },
-    status: {
-      type: String,
-      enum: ["pending", "accepted", "declined", "submitted", "completed"],
-      default: "pending",
-    },
-    selectedPlatform: { type: String, default: null }, // platform the influencer will post on
-    paymentConfirmedAt: { type: Date, default: null },
-    // Shipping address captured from the creator at acceptance time for Product Collabs.
-    // Required server-side when campaign.campaignType === 'product' && campaign.productShippingRequired === true.
-    shippingAddress: {
-      contactName: { type: String },
-      contactMobile: { type: String },
-      line1: { type: String },
-      line2: { type: String },
-      city: { type: String },
-      state: { type: String },
-      pincode: { type: String },
-      landmark: { type: String },
-      capturedAt: { type: Date },
-    },
-    analytics: {
-      reach: { type: Number },
-      engagement: { type: Number },
-      clicks: { type: Number },
-    },
-  },
-  { timestamps: true },
-);
-export const CampaignInviteModel = model(
-  "CampaignInvite",
-  CampaignInviteSchema,
-);

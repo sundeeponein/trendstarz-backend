@@ -1,4 +1,6 @@
 import { Types } from "mongoose";
+import type { ClientSession } from "mongoose";
+import { withSession } from "../utils/mongo-transaction.util";
 
 /**
  * Refunds to the payer of a paid collaboration (manual UPI). Four money states are kept
@@ -163,6 +165,7 @@ export async function holdRefunds(
   now: Date,
   actor: RefundActor,
   reason: string,
+  session?: ClientSession,
 ): Promise<any[]> {
   const holdUntil = new Date(now.getTime() + REFUND_HOLD_DAYS * DAY_MS);
   const filter = {
@@ -170,7 +173,10 @@ export async function holdRefunds(
     ...REFUNDABLE_FILTER,
     refundStatus: { $in: [null, "none", "cancelled"] },
   };
-  const rows: any[] = await model.find(filter).select("_id").lean();
+  const rows: any[] = await model
+    .find(filter, null, withSession({}, session))
+    .select("_id")
+    .lean();
   if (!rows.length) return [];
   await model.updateMany(
     { _id: { $in: rows.map((r) => r._id) }, ...filter },
@@ -189,8 +195,15 @@ export async function holdRefunds(
         ),
       },
     },
+    withSession({}, session),
   );
-  return model.find({ _id: { $in: rows.map((r) => r._id) } }).lean();
+  return model
+    .find(
+      { _id: { $in: rows.map((r) => r._id) } },
+      null,
+      withSession({}, session),
+    )
+    .lean();
 }
 
 /**
@@ -203,13 +216,17 @@ export async function markRefundsOwed(
   now: Date,
   actor: RefundActor = { byRole: "admin" },
   reason = "",
+  session?: ClientSession,
 ): Promise<any[]> {
   const filter = {
     inviteId: anyId(inviteId),
     ...REFUNDABLE_FILTER,
     refundStatus: { $in: [null, "none", "cancelled", "on_hold"] },
   };
-  const rows: any[] = await model.find(filter).select("_id").lean();
+  const rows: any[] = await model
+    .find(filter, null, withSession({}, session))
+    .select("_id")
+    .lean();
   if (!rows.length) return [];
   await model.updateMany(
     { _id: { $in: rows.map((r) => r._id) }, ...filter },
@@ -229,8 +246,15 @@ export async function markRefundsOwed(
         ),
       },
     },
+    withSession({}, session),
   );
-  return model.find({ _id: { $in: rows.map((r) => r._id) } }).lean();
+  return model
+    .find(
+      { _id: { $in: rows.map((r) => r._id) } },
+      null,
+      withSession({}, session),
+    )
+    .lean();
 }
 
 export type ReleaseResult = {
@@ -252,15 +276,24 @@ export async function releaseToCreator(
   now: Date,
   actor: RefundActor,
   note: string,
+  session?: ClientSession,
 ): Promise<ReleaseResult> {
   const result: ReleaseResult = { released: [], settlement: [] };
   const rows: any[] = await model
-    .find({ inviteId: anyId(inviteId), payoutStatus: { $ne: "paid" } })
+    .find(
+      { inviteId: anyId(inviteId), payoutStatus: { $ne: "paid" } },
+      null,
+      withSession({}, session),
+    )
     .lean();
   for (const row of rows) {
     for (let attempt = 0; attempt < 2; attempt += 1) {
       const current: any =
-        attempt === 0 ? row : await model.findById(row._id).lean();
+        attempt === 0
+          ? row
+          : await model
+              .findById(row._id, null, withSession({}, session))
+              .lean();
       if (!current || current.payoutStatus === "paid") break;
       if (current.transactionType === "pay_to_join") break;
       const status = current.refundStatus || "none";
@@ -298,7 +331,7 @@ export async function releaseToCreator(
                 ),
               },
             },
-            { new: true },
+            withSession({ new: true }, session),
           )
           .lean();
         if (updated) {
@@ -343,7 +376,7 @@ export async function releaseToCreator(
         };
       }
       const updated = await model
-        .findOneAndUpdate(guard, update, { new: true })
+        .findOneAndUpdate(guard, update, withSession({ new: true }, session))
         .lean();
       if (updated) {
         result.released.push(updated);

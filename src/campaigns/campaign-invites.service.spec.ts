@@ -92,7 +92,10 @@ describe("CampaignInvitesService (admin disputes + remind)", () => {
     inviteModel = jest.fn();
     inviteModel.findById = jest.fn();
     inviteModel.countDocuments = jest.fn();
-    inviteModel.find = jest.fn();
+    // Default: no earlier invites for this creator (re-invite rule lookup).
+    inviteModel.find = jest.fn().mockReturnValue({
+      select: jest.fn().mockReturnValue({ lean: jest.fn().mockResolvedValue([]) }),
+    });
 
     brandModel = jest.fn();
     brandModel.findById = jest.fn();
@@ -387,7 +390,10 @@ describe("CampaignInvitesService – create() gating", () => {
     }));
     inviteModel.findById = jest.fn();
     inviteModel.countDocuments = jest.fn().mockResolvedValue(0);
-    inviteModel.find = jest.fn();
+    // Default: no earlier invites for this creator (re-invite rule lookup).
+    inviteModel.find = jest.fn().mockReturnValue({
+      select: jest.fn().mockReturnValue({ lean: jest.fn().mockResolvedValue([]) }),
+    });
     inviteModel.updateMany = jest.fn().mockResolvedValue({ modifiedCount: 0 });
 
     brandModel = jest.fn();
@@ -473,6 +479,34 @@ describe("CampaignInvitesService – create() gating", () => {
       ).resolves.toBeDefined();
     },
   );
+
+  it.each([
+    [[{ status: "pending" }], /already been invited/],
+    [[{ status: "declined" }], /declined/],
+  ])(
+    "refuses a creator whose earlier invites are %j (re-invite rule, server-side)",
+    async (prior, message) => {
+      mockCampaignLean({ status: "active", ownerType: "brand" });
+      inviteModel.find.mockReturnValue({
+        select: jest.fn().mockReturnValue({ lean: jest.fn().mockResolvedValue(prior) }),
+      });
+      await expect(
+        service.create("brand1", { campaignId: "camp1", influencerId: "inf1" }),
+      ).rejects.toThrow(message);
+    },
+  );
+
+  it("re-invites a creator whose only earlier invite was withdrawn", async () => {
+    mockCampaignLean({ status: "active", ownerType: "brand" });
+    inviteModel.find.mockReturnValue({
+      select: jest.fn().mockReturnValue({
+        lean: jest.fn().mockResolvedValue([{ status: "withdrawn" }]),
+      }),
+    });
+    await expect(
+      service.create("brand1", { campaignId: "camp1", influencerId: "inf1" }),
+    ).resolves.toBeDefined();
+  });
 
   it("collaborations keep their own wording", async () => {
     mockCampaignLean({ status: "completed", ownerType: "photographer" });
@@ -673,7 +707,10 @@ describe("CampaignInvitesService – respond()", () => {
     inviteModel = jest.fn();
     inviteModel.findById = jest.fn();
     inviteModel.countDocuments = jest.fn().mockResolvedValue(0);
-    inviteModel.find = jest.fn();
+    // Default: no earlier invites for this creator (re-invite rule lookup).
+    inviteModel.find = jest.fn().mockReturnValue({
+      select: jest.fn().mockReturnValue({ lean: jest.fn().mockResolvedValue([]) }),
+    });
     inviteModel.updateMany = jest.fn().mockResolvedValue({ modifiedCount: 0 });
 
     brandModel = jest.fn();
@@ -1061,7 +1098,10 @@ describe("CampaignInvitesService – applyToCampaign()", () => {
     const inviteModel: any = jest.fn();
     inviteModel.findById = jest.fn();
     inviteModel.countDocuments = jest.fn();
-    inviteModel.find = jest.fn();
+    // Default: no earlier invites for this creator (re-invite rule lookup).
+    inviteModel.find = jest.fn().mockReturnValue({
+      select: jest.fn().mockReturnValue({ lean: jest.fn().mockResolvedValue([]) }),
+    });
 
     campaignModel = jest.fn();
     campaignModel.findById = jest.fn().mockReturnValue({
@@ -1106,7 +1146,10 @@ describe("CampaignInvitesService contact visibility in invite lists", () => {
 
   beforeEach(async () => {
     inviteModel = jest.fn();
-    inviteModel.find = jest.fn();
+    // Default: no earlier invites for this creator (re-invite rule lookup).
+    inviteModel.find = jest.fn().mockReturnValue({
+      select: jest.fn().mockReturnValue({ lean: jest.fn().mockResolvedValue([]) }),
+    });
 
     photographerModel = jest.fn();
     photographerModel.find = jest.fn().mockReturnValue({

@@ -6,8 +6,8 @@ import {
   PhotographerSchema,
   StateSchema,
   DistrictSchema,
-  CampaignInviteSchema,
 } from "../database/schemas/profile.schemas";
+import { CampaignInviteSchema } from "../database/schemas/campaign-invite.schema";
 import { CloudinaryService } from "../cloudinary.service";
 import { UsageCounterSchema } from "../database/schemas/usage-counter.schema";
 import { ProfileFlagSchema } from "../database/schemas/profile-flag.schema";
