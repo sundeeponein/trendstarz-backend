@@ -1,6 +1,6 @@
 import { Types } from "mongoose";
 import { runIntegrityChecks, REQUIRED_INDEXES } from "./integrity-checks";
-import { warningSignature } from "./data-integrity.service";
+import { DataIntegrityService, warningSignature } from "./data-integrity.service";
 import { ACTIVE_INVITE_STATUSES } from "../campaigns/reinvite-rule.util";
 import {
   DB_TEST_TIMEOUT_MS,
@@ -81,6 +81,36 @@ describe("data integrity checks (real MongoDB)", () => {
     expect(c.unexplained_premium.samples[0]).toContain(String(premium.insertedId));
     expect(c.unpaid_unlocks.count).toBe(1);
     expect(c.shared_emails.samples[0]).toContain("free@x.com");
+  });
+
+  it("an admin can explain a flagged record: it stops counting, the record is untouched", async () => {
+    const inv = new Types.ObjectId();
+    await db.collection("campaigninvites").insertOne({
+      _id: inv, campaignId: new Types.ObjectId().toHexString(), brandId: new Types.ObjectId().toHexString(),
+      influencerId: new Types.ObjectId(), status: "completed", unlocked: true, unlockType: "paid_collab_payment",
+    });
+    const service = new DataIntegrityService(tdb.conn as any);
+    await service.onModuleInit();
+
+    await expect(
+      service.explain({ check: "unpaid_unlocks", ref: String(inv), reason: "ok" }, "admin1"),
+    ).rejects.toThrow(/at least 10/);
+    await expect(
+      service.explain({ check: "negative_money", ref: String(inv), reason: "settled outside the app" }, "admin1"),
+    ).rejects.toThrow(/can't be explained/);
+    await expect(
+      service.explain({ check: "unpaid_unlocks", ref: new Types.ObjectId().toHexString(), reason: "settled outside the app" }, "admin1"),
+    ).rejects.toThrow(/isn't flagged/);
+
+    const run = await service.explain(
+      { check: "unpaid_unlocks", ref: String(inv), reason: "Paid outside the app during early testing, June 2026" },
+      "admin1",
+    );
+    const c = run.checks.find((x) => x.key === "unpaid_unlocks")!;
+    expect(c).toMatchObject({ status: "ok", count: 0, explained: 1 });
+    expect((await db.collection("campaigninvites").findOne({ _id: inv })).unlocked).toBe(true);
+    const [note] = await service.explanations();
+    expect(note).toMatchObject({ check: "unpaid_unlocks", ref: String(inv), by: "admin1" });
   });
 
   it("the alert fingerprint changes only when what's wrong changes", () => {

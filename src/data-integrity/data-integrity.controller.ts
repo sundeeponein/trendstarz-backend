@@ -1,4 +1,4 @@
-import { Controller, Get, Post, UseGuards } from "@nestjs/common";
+import { Body, Controller, Get, Post, Req, UseGuards } from "@nestjs/common";
 import { JwtAuthGuard } from "../auth/jwt-auth.guard";
 import { RolesGuard } from "../auth/roles.guard";
 import { DataIntegrityService } from "./data-integrity.service";
@@ -17,5 +17,19 @@ export class DataIntegrityController {
   @Post("run")
   runNow() {
     return this.service.run("admin");
+  }
+
+  /** Mark one flagged record as explained (body: { check, ref, reason }). */
+  @Post("explain")
+  explain(
+    @Req() req: any,
+    @Body() body: { check?: string; ref?: string; reason?: string },
+  ) {
+    return this.service.explain(body, String(req.user?.userId || ""));
+  }
+
+  @Get("explanations")
+  explanations() {
+    return this.service.explanations();
   }
 }

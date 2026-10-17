@@ -17,6 +17,37 @@ export interface IntegrityCheck {
   /** What a non-zero count means and what to do. */
   help: string;
   samples: string[];
+  /** Explainable checks: one stable reference per sample (same order), for "Mark as explained". */
+  refs?: string[];
+  /** How many matching records an admin already explained (not counted above). */
+  explained?: number;
+}
+
+/** "<check>:<ref>" keys an admin marked as explained (collection data_integrity_explanations). */
+export type ExplainedSet = Set<string>;
+export const EXPLANATIONS = "data_integrity_explanations";
+
+export async function loadExplained(db: Db): Promise<ExplainedSet> {
+  const rows = await db
+    .collection(EXPLANATIONS)
+    .find({}, { projection: { check: 1, ref: 1 } })
+    .toArray();
+  return new Set(rows.map((r: any) => `${r.check}:${r.ref}`));
+}
+
+/** Builds an explainable check from its matching records, leaving out explained ones. */
+function explainableCheck(
+  key: string,
+  label: string,
+  help: string,
+  found: Array<{ ref: string; text: string }>,
+  explained: ExplainedSet,
+): IntegrityCheck {
+  const open = found.filter((f) => !explained.has(`${key}:${f.ref}`));
+  const result = check(key, label, open.length, help, open.map((f) => f.text));
+  result.refs = open.slice(0, SAMPLE_LIMIT).map((f) => f.ref);
+  result.explained = found.length - open.length;
+  return result;
 }
 
 const SAMPLE_LIMIT = 5;
@@ -217,8 +248,11 @@ async function slotRacePairs(db: Db): Promise<IntegrityCheck> {
   );
 }
 
-async function unexplainedPremium(db: Db): Promise<IntegrityCheck> {
-  const samples: string[] = [];
+async function unexplainedPremium(
+  db: Db,
+  explained: ExplainedSet,
+): Promise<IntegrityCheck> {
+  const found: Array<{ ref: string; text: string }> = [];
   for (const col of ["influencers", "brands", "photographers"]) {
     const users = await db
       .collection(col)
@@ -229,19 +263,25 @@ async function unexplainedPremium(db: Db): Promise<IntegrityCheck> {
         userId: u._id,
         $or: [{ status: "approved" }, { paymentStatus: "captured" }],
       });
-      if (!paid) samples.push(`${col}:${u._id} ${u.email || ""}`.trim());
+      if (!paid) {
+        const ref = `${col}:${u._id}`;
+        found.push({ ref, text: `${ref} ${u.email || ""}`.trim() });
+      }
     }
   }
-  return check(
+  return explainableCheck(
     "unexplained_premium",
     "Every Premium account has a payment or an admin grant",
-    samples.length,
     "Premium without an approved payment and not marked as an admin grant. Check the account; if you granted it, set premiumSource to \"admin\".",
-    samples,
+    found,
+    explained,
   );
 }
 
-async function unlockedWithoutPayment(db: Db): Promise<IntegrityCheck> {
+async function unlockedWithoutPayment(
+  db: Db,
+  explained: ExplainedSet,
+): Promise<IntegrityCheck> {
   const invites = await db
     .collection("campaigninvites")
     .find(
@@ -249,20 +289,20 @@ async function unlockedWithoutPayment(db: Db): Promise<IntegrityCheck> {
       { projection: { _id: 1 } },
     )
     .toArray();
-  const samples: string[] = [];
+  const found: Array<{ ref: string; text: string }> = [];
   for (const inv of invites) {
     const verified = await db.collection("campaigntransactions").countDocuments({
       inviteId: inv._id,
       collectionStatus: "verified",
     });
-    if (!verified) samples.push(String(inv._id));
+    if (!verified) found.push({ ref: String(inv._id), text: String(inv._id) });
   }
-  return check(
+  return explainableCheck(
     "unpaid_unlocks",
     "Paid-collab contact unlocks have a verified payment",
-    samples.length,
-    "A creator's contact was unlocked as paid without any verified payment. Check the campaign (test data is a common cause).",
-    samples,
+    "A creator's contact was unlocked as paid without any verified payment. Check the campaign (test data is a common cause). If it was settled outside the app, mark it as explained.",
+    found,
+    explained,
   );
 }
 
@@ -294,6 +334,7 @@ async function sharedEmails(db: Db): Promise<IntegrityCheck> {
 }
 
 export async function runIntegrityChecks(db: Db): Promise<IntegrityCheck[]> {
+  const explained = await loadExplained(db);
   return Promise.all([
     idTypes(db),
     requiredIndexes(db),
@@ -301,8 +342,8 @@ export async function runIntegrityChecks(db: Db): Promise<IntegrityCheck[]> {
     negativeMoney(db),
     paymentsMissingPaise(db),
     slotRacePairs(db),
-    unexplainedPremium(db),
-    unlockedWithoutPayment(db),
+    unexplainedPremium(db, explained),
+    unlockedWithoutPayment(db, explained),
     sharedEmails(db),
   ]);
 }
