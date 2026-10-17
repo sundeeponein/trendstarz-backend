@@ -332,7 +332,7 @@ export const InfluencerSchema = new Schema(
           {
             name: { type: String },
             enabled: { type: Boolean, default: false },
-            price: { type: Number, default: 0 },
+            price: { type: Number, min: 0, default: 0 },
             // 3D-1d: server-set when the creator last set this rate (new row,
             // price or on/off changed). Null = never confirmed since tracking began.
             priceConfirmedAt: { type: Date, default: null },
@@ -419,7 +419,7 @@ export const InfluencerSchema = new Schema(
       lastImpressionAt: { type: Date, default: null },
       lastClickAt: { type: Date, default: null },
     },
-    promotionalPrice: { type: Number },
+    promotionalPrice: { type: Number, min: 0 },
     website: { type: String },
     // Payout details (where admin sends earned money)
     payout: {
@@ -533,7 +533,7 @@ export const BrandSchema = new Schema(
           {
             name: { type: String },
             enabled: { type: Boolean, default: false },
-            price: { type: Number, default: 0 },
+            price: { type: Number, min: 0, default: 0 },
             // 3D-1d: server-set when the creator last set this rate (new row,
             // price or on/off changed). Null = never confirmed since tracking began.
             priceConfirmedAt: { type: Date, default: null },
@@ -693,7 +693,7 @@ export const BrandSchema = new Schema(
       lastImpressionAt: { type: Date, default: null },
       lastClickAt: { type: Date, default: null },
     },
-    promotionalPrice: { type: Number },
+    promotionalPrice: { type: Number, min: 0 },
     verifiedByTrendStarz: { type: Boolean, default: false },
     // Set once when an admin approves the profile (action: "approve"/"approve_warning").
     // Lets "recently approved" queries sort/filter at the DB level instead of
@@ -833,7 +833,7 @@ export const PhotographerSchema = new Schema(
       {
         name: { type: String }, // e.g. "Starting Price", "Per Reel", "Per Shoot", "Hourly", "Equipment"
         enabled: { type: Boolean, default: false },
-        price: { type: Number, default: 0 },
+        price: { type: Number, min: 0, default: 0 },
       },
     ],
     // Equipment chips: e.g. "Sony", "Canon", "DJI", "iPhone Creator"
@@ -1384,7 +1384,7 @@ export const CampaignSchema = new Schema(
         count: { type: Number, required: true, min: 1 },
         // Compensation override per slot (paise). Optional — falls back to
         // campaign-level `pricePerInfluencer` when not set.
-        comp: { type: Number, default: null },
+        comp: { type: Number, min: 0, default: null },
         // Free-text role notes (e.g. "fashion creator", "reel specialist").
         notes: { type: String, default: "" },
       },
@@ -1436,13 +1436,13 @@ export const CampaignSchema = new Schema(
     adminOverrideReason: { type: String, default: "" },
     adminOverrideBy: { type: String, default: "" },
     adminOverrideAt: { type: Date, default: null },
-    budgetMin: { type: Number },
-    budgetMax: { type: Number },
-    pricePerInfluencer: { type: Number }, // paise
+    budgetMin: { type: Number, min: 0 },
+    budgetMax: { type: Number, min: 0 },
+    pricePerInfluencer: { type: Number, min: 0 }, // paise
     maxInfluencers: { type: Number },
     minInfluencers: { type: Number },
     acceptanceDeadline: { type: Date },
-    estimatedBudget: { type: Number }, // paise
+    estimatedBudget: { type: Number, min: 0 }, // paise
     timelineStart: { type: Date },
     timelineEnd: { type: Date },
     startDate: { type: Date },
@@ -1461,7 +1461,7 @@ export const CampaignSchema = new Schema(
           {
             name: { type: String },
             enabled: { type: Boolean, default: false },
-            price: { type: Number, default: 0 },
+            price: { type: Number, min: 0, default: 0 },
             // 3D-1d: server-set when the creator last set this rate (new row,
             // price or on/off changed). Null = never confirmed since tracking began.
             priceConfirmedAt: { type: Date, default: null },
@@ -1494,10 +1494,10 @@ export const CampaignSchema = new Schema(
     venueDistrict: { type: String },
     venueState: { type: String },
     venueGoogleMapUrl: { type: String },
-    productValue: { type: Number },
+    productValue: { type: Number, min: 0 },
     productDescription: { type: String },
     productPaymentMode: { type: String },
-    productPaymentAmount: { type: Number },
+    productPaymentAmount: { type: Number, min: 0 },
     productShippingRequired: { type: Boolean, default: false },
     inviteBenefits: { type: String },
     // pay_to_join specific fields

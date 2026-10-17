@@ -72,7 +72,7 @@ const AiAnalysisSchema = new Schema(
 
 export const CollaborationAuditSchema = new Schema(
   {
-    userId: { type: Schema.Types.Mixed, required: true, index: true },
+    userId: { type: String, required: true, index: true }, // type locked 2026-10-17 to the stored shape (prod gap-check)
     userType: {
       type: String,
       enum: COLLABORATION_AUDIT_USER_TYPES,

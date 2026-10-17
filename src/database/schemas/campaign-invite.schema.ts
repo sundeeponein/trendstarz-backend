@@ -39,9 +39,9 @@ export const CampaignInviteSchema = new Schema({
   // Influencer's chosen content type when accepting
   selectedPlatform: { type: String },
   selectedContentType: { type: String },
-  agreedAmount: { type: Number },
+  agreedAmount: { type: Number, min: 0 },
   // Canonical payout amount for payment calculations (paise).
-  agreedAmountPaise: { type: Number },
+  agreedAmountPaise: { type: Number, min: 0 },
   // Counter-offer requested by recipient during acceptance.
   counterOffer: {
     status: {
@@ -55,10 +55,10 @@ export const CampaignInviteSchema = new Schema({
     },
     selectedPlatform: { type: String },
     selectedContentType: { type: String },
-    offeredAmount: { type: Number },
-    offeredAmountPaise: { type: Number },
-    requestedAmount: { type: Number },
-    requestedAmountPaise: { type: Number },
+    offeredAmount: { type: Number, min: 0 },
+    offeredAmountPaise: { type: Number, min: 0 },
+    requestedAmount: { type: Number, min: 0 },
+    requestedAmountPaise: { type: Number, min: 0 },
     message: { type: String },
     sentAt: { type: Date },
     resolvedAt: { type: Date },
@@ -124,7 +124,7 @@ export const CampaignInviteSchema = new Schema({
   // Why it was withdrawn, as an INVITE_WITHDRAWN_REASONS code (set by expireUnsubmittedInvite).
   withdrawnReasonCode: { type: String },
   // Barter/location: fixed platform fee (paise) owed when the creator accepted; null/0 = none.
-  platformFeeDue: { type: Number, default: null },
+  platformFeeDue: { type: Number, min: 0, default: null },
   // When TrendStarZ verified that fee — the collaboration is confirmed from then on.
   platformFeePaidAt: { type: Date, default: null },
   // Paid collab: payout fee (%) for the creator's plan, locked when they accepted.
@@ -223,7 +223,7 @@ export const CampaignInviteSchema = new Schema({
     decidedBy: { type: String },
     decidedAt: { type: Date },
     decisionNote: { type: String },
-    compensationAmount: { type: Number }, // paise, approved cancellations only
+    compensationAmount: { type: Number, min: 0 }, // paise, approved cancellations only
     pauseDays: { type: Number },
   },
   createdAt: { type: Date, default: Date.now },

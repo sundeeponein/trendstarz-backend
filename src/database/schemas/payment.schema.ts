@@ -14,9 +14,9 @@ export const PaymentSchema = new Schema(
     paymentId: { type: String, index: true },
     // LEGACY unit depends on the gateway: Razorpay rows paise, manual UPI rows rupees.
     // Read amounts through payment/payment-amount.util.ts, never this field directly.
-    amount: { type: Number, required: true },
+    amount: { type: Number, min: 0, required: true },
     // Always paise. Set on every new row; older rows via cron/backfillPaymentAmountPaise.js.
-    amountPaise: { type: Number },
+    amountPaise: { type: Number, min: 0 },
     premiumDuration: { type: String, enum: ['1m', '3m', '1y'], required: true },
     purpose: {
       type: String,
@@ -43,12 +43,12 @@ export const PaymentSchema = new Schema(
     gatewaySignature: { type: String },
     gatewayVerifiedAt: { type: Date },
     feeBreakdown: {
-      baseAmount: { type: Number, default: 0 },
+      baseAmount: { type: Number, min: 0, default: 0 },
       commissionPercent: { type: Number, default: 0 },
-      commissionAmount: { type: Number, default: 0 },
+      commissionAmount: { type: Number, min: 0, default: 0 },
       gstPercent: { type: Number, default: 0 },
-      gstAmount: { type: Number, default: 0 },
-      totalAmount: { type: Number, default: 0 },
+      gstAmount: { type: Number, min: 0, default: 0 },
+      totalAmount: { type: Number, min: 0, default: 0 },
     },
     metadata: { type: Schema.Types.Mixed, default: {} },
     status: {
@@ -61,7 +61,7 @@ export const PaymentSchema = new Schema(
     approvalNotes: { type: String },
     refundedBy: { type: Schema.Types.ObjectId, ref: 'Admin' },
     refundedAt: { type: Date },
-    refundAmount: { type: Number, default: 0 },
+    refundAmount: { type: Number, min: 0, default: 0 },
     refundReason: { type: String },
     createdAt: { type: Date, default: Date.now },
     approvedAt: { type: Date },

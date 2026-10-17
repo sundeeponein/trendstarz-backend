@@ -7,7 +7,7 @@ import { Schema } from "mongoose";
 // webhook firing twice) never produces duplicate rows.
 export const LinkConversionSchema = new Schema({
   trackingLinkId: { type: Schema.Types.ObjectId, ref: "TrackingLink", required: true, index: true },
-  userId: { type: Schema.Types.Mixed, required: true, index: true },
+  userId: { type: String, required: true, index: true }, // type locked 2026-10-17 to the stored shape (prod gap-check)
   userType: { type: String, enum: ["brand", "influencer", "photographer"], required: true },
   conversionType: {
     type: String,

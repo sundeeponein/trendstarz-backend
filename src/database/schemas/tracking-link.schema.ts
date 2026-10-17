@@ -13,7 +13,7 @@ export const TrackingLinkSchema = new Schema({
   // sparse: referral links must omit this field entirely (not set it to null) so multiple
   // referral rows don't collide on the unique index.
   inviteId: { type: String, unique: true, sparse: true, index: true },
-  hostId: { type: Schema.Types.Mixed, required: true, index: true },
+  hostId: { type: String, required: true, index: true },
   hostType: { type: String, enum: ["brand", "influencer", "photographer"], required: true },
   recipientId: { type: String, index: true },
   recipientType: { type: String, enum: ["influencer", "photographer", "brand"] },

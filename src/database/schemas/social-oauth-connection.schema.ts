@@ -9,7 +9,7 @@ export const SOCIAL_OAUTH_PLATFORMS = ["instagram", "facebook"] as const;
 // meta-oauth.service.ts).
 export const SocialOAuthConnectionSchema = new Schema(
   {
-    userId: { type: Schema.Types.Mixed, required: true, index: true },
+    userId: { type: String, required: true, index: true }, // type locked 2026-10-17 to the stored shape (prod gap-check)
     userType: {
       type: String,
       enum: ["Influencer", "Brand", "Photographer"],

@@ -28,7 +28,7 @@ const SyncPlatformStatusSchema = new Schema(
 
 export const CollaborationSyncStatusSchema = new Schema(
   {
-    userId: { type: Schema.Types.Mixed, required: true },
+    userId: { type: String, required: true }, // type locked 2026-10-17 to the stored shape (prod gap-check)
     platforms: { type: Map, of: SyncPlatformStatusSchema, default: () => ({}) },
   },
   { collection: "collaboration_sync_status", timestamps: true },

@@ -39,15 +39,15 @@ export const CampaignTransactionSchema = new Schema(
     // platform_fee rows: the invite the fee confirms. Their inviteId is a placeholder
     // id (never the real invite), so payout/refund/dispute code that looks transactions
     // up by inviteId can never pick up a fee.
-    feeInviteId: { type: Schema.Types.Mixed, default: null, index: true },
+    feeInviteId: { type: Schema.Types.ObjectId, default: null, index: true },
     // Fee refunded to the host as TrendStarZ credit (creator no-show, admin-approved).
     feeCreditedAt: { type: Date, default: null },
     // platform_fee rows: GST charged on this row's fee (paise), included in payerTotal.
-    gstAmount: { type: Number, default: 0 },
+    gstAmount: { type: Number, min: 0, default: 0 },
     // Razorpay: every order created for this row (a retry replaces paymentBatchId, so an
     // earlier order that still gets paid can be matched), and the order's amount (paise).
     gatewayOrderIds: { type: [String], default: undefined },
-    gatewayOrderAmount: { type: Number, default: null },
+    gatewayOrderAmount: { type: Number, min: 0, default: null },
     payerId: { type: String, required: true, index: true },
     payerRole: {
       type: String,
@@ -60,11 +60,11 @@ export const CampaignTransactionSchema = new Schema(
       enum: ["influencer", "brand", "photographer"],
       required: true,
     },
-    agreedAmount: { type: Number, required: true },
-    platformFee: { type: Number, required: true },
-    payerTotal: { type: Number, required: true },
-    recipientFee: { type: Number, default: 0 },
-    recipientPayout: { type: Number, required: true },
+    agreedAmount: { type: Number, min: 0, required: true },
+    platformFee: { type: Number, min: 0, required: true },
+    payerTotal: { type: Number, min: 0, required: true },
+    recipientFee: { type: Number, min: 0, default: 0 },
+    recipientPayout: { type: Number, min: 0, required: true },
 
     // ── Payment gateway (swap field value to switch provider; no schema change needed) ──
     // MVP: manual_upi. Future: razorpay (auto-capture + escrow).
@@ -135,14 +135,14 @@ export const CampaignTransactionSchema = new Schema(
     disputeIssueReason: { type: String },
     disputeReason: { type: String },
     disputeEvidenceUrl: { type: String },
-    disputedBy: { type: Schema.Types.Mixed }, // userId of whoever raised dispute
+    disputedBy: { type: String }, // userId of whoever raised dispute
     disputedByRole: { type: String }, // 'brand' | 'influencer' | 'photographer' | 'admin'
     disputedAt: { type: Date },
     resolveOutcome: {
       type: String,
       enum: ["release_to_influencer", "refund_to_brand"],
     },
-    resolvedBy: { type: Schema.Types.Mixed }, // admin userId
+    resolvedBy: { type: String }, // admin userId
     resolvedAt: { type: Date },
 
     // ── Refund to payer (manual UPI; see payments-payouts/campaign-refund.util.ts) ──
@@ -156,14 +156,14 @@ export const CampaignTransactionSchema = new Schema(
     refundOnHoldAt: { type: Date },
     refundHoldUntil: { type: Date, index: true },
     refundOwedAt: { type: Date },
-    refundOwedBy: { type: Schema.Types.Mixed },
+    refundOwedBy: { type: String },
     refundOwedReason: { type: String },
     refundCancelledAt: { type: Date },
-    refundAmount: { type: Number }, // paise actually sent back
+    refundAmount: { type: Number, min: 0 }, // paise actually sent back
     refundUtr: { type: String },
     refundTransferDate: { type: Date }, // when the UPI transfer was made (admin-entered)
     refundSentAt: { type: Date }, // when admin recorded it
-    refundSentBy: { type: Schema.Types.Mixed }, // admin userId
+    refundSentBy: { type: String }, // admin userId
     refundNote: { type: String },
     // Append-only audit trail of every refund / late-post / settlement decision.
     refundHistory: { type: [Schema.Types.Mixed], default: undefined },
@@ -176,23 +176,23 @@ export const CampaignTransactionSchema = new Schema(
       originalDeadline: { type: Date },
       status: { type: String, enum: ["pending", "approved", "rejected"] },
       reviewedAt: { type: Date },
-      reviewedBy: { type: Schema.Types.Mixed },
+      reviewedBy: { type: String },
       reviewNote: { type: String },
     },
 
     // Refund policy fixed at payment time: "full_refund" (before terms v2) or "fee_credit"
     // (terms v2: creator amount back by UPI, platform fee back as TrendStarZ credit).
     refundPolicy: { type: String, enum: ["full_refund", "fee_credit"] },
-    creditApplied: { type: Number, default: 0 }, // paise of credit that paid this fee
+    creditApplied: { type: Number, min: 0, default: 0 }, // paise of credit that paid this fee
     feeCredit: {
       status: {
         type: String,
         enum: ["needs_review", "issued", "withheld", "reversed"],
       },
-      amount: { type: Number },
+      amount: { type: Number, min: 0 },
       issuedAt: { type: Date },
       ledgerEntryId: { type: String },
-      reviewedBy: { type: Schema.Types.Mixed },
+      reviewedBy: { type: String },
       reviewedAt: { type: Date },
       note: { type: String },
     },
@@ -200,8 +200,8 @@ export const CampaignTransactionSchema = new Schema(
     noPostClosure: { type: Boolean },
     // Admin-approved cancellation after work started: part of the money goes to the creator.
     compensation: {
-      amount: { type: Number }, // paise paid to the creator
-      decidedBy: { type: Schema.Types.Mixed },
+      amount: { type: Number, min: 0 }, // paise paid to the creator
+      decidedBy: { type: String },
       decidedAt: { type: Date },
       note: { type: String },
     },
@@ -217,15 +217,15 @@ export const CampaignTransactionSchema = new Schema(
           "exception_approved",
         ],
       },
-      amount: { type: Number }, // paise the host is asked to repay
+      amount: { type: Number, min: 0 }, // paise the host is asked to repay
       reason: { type: String },
       openedAt: { type: Date },
-      openedBy: { type: Schema.Types.Mixed },
+      openedBy: { type: String },
       hostRepaymentUtr: { type: String },
-      hostRepaidAmount: { type: Number },
+      hostRepaidAmount: { type: Number, min: 0 },
       hostRepaidAt: { type: Date },
       closedAt: { type: Date },
-      closedBy: { type: Schema.Types.Mixed },
+      closedBy: { type: String },
       exceptionReason: { type: String },
     },
 

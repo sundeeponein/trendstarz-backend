@@ -57,7 +57,7 @@ export const PROFILE_FLAG_CODES = [
 
 export const ProfileFlagSchema = new Schema(
   {
-    userId: { type: Schema.Types.Mixed, required: true, index: true },
+    userId: { type: String, required: true, index: true }, // type locked 2026-10-17 to the stored shape (prod gap-check)
     userType: {
       type: String,
       enum: ["Influencer", "Brand", "Photographer", "User"],

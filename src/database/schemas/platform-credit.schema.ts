@@ -21,8 +21,8 @@ export const PlatformCreditSchema = new Schema(
       required: true,
       index: true,
     },
-    amount: { type: Number, required: true }, // paise, always positive
-    remaining: { type: Number }, // issued lots only
+    amount: { type: Number, min: 0, required: true }, // paise, always positive
+    remaining: { type: Number, min: 0 }, // issued lots only
     expiresAt: { type: Date, index: true }, // issued lots only
     lotId: { type: Schema.Types.ObjectId }, // used / restored / expired / reversed
     transactionId: { type: String, index: true },
