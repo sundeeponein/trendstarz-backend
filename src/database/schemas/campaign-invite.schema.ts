@@ -1,13 +1,15 @@
 import { Schema } from "mongoose";
 
 export const CampaignInviteSchema = new Schema({
-  campaignId: { type: Schema.Types.Mixed, ref: "Campaign", required: true },
+  // Type locked 2026-10-17 to what every stored row already holds (cron/auditIdTypes.js).
+  // campaignId/brandId are 24-hex strings; influencerId is an ObjectId.
+  campaignId: { type: String, ref: "Campaign", required: true },
   influencerId: {
     type: Schema.Types.ObjectId,
     ref: "Influencer",
     required: true,
   },
-  brandId: { type: Schema.Types.Mixed, ref: "Brand", required: true }, // Allow ObjectId or string
+  brandId: { type: String, ref: "Brand", required: true }, // campaign owner (brand or photographer)
   status: {
     type: String,
     enum: [

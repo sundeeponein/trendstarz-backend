@@ -2,7 +2,8 @@ import { Schema, Document } from "mongoose";
 
 export const CampaignSubmissionSchema = new Schema(
   {
-    campaignId: { type: Schema.Types.Mixed, ref: "Campaign", required: true },
+    // Type locked 2026-10-17 to what every stored row already holds (cron/auditIdTypes.js).
+    campaignId: { type: String, ref: "Campaign", required: true },
     influencerId: {
       type: Schema.Types.ObjectId,
       ref: "Influencer",

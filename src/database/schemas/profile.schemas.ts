@@ -1299,8 +1299,9 @@ export const SocialMediaModel = model("SocialMedia", SocialMediaSchema);
 // Campaign schema
 export const CampaignSchema = new Schema(
   {
+    // Owner id as a 24-hex string (brand or photographer). Type locked 2026-10-17 to what every stored row already holds (cron/auditIdTypes.js).
     brandId: {
-      type: Schema.Types.Mixed, // Allow ObjectId or string
+      type: String,
       ref: "Brand",
       required: true,
       index: true,

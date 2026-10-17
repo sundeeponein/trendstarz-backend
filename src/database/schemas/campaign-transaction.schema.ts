@@ -22,14 +22,16 @@ export const CampaignTransactionSchema = new Schema(
       ],
       required: true,
     },
+    // Type locked 2026-10-17 to what every stored row already holds (cron/auditIdTypes.js).
+    // campaignId/payerId/recipientId are 24-hex strings; inviteId is an ObjectId.
     campaignId: {
-      type: Schema.Types.Mixed,
+      type: String,
       ref: "Campaign",
       required: true,
       index: true,
     },
     inviteId: {
-      type: Schema.Types.Mixed,
+      type: Schema.Types.ObjectId,
       ref: "CampaignInvite",
       required: true,
       index: true,
@@ -46,13 +48,13 @@ export const CampaignTransactionSchema = new Schema(
     // earlier order that still gets paid can be matched), and the order's amount (paise).
     gatewayOrderIds: { type: [String], default: undefined },
     gatewayOrderAmount: { type: Number, default: null },
-    payerId: { type: Schema.Types.Mixed, required: true, index: true },
+    payerId: { type: String, required: true, index: true },
     payerRole: {
       type: String,
       enum: ["brand", "influencer", "photographer"],
       required: true,
     },
-    recipientId: { type: Schema.Types.Mixed, required: true, index: true },
+    recipientId: { type: String, required: true, index: true },
     recipientRole: {
       type: String,
       enum: ["influencer", "brand", "photographer"],

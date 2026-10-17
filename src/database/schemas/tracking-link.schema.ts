@@ -8,13 +8,14 @@ export const TrackingLinkSchema = new Schema({
   code: { type: String, required: true, unique: true, index: true },
   // Absent for referral links (moduleType "referral") — those aren't tied to a campaign/invite/recipient
   // until (and unless) someone signs up through them.
-  campaignId: { type: Schema.Types.Mixed, index: true },
+  // campaignId/inviteId/recipientId: 24-hex strings when set (type locked 2026-10-17, cron/auditIdTypes.js).
+  campaignId: { type: String, index: true },
   // sparse: referral links must omit this field entirely (not set it to null) so multiple
   // referral rows don't collide on the unique index.
-  inviteId: { type: Schema.Types.Mixed, unique: true, sparse: true, index: true },
+  inviteId: { type: String, unique: true, sparse: true, index: true },
   hostId: { type: Schema.Types.Mixed, required: true, index: true },
   hostType: { type: String, enum: ["brand", "influencer", "photographer"], required: true },
-  recipientId: { type: Schema.Types.Mixed, index: true },
+  recipientId: { type: String, index: true },
   recipientType: { type: String, enum: ["influencer", "photographer", "brand"] },
   // Free-text, not enum — new social platforms/content types shouldn't need a schema change.
   platform: { type: String, default: "" },
