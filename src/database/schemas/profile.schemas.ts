@@ -1124,6 +1124,11 @@ export const AppSettingsSchema = new Schema({
   pendingUserAutoDeleteLastRunAt: { type: Date, default: null },
   pendingUserAutoDeleteLastRunCount: { type: Number, default: 0 },
   pendingUserAutoDeleteLastRunBy: { type: String, default: "" },
+  // Last "sync email verification from Firebase" run (shown on admin Settings).
+  firebaseEmailSyncLastRunAt: { type: Date, default: null },
+  firebaseEmailSyncLastRunCount: { type: Number, default: 0 },
+  firebaseEmailSyncLastRunBy: { type: String, default: "" },
+  firebaseEmailSyncLastRunCounts: { type: Schema.Types.Mixed, default: null },
   // Cleans up orphaned Cloudinary uploads left in `_pending/*` folders when a
   // registration attempt uploads a photo/doc but never completes (abandoned
   // tab, failed validation) — those assets never get relocated to a real

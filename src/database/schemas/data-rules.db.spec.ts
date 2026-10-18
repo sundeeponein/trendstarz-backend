@@ -185,6 +185,18 @@ describe("data rules (real MongoDB)", () => {
     });
   });
 
+  describe("invite fields that used to be dropped", () => {
+    it("stores the creator's shipping address and the recipient role", async () => {
+      const inv: any = await Invite.create({ campaignId: "c-ship", brandId: "b", influencerId: new Types.ObjectId(), status: "pending", recipientRole: "photographer" });
+      inv.status = "accepted";
+      inv.shippingAddress = { contactName: "Asha", line1: "12 MG Road", city: "Hyderabad", pincode: "500001", capturedAt: new Date() };
+      await inv.save();
+      const raw: any = await db.conn.collection("campaigninvites").findOne({ _id: inv._id });
+      expect(raw.recipientRole).toBe("photographer");
+      expect(raw.shippingAddress).toMatchObject({ line1: "12 MG Road", pincode: "500001" });
+    });
+  });
+
   describe("answering an invite", () => {
     // The real guard from CampaignInvitesService (it doesn't use `this` state).
     const saveIfUnchanged = (doc: any, readState: Record<string, unknown>) =>

@@ -226,6 +226,24 @@ export const CampaignInviteSchema = new Schema({
     compensationAmount: { type: Number, min: 0 }, // paise, approved cancellations only
     pauseDays: { type: Number },
   },
+  // Influencer or photographer invite. Added 2026-10-18 — before that it was
+  // written by the code but silently dropped (not in the schema), so older rows
+  // have none (read as "influencer"; cron/backfillInviteRecipientRole.js fills it).
+  // No default on purpose: a default would mislabel old photographer invites.
+  recipientRole: { type: String, enum: ["influencer", "photographer"] },
+  // Product collab: where the host ships the product, given by the creator when
+  // accepting. Added 2026-10-18 — before that it was silently dropped on save.
+  shippingAddress: {
+    contactName: { type: String },
+    contactMobile: { type: String },
+    line1: { type: String },
+    line2: { type: String },
+    city: { type: String },
+    state: { type: String },
+    pincode: { type: String },
+    landmark: { type: String },
+    capturedAt: { type: Date },
+  },
   createdAt: { type: Date, default: Date.now },
   updatedAt: { type: Date, default: Date.now },
 });

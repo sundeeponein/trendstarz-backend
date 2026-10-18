@@ -50,6 +50,7 @@ import {
 } from "../utils/profile-eligibility.util";
 import { takenAccountFields } from "../utils/account-uniqueness.util";
 import { SingleInstance } from "../utils/single-instance";
+import { idIn } from "../utils/id-match.util";
 
 /** Self-service "Delete Account" grace period — see requestSelfDeletion. */
 export const SELF_DELETION_GRACE_PERIOD_DAYS =
@@ -705,6 +706,38 @@ export class UsersService implements OnModuleInit {
     } catch (err) {
       console.error(`[CLEANUP][ERROR] Failed to remove SocialOAuthConnection docs for ${userId}:`, err);
     }
+    await this.removePersonalTraces(userId);
+  }
+
+  /**
+   * Personal data about a deleted account kept OUTSIDE its profile: their
+   * notifications, push/notification settings, and the shipping address
+   * (name, phone, home address) they gave on product collaborations. The
+   * invites themselves stay (campaign and payment history), minus the address.
+   * Financial records (payments, campaign transactions) are kept for accounting.
+   */
+  private async removePersonalTraces(userId: string): Promise<void> {
+    const id = String(userId);
+    const conn: any = this.influencerModel.db;
+    const collection = (model: string, fallback: string) =>
+      conn.models?.[model]?.collection ?? conn.collection(fallback);
+    const steps: Array<[string, () => Promise<unknown>]> = [
+      ["notifications", () => collection("Notification", "notifications").deleteMany({ userId: id })],
+      ["push subscriptions", () => collection("PushSubscription", "pushsubscriptions").deleteMany({ userId: id })],
+      ["notification preferences", () => collection("NotificationPreference", "notificationpreferences").deleteMany({ userId: id })],
+      ["shipping addresses", () =>
+        this.campaignInviteModel.updateMany(
+          { influencerId: idIn(id), shippingAddress: { $exists: true } },
+          { $unset: { shippingAddress: "" } },
+        )],
+    ];
+    for (const [what, run] of steps) {
+      try {
+        await run();
+      } catch (err) {
+        console.error(`[CLEANUP][ERROR] Failed to remove ${what} for ${id}:`, err);
+      }
+    }
   }
 
   async deletePermanently(id: string) {
@@ -954,17 +987,15 @@ export class UsersService implements OnModuleInit {
       errors.push({ type: "firebase", error: err });
     }
 
+    // Collect media first, but remove it only AFTER the anonymized profile is
+    // saved — a failed save must never leave a live account without its images.
     const publicIds = this.extractMediaPublicIds(user);
-    await this.removeStoredMedia(publicIds);
+    const verificationDocs = user.verificationDocuments;
     this.clearUserMediaFields(user);
-    await this.deleteVerificationDocuments(
-      user.verificationDocuments,
-      errors,
-      `${userType.toLowerCase()}Verification`,
-    );
 
     user.email = `deleted-${user._id}@trendstarz.invalid`;
-    user.phoneNumber = "";
+    // phoneNumber is required on every profile schema: a placeholder, never "".
+    user.phoneNumber = "deleted";
     user.password = randomUUID() + randomUUID();
     user.name = userType === "Brand" ? undefined : "Deleted User";
     user.brandName = userType === "Brand" ? "Deleted Brand" : user.brandName;
@@ -974,11 +1005,43 @@ export class UsersService implements OnModuleInit {
     user.verificationDocuments = [];
     user.website = "";
     user.googleMapAddress = "";
+    // Everything else that identifies the person (2026-10-18: these used to survive).
+    const placeholder = `deleted-${user._id}`;
+    if (userType === "Influencer") user.username = placeholder; // unique + required
+    if (userType === "Photographer") user.username = "";
+    if (userType === "Brand") {
+      user.brandUsername = placeholder;
+      user.description = "";
+    }
+    user.payout = { upiId: "", mobile: "", accountHolderName: "", lastConfirmedAt: null };
+    user.dateOfBirth = null;
+    user.gender = "";
+    user.expertiseArea = "";
+    user.previousVerifiedEmail = "";
+    user.previousVerifiedMobile = "";
+    user.signupAttribution = undefined;
+    user.firebaseUid = null;
+    user.socialMediaEditLog = [];
+    user.adminSocialNotifications = [];
+    user.communityName = "";
+    user.declineReason = "";
+    user.profileModerationNotes = "";
+    user.verificationAdminNotes = "";
+    user.mobileCallbackRequestedAt = null;
     user.status = "deleted";
     user.isDeleted = true;
     user.anonymized = true;
 
     await user.save();
+    await this.removeStoredMedia(publicIds);
+    await this.deleteVerificationDocuments(
+      verificationDocs,
+      errors,
+      `${userType.toLowerCase()}Verification`,
+    );
+    // Outside the profile: notifications, push settings, shipping addresses,
+    // OAuth tokens, score audits (financial records are archived, not deleted).
+    await this.cleanupCollaborationScoreData(String(user._id));
 
     if (errors.length > 0) {
       console.error(

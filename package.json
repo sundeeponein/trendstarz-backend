@@ -44,7 +44,9 @@
     "audit:unique-constraints": "node cron/uniqueConstraints.js",
     "apply:unique-constraints": "node cron/uniqueConstraints.js --apply",
     "backfill:payment-amount-paise": "node cron/backfillPaymentAmountPaise.js",
-    "backfill:payment-amount-paise:apply": "node cron/backfillPaymentAmountPaise.js --apply"
+    "backfill:payment-amount-paise:apply": "node cron/backfillPaymentAmountPaise.js --apply",
+    "backfill:invite-recipient-role": "node cron/backfillInviteRecipientRole.js",
+    "backfill:invite-recipient-role:apply": "node cron/backfillInviteRecipientRole.js --apply"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.115.0",

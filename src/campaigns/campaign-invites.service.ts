@@ -406,11 +406,12 @@ export class CampaignInvitesService {
           { recipientRole: "photographer" },
         ]
       : [
+          // Missing = an influencer invite from before recipientRole was stored.
+          // (Not "has an influencerId": every invite has one — photographers too.)
           { recipientRole: "influencer" },
           { recipientRole: { $exists: false } },
           { recipientRole: null },
           { recipientRole: "" },
-          { influencerId: { $exists: true, $ne: null } },
         ];
   }
 
@@ -719,6 +720,17 @@ export class CampaignInvitesService {
     }
     delete out.missExcused;
     delete out.slotRestored;
+    // The creator's home address: the host gets it only once the collaboration is
+    // confirmed (platform fee paid / contact unlocked), and loses it with the rest
+    // of the contact details after the post-close window.
+    if (
+      side === "host" &&
+      out.shippingAddress &&
+      (!(out.unlocked || out.platformFeePaidAt) ||
+        CampaignInvitesService.contactExpired(out))
+    ) {
+      delete out.shippingAddress;
+    }
     const report = out.reportedIssue;
     if (report?.category === "offplatform" && report?.reportedByRole !== side) {
       delete out.reportedIssue;
