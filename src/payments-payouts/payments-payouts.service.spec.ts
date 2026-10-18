@@ -409,6 +409,21 @@ describe("PaymentsPayoutsService", () => {
       expect(calc.amountDueUpi).toBe(105900);
     });
 
+    it("an admin raising GST 0→18% and commission 0→5% applies to the very next payment (nothing cached)", async () => {
+      paidCampaign();
+      oneCreator();
+      settings({ platformFeeEnabled: false, brandFeePercent: 0, gstPercent: 0 });
+      const before: any = await service.calculatePayment("camp1", "brand1");
+      expect(before.amountDueRazorpay).toBe(100000); // ₹1,000
+
+      // Admin → Settings saved: commission on, 5%, GST 18%.
+      settings({ platformFeeEnabled: true, brandFeePercent: 5, gstPercent: 18 });
+      const after: any = await service.calculatePayment("camp1", "brand1");
+      expect(after.platformFee).toBe(5000);
+      expect(after.gstAmount).toBe(900);
+      expect(after.amountDueRazorpay).toBe(105900); // ₹1,059
+    });
+
     it("Razorpay order and stored rows match the ₹1,059 total", async () => {
       paidCampaign();
       oneCreator();
