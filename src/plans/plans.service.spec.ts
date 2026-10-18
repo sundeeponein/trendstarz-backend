@@ -78,6 +78,10 @@ describe("PlansService", () => {
     const mockSubscriptionModel: any = {
       findOne: jest.fn().mockReturnValue({
         lean: jest.fn().mockResolvedValue(mockSubscription),
+        // activateSubscription's "current end date" lookup (none running by default)
+        sort: jest.fn().mockReturnValue({
+          select: jest.fn().mockReturnValue({ lean: jest.fn().mockResolvedValue(null) }),
+        }),
       }),
       find: jest.fn().mockReturnValue({
         lean: jest.fn().mockResolvedValue([mockSubscription]),
@@ -228,6 +232,34 @@ describe("PlansService", () => {
           billingCycle: "monthly",
         }),
       );
+    });
+
+    const currentSubEndingAt = (end: Date | null) =>
+      subscriptionModel.findOne.mockReturnValueOnce({
+        sort: jest.fn().mockReturnValue({
+          select: jest.fn().mockReturnValue({
+            lean: jest.fn().mockResolvedValue(end ? { endDate: end } : null),
+          }),
+        }),
+      });
+    const createdEnd = () => new Date(subscriptionModel.create.mock.calls.at(-1)[0].endDate);
+
+    it("a paid renewal while Premium is running extends from the current end (no days lost)", async () => {
+      const currentEnd = new Date(Date.now() + 20 * 86400000); // 20 days left
+      currentSubEndingAt(currentEnd);
+      await service.activateSubscription(VALID_USER_ID, "Influencer", VALID_PLAN_ID, "1m", "payment");
+      const expected = new Date(currentEnd);
+      expected.setMonth(expected.getMonth() + 1);
+      expect(createdEnd().getTime()).toBe(expected.getTime());
+    });
+
+    it("an admin grant keeps its exact length from today (doesn't stack)", async () => {
+      subscriptionModel.findOne.mockClear();
+      const before = Date.now();
+      await service.activateSubscription(VALID_USER_ID, "Influencer", VALID_PLAN_ID, "1m", "admin");
+      const lo = new Date(before); lo.setMonth(lo.getMonth() + 1);
+      expect(createdEnd().getTime()).toBeGreaterThanOrEqual(lo.getTime() - 1000);
+      expect(createdEnd().getTime()).toBeLessThan(lo.getTime() + 5000);
     });
 
     it("should not apply offer bonuses for admin-granted subscriptions", async () => {

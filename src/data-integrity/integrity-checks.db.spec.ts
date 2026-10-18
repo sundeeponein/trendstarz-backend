@@ -99,6 +99,15 @@ describe("data integrity checks (real MongoDB)", () => {
     expect(c.premium_sources_agree.count).toBe(1);
     expect(c.premium_sources_agree.samples[0]).toContain("alice@x.com");
     expect(c.invite_payment_agree.samples[0]).toContain("no payout time");
+
+    // Bonus months lost on the profile: profile ends a month before the subscription.
+    const bob = new Types.ObjectId();
+    const soon = new Date(Date.now() + 5 * 86400000);
+    await db.collection("brands").insertOne({ _id: bob, email: "bob@x.com", isPremium: true, premiumSource: "payment", premiumEnd: soon });
+    await db.collection("subscriptions").insertOne({ userId: bob, userType: "BRAND", status: "active", endDate: new Date(soon.getTime() + 30 * 86400000) });
+    const again = await byKey();
+    expect(again.premium_sources_agree.count).toBe(2);
+    expect(again.premium_sources_agree.samples.join(" ")).toContain("bob@x.com");
   });
 
   it("an admin can explain a flagged record: it stops counting, the record is untouched", async () => {

@@ -47,14 +47,24 @@ export class PaymentService {
     return { success: true, payments };
   }
 
-  async confirmUpgrade(userId: string, premiumDuration: "1m" | "3m" | "1y") {
+  /**
+   * Marks the profile Premium. Pass the subscription's endDate so the profile ends
+   * exactly when the subscription does (bonus/Founder months and early renewals
+   * included); without it the end is today + duration (fallback only).
+   */
+  async confirmUpgrade(
+    userId: string,
+    premiumDuration: "1m" | "3m" | "1y",
+    endDate?: Date | null,
+  ) {
     const update: any = { isPremium: true, premiumDuration, premiumSource: "payment" };
     const now = new Date();
     update.premiumStart = now;
-    const end = new Date(now);
+    let end = new Date(now);
     if (premiumDuration === "1m") end.setMonth(end.getMonth() + 1);
     else if (premiumDuration === "3m") end.setMonth(end.getMonth() + 3);
     else if (premiumDuration === "1y") end.setFullYear(end.getFullYear() + 1);
+    if (endDate && !Number.isNaN(new Date(endDate).getTime())) end = new Date(endDate);
     update.premiumEnd = end;
 
     const influencer = await this.influencerModel.findByIdAndUpdate(
@@ -196,17 +206,18 @@ export class PaymentService {
       };
     }
 
-    // Activate premium for user
-    await this.confirmUpgrade(payment.userId, payment.premiumDuration);
-    await this.recordPremiumConversion(String(payment.userId), paymentAmountPaise(payment), payment._id);
+    // Activate premium: the subscription first, then the profile with the SAME end
+    // date (bonus months and early renewals included).
+    let subscriptionEnd: Date | null = null;
     try {
       const plan = await this.plansService.findProPlanForUserType(payment.userType);
-      await this.plansService.activateSubscription(
+      const sub: any = await this.plansService.activateSubscription(
         String(payment.userId),
         payment.userType,
         String(plan._id),
         payment.premiumDuration,
       );
+      subscriptionEnd = sub?.endDate ?? null;
     } catch (e) {
       // Non-fatal: subscription creation failed but payment is approved
       console.error(
@@ -214,6 +225,8 @@ export class PaymentService {
         e,
       );
     }
+    await this.confirmUpgrade(payment.userId, payment.premiumDuration, subscriptionEnd);
+    await this.recordPremiumConversion(String(payment.userId), paymentAmountPaise(payment), payment._id);
 
     const normalizedUserType = String(payment.userType).toLowerCase();
     const userRole = normalizedUserType === "brand"

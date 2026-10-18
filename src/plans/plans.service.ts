@@ -302,14 +302,31 @@ export class PlansService {
       // fallback: resolve a plan by name/duration mapping
       throw new NotFoundException("Plan not found");
     }
-    // Expire any existing active subscription
+    const now = new Date();
+    // A paid renewal while Premium is still running extends from the current end
+    // date — the user keeps the days they already paid for. Admin grants keep the
+    // exact requested length from today.
+    let base = now;
+    if (source === "payment") {
+      const current: any = await this.subscriptionModel
+        .findOne({
+          userId: new Types.ObjectId(userId),
+          status: "active",
+          endDate: { $gt: now },
+        })
+        .sort({ endDate: -1 })
+        .select("endDate")
+        .lean();
+      if (current?.endDate) base = new Date(current.endDate);
+    }
+
+    // Expire any existing active subscription (replaced by the one below)
     await this.subscriptionModel.updateMany(
       { userId: new Types.ObjectId(userId), status: "active" },
       { status: "expired" },
     );
 
-    const now = new Date();
-    const end = new Date(now);
+    const end = new Date(base);
     if (duration === "1m") end.setMonth(end.getMonth() + 1);
     else if (duration === "3m") end.setMonth(end.getMonth() + 3);
     else if (duration === "1y") end.setFullYear(end.getFullYear() + 1);

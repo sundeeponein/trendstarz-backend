@@ -321,24 +321,35 @@ export class MonetizationService {
       throw new BadRequestException("Invalid payment signature");
     }
 
-    const payment: any = await this.paymentModel.findOne({
+    const orderFilter = {
       orderId: input.orderId,
       userId: toObjectId(input.userId),
       purpose: input.paymentType === "subscription" ? "subscription" : "invite_unlock",
-    });
-    if (!payment) throw new NotFoundException("Payment order not found");
-
-    if (payment.paymentStatus === "captured" && payment.status === "approved") {
-      return { success: true, paymentId: input.paymentId || payment.paymentId };
+    };
+    // Claim the order once: the checkout callback and a page refresh can both
+    // verify the same payment — only the first may activate Premium/unlock.
+    const payment: any = await this.paymentModel
+      .findOneAndUpdate(
+        { ...orderFilter, status: { $ne: "approved" } },
+        {
+          $set: {
+            paymentId: input.paymentId,
+            paymentStatus: "captured",
+            status: "approved",
+            gatewayVerifiedAt: new Date(),
+            gatewaySignature: input.signature,
+            gatewayProvider: "razorpay",
+          },
+        },
+        { new: true },
+      )
+      .lean();
+    if (!payment) {
+      const existing: any = await this.paymentModel.findOne(orderFilter).lean();
+      if (!existing) throw new NotFoundException("Payment order not found");
+      // Already verified (by the other request) — nothing more to do.
+      return { success: true, paymentId: existing.paymentId || input.paymentId };
     }
-
-    payment.paymentId = input.paymentId;
-    payment.paymentStatus = "captured";
-    payment.status = "approved";
-    payment.gatewayVerifiedAt = new Date();
-    payment.gatewaySignature = input.signature;
-    payment.gatewayProvider = "razorpay";
-    await payment.save();
 
     await this.transactionModel.updateMany(
       { orderId: input.orderId },
@@ -394,19 +405,21 @@ export class MonetizationService {
             : "Influencer";
       const premiumDuration =
         billingCycle === "yearly" ? "1y" : billingCycle === "quarterly" ? "3m" : "1m";
+      let subscriptionEnd: Date | null = null;
       if (planId) {
-        await this.plansService.activateSubscription(
+        const sub: any = await this.plansService.activateSubscription(
           input.userId,
           normalizedUserType,
           planId,
           premiumDuration,
           "payment",
         );
+        subscriptionEnd = sub?.endDate ?? null;
       }
-      // Mirror the subscription record onto the user's own profile doc —
-      // isPremium there (not the subscriptions collection) drives the
-      // Pro badge and all visibility gating.
-      await this.paymentService.confirmUpgrade(input.userId, premiumDuration);
+      // Mirror the subscription onto the user's own profile doc — isPremium there
+      // (not the subscriptions collection) drives the Pro badge and visibility
+      // gating — with the subscription's exact end date (bonus months included).
+      await this.paymentService.confirmUpgrade(input.userId, premiumDuration, subscriptionEnd);
       await this.recordPremiumConversion(input.userId, paymentAmountPaise(payment), payment._id);
     }
 

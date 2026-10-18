@@ -326,7 +326,7 @@ async function premiumSourcesAgree(
 ): Promise<IntegrityCheck> {
   const subs = await db
     .collection("subscriptions")
-    .find({ status: "active", endDate: { $gte: now } }, { projection: { userId: 1, userType: 1, endDate: 1 } })
+    .find({ status: "active", endDate: { $gte: now } }, { projection: { userId: 1, userType: 1, endDate: 1, source: 1 } })
     .toArray();
   const found: Array<{ ref: string; text: string }> = [];
   for (const sub of subs as any[]) {
@@ -334,17 +334,28 @@ async function premiumSourcesAgree(
     const user: any = await db
       .collection(col)
       .findOne({ _id: sub.userId }, { projection: { email: 1, isPremium: 1, premiumEnd: 1 } });
+    const subEnd = new Date(sub.endDate);
+    const day = (d: Date) => d.toISOString().slice(0, 10);
     if (!isActivePremium(user, now)) {
       found.push({
         ref: `subscriptions:${sub._id}`,
-        text: `${col}:${sub.userId} ${user?.email || "(no profile)"} — subscription active until ${new Date(sub.endDate).toISOString().slice(0, 10)}, profile not Premium`,
+        text: `${col}:${sub.userId} ${user?.email || "(no profile)"} — subscription active until ${day(subEnd)}, profile not Premium`,
+      });
+    } else if (
+      user?.premiumEnd &&
+      subEnd.getTime() - new Date(user.premiumEnd).getTime() > 24 * 3600 * 1000
+    ) {
+      // Paid bonus months the profile didn't get (fixed 2026-10-18 for new payments).
+      found.push({
+        ref: `subscriptions:${sub._id}`,
+        text: `${col}:${sub.userId} ${user?.email || ""} — profile Premium ends ${day(new Date(user.premiumEnd))}, subscription ${day(subEnd)}`,
       });
     }
   }
   return explainableCheck(
     "premium_sources_agree",
     "Subscriptions and profiles agree on Premium",
-    "An active subscription belongs to a profile that isn't Premium, so plan features stay on while the app shows Free. Use the admin Premium toggle (it ends the subscription too) instead of editing the profile directly.",
+    "The subscription (plan features) and the profile (Pro badge, visibility) disagree: either the profile isn't Premium, or its Premium ends before the subscription (bonus months not carried over). Use the admin Premium toggle, or sync the profile end date to the subscription.",
     found,
     explained,
   );
