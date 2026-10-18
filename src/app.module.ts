@@ -89,6 +89,7 @@ import { AvailabilityModule } from "./availability/availability.module";
 import { PlatformDataQualityModule } from "./platform-data-quality/platform-data-quality.module";
 import { PlatformMetricsModule } from "./platform-metrics/platform-metrics.module";
 import { DataIntegrityModule } from "./data-integrity/data-integrity.module";
+import { RazorpayWebhookModule } from "./razorpay-webhook/razorpay-webhook.module";
 import { CronLockInitializer } from "./utils/single-instance";
 
 @Module({
@@ -198,6 +199,7 @@ import { CronLockInitializer } from "./utils/single-instance";
     PlatformDataQualityModule,
     PlatformMetricsModule,
     DataIntegrityModule,
+    RazorpayWebhookModule,
     SocialAccountVerificationModule,
     SocialAccountObservationModule,
     SocialAccountComparisonModule,

@@ -320,11 +320,31 @@ export class MonetizationService {
     if (!valid) {
       throw new BadRequestException("Invalid payment signature");
     }
-
-    const orderFilter = {
+    return this.completePaidOrder({
       orderId: input.orderId,
-      userId: toObjectId(input.userId),
+      paymentId: input.paymentId,
+      signature: input.signature,
       purpose: input.paymentType === "subscription" ? "subscription" : "invite_unlock",
+      userId: input.userId,
+    });
+  }
+
+  /**
+   * An order Razorpay confirmed as paid → activate what it bought. Called by the
+   * checkout callback (signature checked, userId from the session) and by the
+   * Razorpay webhook (when the browser never came back). Runs once per order.
+   */
+  async completePaidOrder(input: {
+    orderId: string;
+    paymentId: string;
+    signature?: string | null;
+    purpose: "subscription" | "invite_unlock";
+    userId?: string;
+  }) {
+    const orderFilter: Record<string, unknown> = {
+      orderId: input.orderId,
+      purpose: input.purpose,
+      ...(input.userId ? { userId: toObjectId(input.userId) } : {}),
     };
     // Claim the order once: the checkout callback and a page refresh can both
     // verify the same payment — only the first may activate Premium/unlock.
@@ -337,7 +357,7 @@ export class MonetizationService {
             paymentStatus: "captured",
             status: "approved",
             gatewayVerifiedAt: new Date(),
-            gatewaySignature: input.signature,
+            ...(input.signature ? { gatewaySignature: input.signature } : {}),
             gatewayProvider: "razorpay",
           },
         },
@@ -350,6 +370,7 @@ export class MonetizationService {
       // Already verified (by the other request) — nothing more to do.
       return { success: true, paymentId: existing.paymentId || input.paymentId };
     }
+    const userId = String(payment.userId);
 
     await this.transactionModel.updateMany(
       { orderId: input.orderId },
@@ -365,7 +386,7 @@ export class MonetizationService {
       },
     );
 
-    if (input.paymentType === "invite_unlock") {
+    if (input.purpose === "invite_unlock") {
       const inviteId = String(payment?.metadata?.inviteId || "").trim();
       if (inviteId) {
         await this.unlockModel.updateOne(
@@ -380,7 +401,7 @@ export class MonetizationService {
         );
         const payerRole = String(payment?.userType || "").toLowerCase();
         if (payerRole === "brand") {
-          await this.invitesService.unlockContact(inviteId, input.userId);
+          await this.invitesService.unlockContact(inviteId, userId);
         } else {
           await this.inviteModel.findByIdAndUpdate(inviteId, {
             $set: {
@@ -393,7 +414,7 @@ export class MonetizationService {
       }
     }
 
-    if (input.paymentType === "subscription") {
+    if (input.purpose === "subscription") {
       const planId = String(payment?.metadata?.planId || "").trim();
       const billingCycle = String(payment?.metadata?.billingCycle || "monthly");
       const paymentUserType = String(payment?.userType || "Influencer");
@@ -408,7 +429,7 @@ export class MonetizationService {
       let subscriptionEnd: Date | null = null;
       if (planId) {
         const sub: any = await this.plansService.activateSubscription(
-          input.userId,
+          userId,
           normalizedUserType,
           planId,
           premiumDuration,
@@ -419,8 +440,8 @@ export class MonetizationService {
       // Mirror the subscription onto the user's own profile doc — isPremium there
       // (not the subscriptions collection) drives the Pro badge and visibility
       // gating — with the subscription's exact end date (bonus months included).
-      await this.paymentService.confirmUpgrade(input.userId, premiumDuration, subscriptionEnd);
-      await this.recordPremiumConversion(input.userId, paymentAmountPaise(payment), payment._id);
+      await this.paymentService.confirmUpgrade(userId, premiumDuration, subscriptionEnd);
+      await this.recordPremiumConversion(userId, paymentAmountPaise(payment), payment._id);
     }
 
     return { success: true, paymentId: input.paymentId };

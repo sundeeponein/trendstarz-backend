@@ -1540,9 +1540,28 @@ export class PaymentsPayoutsService {
       throw new BadRequestException("Invalid Razorpay payment signature");
     }
 
+    return this.completeCampaignOrder({ orderId, paymentId, signature, campaignId, payerId });
+  }
+
+  /**
+   * A campaign Razorpay order confirmed as paid → verify its rows. Called by the
+   * checkout callback (owner checked, signature checked) and by the Razorpay
+   * webhook (browser never came back). Safe to repeat: verifying an already
+   * verified row is a no-op.
+   */
+  async completeCampaignOrder(input: {
+    orderId: string;
+    paymentId: string;
+    signature?: string | null;
+    campaignId?: string;
+    payerId?: string;
+    /** Amount Razorpay says was paid (webhook) — must equal the rows' total. */
+    paidAmountPaise?: number;
+  }) {
+    const { orderId, paymentId } = input;
     const txs = await this.transactionModel.find({
-      campaignId,
-      payerId,
+      ...(input.campaignId ? { campaignId: input.campaignId } : {}),
+      ...(input.payerId ? { payerId: input.payerId } : {}),
       $or: [{ paymentBatchId: orderId }, { gatewayOrderIds: orderId }],
       gateway: "razorpay",
     });
@@ -1559,9 +1578,10 @@ export class PaymentsPayoutsService {
         0,
       );
       const orderAmount = Number(checkedRows[0].gatewayOrderAmount || 0);
-      if (rowsTotal !== orderAmount) {
+      const paid = Number(input.paidAmountPaise ?? orderAmount);
+      if (rowsTotal !== orderAmount || paid !== orderAmount) {
         this.logger.error(
-          `Razorpay order ${orderId}: rows total ${rowsTotal} ≠ order amount ${orderAmount}`,
+          `Razorpay order ${orderId}: rows total ${rowsTotal}, order amount ${orderAmount}, paid ${paid}`,
         );
         throw new BadRequestException(
           "Payment amount mismatch — TrendStarZ will review this payment.",
@@ -1571,12 +1591,13 @@ export class PaymentsPayoutsService {
 
     const results: any[] = [];
     for (const tx of txs) {
-      tx.gatewayOrderId = orderId;
-      tx.gatewayPaymentId = paymentId;
-      tx.gatewaySignature = signature;
-      tx.gatewayVerifiedAt = new Date();
-      await tx.save();
-
+      if (tx.collectionStatus !== "verified") {
+        tx.gatewayOrderId = orderId;
+        tx.gatewayPaymentId = paymentId;
+        if (input.signature) tx.gatewaySignature = input.signature;
+        tx.gatewayVerifiedAt = new Date();
+        await tx.save();
+      }
       const verified = await this.verifyCollectionById(String(tx._id), "Razorpay auto-verified", true);
       results.push(verified?.transaction || tx);
     }

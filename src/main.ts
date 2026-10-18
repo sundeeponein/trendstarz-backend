@@ -32,6 +32,8 @@ async function bootstrap() {
     "/api/campaign-transactions/webhooks/razorpayx",
     express.raw({ type: "application/json" }),
   );
+  // Razorpay payment webhook (payment.captured / order.paid) — same reason.
+  server.use("/api/razorpay/webhook", express.raw({ type: "application/json" }));
   const app = await NestFactory.create(AppModule, new ExpressAdapter(server));
   logMemory("after NestFactory.create");
 

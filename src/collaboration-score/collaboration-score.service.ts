@@ -736,24 +736,52 @@ export class CollaborationScoreService {
       throw new BadRequestException("Invalid payment signature");
     }
 
-    const payment: any = await this.paymentModel.findOne({
+    await this.completeReanalysisOrder({
       orderId: input.orderId,
-      userId: toObjectId(userId),
-      purpose: "collab_score_reanalysis",
+      paymentId: input.paymentId,
+      signature: input.signature,
+      userId,
     });
-    if (!payment) throw new NotFoundException("Payment order not found");
+    return this.getAuditForUser(userId, { userId, role });
+  }
 
-    if (payment.paymentStatus === "captured" && payment.status === "approved") {
-      return this.getAuditForUser(userId, { userId, role });
+  /**
+   * A paid re-analysis order → run the paid audit, once per order. Called by the
+   * checkout callback and by the Razorpay webhook (browser never came back).
+   */
+  async completeReanalysisOrder(input: {
+    orderId: string;
+    paymentId: string;
+    signature?: string | null;
+    userId?: string;
+  }): Promise<boolean> {
+    const filter: Record<string, unknown> = {
+      orderId: input.orderId,
+      purpose: "collab_score_reanalysis",
+      ...(input.userId ? { userId: toObjectId(input.userId) } : {}),
+    };
+    // Claim once: a second verify (callback + refresh, or webhook) is a no-op.
+    const payment: any = await this.paymentModel
+      .findOneAndUpdate(
+        { ...filter, status: { $ne: "approved" } },
+        {
+          $set: {
+            paymentId: input.paymentId,
+            paymentStatus: "captured",
+            status: "approved",
+            gatewayVerifiedAt: new Date(),
+            ...(input.signature ? { gatewaySignature: input.signature } : {}),
+          },
+        },
+        { new: true },
+      )
+      .lean();
+    if (!payment) {
+      if (!(await this.paymentModel.exists(filter))) {
+        throw new NotFoundException("Payment order not found");
+      }
+      return false; // already completed
     }
-
-    payment.paymentId = input.paymentId;
-    payment.paymentStatus = "captured";
-    payment.status = "approved";
-    payment.gatewayVerifiedAt = new Date();
-    payment.gatewaySignature = input.signature;
-    await payment.save();
-
     await this.transactionModel.updateMany(
       { orderId: input.orderId },
       {
@@ -761,12 +789,13 @@ export class CollaborationScoreService {
         $push: { logs: { at: new Date(), event: "payment_captured" } },
       },
     );
-
-    await this.runAudit(userId, role, "USER", {
+    const userId = String(payment.userId);
+    const role = String(payment.userType || "Influencer").toLowerCase();
+    await this.runAudit(userId, role as any, "USER", {
       skipFreeGate: true,
       isPaid: true,
     });
-    return this.getAuditForUser(userId, { userId, role });
+    return true;
   }
 
   /**

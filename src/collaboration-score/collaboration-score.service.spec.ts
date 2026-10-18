@@ -340,12 +340,15 @@ describe("CollaborationScoreService", () => {
     });
 
     it("verifyReanalysisPayment captures payment then runs a real audit with skipFreeGate", async () => {
-      const payment: any = {
-        paymentStatus: "created",
-        status: "pending",
-        save: jest.fn().mockResolvedValue({}),
-      };
-      paymentModel.findOne.mockResolvedValue(payment);
+      // The order is claimed once (pending → approved) with one guarded update.
+      paymentModel.findOneAndUpdate = jest.fn(() => ({
+        lean: jest.fn().mockResolvedValue({
+          userId: "507f1f77bcf86cd799439011",
+          userType: "Influencer",
+          status: "approved",
+          paymentStatus: "captured",
+        }),
+      }));
       auditModel.countDocuments.mockResolvedValue(1);
       auditModel.findOne.mockReturnValue({
         lean: jest.fn().mockResolvedValue({ userId: "507f1f77bcf86cd799439011", collaborationScore: 82 }),
@@ -357,18 +360,19 @@ describe("CollaborationScoreService", () => {
         signature: "good",
       });
 
-      expect(payment.paymentStatus).toBe("captured");
-      expect(payment.status).toBe("approved");
-      expect(payment.save).toHaveBeenCalled();
+      const [filter, update] = paymentModel.findOneAndUpdate.mock.calls[0];
+      expect(filter).toMatchObject({ orderId: "order_1", purpose: "collab_score_reanalysis", status: { $ne: "approved" } });
+      expect(update.$set).toMatchObject({ paymentStatus: "captured", status: "approved", paymentId: "pay_1" });
       expect(transactionModel.updateMany).toHaveBeenCalled();
-      expect(auditModel.create).toHaveBeenCalled(); // the skipFreeGate runAudit call
       expect(auditModel.create).toHaveBeenCalledWith(expect.objectContaining({ isPaid: true }));
       expect(result).toMatchObject({ userId: "507f1f77bcf86cd799439011" });
     });
 
     it("verifyReanalysisPayment is idempotent on a repeat call for an already-captured payment", async () => {
-      const payment: any = { paymentStatus: "captured", status: "approved", save: jest.fn() };
-      paymentModel.findOne.mockResolvedValue(payment);
+      // Already approved → the guarded claim matches nothing; no second audit runs.
+      paymentModel.findOneAndUpdate = jest.fn(() => ({ lean: jest.fn().mockResolvedValue(null) }));
+      paymentModel.exists = jest.fn().mockResolvedValue({ _id: "p1" });
+      auditModel.create.mockClear();
       auditModel.findOne.mockReturnValue({
         lean: jest.fn().mockResolvedValue({ userId: "507f1f77bcf86cd799439011", collaborationScore: 82 }),
       });
@@ -379,7 +383,6 @@ describe("CollaborationScoreService", () => {
         signature: "good",
       });
 
-      expect(payment.save).not.toHaveBeenCalled();
       expect(auditModel.create).not.toHaveBeenCalled();
     });
   });
