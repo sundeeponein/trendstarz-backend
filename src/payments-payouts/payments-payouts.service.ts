@@ -345,6 +345,21 @@ export class PaymentsPayoutsService {
     return feeSettings.brandRecipientFeePercent;
   }
 
+  /**
+   * Whose host rate applies: the campaign owner's role — and an influencer who
+   * hosts (stored as a brand-owned campaign) is recognised by their account, so
+   * they pay the "Influencer host" rate and get their own Premium rate.
+   */
+  private async resolveHostFeeRole(
+    campaign: any,
+  ): Promise<"brand" | "influencer" | "photographer"> {
+    const role = this.resolveCampaignOwnerRole(campaign);
+    if (role !== "brand" || !campaign?.brandId) return role;
+    if (!Types.ObjectId.isValid(String(campaign.brandId))) return role;
+    const isInfluencer = await this.influencerModel.exists({ _id: campaign.brandId });
+    return isInfluencer ? "influencer" : "brand";
+  }
+
   private resolveCampaignOwnerRole(
     campaign: any,
   ): "brand" | "influencer" | "photographer" {
@@ -774,18 +789,22 @@ export class PaymentsPayoutsService {
       const invitePayerUserId = isPayToJoin
         ? String(invite.influencerId || "")
         : String(campaign.brandId || "");
+      // Rate role: like invitePayerRole, but an influencer host pays the influencer rate.
+      const inviteFeeRole = isPayToJoin
+        ? invitePayerRole
+        : await this.resolveHostFeeRole(campaign);
       const inviteBaseFeePercent = calc.feeSettings
         ? this.getRoleBaseFeePercent(
             calc.feeSettings,
-            invitePayerRole,
-            await this.isPremiumUser(invitePayerUserId, invitePayerRole),
+            inviteFeeRole,
+            await this.isPremiumUser(invitePayerUserId, inviteFeeRole),
           )
         : Number(calc.platformFeePercent || 0);
       let inviteEffectiveFeePercent = inviteBaseFeePercent;
       if (calc.platformFeeEnabled && invitePayerUserId && calc.feeSettings) {
         inviteEffectiveFeePercent = await this.getEffectiveCommissionPercent(
           invitePayerUserId,
-          invitePayerRole,
+          inviteFeeRole,
           inviteBaseFeePercent,
         );
       }
@@ -1334,7 +1353,7 @@ export class PaymentsPayoutsService {
       : String(campaign.brandId);
     const payerUserType: "brand" | "influencer" | "photographer" = isPayToJoin
       ? creatorRole
-      : campaignOwnerRole;
+      : await this.resolveHostFeeRole(campaign);
 
     const baseFeePercent = this.getRoleBaseFeePercent(
       feeSettings,

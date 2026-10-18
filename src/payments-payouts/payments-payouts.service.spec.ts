@@ -480,6 +480,46 @@ describe("PaymentsPayoutsService", () => {
       expect(row.recipientPayout).toBe(99000); // creator gets ₹990
     });
 
+    describe("influencer host pays the Influencer host rate", () => {
+      const HOST = "507f1f77bcf86cd799439011";
+      const influencerHostedCampaign = () =>
+        campaignModel.findById.mockReturnValue({
+          lean: jest.fn().mockResolvedValue({ _id: "camp1", brandId: HOST, campaignType: "paid_collab", pricePerInfluencer: 100000 }),
+        });
+      const rates = { platformFeeEnabled: true, brandFeePercent: 5, brandFeePercentPremium: 3, influencerFeePercent: 4, influencerFeePercentPremium: 2 };
+
+      it("a Free influencer host pays 4%, not the brand 5%", async () => {
+        influencerHostedCampaign();
+        oneCreator();
+        settings(rates);
+        influencerModel.exists = jest.fn().mockResolvedValue({ _id: HOST });
+        influencerModel.findById.mockReturnValue({ lean: jest.fn().mockResolvedValue({ _id: HOST, isPremium: false }), select: jest.fn().mockReturnValue({ lean: jest.fn().mockResolvedValue({ isPremium: false }) }) });
+        const calc: any = await service.calculatePayment("camp1", HOST);
+        expect(calc.platformFee).toBe(4000);
+      });
+
+      it("a Premium influencer host gets the Influencer host Premium rate (2%)", async () => {
+        influencerHostedCampaign();
+        oneCreator();
+        settings(rates);
+        const premium = { _id: HOST, isPremium: true, premiumEnd: new Date(Date.now() + 86400000) };
+        influencerModel.exists = jest.fn().mockResolvedValue({ _id: HOST });
+        influencerModel.findById.mockReturnValue({ lean: jest.fn().mockResolvedValue(premium), select: jest.fn().mockReturnValue({ lean: jest.fn().mockResolvedValue(premium) }) });
+        const calc: any = await service.calculatePayment("camp1", HOST);
+        expect(calc.platformFee).toBe(2000);
+      });
+
+      it("a brand host still pays the brand rate", async () => {
+        influencerHostedCampaign();
+        oneCreator();
+        settings(rates);
+        influencerModel.exists = jest.fn().mockResolvedValue(null);
+        brandModel.findById.mockReturnValue({ lean: jest.fn().mockResolvedValue({ isPremium: false }), select: jest.fn().mockReturnValue({ lean: jest.fn().mockResolvedValue({ isPremium: false }) }) });
+        const calc: any = await service.calculatePayment("camp1", HOST);
+        expect(calc.platformFee).toBe(5000);
+      });
+    });
+
     describe("creator payout fee + GST (agreed launch rates)", () => {
       const rates = { platformFeeEnabled: true, brandFeePercent: 5, influencerRecipientFeePercent: 2, photographerRecipientFeePercent: 2.5, gstin: "36ABCDE1234F1Z1", gstPercent: 18 };
       const rowFor = async (invite: any, s: any) => {
