@@ -696,6 +696,14 @@ export const BrandSchema = new Schema(
       lastClickAt: { type: Date, default: null },
     },
     promotionalPrice: { type: Number, min: 0 },
+    // Admin verification decision (approve/reject/remove/pending). Added to the brand
+    // schema 2026-10-18 — before that it was written but silently dropped;
+    // cron/backfillBrandVerificationStatus.js restores it from verificationAuditLog.
+    verificationStatus: {
+      type: String,
+      enum: ["not_submitted", "pending", "approved", "rejected", "removed"],
+      default: "not_submitted",
+    },
     verifiedByTrendStarz: { type: Boolean, default: false },
     // Set once when an admin approves the profile (action: "approve"/"approve_warning").
     // Lets "recently approved" queries sort/filter at the DB level instead of

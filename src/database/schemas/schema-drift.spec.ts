@@ -2,7 +2,13 @@ import * as fs from "fs";
 import * as path from "path";
 import { Schema } from "mongoose";
 import { CampaignInviteSchema } from "./campaign-invite.schema";
-import { CampaignSchema } from "./profile.schemas";
+import {
+  AppSettingsSchema,
+  BrandSchema,
+  CampaignSchema,
+  InfluencerSchema,
+  PhotographerSchema,
+} from "./profile.schemas";
 import { CampaignTransactionSchema } from "./campaign-transaction.schema";
 import { CampaignSubmissionSchema } from "./campaign-submission.schema";
 import { PaymentSchema } from "./payment.schema";
@@ -19,6 +25,11 @@ const DOCS: Array<[variable: string, schema: Schema]> = [
   ["tx", CampaignTransactionSchema],
   ["submission", CampaignSubmissionSchema],
   ["payment", PaymentSchema],
+  ["influencer", InfluencerSchema],
+  ["brand", BrandSchema],
+  ["existingBrand", BrandSchema],
+  ["photographer", PhotographerSchema],
+  ["settings", AppSettingsSchema],
 ];
 
 const sourceFiles = (dir: string): string[] =>
