@@ -289,4 +289,38 @@ describe("ReviewsService", () => {
       ).resolves.toEqual(expect.objectContaining({ success: true }));
     });
   });
+
+  describe("review side comes from the invite, not the account type", () => {
+    beforeEach(() => {
+      plansService.checkFeature.mockResolvedValue(true); // Premium writer
+      reviewModel.findOne.mockReturnValue({ lean: jest.fn().mockResolvedValue(null) }); // no earlier review
+      reviewModel.create.mockResolvedValue({ _id: "r1" });
+    });
+    const invite = (over: any) =>
+      inviteModel.findById.mockReturnValue({
+        lean: jest.fn().mockResolvedValue({ _id: "invP", brandId: "brand1", influencerId: "photo1", status: "completed", ...over }),
+      });
+
+    it("a photographer invited by a brand can review that brand", async () => {
+      invite({ recipientRole: "photographer", status: "payment_confirmed" });
+      brandModel.exists.mockResolvedValue({ _id: "brand1" });
+      await service.writeReview("photo1", "photographer", { inviteId: "invP", rating: 5 });
+      expect(reviewModel.create).toHaveBeenCalledWith(
+        expect.objectContaining({ reviewerType: "photographer", targetId: "brand1", targetType: "brand" }),
+      );
+    });
+
+    it("a brand reviewing a photographer files it as a photographer review", async () => {
+      invite({ recipientRole: "photographer" });
+      await service.writeReview("brand1", "brand", { inviteId: "invP", rating: 4 });
+      expect(reviewModel.create).toHaveBeenCalledWith(
+        expect.objectContaining({ targetId: "photo1", targetType: "photographer" }),
+      );
+    });
+
+    it("someone outside the invite is refused", async () => {
+      invite({});
+      await expect(service.writeReview("stranger", "brand", { inviteId: "invP", rating: 4 })).rejects.toThrow(/does not belong/);
+    });
+  });
 });

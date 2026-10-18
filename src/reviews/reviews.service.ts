@@ -28,6 +28,13 @@ export class ReviewsService {
     private readonly plansService: PlansService,
   ) {}
 
+  /** Old invites without recipientRole: is the creator a photographer account? */
+  private async isPhotographerAccount(id: unknown): Promise<boolean> {
+    const photographers = (this.brandModel as any)?.db?.collection?.("photographers");
+    if (!photographers) return false;
+    return (await photographers.countDocuments({ _id: id }, { limit: 1 })) > 0;
+  }
+
   async writeReview(
     reviewerId: string,
     reviewerType: "brand" | "influencer" | "photographer",
@@ -54,19 +61,21 @@ export class ReviewsService {
       .lean()) as any;
     if (!invite) throw new NotFoundException("Invite not found");
 
-    if (reviewerType === "brand" || reviewerType === "photographer") {
-      if (String(invite.brandId) !== reviewerId) {
-        throw new BadRequestException("This invite does not belong to you");
-      }
+    // The reviewer's SIDE comes from the invite, not their account type: a
+    // photographer can be the host (their own collaboration) or the creator
+    // (invited by a brand).
+    const isHost = String(invite.brandId) === reviewerId;
+    const isCreator = String(invite.influencerId) === reviewerId;
+    if (!isHost && !isCreator) {
+      throw new BadRequestException("This invite does not belong to you");
+    }
+    if (isHost) {
       if (!HOST_REVIEWABLE_INVITE_STATUSES.includes(invite.status)) {
         throw new BadRequestException(
           "Reviews can only be written after the campaign is completed",
         );
       }
     } else {
-      if (String(invite.influencerId) !== reviewerId) {
-        throw new BadRequestException("This invite does not belong to you");
-      }
       if (!CREATOR_REVIEWABLE_INVITE_STATUSES.includes(invite.status)) {
         throw new BadRequestException(
           "Reviews can only be written after payment is confirmed or campaign is completed",
@@ -84,20 +93,25 @@ export class ReviewsService {
       );
     }
 
-    const targetId =
-      reviewerType === "brand" || reviewerType === "photographer"
-        ? String(invite.influencerId)
-        : String(invite.brandId);
+    const targetId = isHost
+      ? String(invite.influencerId)
+      : String(invite.brandId);
 
-    let targetType: "brand" | "influencer" | "photographer" = "influencer";
-    if (reviewerType === "influencer") {
+    let targetType: "brand" | "influencer" | "photographer";
+    if (isHost) {
+      // The creator: photographer or influencer (recipientRole is stored since
+      // 2026-10-18; older invites fall back to where the account lives).
+      targetType =
+        invite.recipientRole === "photographer" ||
+        (!invite.recipientRole && (await this.isPhotographerAccount(invite.influencerId)))
+          ? "photographer"
+          : "influencer";
+    } else {
       const ownerId = String(invite.brandId || "");
-      if (ownerId) {
-        const brandExists = await this.brandModel.exists({ _id: ownerId });
-        targetType = brandExists ? "brand" : "photographer";
-      } else {
-        targetType = "brand";
-      }
+      const brandExists = ownerId
+        ? await this.brandModel.exists({ _id: ownerId })
+        : true;
+      targetType = brandExists ? "brand" : "photographer";
     }
 
     let review: any;
