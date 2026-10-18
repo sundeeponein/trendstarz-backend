@@ -41,12 +41,12 @@
     "audit:id-types": "node cron/auditIdTypes.js",
     "backfill:social-account-identity": "node cron/backfillSocialAccountIdentity.js",
     "backfill:social-account-identity:apply": "node cron/backfillSocialAccountIdentity.js --apply",
-    "audit:unique-constraints": "node cron/uniqueConstraints.js",
-    "apply:unique-constraints": "node cron/uniqueConstraints.js --apply",
-    "backfill:payment-amount-paise": "node cron/backfillPaymentAmountPaise.js",
-    "backfill:payment-amount-paise:apply": "node cron/backfillPaymentAmountPaise.js --apply",
-    "backfill:invite-recipient-role": "node cron/backfillInviteRecipientRole.js",
-    "backfill:invite-recipient-role:apply": "node cron/backfillInviteRecipientRole.js --apply"
+    "audit:unique-constraints": "node -r dotenv/config cron/uniqueConstraints.js",
+    "apply:unique-constraints": "node -r dotenv/config cron/uniqueConstraints.js --apply",
+    "backfill:payment-amount-paise": "node -r dotenv/config cron/backfillPaymentAmountPaise.js",
+    "backfill:payment-amount-paise:apply": "node -r dotenv/config cron/backfillPaymentAmountPaise.js --apply",
+    "backfill:invite-recipient-role": "node -r dotenv/config cron/backfillInviteRecipientRole.js",
+    "backfill:invite-recipient-role:apply": "node -r dotenv/config cron/backfillInviteRecipientRole.js --apply"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.115.0",
