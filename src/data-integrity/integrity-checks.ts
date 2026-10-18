@@ -401,6 +401,81 @@ async function invitePaymentAgree(
   );
 }
 
+/**
+ * Every payment row must add up from its own parts (paise):
+ *   paid collab   payerTotal = agreed + fee + GST − credit; payout = agreed − creator fee
+ *   pay-to-join   payerTotal = agreed;                      payout = agreed − fee
+ *   platform fee  payerTotal = fee + GST − credit;           payout = 0
+ * plus: an invite's rupee and paise amounts agree, and a paid collab row's
+ * amount equals its invite's agreed amount. Rows with an admin-awarded
+ * compensation are skipped (their payout is set on purpose).
+ */
+async function moneyAddsUp(db: Db, explained: ExplainedSet): Promise<IntegrityCheck> {
+  const n = (v: unknown) => Math.round(Number(v || 0));
+  const found: Array<{ ref: string; text: string }> = [];
+  const txs = await db
+    .collection("campaigntransactions")
+    .find(
+      { "compensation.amount": { $in: [null, 0] } },
+      { projection: { transactionType: 1, inviteId: 1, agreedAmount: 1, platformFee: 1, gstAmount: 1, creditApplied: 1, payerTotal: 1, recipientFee: 1, recipientPayout: 1 } },
+    )
+    .toArray();
+  for (const t of txs as any[]) {
+    const type = String(t.transactionType || "");
+    let wantTotal: number | null = null;
+    let wantPayout: number | null = null;
+    if (type === "paid_collab") {
+      wantTotal = n(t.agreedAmount) + n(t.platformFee) + n(t.gstAmount) - n(t.creditApplied);
+      wantPayout = Math.max(n(t.agreedAmount) - n(t.recipientFee), 0);
+    } else if (type === "pay_to_join") {
+      wantTotal = n(t.agreedAmount);
+      wantPayout = Math.max(n(t.agreedAmount) - n(t.platformFee), 0);
+    } else if (type === "platform_fee") {
+      wantTotal = Math.max(n(t.platformFee) + n(t.gstAmount) - n(t.creditApplied), 0);
+      wantPayout = 0;
+    }
+    if (wantTotal === null) continue;
+    const problems: string[] = [];
+    if (n(t.payerTotal) !== wantTotal) problems.push(`payer total ${n(t.payerTotal)} ≠ ${wantTotal}`);
+    if (n(t.recipientPayout) !== wantPayout) problems.push(`payout ${n(t.recipientPayout)} ≠ ${wantPayout}`);
+    if (problems.length) {
+      found.push({ ref: `campaigntransactions:${t._id}`, text: `tx ${t._id} (${type}): ${problems.join("; ")} (paise)` });
+    }
+  }
+  // Invite amounts: rupee copy vs paise copy, and the paid collab row vs the invite.
+  const invites = await db
+    .collection("campaigninvites")
+    .find({ agreedAmountPaise: { $gt: 0 } }, { projection: { agreedAmount: 1, agreedAmountPaise: 1 } })
+    .toArray();
+  const agreedByInvite = new Map<string, number>();
+  for (const inv of invites as any[]) {
+    agreedByInvite.set(String(inv._id), n(inv.agreedAmountPaise));
+    if (inv.agreedAmount != null && Math.abs(n(inv.agreedAmount) * 100 - n(inv.agreedAmountPaise)) > 100) {
+      found.push({
+        ref: `campaigninvites:${inv._id}`,
+        text: `invite ${inv._id}: ₹${inv.agreedAmount} ≠ ${n(inv.agreedAmountPaise)} paise`,
+      });
+    }
+  }
+  for (const t of txs as any[]) {
+    if (t.transactionType !== "paid_collab") continue;
+    const agreed = agreedByInvite.get(String(t.inviteId));
+    if (agreed !== undefined && agreed !== n(t.agreedAmount)) {
+      found.push({
+        ref: `campaigntransactions:${t._id}:agreed`,
+        text: `tx ${t._id}: amount ${n(t.agreedAmount)} ≠ invite's agreed ${agreed} (paise)`,
+      });
+    }
+  }
+  return explainableCheck(
+    "money_adds_up",
+    "Payment amounts add up",
+    "A payment row's totals don't follow from its own parts (amount, fee, GST, credit), or it disagrees with its invite's agreed amount. Check it in Payments before paying out; if it's right as recorded (e.g. an old pricing rule), mark it as explained.",
+    found,
+    explained,
+  );
+}
+
 async function sharedEmails(db: Db): Promise<IntegrityCheck> {
   const rows = await db
     .collection("influencers")
@@ -441,6 +516,7 @@ export async function runIntegrityChecks(db: Db): Promise<IntegrityCheck[]> {
     unlockedWithoutPayment(db, explained),
     premiumSourcesAgree(db, explained),
     invitePaymentAgree(db, explained),
+    moneyAddsUp(db, explained),
     sharedEmails(db),
   ]);
 }

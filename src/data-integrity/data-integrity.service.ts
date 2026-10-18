@@ -19,6 +19,7 @@ export const EXPLAINABLE_CHECKS = [
   "unpaid_unlocks",
   "premium_sources_agree",
   "invite_payment_agree",
+  "money_adds_up",
 ];
 import { sendAppEmail } from "../utils/app-email.service";
 import { SingleInstance } from "../utils/single-instance";

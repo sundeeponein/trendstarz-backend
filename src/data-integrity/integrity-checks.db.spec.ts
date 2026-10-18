@@ -39,7 +39,7 @@ describe("data integrity checks (real MongoDB)", () => {
     const inv = new Types.ObjectId();
     await db.collection("campaigns").insertOne({ brandId: new Types.ObjectId().toHexString(), slotUsedAt: new Date(), pricePerInfluencer: 100000 });
     await db.collection("campaigninvites").insertOne({ _id: inv, campaignId: camp, brandId: new Types.ObjectId().toHexString(), influencerId: new Types.ObjectId(), status: "accepted", unlocked: true, unlockType: "paid_collab_payment" });
-    await db.collection("campaigntransactions").insertOne({ transactionType: "paid_collab", campaignId: camp, inviteId: inv, payerId: new Types.ObjectId().toHexString(), recipientId: new Types.ObjectId().toHexString(), payerTotal: 100000, collectionStatus: "verified", payoutStatus: "paid" });
+    await db.collection("campaigntransactions").insertOne({ transactionType: "paid_collab", campaignId: camp, inviteId: inv, payerId: new Types.ObjectId().toHexString(), recipientId: new Types.ObjectId().toHexString(), agreedAmount: 100000, payerTotal: 100000, recipientPayout: 100000, collectionStatus: "verified", payoutStatus: "paid" });
     await db.collection("campaigninvites").updateOne({ _id: inv }, { $set: { status: "approved", paidOutAt: new Date() } });
     const premiumUser = new Types.ObjectId();
     await db.collection("brands").insertOne({ _id: premiumUser, email: "p@x.com", isPremium: true, premiumSource: "admin", premiumEnd: new Date(Date.now() + 86400000) });
@@ -50,7 +50,7 @@ describe("data integrity checks (real MongoDB)", () => {
 
     const checks = await runIntegrityChecks(db);
     expect(checks.filter((c) => c.status === "warn")).toEqual([]);
-    expect(checks).toHaveLength(11);
+    expect(checks).toHaveLength(12);
   });
 
   it("flags each kind of problem in its own check", async () => {
@@ -108,6 +108,25 @@ describe("data integrity checks (real MongoDB)", () => {
     const again = await byKey();
     expect(again.premium_sources_agree.count).toBe(2);
     expect(again.premium_sources_agree.samples.join(" ")).toContain("bob@x.com");
+  });
+
+  it("checks that payment amounts add up", async () => {
+    const inv = new Types.ObjectId();
+    await db.collection("campaigninvites").insertOne({ _id: inv, campaignId: "c", brandId: "b", influencerId: new Types.ObjectId(), status: "approved", agreedAmount: 1000, agreedAmountPaise: 100000 });
+    await db.collection("campaigntransactions").insertMany([
+      // right: 100000 + 5000 + 900 − 0 = 105900; payout 100000 − 2000
+      { transactionType: "paid_collab", inviteId: inv, agreedAmount: 100000, platformFee: 5000, gstAmount: 900, payerTotal: 105900, recipientFee: 2000, recipientPayout: 98000 },
+      // wrong total, and amount differs from the invite
+      { transactionType: "paid_collab", inviteId: inv, agreedAmount: 90000, platformFee: 5000, gstAmount: 900, payerTotal: 100000, recipientFee: 0, recipientPayout: 90000 },
+      // compensation rows are skipped
+      { transactionType: "paid_collab", inviteId: inv, agreedAmount: 100000, payerTotal: 1, recipientPayout: 20000, compensation: { amount: 20000 } },
+      // platform fee with credit
+      { transactionType: "platform_fee", platformFee: 10000, gstAmount: 1800, creditApplied: 3000, payerTotal: 8800, recipientPayout: 0 },
+    ]);
+    const c = (await byKey()).money_adds_up;
+    expect(c.count).toBe(2);
+    expect(c.samples.join(" ")).toContain("payer total 100000 ≠ 95900");
+    expect(c.samples.join(" ")).toContain("≠ invite's agreed 100000");
   });
 
   it("an admin can explain a flagged record: it stops counting, the record is untouched", async () => {
