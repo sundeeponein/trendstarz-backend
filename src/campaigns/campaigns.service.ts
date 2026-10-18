@@ -1853,14 +1853,13 @@ export class CampaignsService {
       // This update path is the brand/host's own campaign endpoint (ownership
       // is checked above), so any manual completion through here is by the host.
       if (data.status === "completed") {
-        // Ending early would close paid creators and start refunds — only TrendStarZ can.
+        // Ending early would close accepted creators as no-shows (and start refunds) —
+        // while anyone can still post, only TrendStarZ can end it.
         if (
-          await this.campaignInvitesService.paidCreatorsStillPosting(
-            campaign._id,
-          )
+          await this.campaignInvitesService.creatorsStillPosting(campaign._id)
         ) {
           throw new BadRequestException(
-            "Paid creators are still within their posting window. Contact TrendStarZ to end this campaign.",
+            "Creators who accepted are still within their posting window. You can end the campaign after their deadline, or contact TrendStarZ.",
           );
         }
         data.completedBy = "host";

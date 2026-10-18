@@ -164,7 +164,7 @@ describe("CampaignsService", () => {
               .fn()
               .mockResolvedValue(undefined),
             latestOpenPostingDeadline: jest.fn().mockResolvedValue(null),
-            paidCreatorsStillPosting: jest.fn().mockResolvedValue(false),
+            creatorsStillPosting: jest.fn().mockResolvedValue(false),
             hasPaidCollaborationRecords: jest.fn().mockResolvedValue(false),
           },
         },
@@ -373,17 +373,17 @@ describe("CampaignsService", () => {
       ).rejects.toThrow(BadRequestException);
     });
 
-    it("blocks a host from ending the campaign while a paid creator can still post", async () => {
+    it("blocks a host from ending the campaign while a creator who accepted can still post", async () => {
       const campaign = { ...mockCampaign, status: "active", save: jest.fn() };
       campaignModel.findById.mockResolvedValue(campaign);
       const invites = (service as any).campaignInvitesService;
-      invites.paidCreatorsStillPosting.mockResolvedValueOnce(true);
+      invites.creatorsStillPosting.mockResolvedValueOnce(true);
       await expect(
         service.update(mockCampaign._id, mockBrand._id, {
           status: "completed",
         }),
       ).rejects.toThrow(
-        "Paid creators are still within their posting window. Contact TrendStarZ to end this campaign.",
+        /Creators who accepted are still within their posting window/,
       );
       expect(campaign.save).not.toHaveBeenCalled();
     });

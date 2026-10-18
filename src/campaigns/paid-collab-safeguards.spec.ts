@@ -91,6 +91,7 @@ describe("Paid-collaboration safeguards (CampaignInvitesService)", () => {
     txRows: any[] = [],
     appSettings: any[] = [],
     creditRows: any[] = [],
+    campaignOver: Record<string, any> = {},
   ) {
     invites = new InviteCollection(inviteRows);
     credits = new FakeCollection(creditRows);
@@ -113,7 +114,7 @@ describe("Paid-collaboration safeguards (CampaignInvitesService)", () => {
         {
           provide: getModelToken("Campaign"),
           useValue: new FakeCollection([
-            { _id: CAMPAIGN, title: "Diwali Reels", status: "active" },
+            { _id: CAMPAIGN, title: "Diwali Reels", status: "active", ...campaignOver },
           ]),
         },
         {
@@ -445,14 +446,44 @@ describe("Paid-collaboration safeguards (CampaignInvitesService)", () => {
       await build([
         working({ selectedPostDate: new Date(Date.now() + 2 * DAY) }),
       ]);
-      expect(await service.paidCreatorsStillPosting(CAMPAIGN)).toBe(true);
+      expect(await service.creatorsStillPosting(CAMPAIGN)).toBe(true);
+    });
+
+    it("a barter/location creator who accepted (host confirmed) also blocks the host", async () => {
+      await build(
+        [working({ status: "accepted", platformFeeDue: 5000, platformFeePaidAt: new Date(), selectedPostDate: new Date(Date.now() + DAY) })],
+        [], [], [], { campaignType: "invite_location" },
+      );
+      expect(await service.creatorsStillPosting(CAMPAIGN)).toBe(true);
+    });
+
+    it("doesn't block when the creator couldn't start yet (paid collab unpaid, platform fee unpaid)", async () => {
+      await build(
+        [working({ status: "accepted", selectedPostDate: new Date(Date.now() + DAY) })],
+        [], [], [], { campaignType: "paid_collab" },
+      );
+      expect(await service.creatorsStillPosting(CAMPAIGN)).toBe(false);
+      await build(
+        [working({ status: "accepted", platformFeeDue: 5000, platformFeePaidAt: null, selectedPostDate: new Date(Date.now() + DAY) })],
+        [], [], [], { campaignType: "invite_location" },
+      );
+      expect(await service.creatorsStillPosting(CAMPAIGN)).toBe(false);
+    });
+
+    it("an unpaid paid-collab creator closed by the host's end isn't a no-show (slot freed)", async () => {
+      await build(
+        [working({ status: "accepted", paymentConfirmedAt: null })],
+        [], [], [], { campaignType: "paid_collab" },
+      );
+      await service.expireUnsubmittedInvitesForCampaign(CAMPAIGN, "Campaign ended by host before submission.");
+      expect(invites.get(INVITE)).toMatchObject({ status: "withdrawn", withdrawnReasonCode: "host_ended_unpaid" });
     });
 
     it("windows that have closed don't block", async () => {
       await build([
         working({ selectedPostDate: new Date(Date.now() - 30 * DAY) }),
       ]);
-      expect(await service.paidCreatorsStillPosting(CAMPAIGN)).toBe(false);
+      expect(await service.creatorsStillPosting(CAMPAIGN)).toBe(false);
     });
   });
 

@@ -5277,7 +5277,7 @@ export class CampaignInvitesService {
         campaignId: idIn(campaignId),
         status: { $in: ["accepted", "payment_confirmed", "working"] },
       })
-      .select("_id productFulfillment.deliveredAt platformFeeDue platformFeePaidAt")
+      .select("_id status paymentConfirmedAt productFulfillment.deliveredAt platformFeeDue platformFeePaidAt")
       .lean();
     const campaign: any = candidates.length
       ? await this.campaignModel
@@ -5292,6 +5292,19 @@ export class CampaignInvitesService {
           String(candidate._id),
           "Campaign ended before the host confirmed this collaboration.",
           { withdrawnReason: "platform_fee_unpaid" },
+        );
+        continue;
+      }
+      // Paid collab the host never paid for: the creator couldn't start — no penalty.
+      if (
+        String(campaign?.campaignType || "") === "paid_collab" &&
+        !candidate.paymentConfirmedAt &&
+        (candidate as any).status === "accepted"
+      ) {
+        await this.expireUnsubmittedInvite(
+          String(candidate._id),
+          "Campaign ended before the host paid for this collaboration.",
+          { withdrawnReason: "host_ended_unpaid" },
         );
         continue;
       }
@@ -5522,33 +5535,44 @@ export class CampaignInvitesService {
   // Paid-collaboration safeguards: late post, off-platform report, terms, campaign end
   // ─────────────────────────────────────────────────────────────────────────
 
-  /** Paid statuses whose creator still has an open posting window. */
-  private static readonly PAID_WORKING_STATUSES = [
-    "payment_confirmed",
-    "working",
-  ];
-
   /**
-   * True while any PAID creator is still inside their posting window (a paid creator with
-   * no post date yet counts as open). Hosts can't end the campaign then — only TrendStarZ.
+   * True while any creator who accepted can still post: inside their posting
+   * window (no post date yet counts as open). Hosts can't end the campaign then —
+   * only TrendStarZ — because ending would close them as no-shows.
+   *  - paid collab: once the host's payment is confirmed (before that the creator
+   *    can't start, and ending closes them without penalty — host_ended_unpaid);
+   *  - barter/location/product: once accepted, unless the host still owes the
+   *    platform fee or hasn't delivered the product (those close without penalty).
    */
-  async paidCreatorsStillPosting(campaignId: unknown): Promise<boolean> {
+  async creatorsStillPosting(campaignId: unknown): Promise<boolean> {
     const id = String(campaignId);
     const [campaign, invites, graceHours] = await Promise.all([
-      this.campaignModel.findById(id).select("postingDeadlineMode").lean(),
+      this.campaignModel
+        .findById(id)
+        .select("postingDeadlineMode campaignType productShippingRequired")
+        .lean(),
       this.inviteModel
         .find({
           campaignId: { $in: [campaignId, id] },
-          status: { $in: CampaignInvitesService.PAID_WORKING_STATUSES },
+          status: { $in: ["accepted", "payment_confirmed", "working"] },
         })
         .select(
-          "selectedPostDate paymentConfirmedAt submissionDeadlineExtendedTo productFulfillment.deliveredAt platformFeePaidAt",
+          "status selectedPostDate paymentConfirmedAt submissionDeadlineExtendedTo productFulfillment.deliveredAt platformFeeDue platformFeePaidAt",
         )
         .lean(),
       this.getPaidSubmitGraceHours(),
     ]);
+    const isPaidCollab = String((campaign as any)?.campaignType || "") === "paid_collab";
+    const onTheHook = ((invites as any[]) || []).filter((invite) => {
+      if (invite.status !== "accepted") return true; // payment_confirmed / working
+      if (isPaidCollab) return false; // host hasn't paid yet
+      return (
+        !awaitingPlatformFee(invite) &&
+        !this.awaitingProductDelivery(campaign, invite)
+      );
+    });
     const now = Date.now();
-    return ((invites as any[]) || []).some((invite) => {
+    return onTheHook.some((invite) => {
       if (!invite.selectedPostDate) return true;
       const closesAt = this.computeGraceDeadline(
         invite,

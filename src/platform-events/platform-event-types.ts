@@ -47,6 +47,7 @@ export const INVITE_WITHDRAWN_REASONS = [
   "location_no_show", // host marked the location visit as a no-show (after the visit date)
   "product_not_delivered", // campaign ended before the host delivered the product (no penalty)
   "platform_fee_unpaid", // campaign ended before the host confirmed (paid the platform fee) — no penalty
+  "host_ended_unpaid", // paid collab ended before the host paid — the creator couldn't start, no penalty
 ] as const;
 
 export type InviteWithdrawnReason = (typeof INVITE_WITHDRAWN_REASONS)[number];
