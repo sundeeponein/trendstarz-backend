@@ -69,6 +69,7 @@ import {
   WorkflowTimingKey,
 } from "./utils/workflow-timing.util";
 import { idIn } from "./utils/id-match.util";
+import { isValidGstin, normalizeGstin } from "./payments-payouts/fee-rates.util";
 
 interface VisibilityItem {
   _id: string;
@@ -337,7 +338,11 @@ export class AdminListsController {
       influencerRecipientFeePercent: 0,
       photographerRecipientFeePercent: 0,
       brandRecipientFeePercent: 0,
-      gstPercent: commissionDefaults.gstPercent,
+      // What's charged when GST was never saved is 0 (payments-payouts getFeeSettings),
+      // so that's what the settings page shows — not the 18% in plans-config.
+      gstPercent: 0,
+      gstin: "",
+      creatorFeeGstEnabled: false,
       submissionApprovalWaitHours:
         workflowTimingDefaults.submissionApprovalWaitHours,
       submissionAutoCompleteGraceHours:
@@ -454,6 +459,31 @@ export class AdminListsController {
         );
       }
       next.earlyAccessAssignmentMode = mode;
+    }
+    // GST registration: a GSTIN, when given, must be valid; and no GST above 0%
+    // can be saved without one — an unregistered business must not collect GST.
+    if (next.gstin !== undefined) {
+      next.gstin = normalizeGstin(next.gstin);
+      if (next.gstin && !isValidGstin(next.gstin)) {
+        throw new BadRequestException(
+          "That GSTIN doesn't look valid (15 characters, e.g. 36ABCDE1234F1Z1) — check for a typo.",
+        );
+      }
+    }
+    if (next.gstPercent !== undefined && Number(next.gstPercent) > 0) {
+      const saved: any =
+        next.gstin !== undefined
+          ? null
+          : await this.appSettingsModel.findOne({}).select("gstin").lean();
+      const gstin = next.gstin !== undefined ? next.gstin : saved?.gstin;
+      if (!isValidGstin(gstin)) {
+        throw new BadRequestException(
+          "GST can't be charged without a GST registration. Add TrendStarZ's GSTIN first (or keep GST at 0%).",
+        );
+      }
+    }
+    if (next.creatorFeeGstEnabled !== undefined) {
+      next.creatorFeeGstEnabled = next.creatorFeeGstEnabled === true || next.creatorFeeGstEnabled === "true";
     }
     if (next.pendingUserAutoDeleteEnabled !== undefined) {
       next.pendingUserAutoDeleteEnabled = !!next.pendingUserAutoDeleteEnabled;

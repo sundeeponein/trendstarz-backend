@@ -41,6 +41,7 @@ import { WORKFLOW_TIMING_DEFAULTS } from "../utils/workflow-timing.util";
 import { withoutServerOwnedProfileFields } from "../utils/server-owned-profile-fields.util";
 import { isActivePremium } from "../payments-payouts/fee-rates.util";
 import { SingleInstance } from "../utils/single-instance";
+import { effectiveGstPercent } from "../payments-payouts/fee-rates.util";
 
 type AnyUserDoc = {
   email: string;
@@ -2494,7 +2495,7 @@ export class AuthService {
       platformCommissionPercent: settings?.platformCommissionPercent ?? 12,
       inviteUnlockFee: settings?.inviteUnlockFee ?? 499,
       minimumCampaignFee: settings?.minimumCampaignFee ?? 1000,
-      gstPercent: settings?.gstPercent ?? 18,
+      gstPercent: effectiveGstPercent(settings), // 0 without a GSTIN
       submissionApprovalWaitHours:
         settings?.submissionApprovalWaitHours ??
         WORKFLOW_TIMING_DEFAULTS.submissionApprovalWaitHours,

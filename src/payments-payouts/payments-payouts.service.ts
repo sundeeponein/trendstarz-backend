@@ -72,6 +72,10 @@ type FeeSettings = {
   brandRecipientFeePercent: number;
   /** Premium rates by Free-rate field (null = same as Free) — see fee-rates.util. */
   premiumRates: Record<string, number | null>;
+  /** GST % on the creator payout fee (0 while the admin switch is off). */
+  creatorFeeGstPercent: number;
+  /** TrendStarZ's GSTIN (null = not registered → no GST is charged). */
+  gstin: string | null;
 };
 
 import {
@@ -81,6 +85,12 @@ import {
 import { SingleInstance } from "../utils/single-instance";
 import {
   PREMIUM_RATE_FIELDS,
+  creatorFeeGstPercentForInvite,
+  creatorFeeGstPercentFromSettings,
+  creatorPayoutBreakdown,
+  effectiveGstPercent,
+  isValidGstin,
+  normalizeGstin,
   isActivePremium,
   rateForPlan,
 } from "./fee-rates.util";
@@ -218,13 +228,16 @@ export class PaymentsPayoutsService {
     return {
       platformFeeEnabled: !!settings?.platformFeeEnabled,
       platformFeePercent: globalPercent,
-      gstPercent: typeof settings?.gstPercent === "number" ? settings.gstPercent : 0,
+      // 0 unless a valid GSTIN is saved — never collect GST while unregistered.
+      gstPercent: effectiveGstPercent(settings),
+      gstin: isValidGstin(settings?.gstin) ? normalizeGstin(settings.gstin) : null,
       brandFeePercent: rolePercent("brandFeePercent"),
       influencerFeePercent: creatorPercent("influencerFeePercent"),
       photographerFeePercent: creatorPercent("photographerFeePercent"),
       influencerRecipientFeePercent: creatorPercent("influencerRecipientFeePercent"),
       photographerRecipientFeePercent: creatorPercent("photographerRecipientFeePercent"),
       brandRecipientFeePercent: creatorPercent("brandRecipientFeePercent"),
+      creatorFeeGstPercent: creatorFeeGstPercentFromSettings(settings),
       premiumRates: Object.fromEntries(
         Object.entries(PREMIUM_RATE_FIELDS).map(([free, premium]) => [
           free,
@@ -261,7 +274,20 @@ export class PaymentsPayoutsService {
     const feePercent = !feeSettings.platformFeeEnabled && !locked
       ? 0
       : await this.recipientFeePercentForInvite(invite, feeSettings, role);
-    return { feePercent, locked };
+    const gstPercent = feePercent > 0
+      ? creatorFeeGstPercentForInvite(invite, feeSettings.creatorFeeGstPercent)
+      : 0;
+    // Premium savings: the fee a Free creator would pay on Premium (null = no saving).
+    let premiumFeePercent: number | null = null;
+    if (!locked && feeSettings.platformFeeEnabled && !(await this.isPremiumUser(String(userId), role))) {
+      const freeField = role === "photographer" ? "photographerRecipientFeePercent" : "influencerRecipientFeePercent";
+      const premium = rateForPlan(feePercent, feeSettings.premiumRates?.[freeField], true);
+      premiumFeePercent = premium < feePercent ? premium : null;
+    }
+    // The agreed amount once accepted (paise); before that the page uses the offer.
+    const agreed = Number(invite.agreedAmountPaise || 0);
+    const breakdown = agreed > 0 ? creatorPayoutBreakdown(agreed, feePercent, gstPercent) : null;
+    return { feePercent, gstPercent, premiumFeePercent, locked, agreedAmountPaise: agreed || null, breakdown };
   }
 
   /** Whether this user's Premium is active right now (false if not found). */
@@ -783,9 +809,14 @@ export class PaymentsPayoutsService {
               calc.feeSettings,
               inviteRecipientRole,
             );
-      const inviteRecipientFee = calc.platformFeeEnabled
-        ? this.roundPercent(inviteAgreedAmount, inviteRecipientFeePercent)
-        : 0;
+      // Creator side (paid collab): fee + GST on the fee, both locked at acceptance.
+      const creatorSide = creatorPayoutBreakdown(
+        inviteAgreedAmount,
+        calc.platformFeeEnabled ? inviteRecipientFeePercent : 0,
+        creatorFeeGstPercentForInvite(invite, calc.feeSettings?.creatorFeeGstPercent ?? 0),
+      );
+      const inviteRecipientFee = creatorSide.fee;
+      const inviteRecipientFeeGst = isPayToJoin ? 0 : creatorSide.gst;
       // GST on this row's commission (paid collab only) — the same rule as calculatePayment.
       const inviteGst = isPayToJoin
         ? 0
@@ -798,7 +829,7 @@ export class PaymentsPayoutsService {
         : inviteAgreedAmount + inviteFee + inviteGst;
       const inviteRecipientPayout = isPayToJoin
         ? Math.max(inviteAgreedAmount - inviteFee, 0)
-        : Math.max(inviteAgreedAmount - inviteRecipientFee, 0);
+        : Math.max(inviteAgreedAmount - inviteRecipientFee - inviteRecipientFeeGst, 0);
       const recipientId =
         calc.campaignType === "pay_to_join"
           ? String(campaign.brandId)
@@ -829,6 +860,7 @@ export class PaymentsPayoutsService {
         gstAmount: inviteGst,
         payerTotal: invitePayerTotal,
         recipientFee: inviteRecipientFee,
+        recipientFeeGst: inviteRecipientFeeGst,
         recipientPayout: inviteRecipientPayout,
         paymentBatchId,
         gateway: payload?.gateway || "manual_upi",
@@ -1336,6 +1368,7 @@ export class PaymentsPayoutsService {
     const recipientFeePercent = this.getRecipientFeePercent(feeSettings, recipientRoleForPayout);
     // Paid collab: each creator's own rate (locked at acceptance, Free/Premium), per row.
     let recipientFee = 0;
+    let recipientFeeGst = 0;
     if (platformFeeEnabled && isPayToJoin) {
       recipientFee = this.roundPercent(agreedAmount, recipientFeePercent);
     } else if (platformFeeEnabled) {
@@ -1345,7 +1378,13 @@ export class PaymentsPayoutsService {
           feeSettings,
           creatorRole,
         );
-        recipientFee += this.roundPercent(inviteAgreedAmounts[i], pct);
+        const part = creatorPayoutBreakdown(
+          inviteAgreedAmounts[i],
+          pct,
+          creatorFeeGstPercentForInvite(acceptedInvites[i], feeSettings.creatorFeeGstPercent),
+        );
+        recipientFee += part.fee;
+        recipientFeeGst += part.gst;
       }
     }
 
@@ -1357,7 +1396,7 @@ export class PaymentsPayoutsService {
       recipientPayoutTotal = Math.max(agreedAmount - fee, 0);
     } else {
       payerTotal = agreedAmount + fee;
-      recipientPayoutTotal = Math.max(agreedAmount - recipientFee, 0);
+      recipientPayoutTotal = Math.max(agreedAmount - recipientFee - recipientFeeGst, 0);
     }
 
     const credit = await this.creditPreview(payerId, fee, payerTotal, isPayToJoin);
@@ -1378,8 +1417,11 @@ export class PaymentsPayoutsService {
       platformFee: fee,
       payerTotal,
       recipientFee,
+      recipientFeeGst,
       recipientFeePercent,
       recipientPayoutTotal,
+      /** Shown on the host's payment screen whenever GST is charged. */
+      gstin: feeSettings.gstin,
       platformFeeEnabled,
       platformFeePercent: effectiveCommissionPercent,
       feeSettings,
@@ -1861,6 +1903,12 @@ export class PaymentsPayoutsService {
       Number(r.settlement?.hostRepaidAmount || 0),
     );
     const fees = sum(verified, (r) => Number(r.platformFee || 0));
+    // TrendStarZ income vs GST collected (GST is owed to the government, not income).
+    const creatorFees = sum(verified, (r) => Number(r.recipientFee || 0));
+    const gstCollected = sum(
+      verified,
+      (r) => Number(r.gstAmount || 0) + Number(r.recipientFeeGst || 0),
+    );
     const pendingPayouts = sum(pending, (r) => Number(r.recipientPayout || 0));
     const paidOut = sum(paid, (r) => Number(r.recipientPayout || 0));
     const refundSent = sum(sentRows, (r) =>
@@ -1880,6 +1928,12 @@ export class PaymentsPayoutsService {
       data: {
         collected,
         fees,
+        /** Payout fees taken from creators (paid collabs). */
+        creatorFees,
+        /** Host commission + creator payout fees, before refunds — TrendStarZ revenue. */
+        platformRevenue: fees + creatorFees,
+        /** GST on both fees — to remit, not revenue. */
+        gstCollected,
         pendingPayouts,
         paidOut,
         /** Money actually transferred back (UTR recorded). */

@@ -1182,6 +1182,12 @@ export const AppSettingsSchema = new Schema({
   locationPlatformFee: { type: Number, default: 0 },
   minimumCampaignFee: { type: Number, default: 1000 },
   gstPercent: { type: Number, default: 0 },
+  // TrendStarZ's GST registration number. No GST is charged without a valid one
+  // (payments-payouts/fee-rates.util effectiveGstPercent), whatever gstPercent says.
+  gstin: { type: String, default: "", trim: true, uppercase: true },
+  // Also charge GST on the creator payout fee (deducted from the payout). Off
+  // until the accountant confirms; while off the creator fee is GST-inclusive.
+  creatorFeeGstEnabled: { type: Boolean, default: false },
   submissionApprovalWaitHours: {
     type: Number,
     default: WORKFLOW_TIMING_DEFAULTS.submissionApprovalWaitHours,

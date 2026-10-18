@@ -22,6 +22,7 @@ import {
 import {
   isActivePremium,
   recipientFeePercentFromSettings,
+  creatorFeeGstPercentFromSettings,
 } from "../payments-payouts/fee-rates.util";
 import {
   countUsedMonthlySlots,
@@ -595,6 +596,30 @@ export class CampaignInvitesService {
     return role === "photographer"
       ? this.photographerModel
       : this.influencerModel;
+  }
+
+  /** Locks the paid-collab payout fee % and its GST % on the invite (Free/Premium plan now). */
+  private async lockCreatorPayoutFee(
+    invite: any,
+    role: "influencer" | "photographer",
+    recipientId: string,
+  ) {
+    const [settings, recipient] = await Promise.all([
+      this.appSettingsModel
+        .findOne({})
+        .select(
+          "platformFeeEnabled influencerRecipientFeePercent photographerRecipientFeePercent influencerRecipientFeePercentPremium photographerRecipientFeePercentPremium gstPercent creatorFeeGstEnabled",
+        )
+        .lean(),
+      this.loadRecipientProfile(role, recipientId),
+    ]);
+    invite.recipientFeePercent = recipientFeePercentFromSettings(
+      settings,
+      role,
+      isActivePremium(recipient),
+    );
+    invite.recipientFeeGstPercent =
+      invite.recipientFeePercent > 0 ? creatorFeeGstPercentFromSettings(settings) : 0;
   }
 
   private async loadRecipientProfile(
@@ -2869,7 +2894,7 @@ export class CampaignInvitesService {
         const feeSettings: any = await this.appSettingsModel
           .findOne({})
           .select(
-            "barterPlatformFee locationPlatformFee platformFeeEnabled influencerRecipientFeePercent photographerRecipientFeePercent influencerRecipientFeePercentPremium photographerRecipientFeePercentPremium",
+            "barterPlatformFee locationPlatformFee platformFeeEnabled influencerRecipientFeePercent photographerRecipientFeePercent influencerRecipientFeePercentPremium photographerRecipientFeePercentPremium gstPercent creatorFeeGstEnabled",
           )
           .lean();
         const fee = platformFeeFor(campaign, feeSettings);
@@ -2881,6 +2906,11 @@ export class CampaignInvitesService {
             recipientRole,
             isActivePremium(recipient),
           );
+          // …and the GST on that fee (0 while the admin switch is off), locked too.
+          invite.recipientFeeGstPercent =
+            invite.recipientFeePercent > 0
+              ? creatorFeeGstPercentFromSettings(feeSettings)
+              : 0;
         }
       }
       const recipientAny = recipient as any;
@@ -3393,7 +3423,7 @@ export class CampaignInvitesService {
     if (action === "accept") {
       const campaign: any = await this.campaignModel
         .findById(invite.campaignId)
-        .select("status")
+        .select("status campaignType")
         .lean();
       this.assertCampaignLiveForRecipient(campaign, "accept the counter offer");
       this.assertCampaignNotEnded(campaign, "accept the counter offer");
@@ -3419,6 +3449,11 @@ export class CampaignInvitesService {
       invite.agreedAmountPaise = requestedAmountPaise;
       invite.status = "accepted";
       invite.acceptedAt = invite.acceptedAt || new Date();
+      // Paid collab: lock the creator's payout fee (+ GST on it) now, exactly as a
+      // direct acceptance does — the creator saw it on the invite.
+      if (String(campaign?.campaignType || "") === "paid_collab") {
+        await this.lockCreatorPayoutFee(invite, recipientRole, recipientIdForEligibility);
+      }
       invite.counterOffer = {
         ...counter,
         status: "accepted",

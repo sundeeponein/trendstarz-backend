@@ -129,6 +129,9 @@ export const CampaignInviteSchema = new Schema({
   platformFeePaidAt: { type: Date, default: null },
   // Paid collab: payout fee (%) for the creator's plan, locked when they accepted.
   recipientFeePercent: { type: Number, default: null },
+  // GST (%) on that fee, locked at the same moment (0 while the admin switch
+  // "Charge GST on creator payout fee" is off). null = accepted before 2026-10-18.
+  recipientFeeGstPercent: { type: Number, default: null },
   // Admin correction: this creator may submit until at least this time (see submissionWindow).
   submissionDeadlineExtendedTo: { type: Date },
   // Admin corrections log (append-only, admin-only — hidden from every query unless

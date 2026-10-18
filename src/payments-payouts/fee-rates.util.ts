@@ -55,3 +55,79 @@ export function recipientFeePercentFromSettings(
   const free = percentOrNull(settings?.[field]) ?? 0;
   return rateForPlan(free, settings?.[PREMIUM_RATE_FIELDS[field]], isPremium);
 }
+
+/**
+ * GST (%) charged on the creator's payout fee, from raw app settings: the
+ * platform GST rate, but only once an admin turned on "Charge GST on creator
+ * payout fee" (default off — until the accountant confirms the treatment, the
+ * fee is GST-inclusive and TrendStarZ absorbs it). Locked at acceptance.
+ */
+export function creatorFeeGstPercentFromSettings(settings: any): number {
+  if (!settings?.platformFeeEnabled || !settings?.creatorFeeGstEnabled) return 0;
+  return effectiveGstPercent(settings);
+}
+
+/**
+ * The GST % that applies to one invite's creator fee: the rate locked at
+ * acceptance; 0 for invites accepted before this existed (they were promised a
+ * payout without it); otherwise today's setting (not accepted yet).
+ */
+export function creatorFeeGstPercentForInvite(invite: any, currentPercent: number): number {
+  if (typeof invite?.recipientFeeGstPercent === "number") return invite.recipientFeeGstPercent;
+  if (typeof invite?.recipientFeePercent === "number") return 0;
+  return Number(currentPercent || 0);
+}
+
+/**
+ * The creator side of a paid collaboration, in paise — one rule for the
+ * invite preview, the checkout, the stored payment rows and the integrity check:
+ *   fee = amount × fee%;  gst = fee × gst%;  payout = amount − fee − gst
+ */
+export function creatorPayoutBreakdown(
+  agreedPaise: number,
+  feePercent: number,
+  gstPercent: number,
+): { fee: number; gst: number; payout: number } {
+  const amount = Math.max(Math.round(Number(agreedPaise || 0)), 0);
+  const pct = Number(feePercent || 0);
+  const fee = pct > 0 ? Math.round((amount * pct) / 100) : 0;
+  const gstPct = Number(gstPercent || 0);
+  const gst = fee > 0 && gstPct > 0 ? Math.round((fee * gstPct) / 100) : 0;
+  return { fee, gst, payout: Math.max(amount - fee - gst, 0) };
+}
+
+/** GSTIN format: 2-digit state code + PAN (10) + entity no. + "Z" + check char. */
+const GSTIN_PATTERN = /^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][1-9A-Z]Z[0-9A-Z]$/;
+
+export function normalizeGstin(value: unknown): string {
+  return String(value ?? "").trim().toUpperCase();
+}
+
+const GSTIN_CHARS = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+
+/** The 15th GSTIN character, computed from the first 14 (GSTN's mod-36 check). */
+export function gstinCheckChar(first14: string): string {
+  let sum = 0;
+  for (let i = 0; i < 14; i++) {
+    const product = GSTIN_CHARS.indexOf(first14[i]) * (i % 2 === 0 ? 1 : 2);
+    sum += Math.floor(product / 36) + (product % 36);
+  }
+  return GSTIN_CHARS[(36 - (sum % 36)) % 36];
+}
+
+/** Format AND check character — so a mistyped GSTIN is refused, not saved. */
+export function isValidGstin(value: unknown): boolean {
+  const g = normalizeGstin(value);
+  return GSTIN_PATTERN.test(g) && gstinCheckChar(g.slice(0, 14)) === g[14];
+}
+
+/**
+ * The GST % TrendStarZ may actually charge: the configured rate only once a
+ * valid GSTIN is saved in Settings — an unregistered business must not collect
+ * GST. Every GST calculation goes through this, so even a GST rate written
+ * straight into the database is never charged without a GSTIN.
+ */
+export function effectiveGstPercent(settings: any): number {
+  if (!isValidGstin(settings?.gstin)) return 0;
+  return percentOrNull(settings?.gstPercent) ?? 0;
+}

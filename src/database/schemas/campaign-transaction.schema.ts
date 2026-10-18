@@ -64,6 +64,8 @@ export const CampaignTransactionSchema = new Schema(
     platformFee: { type: Number, min: 0, required: true },
     payerTotal: { type: Number, min: 0, required: true },
     recipientFee: { type: Number, min: 0, default: 0 },
+    // GST on the creator payout fee (paise), deducted from the payout. 0 while off.
+    recipientFeeGst: { type: Number, default: 0, min: 0 },
     recipientPayout: { type: Number, min: 0, required: true },
 
     // ── Payment gateway (swap field value to switch provider; no schema change needed) ──

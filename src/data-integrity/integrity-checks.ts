@@ -403,7 +403,7 @@ async function invitePaymentAgree(
 
 /**
  * Every payment row must add up from its own parts (paise):
- *   paid collab   payerTotal = agreed + fee + GST − credit; payout = agreed − creator fee
+ *   paid collab   payerTotal = agreed + fee + GST − credit; payout = agreed − creator fee − its GST
  *   pay-to-join   payerTotal = agreed;                      payout = agreed − fee
  *   platform fee  payerTotal = fee + GST − credit;           payout = 0
  * plus: an invite's rupee and paise amounts agree, and a paid collab row's
@@ -417,7 +417,7 @@ async function moneyAddsUp(db: Db, explained: ExplainedSet): Promise<IntegrityCh
     .collection("campaigntransactions")
     .find(
       { "compensation.amount": { $in: [null, 0] } },
-      { projection: { transactionType: 1, inviteId: 1, agreedAmount: 1, platformFee: 1, gstAmount: 1, creditApplied: 1, payerTotal: 1, recipientFee: 1, recipientPayout: 1 } },
+      { projection: { transactionType: 1, inviteId: 1, agreedAmount: 1, platformFee: 1, gstAmount: 1, creditApplied: 1, payerTotal: 1, recipientFee: 1, recipientFeeGst: 1, recipientPayout: 1 } },
     )
     .toArray();
   for (const t of txs as any[]) {
@@ -426,7 +426,7 @@ async function moneyAddsUp(db: Db, explained: ExplainedSet): Promise<IntegrityCh
     let wantPayout: number | null = null;
     if (type === "paid_collab") {
       wantTotal = n(t.agreedAmount) + n(t.platformFee) + n(t.gstAmount) - n(t.creditApplied);
-      wantPayout = Math.max(n(t.agreedAmount) - n(t.recipientFee), 0);
+      wantPayout = Math.max(n(t.agreedAmount) - n(t.recipientFee) - n(t.recipientFeeGst), 0);
     } else if (type === "pay_to_join") {
       wantTotal = n(t.agreedAmount);
       wantPayout = Math.max(n(t.agreedAmount) - n(t.platformFee), 0);

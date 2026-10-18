@@ -35,3 +35,56 @@ describe("commission rates by plan", () => {
     ).toBe(0);
   });
 });
+
+import {
+  creatorFeeGstPercentForInvite,
+  creatorFeeGstPercentFromSettings,
+  creatorPayoutBreakdown,
+} from "./fee-rates.util";
+
+describe("creator payout fee + GST", () => {
+  it("₹1,000 at 2% + 18% → ₹976.40; 2.5% → ₹970.50; Premium 1% → ₹988.20", () => {
+    expect(creatorPayoutBreakdown(100000, 2, 18)).toEqual({ fee: 2000, gst: 360, payout: 97640 });
+    expect(creatorPayoutBreakdown(100000, 2.5, 18)).toEqual({ fee: 2500, gst: 450, payout: 97050 });
+    expect(creatorPayoutBreakdown(100000, 1, 18)).toEqual({ fee: 1000, gst: 180, payout: 98820 });
+    expect(creatorPayoutBreakdown(100000, 0, 18)).toEqual({ fee: 0, gst: 0, payout: 100000 });
+  });
+
+  it("charges GST on the creator fee only when commission AND the creator-GST switch are on", () => {
+    expect(creatorFeeGstPercentFromSettings({ platformFeeEnabled: true, gstin: "36ABCDE1234F1Z1", gstPercent: 18 })).toBe(0);
+    expect(creatorFeeGstPercentFromSettings({ platformFeeEnabled: false, creatorFeeGstEnabled: true, gstin: "36ABCDE1234F1Z1", gstPercent: 18 })).toBe(0);
+    expect(creatorFeeGstPercentFromSettings({ platformFeeEnabled: true, creatorFeeGstEnabled: true, gstin: "36ABCDE1234F1Z1", gstPercent: 18 })).toBe(18);
+  });
+
+  it("uses the GST locked at acceptance; older accepted invites stay at 0", () => {
+    expect(creatorFeeGstPercentForInvite({ recipientFeeGstPercent: 18 }, 0)).toBe(18);
+    expect(creatorFeeGstPercentForInvite({ recipientFeePercent: 2 }, 18)).toBe(0);
+    expect(creatorFeeGstPercentForInvite({}, 18)).toBe(18); // not accepted yet → today's rate
+  });
+});
+
+import { effectiveGstPercent, gstinCheckChar, isValidGstin } from "./fee-rates.util";
+
+describe("no GST without a GST registration", () => {
+  it("validates the GSTIN format", () => {
+    expect(isValidGstin("36ABCDE1234F1Z1")).toBe(true);
+    expect(isValidGstin(" 36abcde1234f1z1 ")).toBe(true); // normalized
+    expect(isValidGstin("ABCDE1234F")).toBe(false); // a PAN, not a GSTIN
+    expect(isValidGstin("")).toBe(false);
+  });
+
+  it("charges 0% GST without a valid GSTIN, whatever the GST % says", () => {
+    expect(effectiveGstPercent({ gstPercent: 18 })).toBe(0);
+    expect(effectiveGstPercent({ gstPercent: 18, gstin: "not-a-gstin" })).toBe(0);
+    expect(effectiveGstPercent({ gstPercent: 18, gstin: "36ABCDE1234F1Z1" })).toBe(18);
+  });
+});
+
+describe("GSTIN check character", () => {
+  it("accepts a real GSTIN and refuses a one-character typo", () => {
+    expect(gstinCheckChar("27AAPFU0939F1Z")).toBe("V");
+    expect(isValidGstin("27AAPFU0939F1ZV")).toBe(true);
+    expect(isValidGstin("27AAPFU0939F1ZW")).toBe(false); // wrong check char
+    expect(isValidGstin("27AAPFU0938F1ZV")).toBe(false); // typo in the PAN part
+  });
+});

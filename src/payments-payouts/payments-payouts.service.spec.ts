@@ -401,7 +401,7 @@ describe("PaymentsPayoutsService", () => {
     it("₹1,000 + 5% commission + 18% GST on the commission → ₹1,059 (not ₹1,230)", async () => {
       paidCampaign();
       oneCreator();
-      settings({ platformFeeEnabled: true, platformFeePercent: 5, brandFeePercent: 5, gstPercent: 18 });
+      settings({ platformFeeEnabled: true, platformFeePercent: 5, brandFeePercent: 5, gstin: "36ABCDE1234F1Z1", gstPercent: 18 });
       const calc: any = await service.calculatePayment("camp1", "brand1");
       expect(calc.platformFee).toBe(5000); // ₹50
       expect(calc.gstAmount).toBe(900); // 18% of ₹50 = ₹9
@@ -417,17 +417,27 @@ describe("PaymentsPayoutsService", () => {
       expect(before.amountDueRazorpay).toBe(100000); // ₹1,000
 
       // Admin → Settings saved: commission on, 5%, GST 18%.
-      settings({ platformFeeEnabled: true, brandFeePercent: 5, gstPercent: 18 });
+      settings({ platformFeeEnabled: true, brandFeePercent: 5, gstin: "36ABCDE1234F1Z1", gstPercent: 18 });
       const after: any = await service.calculatePayment("camp1", "brand1");
       expect(after.platformFee).toBe(5000);
       expect(after.gstAmount).toBe(900);
       expect(after.amountDueRazorpay).toBe(105900); // ₹1,059
     });
 
+    it("GST 18% saved but no GSTIN → no GST is charged (₹1,050, not ₹1,059)", async () => {
+      paidCampaign();
+      oneCreator();
+      settings({ platformFeeEnabled: true, brandFeePercent: 5, gstPercent: 18 });
+      const calc: any = await service.calculatePayment("camp1", "brand1");
+      expect(calc.gstAmount).toBe(0);
+      expect(calc.amountDueRazorpay).toBe(105000);
+      expect(calc.gstin).toBeNull();
+    });
+
     it("Razorpay order and stored rows match the ₹1,059 total", async () => {
       paidCampaign();
       oneCreator();
-      settings({ platformFeeEnabled: true, platformFeePercent: 5, brandFeePercent: 5, gstPercent: 18 });
+      settings({ platformFeeEnabled: true, platformFeePercent: 5, brandFeePercent: 5, gstin: "36ABCDE1234F1Z1", gstPercent: 18 });
       transactionModel.create.mockImplementation(async (d: any) => ({ ...d, _id: "t1" }));
       razorpayService.createOrder.mockResolvedValue({ orderId: "order_pc", amount: 105900 });
       const res: any = await service.createRazorpayOrderForCampaign("camp1", "brand1", true);
@@ -444,7 +454,7 @@ describe("PaymentsPayoutsService", () => {
     it("Premium brand pays its Premium commission (5% → 3%)", async () => {
       paidCampaign();
       oneCreator();
-      settings({ platformFeeEnabled: true, brandFeePercent: 5, brandFeePercentPremium: 3, gstPercent: 18 });
+      settings({ platformFeeEnabled: true, brandFeePercent: 5, brandFeePercentPremium: 3, gstin: "36ABCDE1234F1Z1", gstPercent: 18 });
       brandModel.findById.mockReturnValue({
         lean: jest.fn().mockResolvedValue({ isPremium: true }),
         select: jest.fn().mockReturnValue({ lean: jest.fn().mockResolvedValue({ isPremium: true }) }),
@@ -470,6 +480,52 @@ describe("PaymentsPayoutsService", () => {
       expect(row.recipientPayout).toBe(99000); // creator gets ₹990
     });
 
+    describe("creator payout fee + GST (agreed launch rates)", () => {
+      const rates = { platformFeeEnabled: true, brandFeePercent: 5, influencerRecipientFeePercent: 2, photographerRecipientFeePercent: 2.5, gstin: "36ABCDE1234F1Z1", gstPercent: 18 };
+      const rowFor = async (invite: any, s: any) => {
+        paidCampaign();
+        inviteModel.find.mockReturnValue({ lean: jest.fn().mockResolvedValue([invite]) });
+        settings(s);
+        transactionModel.create.mockImplementation(async (d: any) => ({ ...d, _id: "t1" }));
+        razorpayService.createOrder.mockResolvedValue({ orderId: "o", amount: 1 });
+        const res: any = await service.createRazorpayOrderForCampaign("camp1", "brand1", true);
+        return res.transactions[0];
+      };
+
+      it("influencer, Free, GST switch ON: host ₹1,059, creator ₹976.40", async () => {
+        const row = await rowFor(
+          { _id: "i1", influencerId: "inf1", recipientFeePercent: 2, recipientFeeGstPercent: 18 },
+          { ...rates, creatorFeeGstEnabled: true },
+        );
+        expect(row.payerTotal).toBe(105900); // ₹1,059 — the host never pays the creator's fee
+        expect(row.recipientFee).toBe(2000); // ₹20
+        expect(row.recipientFeeGst).toBe(360); // ₹3.60
+        expect(row.recipientPayout).toBe(97640); // ₹976.40
+      });
+
+      it("photographer, Free, GST switch ON: creator ₹970.50", async () => {
+        const row = await rowFor(
+          { _id: "i1", influencerId: "ph1", recipientRole: "photographer", recipientFeePercent: 2.5, recipientFeeGstPercent: 18 },
+          { ...rates, creatorFeeGstEnabled: true },
+        );
+        expect(row.recipientFee).toBe(2500);
+        expect(row.recipientFeeGst).toBe(450);
+        expect(row.recipientPayout).toBe(97050);
+      });
+
+      it("switch OFF (default): no GST on the creator fee — creator ₹980", async () => {
+        const row = await rowFor({ _id: "i1", influencerId: "inf1", recipientFeePercent: 2, recipientFeeGstPercent: 0 }, rates);
+        expect(row.recipientFeeGst).toBe(0);
+        expect(row.recipientPayout).toBe(98000);
+      });
+
+      it("an invite accepted before creator GST existed keeps its promised payout, even after the switch is ON", async () => {
+        const row = await rowFor({ _id: "i1", influencerId: "inf1", recipientFeePercent: 2 }, { ...rates, creatorFeeGstEnabled: true });
+        expect(row.recipientFeeGst).toBe(0);
+        expect(row.recipientPayout).toBe(98000);
+      });
+    });
+
     it("commission and GST are rounded per creator, so the total equals the rows", async () => {
       paidCampaign();
       inviteModel.find.mockReturnValue({
@@ -478,7 +534,7 @@ describe("PaymentsPayoutsService", () => {
           { _id: "i2", influencerId: "inf2", agreedAmountPaise: 33333 },
         ]),
       });
-      settings({ platformFeeEnabled: true, platformFeePercent: 5, brandFeePercent: 5, gstPercent: 18 });
+      settings({ platformFeeEnabled: true, platformFeePercent: 5, brandFeePercent: 5, gstin: "36ABCDE1234F1Z1", gstPercent: 18 });
       transactionModel.create.mockImplementation(async (d: any) => ({ ...d, _id: d.feeInviteId || "t" }));
       razorpayService.createOrder.mockImplementation(async (amount: number) => ({ orderId: "o", amount }));
       const calc: any = await service.calculatePayment("camp1", "brand1");
@@ -509,7 +565,7 @@ describe("PaymentsPayoutsService", () => {
       });
     const settings = (over: any = {}) =>
       appSettingsModel.findOne.mockReturnValue({
-        lean: jest.fn().mockResolvedValue({ gstPercent: 18, ...over }),
+        lean: jest.fn().mockResolvedValue({ gstin: "36ABCDE1234F1Z1", gstPercent: 18, ...over }),
       });
     const createdRows = () => {
       let n = 0;

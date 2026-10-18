@@ -16,6 +16,7 @@ import {
   computeSubscriptionPrice,
   SubscriptionPrice,
 } from "../plans/subscription-price.util";
+import { effectiveGstPercent } from "../payments-payouts/fee-rates.util";
 
 type UserRole = "brand" | "influencer" | "photographer";
 
@@ -59,7 +60,8 @@ export class MonetizationService {
         platformFeePercent: Number(settings?.platformFeePercent ?? 5),
         inviteUnlockFee: Number(settings?.inviteUnlockFee ?? 499),
         minimumCampaignFee: Number(settings?.minimumCampaignFee ?? 1000),
-        gstPercent: Number(settings?.gstPercent ?? 18),
+        // Never GST without a GSTIN (same rule as campaign payments).
+        gstPercent: effectiveGstPercent(settings),
         platformCommissionPercent: Number(settings?.platformCommissionPercent ?? 12),
       },
     };
