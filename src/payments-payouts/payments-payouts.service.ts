@@ -82,6 +82,7 @@ import {
   awaitingPlatformFee,
   isBarterOrLocationCampaign,
 } from "../campaigns/barter-limits.util";
+import { normalizeUtr, utrMatchValues } from "../utils/utr.util";
 import { SingleInstance } from "../utils/single-instance";
 import {
   PREMIUM_RATE_FIELDS,
@@ -1407,6 +1408,36 @@ export class PaymentsPayoutsService {
     };
   }
 
+  /**
+   * One bank transfer pays one thing: a UTR already given for other creators' rows or
+   * another campaign (still under review or verified), or for a Premium payment, is
+   * refused. Re-sending it for the same rows (e.g. after fixing the screenshot) is fine.
+   */
+  private async assertUtrNotUsedElsewhere(rawUtr: unknown, calc: any) {
+    const values = utrMatchValues(rawUtr);
+    const sameRows = calc?.isPlatformFee
+      ? [] // fee rows carry a placeholder invite id; matched by campaign below
+      : (calc?.acceptedInviteIds || []).flatMap((id: string) => anyId(id).$in);
+    const reused = await this.transactionModel.exists({
+      utrNumber: { $in: values },
+      collectionStatus: { $in: ["proof_submitted", "verified"] },
+      ...(calc?.isPlatformFee
+        ? { campaignId: { $ne: String(calc.campaignId || "") } }
+        : { inviteId: { $nin: sameRows } }),
+    });
+    const premium =
+      reused || !this.connection
+        ? null
+        : await this.connection
+            .collection("payments")
+            .findOne({ transactionId: { $in: values } }, { projection: { _id: 1 } });
+    if (reused || premium) {
+      throw new BadRequestException(
+        "This UTR was already used for another payment. Please check the reference from your bank app — each transfer can pay only once.",
+      );
+    }
+  }
+
   async submitPaymentProof(
     campaignId: string,
     payerId: string,
@@ -1418,7 +1449,7 @@ export class PaymentsPayoutsService {
       inviteIds?: string[];
     },
   ) {
-    const utrNumber = (body.utrNumber || "").trim();
+    const utrNumber = normalizeUtr(body.utrNumber);
     if (!utrNumber) {
       throw new BadRequestException("UTR number is required");
     }
@@ -1435,6 +1466,7 @@ export class PaymentsPayoutsService {
     if (!calc.acceptedCount) {
       throw new BadRequestException("No accepted recipients found for payment");
     }
+    await this.assertUtrNotUsedElsewhere(body.utrNumber, calc);
     await this.recordHostTermsAcceptance(calc, payerId, body?.acceptTerms);
     const paymentBatchId = `batch_${campaignId}_${Date.now()}`;
 

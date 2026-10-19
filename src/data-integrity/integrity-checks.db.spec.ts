@@ -50,7 +50,7 @@ describe("data integrity checks (real MongoDB)", () => {
 
     const checks = await runIntegrityChecks(db);
     expect(checks.filter((c) => c.status === "warn")).toEqual([]);
-    expect(checks).toHaveLength(12);
+    expect(checks).toHaveLength(13);
   });
 
   it("flags each kind of problem in its own check", async () => {
@@ -127,6 +127,24 @@ describe("data integrity checks (real MongoDB)", () => {
     expect(c.count).toBe(2);
     expect(c.samples.join(" ")).toContain("payer total 100000 ≠ 95900");
     expect(c.samples.join(" ")).toContain("≠ invite's agreed 100000");
+  });
+
+  it("flags one bank transfer (UTR) used for two payments", async () => {
+    const row = (utr: string, batch: string, status = "verified") => ({
+      transactionType: "paid_collab", inviteId: new Types.ObjectId(), campaignId: "c1",
+      utrNumber: utr, paymentBatchId: batch, collectionStatus: status,
+      agreedAmount: 100, payerTotal: 100, recipientPayout: 100,
+    });
+    await db.collection("campaigntransactions").insertMany([
+      row("UTR111", "b1"), row("UTR111", "b1"), // two creators, one transfer: fine
+      row("UTR222", "b2"), row("utr 222", "b3"), // reused across batches (spacing/case ignored)
+      row("UTR333", "b4"), row("UTR333", "b5", "failed"), // rejected proof doesn't count
+      row("UTR444", "b6"),
+    ]);
+    await db.collection("payments").insertOne({ transactionId: "UTR444" }); // also used for Premium
+    const c = (await byKey()).utr_used_twice;
+    expect(c.count).toBe(2);
+    expect(c.refs).toEqual(expect.arrayContaining(["utr:UTR222", "utr:UTR444"]));
   });
 
   it("an admin can explain a flagged record: it stops counting, the record is untouched", async () => {

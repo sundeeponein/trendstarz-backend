@@ -20,6 +20,7 @@ export const EXPLAINABLE_CHECKS = [
   "premium_sources_agree",
   "invite_payment_agree",
   "money_adds_up",
+  "utr_used_twice",
 ];
 import { sendAppEmail } from "../utils/app-email.service";
 import { SingleInstance } from "../utils/single-instance";

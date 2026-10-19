@@ -8,6 +8,8 @@ import { PushService } from "../push/push.service";
 import { paymentAmountPaise, paymentAmountRupees } from "./payment-amount.util";
 import { SubscriptionPrice } from "../plans/subscription-price.util";
 
+import { utrMatchValues } from "../utils/utr.util";
+
 @Injectable()
 export class PaymentService {
   constructor(
@@ -131,8 +133,19 @@ export class PaymentService {
     paymentMethod: "upi" | "qr" = "upi",
     userType: "Influencer" | "Brand" | "Photographer" = "Influencer",
   ) {
-    // Check if transaction ID already exists
-    const existing = await this.paymentModel.findOne({ transactionId });
+    // Check if transaction ID already exists — here, or as a campaign payment's UTR.
+    const utrValues = utrMatchValues(transactionId);
+    const existing =
+      (await this.paymentModel.findOne({ transactionId: { $in: utrValues } })) ||
+      (await this.paymentModel.db
+        ?.collection("campaigntransactions")
+        .findOne(
+          {
+            utrNumber: { $in: utrValues },
+            collectionStatus: { $in: ["proof_submitted", "verified"] },
+          },
+          { projection: { _id: 1 } },
+        ));
     if (existing) {
       return {
         success: false,

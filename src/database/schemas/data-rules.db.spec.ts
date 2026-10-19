@@ -11,6 +11,7 @@ import { CampaignInviteSchema } from "./campaign-invite.schema";
 import { PaymentSchema } from "./payment.schema";
 import { UsageCounterSchema } from "./usage-counter.schema";
 import { CampaignSubmissionSchema } from "./campaign-submission.schema";
+import { PaymentsPayoutsService } from "../../payments-payouts/payments-payouts.service";
 import { openMoneyFilter, openWorkFilter } from "../../users/self-deletion.util";
 import { BrandSchema, InfluencerSchema, PhotographerSchema } from "./profile.schemas";
 import { idIn, idsIn } from "../../utils/id-match.util";
@@ -339,6 +340,67 @@ describe("data rules (real MongoDB)", () => {
       await run();
       expect(((await Invite.findById(silent.inviteId).lean()) as any).status).toBe("submitted");
       expect(((await Invite.findById(ticked.inviteId).lean()) as any).status).toBe("completed");
+    });
+  });
+
+  describe("resolving a dispute", () => {
+    it("two resolvers at the same moment: only the first lands, the second changes no money", async () => {
+      const { insertedId } = await Invite.collection.insertOne({
+        campaignId: "camp-dispute", brandId: "b", influencerId: new Types.ObjectId(), status: "disputed",
+        reportedIssue: { reason: "mismatch", reportedAt: new Date(Date.now() - 48 * 3600e3) },
+      });
+      await Tx.collection.insertOne({ ...txBase(), inviteId: insertedId, collectionStatus: "verified", payoutStatus: "pending" });
+      const tx = { find: jest.fn(), updateMany: jest.fn() };
+      const service = Object.create(CampaignInvitesService.prototype);
+      Object.assign(service, {
+        inviteModel: Invite,
+        submissionModel: { findOne: async () => null },
+        campaignTransactionModel: tx,
+        platformEvents: { record: async () => true },
+        recordInviteWithdrawn: async () => undefined,
+      });
+      // The admin's copy is read first, then the hourly job resolves it for the host…
+      const adminCopy: any = await Invite.findById(insertedId);
+      jest.spyOn(Invite, "findById").mockResolvedValueOnce(adminCopy as any);
+      await Invite.collection.updateOne(
+        { _id: insertedId },
+        { $set: { status: "withdrawn", "reportedIssue.resolvedAt": new Date() } },
+      );
+      // …so the admin's "pay the creator" must not land or touch any payment row.
+      const result = await (service as any).finalizeDisputeOutcome(String(insertedId), "pay_influencer", {
+        resolvedBy: "admin",
+        note: "checked",
+      });
+      expect(result).toMatchObject({ skipped: true });
+      expect(tx.find).not.toHaveBeenCalled();
+      expect(tx.updateMany).not.toHaveBeenCalled();
+      expect(((await Invite.findById(insertedId).lean()) as any).status).toBe("withdrawn");
+    });
+  });
+
+  describe("one bank transfer pays once (UTR)", () => {
+    const check = (calc: any) => {
+      const service = Object.create(PaymentsPayoutsService.prototype);
+      Object.assign(service, { transactionModel: Tx, connection: db.conn });
+      return (service as any).assertUtrNotUsedElsewhere("4321 8765 1234", calc);
+    };
+
+    it("refuses a UTR already sent for other creators or a Premium payment; allows re-sending for the same rows", async () => {
+      const invA = new Types.ObjectId();
+      const invB = new Types.ObjectId();
+      await Tx.collection.insertOne({
+        ...txBase(), inviteId: invA, utrNumber: "432187651234", collectionStatus: "proof_submitted",
+      });
+      // Same creator's row again (fixing the screenshot): fine.
+      await expect(check({ acceptedInviteIds: [String(invA)] })).resolves.toBeUndefined();
+      // Another creator (or campaign) with the same transfer: refused, spaces or not.
+      await expect(check({ acceptedInviteIds: [String(invB)] })).rejects.toThrow(/already used/);
+
+      await Tx.collection.updateMany({ utrNumber: "432187651234" }, { $set: { collectionStatus: "failed" } });
+      await expect(check({ acceptedInviteIds: [String(invB)] })).resolves.toBeUndefined(); // rejected proof frees it
+
+      await db.conn.collection("payments").insertOne({ transactionId: "432187651234" });
+      await expect(check({ acceptedInviteIds: [String(invB)] })).rejects.toThrow(/already used/);
     });
   });
 });

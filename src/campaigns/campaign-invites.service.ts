@@ -4759,7 +4759,20 @@ export class CampaignInvitesService {
         `\n[${opts.resolvedBy} ${now.toISOString()}]: ${opts.note}`;
     }
     invite.updatedAt = now;
-    await invite.save();
+    // Guarded on what was read: if an admin, the creator and the hourly job resolve it
+    // at the same moment, only the first lands — the others change no money.
+    invite.$where = {
+      status: previousStatus,
+      "reportedIssue.resolvedAt": null,
+    };
+    try {
+      await invite.save();
+    } catch (err: any) {
+      if (err?.name === "DocumentNotFoundError") {
+        return { success: true, status: "changed", skipped: true };
+      }
+      throw err;
+    }
 
     const disputeActor: { userId?: unknown; userRole: PlatformEventActorRole } =
       {

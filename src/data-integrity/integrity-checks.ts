@@ -1,3 +1,4 @@
+import { normalizeUtr } from "../utils/utr.util";
 import type { Db } from "mongodb";
 import { ACTIVE_INVITE_STATUSES } from "../campaigns/reinvite-rule.util";
 import { isActivePremium } from "../payments-payouts/fee-rates.util";
@@ -472,6 +473,45 @@ async function moneyAddsUp(db: Db, explained: ExplainedSet): Promise<IntegrityCh
   );
 }
 
+/**
+ * One bank transfer pays once: the same UTR (spaces/dashes ignored) on campaign payments
+ * from different payment batches, or also on a Premium payment. Rows of one batch share
+ * their UTR by design. Rejected proofs ("failed") don't count.
+ */
+async function utrUsedTwice(db: Db, explained: ExplainedSet): Promise<IntegrityCheck> {
+  const rows = await db
+    .collection("campaigntransactions")
+    .find(
+      { utrNumber: { $nin: [null, ""] }, collectionStatus: { $in: ["proof_submitted", "verified"] } },
+      { projection: { utrNumber: 1, paymentBatchId: 1, campaignId: 1 } },
+    )
+    .toArray();
+  const premium = await db
+    .collection("payments")
+    .find({ transactionId: { $nin: [null, ""] } }, { projection: { transactionId: 1 } })
+    .toArray();
+  const uses = new Map<string, Set<string>>();
+  const add = (utr: string, use: string) => {
+    if (!utr) return;
+    if (!uses.has(utr)) uses.set(utr, new Set());
+    uses.get(utr)!.add(use);
+  };
+  for (const r of rows as any[]) {
+    add(normalizeUtr(r.utrNumber), `campaign ${r.campaignId} batch ${r.paymentBatchId || r._id}`);
+  }
+  for (const p of premium as any[]) add(normalizeUtr(p.transactionId), `premium payment ${p._id}`);
+  const found = [...uses.entries()]
+    .filter(([, u]) => u.size > 1)
+    .map(([utr, u]) => ({ ref: `utr:${utr}`, text: `UTR ${utr}: ${[...u].join(" · ")}` }));
+  return explainableCheck(
+    "utr_used_twice",
+    "Each bank transfer pays once",
+    "The same UTR was given for more than one payment. Check your bank statement: if it's one transfer, one of the payments wasn't really paid. If it's right (e.g. a split you agreed), mark it as explained.",
+    found,
+    explained,
+  );
+}
+
 async function sharedEmails(db: Db): Promise<IntegrityCheck> {
   const rows = await db
     .collection("influencers")
@@ -514,5 +554,6 @@ export async function runIntegrityChecks(db: Db): Promise<IntegrityCheck[]> {
     invitePaymentAgree(db, explained),
     moneyAddsUp(db, explained),
     sharedEmails(db),
+    utrUsedTwice(db, explained),
   ]);
 }

@@ -57,6 +57,7 @@ describe("PaymentsPayoutsService", () => {
       create: jest.fn(),
       updateMany: jest.fn().mockResolvedValue({}),
       updateOne: jest.fn().mockResolvedValue({ modifiedCount: 1 }),
+      exists: jest.fn().mockResolvedValue(null),
       // Default: the guarded claim succeeds (returns the matched row).
       findOneAndUpdate: jest.fn((filter: any) => ({
         lean: jest.fn().mockResolvedValue({ _id: filter?._id }),

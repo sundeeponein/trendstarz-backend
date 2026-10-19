@@ -177,6 +177,13 @@ export class FakeCollection {
 
   findById = jest.fn((id: any) => query(() => clone(this.get(id) ?? null)));
 
+  exists = jest.fn((filter: any = {}) =>
+    query(() => {
+      const hit = this.docs.find((d) => matches(d, filter));
+      return hit ? { _id: hit._id } : null;
+    }),
+  );
+
   private seq = 0;
 
   create = jest.fn((data: any) => {
