@@ -860,6 +860,8 @@ describe("Paid-collaboration safeguards (CampaignInvitesService)", () => {
             transactionId: "tx1",
             expiresAt: new Date(Date.now() + 300 * DAY),
           },
+          // ₹20 of it was spent on a later payment (consumeCredit writes this record).
+          { _id: "use1", ownerId: "host1", type: "used", amount: 2000, lotId: "lot", transactionId: "tx9", restoredAt: null },
         ],
       );
       await service.adminReviewLatePost(INVITE, "admin1", {
@@ -873,6 +875,39 @@ describe("Paid-collaboration safeguards (CampaignInvitesService)", () => {
         amount: 50000 + 2000,
       });
       expect(tx.feeCredit.status).toBe("reversed");
+      expect(credits.get("lot").remaining).toBe(0);
+    });
+
+    it("a second, overlapping verification doesn't charge the host again", async () => {
+      await build(
+        [working({ status: "withdrawn", withdrawnAt: new Date() })],
+        [
+          txRow({
+            refundStatus: "sent",
+            refundAmount: 50000,
+            refundPolicy: "fee_credit",
+            platformFee: 5000,
+            feeCredit: { status: "issued", amount: 5000 },
+          }),
+        ],
+        [],
+        [
+          {
+            _id: "lot",
+            ownerId: "host1",
+            type: "issued",
+            amount: 5000,
+            remaining: 5000,
+            transactionId: "tx1",
+            expiresAt: new Date(Date.now() + 300 * DAY),
+          },
+        ],
+      );
+      const settlementRow = () => [{ ...txs.get("tx1"), _id: "tx1" }];
+      // Two runs of the same step (e.g. a retry): the second finds the credit claimed.
+      await (service as any).afterDeliveryVerified({ _id: INVITE }, { released: [], settlement: settlementRow() });
+      await (service as any).afterDeliveryVerified({ _id: INVITE }, { released: [], settlement: settlementRow() });
+      expect(Number(txs.get("tx1").settlement?.amount || 0)).toBe(0); // nothing was spent
       expect(credits.get("lot").remaining).toBe(0);
     });
   });

@@ -475,6 +475,48 @@ async function moneyAddsUp(db: Db, explained: ExplainedSet): Promise<IntegrityCh
 }
 
 /**
+ * TrendStarZ credit is a ledger: every issued lot must equal what's still on it plus
+ * what was spent (not given back), taken back, and expired.
+ */
+async function creditLedgerAddsUp(db: Db, explained: ExplainedSet): Promise<IntegrityCheck> {
+  const n = (v: unknown) => Math.round(Number(v || 0));
+  const lots = await db
+    .collection("platform_credits")
+    .find({ type: "issued" }, { projection: { amount: 1, remaining: 1, ownerId: 1 } })
+    .toArray();
+  const moves = await db
+    .collection("platform_credits")
+    .find(
+      { type: { $in: ["used", "reversed", "expired"] }, lotId: { $ne: null } },
+      { projection: { type: 1, amount: 1, lotId: 1, restoredAt: 1 } },
+    )
+    .toArray();
+  const out = new Map<string, number>();
+  for (const m of moves as any[]) {
+    if (m.type === "used" && m.restoredAt) continue; // given back to the lot
+    const key = String(m.lotId);
+    out.set(key, (out.get(key) || 0) + n(m.amount));
+  }
+  const found: Array<{ ref: string; text: string }> = [];
+  for (const lot of lots as any[]) {
+    const accounted = n(lot.remaining) + (out.get(String(lot._id)) || 0);
+    if (accounted !== n(lot.amount) || n(lot.remaining) < 0) {
+      found.push({
+        ref: `platform_credits:${lot._id}`,
+        text: `credit lot ${lot._id} (owner ${lot.ownerId}): issued ${n(lot.amount)} ≠ left ${n(lot.remaining)} + spent/taken back/expired ${out.get(String(lot._id)) || 0} (paise)`,
+      });
+    }
+  }
+  return explainableCheck(
+    "credit_ledger_adds_up",
+    "TrendStarZ credit adds up",
+    "A credit lot's balance doesn't match its history (spent, taken back, expired). Check the host's credit in Payments; if it's right as recorded (e.g. an early manual adjustment), mark it as explained.",
+    found,
+    explained,
+  );
+}
+
+/**
  * One bank transfer pays once: the same UTR (spaces/dashes ignored) on campaign payments
  * from different payment batches, or also on a Premium payment. Rows of one batch share
  * their UTR by design. Rejected proofs ("failed") don't count.
@@ -556,5 +598,6 @@ export async function runIntegrityChecks(db: Db): Promise<IntegrityCheck[]> {
     moneyAddsUp(db, explained),
     sharedEmails(db),
     utrUsedTwice(db, explained),
+    creditLedgerAddsUp(db, explained),
   ]);
 }

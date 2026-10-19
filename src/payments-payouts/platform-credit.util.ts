@@ -206,7 +206,6 @@ export async function reverseIssuedCredit(
     )
     .lean();
   let reversed = 0;
-  let alreadyUsed = 0;
   for (const lot of lots) {
     const fresh: any = await model
       .findOneAndUpdate(
@@ -216,7 +215,6 @@ export async function reverseIssuedCredit(
       )
       .lean();
     const unused = Number(fresh?.remaining || 0);
-    alreadyUsed += Number(lot.amount || 0) - unused;
     if (unused > 0) {
       await createOne(
         model,
@@ -234,6 +232,20 @@ export async function reverseIssuedCredit(
       reversed += unused;
     }
   }
+  // Spent = what the spending records say (not "amount − what was left now"), so a
+  // repeated call can't count credit that an earlier call took back as spent.
+  const lotIds = lots.map((l) => l._id);
+  const spent: any[] = lotIds.length
+    ? await model
+        .find(
+          { type: "used", lotId: { $in: lotIds }, restoredAt: null },
+          null,
+          withSession({}, session),
+        )
+        .select("amount")
+        .lean()
+    : [];
+  const alreadyUsed = spent.reduce((sum, u) => sum + Number(u.amount || 0), 0);
   return { reversed, alreadyUsed };
 }
 

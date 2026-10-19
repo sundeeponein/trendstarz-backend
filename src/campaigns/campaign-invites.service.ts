@@ -5164,25 +5164,32 @@ export class CampaignInvitesService {
         continue;
       }
       if (status !== "issued") continue;
+      // Claim first: of two overlapping calls only one reverses and charges the host.
+      const claimed = await this.campaignTransactionModel
+        .findOneAndUpdate(
+          { _id: tx._id, "feeCredit.status": "issued" },
+          { $set: { "feeCredit.status": "reversed" } },
+          { new: true },
+        )
+        .lean();
+      if (!claimed) continue;
       const { alreadyUsed } = await reverseIssuedCredit(
         this.creditModel,
         String(tx._id),
         "system",
         "Post verified after the refund — fee credit taken back",
       );
-      const updated = await this.campaignTransactionModel
-        .findOneAndUpdate(
-          { _id: tx._id, "feeCredit.status": "issued" },
-          {
-            $set: { "feeCredit.status": "reversed" },
-            ...(alreadyUsed > 0
-              ? { $inc: { "settlement.amount": alreadyUsed } }
-              : {}),
-          },
-          { new: true },
-        )
-        .lean();
-      if (updated) tx.settlement = (updated as any).settlement;
+      const updated: any =
+        alreadyUsed > 0
+          ? await this.campaignTransactionModel
+              .findOneAndUpdate(
+                { _id: tx._id },
+                { $inc: { "settlement.amount": alreadyUsed } },
+                { new: true },
+              )
+              .lean()
+          : claimed;
+      if (updated) tx.settlement = updated.settlement;
     }
     await this.setFinancialCaseOpen(invite._id, result.settlement.length > 0);
     if (!result.settlement.length && !result.released.length) return;

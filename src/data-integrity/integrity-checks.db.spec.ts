@@ -54,7 +54,7 @@ describe("data integrity checks (real MongoDB)", () => {
 
     const checks = await runIntegrityChecks(db);
     expect(checks.filter((c) => c.status === "warn")).toEqual([]);
-    expect(checks).toHaveLength(13);
+    expect(checks).toHaveLength(14);
   });
 
   it("flags each kind of problem in its own check", async () => {
@@ -149,6 +149,24 @@ describe("data integrity checks (real MongoDB)", () => {
     const c = (await byKey()).utr_used_twice;
     expect(c.count).toBe(2);
     expect(c.refs).toEqual(expect.arrayContaining(["utr:UTR222", "utr:UTR444"]));
+  });
+
+  it("checks that every TrendStarZ credit lot adds up", async () => {
+    const good = new Types.ObjectId();
+    const bad = new Types.ObjectId();
+    await db.collection("platform_credits").insertMany([
+      // ₹50 issued: ₹20 spent, ₹5 spent then given back, ₹10 expired → ₹20 left. Adds up.
+      { _id: good, type: "issued", ownerId: "h1", amount: 5000, remaining: 2500 },
+      { type: "used", lotId: good, amount: 2000 },
+      { type: "used", lotId: good, amount: 500, restoredAt: new Date() },
+      { type: "expired", lotId: good, amount: 500 },
+      // ₹50 issued, ₹10 spent, but ₹50 still left: ₹10 appeared from nowhere.
+      { _id: bad, type: "issued", ownerId: "h2", amount: 5000, remaining: 5000 },
+      { type: "used", lotId: bad, amount: 1000 },
+    ]);
+    const c = (await byKey()).credit_ledger_adds_up;
+    expect(c.count).toBe(1);
+    expect(c.refs).toEqual([`platform_credits:${bad}`]);
   });
 
   it("an admin can explain a flagged record: it stops counting, the record is untouched", async () => {
