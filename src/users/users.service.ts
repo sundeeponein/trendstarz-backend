@@ -51,6 +51,7 @@ import {
 import { takenAccountFields } from "../utils/account-uniqueness.util";
 import { SingleInstance } from "../utils/single-instance";
 import { idIn } from "../utils/id-match.util";
+import { openMoneyFilter, openWorkFilter } from "./self-deletion.util";
 
 /** Self-service "Delete Account" grace period — see requestSelfDeletion. */
 export const SELF_DELETION_GRACE_PERIOD_DAYS =
@@ -3014,11 +3015,36 @@ export class UsersService implements OnModuleInit {
     const isMatch = await bcrypt.compare(password || "", user.password);
     if (!isMatch) throw new BadRequestException("Incorrect password");
 
+    const blocker = await this.selfDeletionBlocker(id);
+    if (blocker) throw new BadRequestException(blocker);
+
     await this.deleteUser(id, "deletion_pending");
     return {
       message: "Account scheduled for deletion",
       gracePeriodDays: SELF_DELETION_GRACE_PERIOD_DAYS,
     };
+  }
+
+  /**
+   * Open work or money stops a self-deletion: anonymizing would erase the creator's
+   * UPI (unpayable) or leave creators/refunds with a host that's gone.
+   */
+  async selfDeletionBlocker(id: string): Promise<string | null> {
+    const work = await this.campaignInviteModel
+      .findOne(openWorkFilter(id))
+      .select("_id")
+      .lean();
+    if (work) {
+      return "You have a collaboration in progress. Finish it, or ask the other side to end it, before deleting your account.";
+    }
+    const money = await this.campaignTransactionModel
+      .findOne(openMoneyFilter(id))
+      .select("_id")
+      .lean();
+    if (money) {
+      return "A payment, payout or refund involving you isn't settled yet. Please wait until it's done, or contact TrendStarZ support.";
+    }
+    return null;
   }
 
   /** Cancels a pending self-deletion request — same reset as admin restoreUser. */
@@ -3098,6 +3124,12 @@ export class UsersService implements OnModuleInit {
     let deleted = 0;
     for (const id of ids) {
       try {
+        // Asked before open work/money blocked it: wait until that's settled.
+        const blocker = await this.selfDeletionBlocker(id);
+        if (blocker) {
+          console.warn(`[selfDeletion] ${id} not anonymized yet: ${blocker}`);
+          continue;
+        }
         await this.anonymizeUser(id);
         deleted++;
       } catch (e) {

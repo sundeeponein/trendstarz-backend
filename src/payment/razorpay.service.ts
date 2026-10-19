@@ -110,7 +110,11 @@ export class RazorpayService {
     return !!(creds.keyId && creds.keySecret && creds.accountNumber);
   }
 
-  private async razorpayXPost(path: string, payload: any): Promise<any> {
+  private async razorpayXPost(
+    path: string,
+    payload: any,
+    idempotencyKey?: string,
+  ): Promise<any> {
     const creds = this.getRazorpayXCredentials();
     if (!creds.keyId || !creds.keySecret) {
       throw new Error("Missing RazorpayX API credentials");
@@ -123,6 +127,8 @@ export class RazorpayService {
       headers: {
         Authorization: `Basic ${auth}`,
         "Content-Type": "application/json",
+        // Same key = same payout: a retry after a timeout can't pay twice.
+        ...(idempotencyKey ? { "X-Payout-Idempotency": idempotencyKey } : {}),
       },
       timeout: 20000,
     };
@@ -139,6 +145,7 @@ export class RazorpayService {
     amountPaise: number;
     recipientName: string;
     recipientUpiId: string;
+    /** Stable per payout attempt — also sent as the idempotency key. */
     referenceId: string;
     narration: string;
     notes?: Record<string, string>;
@@ -180,7 +187,7 @@ export class RazorpayService {
       reference_id: input.referenceId,
       narration: input.narration,
       notes: input.notes || {},
-    });
+    }, input.referenceId);
 
     return {
       payoutId: String(payout?.id || ""),

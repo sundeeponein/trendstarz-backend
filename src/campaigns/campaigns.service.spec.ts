@@ -99,6 +99,9 @@ describe("CampaignsService", () => {
 
     const mockCampaignInviteModel: any = {
       deleteMany: jest.fn().mockResolvedValue({ deletedCount: 0 }),
+      find: jest.fn(() => ({
+        select: jest.fn().mockReturnValue({ lean: jest.fn().mockResolvedValue([]) }),
+      })),
     };
 
     const mockProfileFlagModel: any = {
@@ -165,7 +168,7 @@ describe("CampaignsService", () => {
               .mockResolvedValue(undefined),
             latestOpenPostingDeadline: jest.fn().mockResolvedValue(null),
             creatorsStillPosting: jest.fn().mockResolvedValue(false),
-            hasPaidCollaborationRecords: jest.fn().mockResolvedValue(false),
+            hasPaymentRows: jest.fn().mockResolvedValue(false),
           },
         },
       ],
@@ -522,9 +525,10 @@ describe("CampaignsService", () => {
 
     it("deleting a live campaign keeps its slot counted; deleting a draft doesn't", async () => {
       deletedSlots().create.mockClear();
+      // "pending" = submitted for review: it already took a slot.
       campaignModel.findById.mockResolvedValue({
         ...mockCampaign,
-        status: "active",
+        status: "pending",
         createdAt: new Date(),
       });
       await service.remove(mockCampaign._id, mockBrand._id);
@@ -596,13 +600,30 @@ describe("CampaignsService", () => {
       );
     });
 
-    it("refuses to delete a campaign with paid collaborations", async () => {
+    it("refuses to delete a campaign with a payment started or made", async () => {
       const invites = (service as any).campaignInvitesService;
-      invites.hasPaidCollaborationRecords.mockResolvedValueOnce(true);
+      invites.hasPaymentRows.mockResolvedValueOnce(true);
       campaignInviteModel.deleteMany.mockClear();
       await expect(
         service.remove(mockCampaign._id, mockBrand._id),
-      ).rejects.toThrow("This campaign has paid collaborations");
+      ).rejects.toThrow("payment started or made");
+      expect(campaignInviteModel.deleteMany).not.toHaveBeenCalled();
+    });
+
+    it("refuses once a creator accepted, or once the campaign is live (API, not just the button)", async () => {
+      campaignInviteModel.deleteMany.mockClear();
+      campaignInviteModel.find.mockReturnValueOnce({
+        select: jest.fn().mockReturnValue({
+          lean: jest.fn().mockResolvedValue([{ status: "declined" }, { status: "accepted" }]),
+        }),
+      });
+      await expect(service.remove(mockCampaign._id, mockBrand._id)).rejects.toThrow(
+        "already accepted",
+      );
+      campaignModel.findById.mockResolvedValueOnce({ ...mockCampaign, status: "active" });
+      await expect(service.remove(mockCampaign._id, mockBrand._id)).rejects.toThrow(
+        "End or cancel it instead",
+      );
       expect(campaignInviteModel.deleteMany).not.toHaveBeenCalled();
     });
 

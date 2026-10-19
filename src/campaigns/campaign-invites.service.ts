@@ -5655,12 +5655,10 @@ export class CampaignInvitesService {
   }
 
   /** True when a campaign has paid-collaboration money records (it must not be deleted). */
-  async hasPaidCollaborationRecords(campaignId: unknown): Promise<boolean> {
+  /** Any payment row for this campaign — paid, proof sent, or a checkout started. */
+  async hasPaymentRows(campaignId: unknown): Promise<boolean> {
     const found = await this.campaignTransactionModel
-      .findOne({
-        campaignId: anyId(campaignId),
-        collectionStatus: { $in: ["proof_submitted", "verified"] },
-      })
+      .findOne({ campaignId: anyId(campaignId) })
       .select("_id")
       .lean();
     return !!found;

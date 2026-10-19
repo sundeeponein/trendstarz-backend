@@ -61,6 +61,10 @@ import { CampaignInvitesService } from "./campaign-invites.service";
 import { settingHours } from "../utils/workflow-timing.util";
 import { idIn } from "../utils/id-match.util";
 import { SingleInstance } from "../utils/single-instance";
+import {
+  campaignDeletionBlocker,
+  DELETABLE_INVITE_STATUSES,
+} from "./campaign-deletion.util";
 
 const VALID_TRANSITIONS: Record<string, string[]> = {
   draft: ["pending", "pending_review", "active", "needs_changes"],
@@ -2503,17 +2507,27 @@ export class CampaignsService {
     if (String(campaign.brandId) !== brandId) {
       throw new BadRequestException("Not your campaign");
     }
-    // Deleting would wipe the invites behind paid money records (payouts, refunds).
-    if (await this.campaignInvitesService.hasPaidCollaborationRecords(id)) {
-      throw new BadRequestException(
-        "This campaign has paid collaborations, so it can't be deleted. Contact TrendStarZ if it needs to be closed.",
-      );
-    }
     const inviteQueries: any[] = [{ campaignId: id }];
     if (/^[a-fA-F0-9]{24}$/.test(id)) {
       inviteQueries.push({ campaignId: new Types.ObjectId(id) });
     }
-    await this.campaignInviteModel.deleteMany({ $or: inviteQueries });
+    // Same rule as the Delete button: before approval, nobody accepted, no payment
+    // started (a checkout paid after deletion would collect money for nothing).
+    const invites = await this.campaignInviteModel
+      .find({ $or: inviteQueries })
+      .select("status")
+      .lean();
+    const blocker = campaignDeletionBlocker({
+      campaignStatus: campaign.status,
+      inviteStatuses: (invites as any[]).map((i) => i.status),
+      hasPaymentRows: await this.campaignInvitesService.hasPaymentRows(id),
+    });
+    if (blocker) throw new BadRequestException(blocker);
+    // Only invites without accepted work go (one accepted meanwhile is kept).
+    await this.campaignInviteModel.deleteMany({
+      $or: inviteQueries,
+      status: { $in: DELETABLE_INVITE_STATUSES },
+    });
     // A campaign that went live keeps using its monthly slot after it's deleted.
     if (WENT_LIVE_STATUSES.includes(String(campaign.status))) {
       await this.deletedCampaignSlotModel.create({

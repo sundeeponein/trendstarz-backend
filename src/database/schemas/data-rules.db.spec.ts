@@ -10,6 +10,7 @@ import { CampaignTransactionSchema } from "./campaign-transaction.schema";
 import { CampaignInviteSchema } from "./campaign-invite.schema";
 import { PaymentSchema } from "./payment.schema";
 import { UsageCounterSchema } from "./usage-counter.schema";
+import { openMoneyFilter, openWorkFilter } from "../../users/self-deletion.util";
 import { BrandSchema, InfluencerSchema, PhotographerSchema } from "./profile.schemas";
 import { idIn, idsIn } from "../../utils/id-match.util";
 import { anyId } from "../../payments-payouts/campaign-refund.util";
@@ -258,6 +259,35 @@ describe("data rules (real MongoDB)", () => {
       expect(row.createdAt).toBeInstanceOf(Date);
       const ttl = (await Usage.collection.indexes()).find((i: any) => i.key?.createdAt === 1);
       expect(ttl?.expireAfterSeconds).toBe(90 * 24 * 60 * 60);
+    });
+  });
+
+  describe("self-deletion blockers", () => {
+    it("find open work and unsettled money however the user's id is stored", async () => {
+      const creator = new Types.ObjectId();
+      const host = new Types.ObjectId().toHexString();
+      const campaignId = new Types.ObjectId().toHexString();
+      // Invites store the creator as an ObjectId and the host as a string.
+      await Invite.collection.insertOne({ campaignId, influencerId: creator, brandId: host, status: "accepted" });
+      expect(await Invite.findOne(openWorkFilter(String(creator))).lean()).toBeTruthy();
+      expect(await Invite.findOne(openWorkFilter(host)).lean()).toBeTruthy();
+      await Invite.collection.updateMany({ campaignId }, { $set: { status: "completed" } });
+      expect(await Invite.findOne(openWorkFilter(String(creator))).lean()).toBeNull();
+
+      // Payment rows store both sides as strings.
+      const row = await Tx.collection.insertOne({
+        ...txBase(),
+        payerId: host,
+        recipientId: String(creator),
+        collectionStatus: "verified",
+        payoutStatus: "pending",
+      });
+      expect(await Tx.findOne(openMoneyFilter(String(creator))).lean()).toBeTruthy();
+      expect(await Tx.findOne(openMoneyFilter(host)).lean()).toBeTruthy();
+      await Tx.collection.updateOne({ _id: row.insertedId }, { $set: { payoutStatus: "paid" } });
+      expect(await Tx.findOne(openMoneyFilter(String(creator))).lean()).toBeNull();
+      await Tx.collection.updateOne({ _id: row.insertedId }, { $set: { refundStatus: "owed" } });
+      expect(await Tx.findOne(openMoneyFilter(host)).lean()).toBeTruthy();
     });
   });
 });

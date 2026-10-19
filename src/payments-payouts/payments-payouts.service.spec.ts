@@ -56,6 +56,7 @@ describe("PaymentsPayoutsService", () => {
       findOne: jest.fn(),
       create: jest.fn(),
       updateMany: jest.fn().mockResolvedValue({}),
+      updateOne: jest.fn().mockResolvedValue({ modifiedCount: 1 }),
       // Default: the guarded claim succeeds (returns the matched row).
       findOneAndUpdate: jest.fn((filter: any) => ({
         lean: jest.fn().mockResolvedValue({ _id: filter?._id }),
@@ -1002,6 +1003,85 @@ describe("PaymentsPayoutsService", () => {
       expect(tx.save).not.toHaveBeenCalled();
     });
 
+    describe("double-payout guards", () => {
+      const readyTx = (extra: any = {}) => {
+        const tx: any = {
+          _id: "tx_guard",
+          collectionStatus: "verified",
+          payoutStatus: "pending",
+          disputeStatus: "none",
+          gateway: "razorpay",
+          inviteId: "inv_guard",
+          recipientId: "inf_guard",
+          recipientRole: "influencer",
+          recipientPayout: 50000,
+          ...extra,
+          toObject() {
+            return { ...this };
+          },
+        };
+        transactionModel.find.mockReturnValue({
+          sort: jest.fn().mockReturnValue({ limit: jest.fn().mockResolvedValue([tx]) }),
+        });
+        appSettingsModel.findOne.mockReturnValue({
+          lean: jest.fn().mockResolvedValue({ payoutReleaseWaitHours: 0 }),
+        });
+        inviteModel.findById.mockReturnValue({
+          select: jest.fn().mockReturnValue({
+            lean: jest.fn().mockResolvedValue({
+              status: "completed",
+              completedAt: new Date(Date.now() - 60 * 60 * 1000),
+            }),
+          }),
+        });
+        influencerModel.findById.mockReturnValue({
+          select: jest.fn().mockReturnValue({
+            lean: jest.fn().mockResolvedValue({ name: "Creator", payout: { upiId: "c@upi" } }),
+          }),
+        });
+        transactionModel.updateOne.mockImplementation(async (_f: any, update: any) => {
+          Object.assign(tx, update.$set);
+          return { modifiedCount: 1 };
+        });
+        return tx;
+      };
+
+      it("doesn't call RazorpayX when another sweep or a manual payout claimed the row", async () => {
+        readyTx();
+        transactionModel.findOneAndUpdate.mockResolvedValue(null);
+        const result = await service.runAutoPayoutSweep("admin1");
+        expect(razorpayService.createPayoutByUpi).not.toHaveBeenCalled();
+        expect(result.skipped).toBe(1);
+      });
+
+      it("a timeout keeps the same reference, so the retry can't create a second payout", async () => {
+        const tx = readyTx({ payoutRetryCount: 1 });
+        transactionModel.findOneAndUpdate.mockResolvedValue({ _id: "tx_guard" });
+        razorpayService.createPayoutByUpi.mockRejectedValue(
+          Object.assign(new Error("timeout of 20000ms exceeded"), { code: "ECONNABORTED" }),
+        );
+        await service.runAutoPayoutSweep("admin1");
+        expect(razorpayService.createPayoutByUpi).toHaveBeenCalledWith(
+          expect.objectContaining({ referenceId: "tsz_tx_guard_1" }),
+        );
+        expect(tx.payoutRetryCount).toBe(1);
+        expect(tx.payoutTransferStatus).toBe("failed");
+      });
+
+      it("a refusal from RazorpayX (4xx) moves on to a new reference", async () => {
+        const tx = readyTx({ payoutRetryCount: 1 });
+        transactionModel.findOneAndUpdate.mockResolvedValue({ _id: "tx_guard" });
+        razorpayService.createPayoutByUpi.mockRejectedValue(
+          Object.assign(new Error("Request failed"), {
+            response: { status: 400, data: { error: { description: "Invalid VPA" } } },
+          }),
+        );
+        await service.runAutoPayoutSweep("admin1");
+        expect(tx.payoutRetryCount).toBe(2);
+        expect(tx.payoutFailureReason).toBe("Invalid VPA");
+      });
+    });
+
     it("creates gateway payout after the admin-configured payout wait is satisfied", async () => {
       const tx: any = {
         _id: "tx_auto_ready",
@@ -1013,8 +1093,16 @@ describe("PaymentsPayoutsService", () => {
         recipientId: "inf_auto_ready",
         recipientRole: "influencer",
         recipientPayout: 100000,
-        save: jest.fn().mockResolvedValue(true),
+        toObject() {
+          return { ...this };
+        },
       };
+      // The sweep claims the row, then writes the gateway result onto the claimed row.
+      transactionModel.findOneAndUpdate.mockResolvedValue({ ...tx, payoutTransferStatus: "initiating" });
+      transactionModel.updateOne.mockImplementation(async (_filter: any, update: any) => {
+        Object.assign(tx, update.$set);
+        return { modifiedCount: 1 };
+      });
       transactionModel.find.mockReturnValue({
         sort: jest.fn().mockReturnValue({
           limit: jest.fn().mockResolvedValue([tx]),
@@ -1056,10 +1144,19 @@ describe("PaymentsPayoutsService", () => {
           recipientUpiId: "creator@upi",
         }),
       );
+      expect(razorpayService.createPayoutByUpi).toHaveBeenCalledWith(
+        expect.objectContaining({ referenceId: "tsz_tx_auto_ready_0" }),
+      );
+      expect(transactionModel.findOneAndUpdate).toHaveBeenCalledWith(
+        expect.objectContaining({ _id: "tx_auto_ready", collectionStatus: "verified" }),
+        { $set: expect.objectContaining({ payoutTransferStatus: "initiating", payoutGatewayProvider: "razorpayx" }) },
+      );
+      expect(transactionModel.updateOne).toHaveBeenCalledWith(
+        { _id: "tx_auto_ready", payoutTransferStatus: "initiating" },
+        expect.anything(),
+      );
       expect(tx.payoutStatus).toBe("paid");
-      expect(tx.payoutGatewayProvider).toBe("razorpayx");
       expect(tx.payoutUtr).toBe("UTR_AUTO_READY");
-      expect(tx.save).toHaveBeenCalled();
       expect(inviteModel.updateOne).toHaveBeenCalledWith(
         { _id: "inv_auto_ready" },
         expect.objectContaining({

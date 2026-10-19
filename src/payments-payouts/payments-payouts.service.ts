@@ -102,6 +102,11 @@ export function platformFeeGst(feePaise: number, gstPercent: number): number {
   return Math.round((fee * pct) / 100);
 }
 
+/** A RazorpayX payout may be on its way: nobody else may pay this row meanwhile. */
+export const GATEWAY_PAYOUT_IN_FLIGHT = ["initiating", "queued", "pending", "processing"];
+/** An "initiating" claim older than this was cut off (crash/deploy) and may be retried. */
+const STALE_PAYOUT_CLAIM_MS = 30 * 60 * 1000;
+
 @Injectable()
 export class PaymentsPayoutsService {
   private readonly logger = new Logger(PaymentsPayoutsService.name);
@@ -679,6 +684,20 @@ export class PaymentsPayoutsService {
 
     const gatewayStatus = String(entity?.status || "").toLowerCase();
     const state = this.mapGatewayPayoutState(gatewayStatus);
+    // Events can arrive out of order: a late "queued"/"processing" never undoes a paid row
+    // (it would make the row payable again). A redelivered "processed" still runs, so
+    // the invite side is completed if an earlier delivery was cut off.
+    if (tx.payoutStatus === "paid" && state === "in_progress") {
+      return {
+        success: true,
+        message: "Webhook accepted (payout already paid)",
+        payoutId,
+        event,
+        transactionId: String(tx._id),
+        payoutStatus: tx.payoutStatus,
+        ignored: true,
+      };
+    }
 
     tx.payoutGatewayProvider = "razorpayx";
     tx.payoutTransferStatus = gatewayStatus || event || "unknown";
@@ -2461,7 +2480,10 @@ export class PaymentsPayoutsService {
           .findOneAndUpdate(
             {
               _id: tx._id,
+              collectionStatus: "verified",
               payoutStatus: { $in: ["pending", "processing"] },
+              payoutTransferStatus: { $nin: GATEWAY_PAYOUT_IN_FLIGHT },
+              disputeStatus: { $ne: "open" },
               "settlement.status": { $ne: SETTLEMENT_OPEN },
               $or: [
                 { refundStatus: { $nin: ["on_hold", "owed", "sent"] } },
@@ -2490,7 +2512,7 @@ export class PaymentsPayoutsService {
           .lean();
         if (!claimed) {
           throw new BadRequestException(
-            "This payout changed meanwhile (already paid or under refund). Reload and try again.",
+            "This payout changed meanwhile (already paid, under refund or dispute, or a RazorpayX payout is on its way). Reload and try again.",
           );
         }
         await this.markInvitePaidOut(claimed, now, session);
@@ -2643,8 +2665,47 @@ export class PaymentsPayoutsService {
         continue;
       }
 
+      // Claim the row first, so a second sweep (cron + the admin button) or a manual
+      // "mark paid" can't pay it at the same time.
+      const now = new Date();
+      const claimed = await this.transactionModel.findOneAndUpdate(
+        {
+          _id: tx._id,
+          collectionStatus: "verified",
+          payoutStatus: { $in: ["pending", "processing"] },
+          $or: [
+            { payoutTransferStatus: { $nin: GATEWAY_PAYOUT_IN_FLIGHT } },
+            // Cut off mid-call: retry — the same reference can't create a second payout.
+            {
+              payoutTransferStatus: "initiating",
+              payoutInitiatedAt: { $lt: new Date(now.getTime() - STALE_PAYOUT_CLAIM_MS) },
+            },
+          ],
+          disputeStatus: { $ne: "open" },
+          refundStatus: { $nin: ["on_hold", "owed", "sent"] },
+          "settlement.status": { $ne: SETTLEMENT_OPEN },
+        },
+        {
+          $set: {
+            payoutTransferStatus: "initiating",
+            payoutGatewayProvider: "razorpayx",
+            payoutInitiatedAt: now,
+            payoutLastRetryAt: now,
+          },
+        },
+      );
+      if (!claimed) {
+        skipped += 1;
+        details.push({ txId, status: "skipped", message: "Changed meanwhile" });
+        continue;
+      }
+      const stillInitiating = { _id: tx._id, payoutTransferStatus: "initiating" };
+
+      // One reference per attempt: a retry after an unclear failure (timeout,
+      // 5xx) reuses it, and RazorpayX returns the same payout instead of a new one.
+      const attempt = Math.max(Number(tx.payoutRetryCount || 0), 0);
+      const referenceId = `tsz_${txId}_${attempt}`;
       try {
-        const referenceId = `tsz_${txId.slice(-8)}_${Date.now()}`;
         const payout = await this.razorpayService.createPayoutByUpi({
           amountPaise: Number(tx.recipientPayout || 0),
           recipientName: recipient.name,
@@ -2658,21 +2719,19 @@ export class PaymentsPayoutsService {
           },
         });
 
-        tx.payoutGatewayProvider = "razorpayx";
-        tx.payoutTransferId = payout.payoutId;
-        tx.payoutTransferStatus = payout.status;
-        tx.payoutInitiatedAt = new Date();
-        tx.payoutUpiId = tx.payoutUpiId || recipient.upiId;
-        tx.payoutFailureReason = "";
-        tx.payoutRetryCount = 0;
-        tx.payoutLastRetryAt = new Date();
-
+        const update: Record<string, any> = {
+          payoutTransferId: payout.payoutId,
+          payoutTransferStatus: payout.status,
+          payoutUpiId: tx.payoutUpiId || recipient.upiId,
+          payoutFailureReason: "",
+        };
         const status = String(payout.status || "").toLowerCase();
         if (status === "processed") {
-          tx.payoutStatus = "paid";
-          tx.paidOutAt = new Date();
-          tx.payoutSettledAt = tx.paidOutAt;
-          if (payout.utr) tx.payoutUtr = payout.utr;
+          update.payoutStatus = "paid";
+          update.paidOutAt = new Date();
+          update.payoutSettledAt = update.paidOutAt;
+          update.payoutRetryCount = 0;
+          if (payout.utr) update.payoutUtr = payout.utr;
           processed += 1;
           details.push({
             txId,
@@ -2680,7 +2739,7 @@ export class PaymentsPayoutsService {
             message: `Gateway payout processed (${payout.payoutId})`,
           });
         } else if (["queued", "pending", "processing"].includes(status)) {
-          tx.payoutStatus = "processing";
+          update.payoutStatus = "processing";
           queued += 1;
           details.push({
             txId,
@@ -2688,37 +2747,49 @@ export class PaymentsPayoutsService {
             message: `Gateway payout queued (${payout.payoutId})`,
           });
         } else {
-          tx.payoutStatus = "pending";
-          tx.payoutFailureReason = `Gateway status: ${payout.status || "unknown"}`;
+          update.payoutStatus = "pending";
+          update.payoutTransferStatus = "failed";
+          update.payoutFailureReason = `Gateway status: ${payout.status || "unknown"}`;
+          update.payoutRetryCount = attempt + 1;
           failed += 1;
           details.push({
             txId,
             status: "failed",
-            message: tx.payoutFailureReason,
+            message: update.payoutFailureReason,
           });
         }
 
-        await tx.save();
-        if (tx.payoutStatus === "paid") {
-          await this.markInvitePayoutReleased(tx, tx.paidOutAt, "auto_sweep");
+        await this.transactionModel.updateOne(stillInitiating, { $set: update });
+        if (update.payoutStatus === "paid") {
+          await this.markInvitePayoutReleased(
+            { ...tx.toObject(), ...update },
+            update.paidOutAt,
+            "auto_sweep",
+          );
         }
       } catch (error: any) {
-        tx.payoutStatus = "pending";
-        tx.payoutGatewayProvider = "razorpayx";
-        tx.payoutFailureReason =
+        // A 4xx means RazorpayX refused it: the next try is a new payout. Anything
+        // else (timeout, network, 5xx) may have gone through: keep the same reference.
+        const httpStatus = Number(error?.response?.status || 0);
+        const refused = httpStatus >= 400 && httpStatus < 500;
+        const reason =
           error?.response?.data?.error?.description ||
           error?.message ||
           "Gateway payout failed";
-        tx.payoutTransferStatus = "failed";
-        tx.payoutRetryCount = Math.max(Number(tx.payoutRetryCount || 0), 0) + 1;
-        tx.payoutLastRetryAt = new Date();
-        await tx.save();
+        await this.transactionModel.updateOne(stillInitiating, {
+          $set: {
+            payoutStatus: "pending",
+            payoutTransferStatus: "failed",
+            payoutFailureReason: refused ? reason : `${reason} (outcome unclear — retry reuses ${referenceId})`,
+            payoutRetryCount: refused ? attempt + 1 : attempt,
+          },
+        });
 
         failed += 1;
         details.push({
           txId,
           status: "failed",
-          message: tx.payoutFailureReason,
+          message: reason,
         });
       }
     }
