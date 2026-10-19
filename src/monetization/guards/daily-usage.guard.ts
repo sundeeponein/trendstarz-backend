@@ -12,13 +12,8 @@ import {
   USAGE_LIMIT_METADATA_KEY,
   UsageLimitMetadata,
 } from "../decorators/usage-limit.decorator";
+import { usageDayKey } from "../../utils/usage-day.util";
 
-function toDayKey(date = new Date()): string {
-  const y = date.getUTCFullYear();
-  const m = String(date.getUTCMonth() + 1).padStart(2, "0");
-  const d = String(date.getUTCDate()).padStart(2, "0");
-  return `${y}-${m}-${d}`;
-}
 
 @Injectable()
 export class DailyUsageGuard implements CanActivate {
@@ -57,7 +52,7 @@ export class DailyUsageGuard implements CanActivate {
       );
     }
 
-    const day = toDayKey();
+    const day = usageDayKey();
     const usageType = usageMeta.metric === "search" ? "search" : "profile_view";
 
     const doc = await this.usageModel.findOneAndUpdate(

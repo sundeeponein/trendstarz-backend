@@ -17,6 +17,7 @@ import {
   SubscriptionPrice,
 } from "../plans/subscription-price.util";
 import { effectiveGstPercent } from "../payments-payouts/fee-rates.util";
+import { usageDayKey } from "../utils/usage-day.util";
 
 type UserRole = "brand" | "influencer" | "photographer";
 
@@ -24,12 +25,6 @@ function toObjectId(value: string) {
   return new Types.ObjectId(value);
 }
 
-function toDayKey(date = new Date()): string {
-  const y = date.getUTCFullYear();
-  const m = String(date.getUTCMonth() + 1).padStart(2, "0");
-  const d = String(date.getUTCDate()).padStart(2, "0");
-  return `${y}-${m}-${d}`;
-}
 
 @Injectable()
 export class MonetizationService {
@@ -500,7 +495,7 @@ export class MonetizationService {
       platform: String(input.platform || "").toLowerCase(),
       url: input.url,
       source: input.source || "profile",
-      day: toDayKey(),
+      day: usageDayKey(),
       userAgent: input.userAgent || "",
       ipHash,
     });
@@ -509,7 +504,7 @@ export class MonetizationService {
   }
 
   async getUsageSummary(userId: string, userRole: UserRole) {
-    const day = toDayKey();
+    const day = usageDayKey();
     const [search, profileView, caps] = await Promise.all<any>([
       this.usageModel.findOne({ userId, userRole, usageType: "search", day }).lean(),
       this.usageModel.findOne({ userId, userRole, usageType: "profile_view", day }).lean(),

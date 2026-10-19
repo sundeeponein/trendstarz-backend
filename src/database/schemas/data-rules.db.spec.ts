@@ -9,6 +9,7 @@ import mongoose, { Types } from "mongoose";
 import { CampaignTransactionSchema } from "./campaign-transaction.schema";
 import { CampaignInviteSchema } from "./campaign-invite.schema";
 import { PaymentSchema } from "./payment.schema";
+import { UsageCounterSchema } from "./usage-counter.schema";
 import { BrandSchema, InfluencerSchema, PhotographerSchema } from "./profile.schemas";
 import { idIn, idsIn } from "../../utils/id-match.util";
 import { anyId } from "../../payments-payouts/campaign-refund.util";
@@ -197,6 +198,25 @@ describe("data rules (real MongoDB)", () => {
     });
   });
 
+  describe("submitting at the deadline vs the hourly expiry", () => {
+    it("whichever saves first wins; the other doesn't overwrite it", async () => {
+      const { insertedId } = await db.conn.collection("campaigninvites").insertOne({
+        campaignId: "camp-race", brandId: "b", influencerId: new Types.ObjectId(), status: "payment_confirmed",
+      });
+      const creatorCopy: any = await Invite.findById(insertedId);
+      const cronCopy: any = await Invite.findById(insertedId);
+      // Creator's submission lands first…
+      creatorCopy.$where = { status: creatorCopy.status };
+      creatorCopy.status = "submitted";
+      await creatorCopy.save();
+      // …then the expiry, guarded on the status it read, must not close it.
+      cronCopy.$where = { status: cronCopy.status };
+      cronCopy.status = "withdrawn";
+      await expect(cronCopy.save()).rejects.toMatchObject({ name: "DocumentNotFoundError" });
+      expect(((await Invite.findById(insertedId).lean()) as any).status).toBe("submitted");
+    });
+  });
+
   describe("answering an invite", () => {
     // The real guard from CampaignInvitesService (it doesn't use `this` state).
     const saveIfUnchanged = (doc: any, readState: Record<string, unknown>) =>
@@ -223,6 +243,21 @@ describe("data rules (real MongoDB)", () => {
       b.status = "declined";
       await expect(saveIfUnchanged(b, rb)).rejects.toThrow(/answered meanwhile/);
       expect((await Invite.findById(insertedId).lean() as any).status).toBe("accepted");
+    });
+  });
+
+  describe("daily usage counters", () => {
+    it("rows get createdAt on upsert and expire 90 days later", async () => {
+      const Usage = db.conn.model("UsageCounter", UsageCounterSchema, "usage_counters");
+      await Usage.init();
+      const row: any = await Usage.findOneAndUpdate(
+        { userId: new Types.ObjectId(), userRole: "brand", usageType: "search", day: "2026-10-19" },
+        { $setOnInsert: { limit: 10, remaining: 10 }, $inc: { used: 1 } },
+        { upsert: true, new: true },
+      ).lean();
+      expect(row.createdAt).toBeInstanceOf(Date);
+      const ttl = (await Usage.collection.indexes()).find((i: any) => i.key?.createdAt === 1);
+      expect(ttl?.expireAfterSeconds).toBe(90 * 24 * 60 * 60);
     });
   });
 });

@@ -28,6 +28,7 @@ import { UsageLimit } from "../monetization/decorators/usage-limit.decorator";
 import { PlansService } from "../plans/plans.service";
 import { PhotographersService } from "../photographers/photographers.service";
 import { isLocalAuthBypassRequest } from "../utils/local-auth-bypass.util";
+import { usageDayKey, nextUsageDayKey } from "../utils/usage-day.util";
 
 /** Decode JWT from request without throwing. Returns userId or null. */
 function extractOptionalViewerId(req: any): string | null {
@@ -59,16 +60,7 @@ function extractOptionalViewerContext(req: any): { userId: string; role: string 
   }
 }
 
-function toDayKey(date = new Date()): string {
-  const y = date.getUTCFullYear();
-  const m = String(date.getUTCMonth() + 1).padStart(2, "0");
-  const d = String(date.getUTCDate()).padStart(2, "0");
-  return `${y}-${m}-${d}`;
-}
 
-function nextDayKey(date = new Date()): string {
-  return toDayKey(new Date(date.getTime() + 24 * 60 * 60 * 1000));
-}
 
 function parseBooleanLike(value: unknown): boolean {
   const normalized = String(value || "").trim().toLowerCase();
@@ -115,7 +107,7 @@ export class UsersController {
       );
     }
 
-    const day = toDayKey();
+    const day = usageDayKey();
     const doc = await this.usageModel.findOneAndUpdate(
       {
         userId: viewer.userId,
@@ -137,7 +129,7 @@ export class UsersController {
 
     if ((doc?.used || 0) >= maxLimit) {
       throw new ForbiddenException(
-        `You have exhausted today's usage limit (${maxLimit}/day on your current plan). You can search again on ${nextDayKey()}. Upgrade your plan for higher limits.`,
+        `You have exhausted today's usage limit (${maxLimit}/day on your current plan). You can search again on ${nextUsageDayKey()}. Upgrade your plan for higher limits.`,
       );
     }
 

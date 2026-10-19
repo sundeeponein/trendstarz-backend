@@ -29,6 +29,14 @@ UsageCounterSchema.index(
   { unique: true },
 );
 
+// Only today's row is ever read (daily search/profile-view limits); MongoDB
+// deletes rows 90 days after they were created. Keeps 3 months for usage review.
+export const USAGE_COUNTER_KEEP_DAYS = 90;
+UsageCounterSchema.index(
+  { createdAt: 1 },
+  { expireAfterSeconds: USAGE_COUNTER_KEEP_DAYS * 24 * 60 * 60 },
+);
+
 export interface UsageCounter extends Document {
   userId: string;
   userRole: "brand" | "influencer" | "photographer";

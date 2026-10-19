@@ -4067,9 +4067,23 @@ export class CampaignInvitesService {
         `\n[system ${resolvedNow.toISOString()}]: Auto-resolved: influencer submitted a post.`;
     }
 
-    // Update invite status to submitted
+    // Update invite status to submitted — only if the invite is still open (the
+    // hourly expiry may have closed it at this same moment; then it stays closed
+    // and this new submission is withdrawn so nothing is left half-done).
+    const statusAsRead = invite.status;
     invite.status = "submitted";
-    await invite.save();
+    invite.$where = { status: statusAsRead };
+    try {
+      await invite.save();
+    } catch (err: any) {
+      if (err?.name !== "DocumentNotFoundError") throw err;
+      if (!canResubmit && submission?._id) {
+        await this.submissionModel.deleteOne({ _id: submission._id }).catch(() => undefined);
+      }
+      throw new BadRequestException(
+        "The submission window closed just now. If you already posted, contact TrendStarZ support.",
+      );
+    }
     this.invalidateAttentionCache();
 
     const resubmissionCount = Number(submission?.resubmissionCount || 0);
@@ -5179,7 +5193,17 @@ export class CampaignInvitesService {
     // "expired_unsubmitted" keeps holding the creator's monthly slot (creator-monthly-slots.util).
     invite.withdrawnReasonCode = opts.withdrawnReason ?? "expired_unsubmitted";
     invite.updatedAt = now;
-    await invite.save();
+    // Only if still in the state just read: a creator who submitted at the same
+    // moment wins, and their invite is never closed (nor the host refunded).
+    invite.$where = { status: previousStatus };
+    try {
+      await invite.save();
+    } catch (err: any) {
+      if (err?.name === "DocumentNotFoundError") {
+        return { success: true, status: "changed", skipped: true };
+      }
+      throw err;
+    }
     await this.recordInviteWithdrawn(
       invite,
       opts.withdrawnReason ?? "expired_unsubmitted",
