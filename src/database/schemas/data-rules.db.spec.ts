@@ -379,6 +379,34 @@ describe("data rules (real MongoDB)", () => {
   });
 
   describe("one bank transfer pays once (UTR)", () => {
+    it("host pays creators 1+2 in one transfer, then creators 3 and 4 one by one", async () => {
+      const [c1, c2, c3, c4] = [1, 2, 3, 4].map(() => new Types.ObjectId());
+      const service = Object.create(PaymentsPayoutsService.prototype);
+      Object.assign(service, { transactionModel: Tx, connection: db.conn });
+      const check = (utr: string, invites: Types.ObjectId[]) =>
+        (service as any).assertUtrNotUsedElsewhere(utr, { acceptedInviteIds: invites.map(String) });
+      const save = (utr: string, invite: Types.ObjectId, batch: string) =>
+        Tx.collection.insertOne({
+          ...txBase(), inviteId: invite, utrNumber: utr, paymentBatchId: batch, collectionStatus: "proof_submitted",
+        });
+
+      // 1) Creators 1 and 2 accepted; one transfer (UTR A) covers both.
+      await expect(check("UTRA0001", [c1, c2])).resolves.toBeUndefined();
+      await save("UTRA0001", c1, "batch1");
+      await save("UTRA0001", c2, "batch1");
+      // Re-sending UTR A for the same two (e.g. a clearer screenshot) is fine.
+      await expect(check("UTRA0001", [c1, c2])).resolves.toBeUndefined();
+
+      // 2) Creator 3 accepts and is paid with a new transfer (UTR B).
+      await expect(check("UTRB0002", [c3])).resolves.toBeUndefined();
+      await save("UTRB0002", c3, "batch2");
+
+      // 3) Creator 4 paid with its own transfer (UTR C) — fine; reusing A or B is refused.
+      await expect(check("UTRA0001", [c4])).rejects.toThrow(/already used/);
+      await expect(check("UTRB0002", [c4])).rejects.toThrow(/already used/);
+      await expect(check("UTRC0003", [c4])).resolves.toBeUndefined();
+    });
+
     const check = (calc: any) => {
       const service = Object.create(PaymentsPayoutsService.prototype);
       Object.assign(service, { transactionModel: Tx, connection: db.conn });
