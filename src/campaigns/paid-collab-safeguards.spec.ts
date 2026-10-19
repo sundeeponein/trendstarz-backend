@@ -836,6 +836,47 @@ describe("Paid-collaboration safeguards (CampaignInvitesService)", () => {
     });
   });
 
+  describe("product shipping (barter)", () => {
+    const product = { campaignType: "product", productShippingRequired: true };
+
+    it("only an accepted, unsubmitted collaboration can be marked shipped", async () => {
+      await build([working({ status: "pending" })], [], [], [], product);
+      await expect(
+        service.updateProductFulfillment(INVITE, "host1", { trackingId: "AWB1" }),
+      ).rejects.toThrow("accepted collaboration");
+    });
+
+    it("refuses invalid and future dates, and delivery before shipping", async () => {
+      await build([working({ status: "accepted" })], [], [], [], product);
+      await expect(
+        service.updateProductFulfillment(INVITE, "host1", { shippedAt: "not a date" }),
+      ).rejects.toThrow("isn't a valid date");
+      await expect(
+        service.updateProductFulfillment(INVITE, "host1", {
+          deliveredAt: new Date(Date.now() + 3 * DAY).toISOString(),
+        }),
+      ).rejects.toThrow("can't be in the future");
+      await expect(
+        service.updateProductFulfillment(INVITE, "host1", {
+          shippedAt: new Date(Date.now() - 1 * DAY).toISOString(),
+          deliveredAt: new Date(Date.now() - 2 * DAY).toISOString(),
+        }),
+      ).rejects.toThrow("before the shipped date");
+    });
+
+    it("'delivered' records the delivery time and can't be undone (only 'returned')", async () => {
+      await build([working({ status: "accepted" })], [], [], [], product);
+      await service.updateProductFulfillment(INVITE, "host1", { status: "delivered" });
+      const deliveredAt = new Date(invites.get(INVITE).productFulfillment.deliveredAt);
+      expect(Math.abs(deliveredAt.getTime() - Date.now())).toBeLessThan(60 * 1000);
+      await expect(
+        service.updateProductFulfillment(INVITE, "host1", { status: "pending" }),
+      ).rejects.toThrow("already marked delivered");
+      await service.updateProductFulfillment(INVITE, "host1", { status: "returned" });
+      expect(invites.get(INVITE).productFulfillment.status).toBe("returned");
+    });
+  });
+
   describe("settlement takes back fee credit", () => {
     it("unused credit is reversed and spent credit is added to what the host repays", async () => {
       await build(

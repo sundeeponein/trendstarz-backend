@@ -2174,16 +2174,48 @@ export class CampaignInvitesService {
         "Product fulfillment is only valid for `product` campaigns.",
       );
     }
+    // Shipping belongs to an accepted collaboration that isn't finished: marking a
+    // pending/declined/closed invite as shipped would block withdrawing it and start
+    // a posting window that doesn't exist.
+    if (!["accepted", "payment_confirmed", "working"].includes(String(invite.status))) {
+      throw new BadRequestException(
+        "Shipping can be updated only for an accepted collaboration that hasn't been submitted yet.",
+      );
+    }
     const pf = invite.productFulfillment || {};
+    const now = Date.now();
+    const realDate = (value: unknown, label: string): Date => {
+      const d = new Date(value as any);
+      if (Number.isNaN(d.getTime())) {
+        throw new BadRequestException(`${label} isn't a valid date.`);
+      }
+      // The form sends a plain date (read as 00:00 UTC = 05:30 IST): "today" picked in
+      // India before 05:30 is still fine. Anything later is a future date.
+      if (d.getTime() > now + 6 * 60 * 60 * 1000) {
+        throw new BadRequestException(`${label} can't be in the future.`);
+      }
+      return d;
+    };
+    const wasDelivered = String(pf.status || "") === "delivered" || !!pf.deliveredAt;
     if (body.courier !== undefined) pf.courier = body.courier;
     if (body.trackingId !== undefined) pf.trackingId = body.trackingId;
     if (body.trackingUrl !== undefined) pf.trackingUrl = body.trackingUrl;
-    if (body.shippedAt !== undefined) pf.shippedAt = new Date(body.shippedAt);
+    if (body.shippedAt !== undefined) pf.shippedAt = realDate(body.shippedAt, "Shipped date");
     if (body.deliveredAt !== undefined)
-      pf.deliveredAt = new Date(body.deliveredAt);
+      pf.deliveredAt = realDate(body.deliveredAt, "Delivered date");
+    if (pf.shippedAt && pf.deliveredAt && new Date(pf.deliveredAt) < new Date(pf.shippedAt)) {
+      throw new BadRequestException("The delivered date can't be before the shipped date.");
+    }
     if (body.note !== undefined) pf.note = body.note;
+    // Delivered starts the creator's posting window: it can't be undone (only "returned").
+    if (wasDelivered && body.status && !["delivered", "returned"].includes(body.status)) {
+      throw new BadRequestException(
+        "This product is already marked delivered. If it came back, mark it as returned.",
+      );
+    }
     if (body.status) {
       pf.status = body.status;
+      if (body.status === "delivered" && !pf.deliveredAt) pf.deliveredAt = new Date();
     } else {
       // Auto-derive
       if (pf.deliveredAt) pf.status = "delivered";
@@ -2258,9 +2290,19 @@ export class CampaignInvitesService {
       return { success: true, locationVisit: { status: "cancelled" }, closed: true };
     }
 
+    if (!["accepted", "payment_confirmed", "working"].includes(String(invite.status))) {
+      throw new BadRequestException(
+        "The visit can be updated only for an accepted collaboration that hasn't been submitted yet.",
+      );
+    }
     const lv = invite.locationVisit || {};
-    if (body.scheduledAt !== undefined)
-      lv.scheduledAt = new Date(body.scheduledAt);
+    if (body.scheduledAt !== undefined) {
+      const at = new Date(body.scheduledAt as any);
+      if (Number.isNaN(at.getTime())) {
+        throw new BadRequestException("The visit date isn't a valid date.");
+      }
+      lv.scheduledAt = at;
+    }
     if (body.note !== undefined) lv.note = body.note;
     if (body.status) {
       lv.status = body.status;
