@@ -9,6 +9,9 @@
 //       src/campaigns/reinvite-rule.util.ts). Partial index; needs MongoDB 6.0+.
 //   uniq_review_per_invite_side       reviews          one review per invite
 //       per reviewer side (the guard in reviews.service.ts).
+//   uniq_submission_per_invite        campaignsubmissions  one submitted post per
+//       invite (submitPost and the late-post path find-or-create it; a double
+//       click could otherwise create two and the app reads only one).
 //
 // Safety:
 // - Dry-run by default: reads only, reports duplicates.
@@ -63,6 +66,15 @@ const CONSTRAINTS = [
     keys: { inviteId: 1, reviewerType: 1 },
     match: {},
     group: { inviteId: { $toString: '$inviteId' }, reviewerType: '$reviewerType' },
+    options: {},
+    minMongoMajor: 0,
+  },
+  {
+    name: 'uniq_submission_per_invite',
+    collection: 'campaignsubmissions',
+    keys: { inviteId: 1 },
+    match: {},
+    group: { inviteId: { $toString: '$inviteId' } },
     options: {},
     minMongoMajor: 0,
   },

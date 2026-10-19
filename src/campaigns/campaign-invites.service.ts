@@ -4068,19 +4068,26 @@ export class CampaignInvitesService {
       await existing.save();
       submission = existing;
     } else {
-      // Create one submission record per invite
-      submission = await this.submissionModel.create({
-        campaignId: String(invite.campaignId),
-        influencerId,
-        inviteId,
-        ...normalizedSubmissionData,
-        postPlatform,
-        engagementRate,
-        submittedAt: new Date(),
-        status: "submitted",
-        isLate: lateInfo.isLate,
-        daysLate: lateInfo.daysLate,
-      });
+      // Create one submission record per invite (unique index uniq_submission_per_invite).
+      try {
+        submission = await this.submissionModel.create({
+          campaignId: String(invite.campaignId),
+          influencerId,
+          inviteId,
+          ...normalizedSubmissionData,
+          postPlatform,
+          engagementRate,
+          submittedAt: new Date(),
+          status: "submitted",
+          isLate: lateInfo.isLate,
+          daysLate: lateInfo.daysLate,
+        });
+      } catch (err: any) {
+        if (err?.code === 11000) {
+          throw new BadRequestException("Your post was already submitted for this invite.");
+        }
+        throw err;
+      }
     }
 
     // A plain report ("not yet posted") is now moot once the influencer actually submits —

@@ -88,6 +88,7 @@ export const MONEY_RULES: Record<string, string[]> = {
 export const REQUIRED_INDEXES: Array<[collection: string, name: string]> = [
   ["campaigninvites", "uniq_active_invite_per_recipient"],
   ["reviews", "uniq_review_per_invite_side"],
+  ["campaignsubmissions", "uniq_submission_per_invite"],
 ];
 
 function check(

@@ -32,6 +32,10 @@ describe("data integrity checks (real MongoDB)", () => {
       { inviteId: 1, reviewerType: 1 },
       { name: REQUIRED_INDEXES[1][1], unique: true },
     );
+    await db.collection("campaignsubmissions").createIndex(
+      { inviteId: 1 },
+      { name: REQUIRED_INDEXES[2][1], unique: true },
+    );
   });
 
   it("reports every check ok on clean, production-shaped data", async () => {

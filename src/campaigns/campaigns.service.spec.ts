@@ -58,7 +58,7 @@ describe("CampaignsService", () => {
         .mockReturnValue({ lean: jest.fn().mockResolvedValue([mockCampaign]) }),
     });
     mockCampaignModel.findById = jest.fn().mockResolvedValue(mockCampaign);
-    mockCampaignModel.findByIdAndDelete = jest
+    mockCampaignModel.findOneAndDelete = jest
       .fn()
       .mockResolvedValue(mockCampaign);
     mockCampaignModel.countDocuments = jest.fn().mockResolvedValue(0);
@@ -595,9 +595,19 @@ describe("CampaignsService", () => {
     it("should delete campaign owned by brand", async () => {
       const result = await service.remove(mockCampaign._id, mockBrand._id);
       expect(campaignInviteModel.deleteMany).toHaveBeenCalled();
-      expect(campaignModel.findByIdAndDelete).toHaveBeenCalledWith(
-        mockCampaign._id,
+      expect(campaignModel.findOneAndDelete).toHaveBeenCalledWith({
+        _id: mockCampaign._id,
+        status: mockCampaign.status,
+      });
+    });
+
+    it("a second quick click deletes nothing more and records no second slot", async () => {
+      campaignModel.findOneAndDelete.mockResolvedValueOnce(null); // the first click won
+      campaignInviteModel.deleteMany.mockClear();
+      await expect(service.remove(mockCampaign._id, mockBrand._id)).rejects.toThrow(
+        "changed meanwhile",
       );
+      expect(campaignInviteModel.deleteMany).not.toHaveBeenCalled();
     });
 
     it("refuses to delete a campaign with a payment started or made", async () => {

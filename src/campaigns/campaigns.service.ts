@@ -2523,6 +2523,18 @@ export class CampaignsService {
       hasPaymentRows: await this.campaignInvitesService.hasPaymentRows(id),
     });
     if (blocker) throw new BadRequestException(blocker);
+    // The delete itself decides: only if the campaign is unchanged (not approved
+    // meanwhile), and only one of two quick clicks gets here — so its monthly slot
+    // is recorded once.
+    const deleted = await this.campaignModel.findOneAndDelete({
+      _id: campaign._id,
+      status: campaign.status,
+    });
+    if (!deleted) {
+      throw new BadRequestException(
+        "This campaign changed meanwhile (or was already deleted). Reload and try again.",
+      );
+    }
     // Only invites without accepted work go (one accepted meanwhile is kept).
     await this.campaignInviteModel.deleteMany({
       $or: inviteQueries,
@@ -2549,6 +2561,6 @@ export class CampaignsService {
           ),
         );
     }
-    return this.campaignModel.findByIdAndDelete(id);
+    return deleted;
   }
 }
