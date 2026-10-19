@@ -52,6 +52,7 @@ import { takenAccountFields } from "../utils/account-uniqueness.util";
 import { SingleInstance } from "../utils/single-instance";
 import { idIn } from "../utils/id-match.util";
 import { openMoneyFilter, openWorkFilter } from "./self-deletion.util";
+import { normalizeUpiId, upiIdError } from "../utils/upi.util";
 
 /** Self-service "Delete Account" grace period — see requestSelfDeletion. */
 export const SELF_DELETION_GRACE_PERIOD_DAYS =
@@ -3483,7 +3484,9 @@ export class UsersService implements OnModuleInit {
       if (update[key] !== undefined) updateData[key] = update[key];
     }
     if (update.payout !== undefined) {
-      updateData["payout.upiId"] = String(update?.payout?.upiId || "").trim();
+      const upiError = upiIdError(update?.payout?.upiId);
+      if (upiError) throw new BadRequestException(upiError);
+      updateData["payout.upiId"] = normalizeUpiId(update?.payout?.upiId);
       updateData["payout.mobile"] = String(update?.payout?.mobile || "").trim();
       updateData["payout.accountHolderName"] = String(
         update?.payout?.accountHolderName || "",

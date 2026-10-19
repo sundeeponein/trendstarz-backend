@@ -43,6 +43,7 @@ import {
 } from "../utils/profile-eligibility.util";
 import { idIn } from "../utils/id-match.util";
 import { takenAccountFields } from "../utils/account-uniqueness.util";
+import { normalizeUpiId, upiIdError } from "../utils/upi.util";
 
 const PROFILE_PHOTO_VISIBILITY_BLOCK_FLAG_CODES = [
   "PROFILE_PHOTO_PENDING_REVIEW",
@@ -566,6 +567,18 @@ export class PhotographersService {
       if (key === "socialMedia") {
         if (data[key] !== undefined) {
           update.socialMedia = normalizeSocialMediaList(data[key]);
+        }
+        continue;
+      }
+      if (key === "payout") {
+        if (data.payout !== undefined) {
+          const upiError = upiIdError(data.payout?.upiId);
+          if (upiError) throw new BadRequestException(upiError);
+          update["payout.upiId"] = normalizeUpiId(data.payout?.upiId);
+          update["payout.mobile"] = String(data.payout?.mobile || "").trim();
+          update["payout.accountHolderName"] = String(
+            data.payout?.accountHolderName || "",
+          ).trim();
         }
         continue;
       }

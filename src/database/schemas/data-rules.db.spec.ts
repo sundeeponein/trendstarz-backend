@@ -10,6 +10,7 @@ import { CampaignTransactionSchema } from "./campaign-transaction.schema";
 import { CampaignInviteSchema } from "./campaign-invite.schema";
 import { PaymentSchema } from "./payment.schema";
 import { UsageCounterSchema } from "./usage-counter.schema";
+import { CampaignSubmissionSchema } from "./campaign-submission.schema";
 import { openMoneyFilter, openWorkFilter } from "../../users/self-deletion.util";
 import { BrandSchema, InfluencerSchema, PhotographerSchema } from "./profile.schemas";
 import { idIn, idsIn } from "../../utils/id-match.util";
@@ -288,6 +289,56 @@ describe("data rules (real MongoDB)", () => {
       expect(await Tx.findOne(openMoneyFilter(String(creator))).lean()).toBeNull();
       await Tx.collection.updateOne({ _id: row.insertedId }, { $set: { refundStatus: "owed" } });
       expect(await Tx.findOne(openMoneyFilter(host)).lean()).toBeTruthy();
+    });
+  });
+
+  describe("a post under review completes when the host stays silent", () => {
+    const HOUR = 60 * 60 * 1000;
+    // The real job, on real collections; settings and event logging are stand-ins.
+    const job = (settings: any) => {
+      const Submission = db.conn.models.CampaignSubmission
+        || db.conn.model("CampaignSubmission", CampaignSubmissionSchema, "campaignsubmissions");
+      const service = Object.create(CampaignInvitesService.prototype);
+      Object.assign(service, {
+        submissionModel: Submission,
+        inviteModel: Invite,
+        campaignTransactionModel: Tx,
+        appSettingsModel: { findOne: () => ({ lean: async () => settings }) },
+        platformEvents: { record: async () => true },
+      });
+      return { run: () => service.autoApproveStaleSubmissions(), Submission };
+    };
+    const seed = async (Submission: any, hoursAgo: number, extra: any = {}, inviteStatus = "submitted") => {
+      const invite = await Invite.collection.insertOne({
+        campaignId: "camp-review", brandId: "b", influencerId: new Types.ObjectId(), status: inviteStatus,
+      });
+      const sub = await Submission.collection.insertOne({
+        campaignId: "camp-review", influencerId: new Types.ObjectId(), inviteId: invite.insertedId,
+        postUrl: "https://instagram.com/p/x", status: "submitted",
+        submittedAt: new Date(Date.now() - hoursAgo * HOUR), ...extra,
+      });
+      return { inviteId: invite.insertedId, subId: sub.insertedId };
+    };
+
+    it("default (24 h + 0): completes after 24 h; not before, and never one under dispute", async () => {
+      const { run, Submission } = job({ submissionApprovalWaitHours: 24, submissionAutoCompleteGraceHours: 0 });
+      const due = await seed(Submission, 25);
+      const early = await seed(Submission, 10);
+      const disputed = await seed(Submission, 30, {}, "disputed");
+      await run();
+      expect(((await Invite.findById(due.inviteId).lean()) as any).status).toBe("completed");
+      expect(((await Submission.findById(due.subId).lean()) as any).autoCompletedAt).toBeInstanceOf(Date);
+      expect(((await Invite.findById(early.inviteId).lean()) as any).status).toBe("submitted");
+      expect(((await Invite.findById(disputed.inviteId).lean()) as any).status).toBe("disputed");
+    });
+
+    it("with extra silent hours, only a host who ticked auto-complete ends it at 24 h", async () => {
+      const { run, Submission } = job({ submissionApprovalWaitHours: 24, submissionAutoCompleteGraceHours: 48 });
+      const silent = await seed(Submission, 30);
+      const ticked = await seed(Submission, 30, { hostAutoCompleteEnabled: true });
+      await run();
+      expect(((await Invite.findById(silent.inviteId).lean()) as any).status).toBe("submitted");
+      expect(((await Invite.findById(ticked.inviteId).lean()) as any).status).toBe("completed");
     });
   });
 });

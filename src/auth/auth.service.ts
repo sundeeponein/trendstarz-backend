@@ -39,6 +39,7 @@ import { CloudinaryService } from "../cloudinary.service";
 import { CloudinaryFolders } from "../cloudinary-folders";
 import { WORKFLOW_TIMING_DEFAULTS } from "../utils/workflow-timing.util";
 import { withoutServerOwnedProfileFields } from "../utils/server-owned-profile-fields.util";
+import { payoutFromInput } from "../utils/upi.util";
 import { isActivePremium } from "../payments-payouts/fee-rates.util";
 import { SingleInstance } from "../utils/single-instance";
 import { effectiveGstPercent } from "../payments-payouts/fee-rates.util";
@@ -1953,6 +1954,9 @@ export class AuthService {
     const influencer = new this.influencerModel({
       // Signup form minus server-owned fields (status, Premium, verification…).
       ...withoutServerOwnedProfileFields(data),
+      payout: payoutFromInput(data?.payout, (m) => {
+        throw new BadRequestException(m);
+      }),
       email: normalizedEmail || data.email,
       phoneNumber: normalizedPhone || data.phoneNumber,
       isMobileVerified: mobileOtpVerified,
@@ -2400,6 +2404,9 @@ export class AuthService {
     const photographer = new this.photographerModel({
       // Signup form minus server-owned fields (status, Premium, verification…).
       ...withoutServerOwnedProfileFields(data),
+      payout: payoutFromInput(data?.payout, (m) => {
+        throw new BadRequestException(m);
+      }),
       username: normalizedUsername,
       email: normalizedEmail || data.email,
       phoneNumber: normalizedPhone || data.phoneNumber,

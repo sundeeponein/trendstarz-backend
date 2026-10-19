@@ -702,6 +702,7 @@ describe("CampaignInvitesService – respond()", () => {
   let inviteModel: any;
   let brandModel: any;
   let influencerModel: any;
+  let photographerModel: any;
   let campaignModel: any;
   let plansService: any;
 
@@ -751,6 +752,13 @@ describe("CampaignInvitesService – respond()", () => {
       }),
     });
     influencerModel.findByIdAndUpdate = jest.fn().mockResolvedValue(undefined);
+    photographerModel = jest.fn();
+    photographerModel.findById = jest.fn().mockReturnValue({
+      select: jest.fn().mockReturnValue({
+        lean: jest.fn().mockResolvedValue({ name: "Photo" }),
+      }),
+    });
+    photographerModel.findByIdAndUpdate = jest.fn().mockResolvedValue(undefined);
 
     campaignModel = jest.fn();
     campaignModel.findById = jest.fn();
@@ -764,7 +772,7 @@ describe("CampaignInvitesService – respond()", () => {
         { provide: getModelToken("CampaignSubmission"), useValue: lenientModel({}) },
         { provide: getModelToken("Campaign"), useValue: lenientModel(campaignModel) },
         { provide: getModelToken("Brand"), useValue: lenientModel(brandModel) },
-        { provide: getModelToken("Photographer"), useValue: lenientModel(jest.fn()) },
+        { provide: getModelToken("Photographer"), useValue: lenientModel(photographerModel) },
         { provide: getModelToken("Influencer"), useValue: lenientModel(influencerModel) },
         { provide: getModelToken("CampaignTransaction"), useValue: lenientModel({}) },
         { provide: PlansService, useValue: plansService },
@@ -791,6 +799,33 @@ describe("CampaignInvitesService – respond()", () => {
       ...overrides,
     };
   }
+
+  it("refuses a mistyped UPI ID before saving anything", async () => {
+    inviteModel.findById.mockResolvedValue(pendingInvite());
+    await expect(
+      service.respond("inv1", "inf1", "accepted", "2026-07-01", undefined, undefined, undefined, undefined, {
+        upiId: "9876543210",
+      }),
+    ).rejects.toThrow(/doesn't look right/);
+    expect(influencerModel.findByIdAndUpdate).not.toHaveBeenCalled();
+  });
+
+  it("saves a photographer's payout details typed while accepting (they used to be dropped)", async () => {
+    inviteModel.findById.mockResolvedValue(pendingInvite({ recipientRole: "photographer" }));
+    await service
+      .respond("inv1", "inf1", "accepted", "2026-07-01", undefined, undefined, undefined, undefined, {
+        upiId: " Photo.Studio@OKSBI ",
+        accountHolderName: "Photo Studio",
+      })
+      .catch(() => undefined); // later eligibility steps aren't mocked here
+    expect(photographerModel.findByIdAndUpdate).toHaveBeenCalledWith("inf1", {
+      $set: expect.objectContaining({
+        "payout.upiId": "photo.studio@oksbi",
+        "payout.accountHolderName": "Photo Studio",
+      }),
+    });
+    expect(influencerModel.findByIdAndUpdate).not.toHaveBeenCalled();
+  });
 
   it("throws when invite not found", async () => {
     inviteModel.findById.mockResolvedValue(null);

@@ -5,8 +5,8 @@
 export const WORKFLOW_TIMING_DEFAULTS = {
   /** Host can mark a submitted post completed after this many hours. */
   submissionApprovalWaitHours: 24,
-  /** Auto-complete if the host stays silent this long after that. */
-  submissionAutoCompleteGraceHours: 48,
+  /** Extra hours after that before a silent host's post completes on its own (0 = right then). */
+  submissionAutoCompleteGraceHours: 0,
   /** Admin/auto payout release wait. */
   payoutReleaseWaitHours: 24,
   /** A disputed creator must respond within this window. */

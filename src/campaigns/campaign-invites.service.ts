@@ -73,6 +73,7 @@ import {
   currentTermsVersion,
   termsV2EffectiveAt,
 } from "./paid-collab-terms";
+import { normalizeUpiId, upiIdError } from "../utils/upi.util";
 import { reverseIssuedCredit } from "../payments-payouts/platform-credit.util";
 import { SingleInstance } from "../utils/single-instance";
 
@@ -297,6 +298,7 @@ export class CampaignInvitesService {
     return new Date(submittedAt.getTime() + waitHours * 60 * 60 * 1000);
   }
 
+  /** Completes a post under review; false when the host acted meanwhile (dispute/approve). */
   private async autoCompleteSubmission(
     submission: any,
     invite: any,
@@ -304,14 +306,21 @@ export class CampaignInvitesService {
     actor: { userId?: unknown; userRole: PlatformEventActorRole } = {
       userRole: "system",
     },
-  ) {
+  ): Promise<boolean> {
     submission.status = "approved";
     submission.brandFeedback =
       submission.brandFeedback ||
       "Auto-completed after the host review window expired without response.";
     submission.reviewedAt = now;
     submission.autoCompletedAt = now;
-    await submission.save();
+    // Guarded: a dispute saved at the same moment wins, and this does nothing.
+    submission.$where = { status: "submitted" };
+    try {
+      await submission.save();
+    } catch (err: any) {
+      if (err?.name === "DocumentNotFoundError") return false;
+      throw err;
+    }
 
     invite.status = "completed";
     invite.completedAt = now;
@@ -340,6 +349,7 @@ export class CampaignInvitesService {
         tx.collectionStatus === "verified" ? "processing" : "pending";
       await tx.save();
     }
+    return true;
   }
 
   private normalizeRecipientRole(role: any): "influencer" | "photographer" {
@@ -1005,14 +1015,26 @@ export class CampaignInvitesService {
     await this.autoApproveStaleSubmissions();
   }
 
+  /**
+   * A submitted post completes on its own when the host's review window ends with no
+   * issue raised: "Host mark completed after" + "Auto-complete if host silent after"
+   * hours (admin settings). A host who ticked auto-complete ends it at the first one.
+   */
   async autoApproveStaleSubmissions() {
     const waitHours = await this.getSubmissionApprovalWaitHours();
-    const cutoff = new Date(Date.now() - waitHours * 60 * 60 * 1000);
+    const silentHours = await this.getSubmissionAutoCompleteGraceHours();
+    const now = Date.now();
+    const optInCutoff = new Date(now - waitHours * 60 * 60 * 1000);
+    const silentCutoff = new Date(now - (waitHours + silentHours) * 60 * 60 * 1000);
     const staleSubmissions = await this.submissionModel
       .find({
         status: "submitted",
-        hostAutoCompleteEnabled: true,
-        submittedAt: { $lte: cutoff },
+        $or: [
+          { hostAutoCompleteEnabled: true, submittedAt: { $lte: optInCutoff } },
+          { submittedAt: { $lte: silentCutoff } },
+          // Older rows without submittedAt: fall back to when they were created.
+          { submittedAt: null, createdAt: { $lte: silentCutoff } },
+        ],
       })
       .lean();
 
@@ -1023,21 +1045,28 @@ export class CampaignInvitesService {
       if (!submission || submission.status !== "submitted") continue;
 
       const invite = await this.inviteModel.findById(submission.inviteId);
-      if (!invite) continue;
+      // Only a post still waiting for review — never one under dispute or closed.
+      if (!invite || invite.status !== "submitted") continue;
 
-      await this.autoCompleteSubmission(submission, invite);
-
-      // Auto-approved post emails are disabled by product request.
-
-      autoApprovedCount++;
+      if (await this.autoCompleteSubmission(submission, invite)) autoApprovedCount++;
     }
 
     return {
       success: true,
       autoApprovedCount,
       waitHours,
-      totalHours: waitHours,
+      totalHours: waitHours + silentHours,
     };
+  }
+
+  /** When the host's review window for this post ends (it completes on its own then). */
+  private reviewWindowEndsAt(
+    submission: any,
+    waitHours: number,
+    silentHours: number,
+  ): Date | null {
+    const hours = submission?.hostAutoCompleteEnabled ? waitHours : waitHours + silentHours;
+    return this.getHostAutoCompleteAt(submission, hours);
   }
 
   async getCampaignIdForInvite(inviteId: string): Promise<string | null> {
@@ -2717,13 +2746,11 @@ export class CampaignInvitesService {
       // otherwise assertHasPayout re-reads the still-stale profile and
       // rejects details the influencer just entered, since the old persist
       // step ran only after these checks (and was never reached on failure).
-      if (
-        recipientRole !== "photographer" &&
-        payout &&
-        (payout.upiId || payout.mobile || payout.accountHolderName)
-      ) {
+      if (payout && (payout.upiId || payout.mobile || payout.accountHolderName)) {
+        const upiError = upiIdError(payout.upiId);
+        if (upiError) throw new BadRequestException(upiError);
         const set: any = { "payout.lastConfirmedAt": new Date() };
-        const upiId = String(payout.upiId || "").trim();
+        const upiId = normalizeUpiId(payout.upiId);
         const mobile = String(payout.mobile || "").trim();
         const accountHolderName = String(payout.accountHolderName || "").trim();
         if (upiId) set["payout.upiId"] = upiId;
@@ -2732,9 +2759,11 @@ export class CampaignInvitesService {
           set["payout.accountHolderName"] = accountHolderName;
         try {
           if (Object.keys(set).length > 1) {
-            await this.influencerModel.findByIdAndUpdate(influencerId, {
-              $set: set,
-            });
+            // Photographers' details used to be dropped here (influencers only).
+            await (recipientRole === "photographer"
+              ? this.photographerModel
+              : this.influencerModel
+            ).findByIdAndUpdate(influencerId, { $set: set });
             recipient = await this.loadRecipientProfile(
               recipientRole,
               influencerId,
@@ -2749,13 +2778,6 @@ export class CampaignInvitesService {
         influencerId,
         recipientRole,
       );
-      if (status === "accepted") {
-        await this.profileVerificationService.assertHasPayout(
-          influencerId,
-          recipientRole,
-        );
-      }
-
       if (!selectedPostDate) {
         throw new BadRequestException(
           "selectedPostDate is required to respond",
@@ -2768,6 +2790,15 @@ export class CampaignInvitesService {
         )
         .lean();
       if (!campaign) throw new NotFoundException("Campaign not found");
+      if (status === "accepted") {
+        // Paid work (not barter/location): payouts go to the UPI ID, so it's required.
+        await this.profileVerificationService.assertHasPayout(
+          influencerId,
+          recipientRole,
+          "self",
+          !isBarterOrLocationCampaign(campaign),
+        );
+      }
 
       this.assertCampaignLiveForRecipient(campaign, "accept");
       this.assertCampaignNotEnded(campaign, "accept");
@@ -3439,6 +3470,7 @@ export class CampaignInvitesService {
         recipientIdForEligibility,
         recipientRole,
         "brand",
+        true, // a counter offer is always a paid amount
       );
       const requestedAmount = Number(counter?.requestedAmount || 0);
       const requestedAmountPaise = Number(counter?.requestedAmountPaise || 0);
@@ -4297,7 +4329,20 @@ export class CampaignInvitesService {
 
     const now = new Date();
     // A host can flag an issue at any point during the review window — only
-    // "approve" (Mark Completed) is gated behind the review-wait period.
+    // "approve" (Mark Completed) is gated behind the review-wait period. Once the
+    // window ends the post is complete (the hourly job finishes it): no more issues.
+    if (action === "dispute" && String(submission.status) === "submitted") {
+      const windowEndsAt = this.reviewWindowEndsAt(
+        submission,
+        await this.getSubmissionApprovalWaitHours(),
+        await this.getSubmissionAutoCompleteGraceHours(),
+      );
+      if (windowEndsAt && now.getTime() >= windowEndsAt.getTime()) {
+        throw new BadRequestException(
+          "The review window for this post has closed, so it's completed automatically. Contact TrendStarZ support if something is wrong.",
+        );
+      }
+    }
     if (action === "approve") {
       const waitHours = await this.getSubmissionApprovalWaitHours();
       const submittedAtRaw =

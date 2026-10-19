@@ -8,6 +8,7 @@ import { resolveTier, tierForFollowers } from "../utils/tier-ranges.util";
 import { InjectModel } from "@nestjs/mongoose";
 import { Model, Types } from "mongoose";
 import { WhatsAppService } from "../whatsapp/whatsapp.service";
+import { upiIdError } from "../utils/upi.util";
 
 type ProfileRole = "influencer" | "brand" | "photographer" | "admin";
 export type ProfileUserType = "Influencer" | "Brand" | "Photographer" | "User";
@@ -1196,8 +1197,17 @@ export class ProfileVerificationService {
     userId: string,
     role: any,
     audience: "self" | "brand" = "self",
+    /** The creator is paid through TrendStarZ: a valid UPI ID is required (payouts go there). */
+    paid = false,
   ) {
     const { profile } = await this.loadProfile(userId, role);
+    if (paid && (!this.hasText(profile?.payout?.upiId) || upiIdError(profile?.payout?.upiId))) {
+      throw new BadRequestException(
+        audience === "brand"
+          ? "This creator hasn't added a valid UPI ID for payouts yet, so the offer can't be accepted."
+          : "Add your UPI ID (for example 9876543210@ybl) to accept a paid invite — TrendStarZ sends your payout there. A mobile number alone isn't enough.",
+      );
+    }
     if (!this.hasPayout(profile)) {
       throw new BadRequestException(
         audience === "brand"

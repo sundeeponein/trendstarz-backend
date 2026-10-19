@@ -182,3 +182,35 @@ describe("ProfileVerificationService.adminAction clears the 'updated since revie
     },
   );
 });
+
+describe("payout details needed to accept", () => {
+  const serviceWith = (payout: any) => {
+    const service = new ProfileVerificationService(
+      { updateMany: jest.fn() } as any,
+      { findById: () => ({ lean: () => Promise.resolve({ payout }) }) } as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+    );
+    return service;
+  };
+
+  it("a paid invite needs a valid UPI ID — a mobile number alone isn't enough", async () => {
+    await expect(
+      serviceWith({ mobile: "9876543210", accountHolderName: "Ravi" }).assertHasPayout("u1", "influencer", "self", true),
+    ).rejects.toThrow(/UPI ID/);
+    await expect(
+      serviceWith({ upiId: "9876543210" }).assertHasPayout("u1", "influencer", "self", true),
+    ).rejects.toThrow(/UPI ID/);
+    await expect(
+      serviceWith({ upiId: "9876543210@ybl" }).assertHasPayout("u1", "influencer", "self", true),
+    ).resolves.toBeUndefined();
+  });
+
+  it("barter/location keeps the old rule: UPI, or mobile + name", async () => {
+    await expect(
+      serviceWith({ mobile: "9876543210", accountHolderName: "Ravi" }).assertHasPayout("u1", "influencer"),
+    ).resolves.toBeUndefined();
+  });
+});

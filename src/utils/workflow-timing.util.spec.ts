@@ -20,25 +20,24 @@ describe("settingHours", () => {
   });
 
   it("falls back to the default when missing, null, negative or not a number", () => {
-    const d = WORKFLOW_TIMING_DEFAULTS.submissionAutoCompleteGraceHours;
-    expect(d).toBe(48);
+    const d = WORKFLOW_TIMING_DEFAULTS.submissionApprovalWaitHours;
+    expect(d).toBe(24);
     for (const settings of [
       null,
       {},
-      { submissionAutoCompleteGraceHours: null },
-      { submissionAutoCompleteGraceHours: -1 },
-      { submissionAutoCompleteGraceHours: "abc" },
+      { submissionApprovalWaitHours: null },
+      { submissionApprovalWaitHours: -1 },
+      { submissionApprovalWaitHours: "abc" },
     ]) {
-      expect(settingHours(settings, "submissionAutoCompleteGraceHours")).toBe(
-        d,
-      );
+      expect(settingHours(settings, "submissionApprovalWaitHours")).toBe(d);
     }
   });
 
   it("defaults match the admin settings page", () => {
     expect(WORKFLOW_TIMING_DEFAULTS).toEqual({
       submissionApprovalWaitHours: 24,
-      submissionAutoCompleteGraceHours: 48,
+      // A silent host's post completes right when "mark completed" unlocks (2026-10-19).
+      submissionAutoCompleteGraceHours: 0,
       payoutReleaseWaitHours: 24,
       disputeResponseWaitHours: 12,
       campaignAutoCloseGraceHours: 24,
