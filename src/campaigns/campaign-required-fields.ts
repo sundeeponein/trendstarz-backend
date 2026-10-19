@@ -25,18 +25,17 @@ export function getRequiredFields(ctx: CampaignRequiredFieldsCtx): string[] {
   const isPaid = t === "paid_collab";
   const isProduct = t === "product";
   const isLocation = t === "invite_location";
-  const isPayToJoin = t === "pay_to_join";
   const isCreativeProject = t === "creative_project";
 
   const required: string[] = [];
 
   // Flat payout requirement is role/type aware:
   // - paid_collab: flat only when photographer is involved
-  // - invite_location + pay_to_join: always flat
+  // - invite_location: always flat
   // - creative_project: flat for photographer-led collaborations
   const paidNeedsFlat = isPaid && (isPhotographerCreator || isInvitingPhotographers);
   const creativeNeedsFlat = isCreativeProject && isPhotographerCreator;
-  if (paidNeedsFlat || isPayToJoin || isLocation || creativeNeedsFlat) {
+  if (paidNeedsFlat || isLocation || creativeNeedsFlat) {
     required.push("pricePerInfluencer");
   }
 
@@ -50,9 +49,6 @@ export function getRequiredFields(ctx: CampaignRequiredFieldsCtx): string[] {
       "inviteBenefits",
     );
   }
-
-  // Pay-to-join benefits.
-  if (isPayToJoin) required.push("payToJoinBenefits");
 
   // Product collab fields.
   if (isProduct) {

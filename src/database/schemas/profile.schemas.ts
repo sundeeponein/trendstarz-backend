@@ -709,13 +709,6 @@ export const BrandSchema = new Schema(
     // Lets "recently approved" queries sort/filter at the DB level instead of
     // scanning verificationAuditLog, independent of total collection size.
     approvedAt: { type: Date, default: null, index: true },
-    // Payout details (used for pay_to_join campaigns where brand receives money)
-    payout: {
-      upiId: { type: String, default: "" },
-      mobile: { type: String, default: "" },
-      accountHolderName: { type: String, default: "" },
-      lastConfirmedAt: { type: Date, default: null },
-    },
     // Self-service "please call me to verify my mobile" ask — cleared once
     // the number is verified. Surfaced to admins in the Admin Users table.
     mobileCallbackRequestedAt: { type: Date, default: null },
@@ -1342,7 +1335,6 @@ export const CampaignSchema = new Schema(
         "paid_collab",
         "product",
         "invite_location",
-        "pay_to_join",
         // Photographer-led collaboration types
         "portfolio_collab",
         "reel_collab",
@@ -1363,7 +1355,6 @@ export const CampaignSchema = new Schema(
         "in_person_event",
         "on_location_shoot",
         "remote_delivery",
-        "pay_to_join_program",
       ],
       default: "none",
       index: true,
@@ -1525,9 +1516,6 @@ export const CampaignSchema = new Schema(
     productPaymentAmount: { type: Number, min: 0 },
     productShippingRequired: { type: Boolean, default: false },
     inviteBenefits: { type: String },
-    // pay_to_join specific fields
-    payToJoinBenefits: { type: String },
-    payToJoinInstructions: { type: String },
     // Campaign Resources — assets/links shared with the influencer once they accept.
     promotionUrlType: {
       type: String,

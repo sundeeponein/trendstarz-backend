@@ -523,19 +523,6 @@ export class PaymentsPayoutsService {
     const recipientId = String(tx?.recipientId || "");
     if (!recipientId) return null;
 
-    if (role === "brand") {
-      const brand: any = await this.brandModel
-        .findById(recipientId)
-        .select("brandName payout")
-        .lean();
-      if (!brand) return null;
-      return {
-        name: String(brand?.brandName || "Brand Recipient"),
-        upiId: String(brand?.payout?.upiId || "").trim(),
-        role: "brand",
-      };
-    }
-
     if (role === "photographer") {
       const photographer: any = await this.photographerModel
         .findById(recipientId)
@@ -773,7 +760,6 @@ export class PaymentsPayoutsService {
           `Invite ${String(invite?._id?.toString() ?? "")} has no valid agreed payout amount.`,
         );
       }
-      const isPayToJoin = calc.campaignType === "pay_to_join";
       const influencerId = String(invite.influencerId);
       const inviteRecipientRole: "influencer" | "photographer" =
         String(invite?.recipientRole || "")
@@ -781,18 +767,12 @@ export class PaymentsPayoutsService {
           .toLowerCase() === "photographer"
           ? "photographer"
           : "influencer";
-      // Payer role: for pay_to_join the creator pays; for regular campaigns use
-      // the campaign owner's actual role (brand or photographer or influencer).
+      // Payer: the campaign owner's actual role (brand or photographer or influencer).
       const campaignOwnerRole = this.resolveCampaignOwnerRole(campaign);
-      const invitePayerRole: "brand" | "influencer" | "photographer" =
-        isPayToJoin ? inviteRecipientRole : campaignOwnerRole;
-      const invitePayerUserId = isPayToJoin
-        ? String(invite.influencerId || "")
-        : String(campaign.brandId || "");
+      const invitePayerRole: "brand" | "influencer" | "photographer" = campaignOwnerRole;
+      const invitePayerUserId = String(campaign.brandId || "");
       // Rate role: like invitePayerRole, but an influencer host pays the influencer rate.
-      const inviteFeeRole = isPayToJoin
-        ? invitePayerRole
-        : await this.resolveHostFeeRole(campaign);
+      const inviteFeeRole = await this.resolveHostFeeRole(campaign);
       const inviteBaseFeePercent = calc.feeSettings
         ? this.getRoleBaseFeePercent(
             calc.feeSettings,
@@ -811,23 +791,14 @@ export class PaymentsPayoutsService {
       const inviteFee = calc.platformFeeEnabled
         ? this.roundPercent(inviteAgreedAmount, inviteEffectiveFeePercent)
         : 0;
-      // Recipient-side payout fee: role-specific, default 0%, scaffolded for future 1-4%.
-      const inviteRecipientFeeRoleForPayout:
-        | "brand"
-        | "influencer"
-        | "photographer" = isPayToJoin ? "brand" : inviteRecipientRole;
+      // Recipient-side payout fee: the creator's own rate, locked at acceptance.
       const inviteRecipientFeePercent = !calc.feeSettings
         ? 0
-        : isPayToJoin
-          ? this.getRecipientFeePercent(
-              calc.feeSettings,
-              inviteRecipientFeeRoleForPayout,
-            )
-          : await this.recipientFeePercentForInvite(
-              invite,
-              calc.feeSettings,
-              inviteRecipientRole,
-            );
+        : await this.recipientFeePercentForInvite(
+            invite,
+            calc.feeSettings,
+            inviteRecipientRole,
+          );
       // Creator side (paid collab): fee + GST on the fee, both locked at acceptance.
       const creatorSide = creatorPayoutBreakdown(
         inviteAgreedAmount,
@@ -835,24 +806,18 @@ export class PaymentsPayoutsService {
         creatorFeeGstPercentForInvite(invite, calc.feeSettings?.creatorFeeGstPercent ?? 0),
       );
       const inviteRecipientFee = creatorSide.fee;
-      const inviteRecipientFeeGst = isPayToJoin ? 0 : creatorSide.gst;
-      // GST on this row's commission (paid collab only) — the same rule as calculatePayment.
-      const inviteGst = isPayToJoin
-        ? 0
-        : platformFeeGst(
-            inviteFee,
-            Number(calc.gstPercent ?? calc.feeSettings?.gstPercent ?? 0),
-          );
-      const invitePayerTotal = isPayToJoin
-        ? inviteAgreedAmount
-        : inviteAgreedAmount + inviteFee + inviteGst;
-      const inviteRecipientPayout = isPayToJoin
-        ? Math.max(inviteAgreedAmount - inviteFee, 0)
-        : Math.max(inviteAgreedAmount - inviteRecipientFee - inviteRecipientFeeGst, 0);
-      const recipientId =
-        calc.campaignType === "pay_to_join"
-          ? String(campaign.brandId)
-          : influencerId;
+      const inviteRecipientFeeGst = creatorSide.gst;
+      // GST on this row's commission — the same rule as calculatePayment.
+      const inviteGst = platformFeeGst(
+        inviteFee,
+        Number(calc.gstPercent ?? calc.feeSettings?.gstPercent ?? 0),
+      );
+      const invitePayerTotal = inviteAgreedAmount + inviteFee + inviteGst;
+      const inviteRecipientPayout = Math.max(
+        inviteAgreedAmount - inviteRecipientFee - inviteRecipientFeeGst,
+        0,
+      );
+      const recipientId = influencerId;
 
       const existing = await this.transactionModel.findOne({
         campaignId: String(campaign._id || ""),
@@ -860,20 +825,16 @@ export class PaymentsPayoutsService {
         payerId,
       });
 
-      const txDirection = isPayToJoin
-        ? (`${inviteRecipientRole}_to_brand` as const)
-        : (`${campaignOwnerRole}_to_${inviteRecipientRole}` as const);
+      const txDirection = `${campaignOwnerRole}_to_${inviteRecipientRole}` as const;
       const txData: any = {
-        transactionType:
-          calc.campaignType === "pay_to_join" ? "pay_to_join" : "paid_collab",
+        transactionType: "paid_collab",
         direction: txDirection,
         campaignId: String(campaign._id || ""),
         inviteId: invite._id,
         payerId,
         payerRole: invitePayerRole,
         recipientId,
-        recipientRole:
-          calc.campaignType === "pay_to_join" ? "brand" : inviteRecipientRole,
+        recipientRole: inviteRecipientRole,
         agreedAmount: inviteAgreedAmount,
         platformFee: inviteFee,
         gstAmount: inviteGst,
@@ -886,10 +847,9 @@ export class PaymentsPayoutsService {
       };
 
       // Refund policy is fixed when the payment is made (terms v2 = fee credit).
-      txData.refundPolicy =
-        !isPayToJoin && termsV2Active(policySettings)
-          ? "fee_credit"
-          : "full_refund";
+      txData.refundPolicy = termsV2Active(policySettings)
+        ? "fee_credit"
+        : "full_refund";
       txData.creditApplied = 0;
 
       if (mode === "manual_proof") {
@@ -912,7 +872,7 @@ export class PaymentsPayoutsService {
       const row = await this.saveRowApplyingCredit(
         existing,
         txData,
-        mode === "manual_proof" && !isPayToJoin && inviteFee > 0
+        mode === "manual_proof" && inviteFee > 0
           ? {
               payerId: String(payerId),
               wanted: inviteFee,
@@ -1025,7 +985,7 @@ export class PaymentsPayoutsService {
       (sum, inv) => sum + platformFeeGst(Number(inv.platformFeeDue || 0), gstPercent),
       0,
     );
-    const credit = await this.creditPreview(payerId, fee, fee, false);
+    const credit = await this.creditPreview(payerId, fee, fee);
     return {
       campaignId,
       campaignType: campaign.campaignType,
@@ -1212,11 +1172,8 @@ export class PaymentsPayoutsService {
     payerId: string,
     fee: number,
     payerTotal: number,
-    isPayToJoin: boolean,
   ) {
-    const creditAvailable = isPayToJoin
-      ? 0
-      : await creditBalance(this.creditModel, payerId).catch(() => 0);
+    const creditAvailable = await creditBalance(this.creditModel, payerId).catch(() => 0);
     const creditToApply = Math.min(
       creditAvailable,
       Math.max(0, Number(fee || 0)),
@@ -1338,22 +1295,16 @@ export class PaymentsPayoutsService {
     const settingsForTerms: any = await this.appSettingsModel.findOne({}).lean();
 
     const campaignType = campaign.campaignType || "paid_collab";
-    const isPayToJoin = campaignType === "pay_to_join";
 
-    // Determine payer: campaign owner for regular campaigns; creator for pay_to_join.
     const creatorRole: "influencer" | "photographer" =
       String(campaign.inviteRecipientRole || acceptedInvites[0]?.recipientRole || "influencer")
         .toLowerCase() === "photographer"
         ? "photographer"
         : "influencer";
 
-    const campaignOwnerRole = this.resolveCampaignOwnerRole(campaign);
-    const payerUserId = isPayToJoin
-      ? String(acceptedInvites[0]?.influencerId || "")
-      : String(campaign.brandId);
-    const payerUserType: "brand" | "influencer" | "photographer" = isPayToJoin
-      ? creatorRole
-      : await this.resolveHostFeeRole(campaign);
+    // The campaign owner pays; an influencer host pays the influencer rate.
+    const payerUserId = String(campaign.brandId);
+    const payerUserType = await this.resolveHostFeeRole(campaign);
 
     const baseFeePercent = this.getRoleBaseFeePercent(
       feeSettings,
@@ -1369,28 +1320,17 @@ export class PaymentsPayoutsService {
     const rowFees = inviteAgreedAmounts.map((amount) =>
       platformFeeEnabled ? this.roundPercent(amount, effectiveCommissionPercent) : 0,
     );
-    const fee = !platformFeeEnabled
-      ? 0
-      : isPayToJoin
-        ? this.roundPercent(agreedAmount, effectiveCommissionPercent)
-        : rowFees.reduce((sum, f) => sum + f, 0);
+    const fee = rowFees.reduce((sum, f) => sum + f, 0);
     // GST is charged on TrendStarZ's commission only, never on the creator's amount.
     const gstPercent = Number(feeSettings.gstPercent || 0);
-    const gstAmount = isPayToJoin
-      ? 0
-      : rowFees.reduce((sum, f) => sum + platformFeeGst(f, gstPercent), 0);
+    const gstAmount = rowFees.reduce((sum, f) => sum + platformFeeGst(f, gstPercent), 0);
 
     // Recipient-side payout fee: role-specific, default 0%, scaffolded for future 1-4%.
-    const recipientRoleForPayout: "brand" | "influencer" | "photographer" = isPayToJoin
-      ? "brand"
-      : creatorRole;
-    const recipientFeePercent = this.getRecipientFeePercent(feeSettings, recipientRoleForPayout);
+    const recipientFeePercent = this.getRecipientFeePercent(feeSettings, creatorRole);
     // Paid collab: each creator's own rate (locked at acceptance, Free/Premium), per row.
     let recipientFee = 0;
     let recipientFeeGst = 0;
-    if (platformFeeEnabled && isPayToJoin) {
-      recipientFee = this.roundPercent(agreedAmount, recipientFeePercent);
-    } else if (platformFeeEnabled) {
+    if (platformFeeEnabled) {
       for (let i = 0; i < acceptedInvites.length; i++) {
         const pct = await this.recipientFeePercentForInvite(
           acceptedInvites[i],
@@ -1407,18 +1347,10 @@ export class PaymentsPayoutsService {
       }
     }
 
-    let payerTotal = agreedAmount;
-    let recipientPayoutTotal = agreedAmount;
+    const payerTotal = agreedAmount + fee;
+    const recipientPayoutTotal = Math.max(agreedAmount - recipientFee - recipientFeeGst, 0);
 
-    if (isPayToJoin) {
-      payerTotal = agreedAmount;
-      recipientPayoutTotal = Math.max(agreedAmount - fee, 0);
-    } else {
-      payerTotal = agreedAmount + fee;
-      recipientPayoutTotal = Math.max(agreedAmount - recipientFee - recipientFeeGst, 0);
-    }
-
-    const credit = await this.creditPreview(payerId, fee, payerTotal, isPayToJoin);
+    const credit = await this.creditPreview(payerId, fee, payerTotal);
     return {
       campaignId,
       campaignType,
@@ -1771,7 +1703,7 @@ export class PaymentsPayoutsService {
       brandIds.size
         ? this.brandModel
             .find({ _id: { $in: Array.from(brandIds) } })
-            .select("brandName email phoneNumber payout")
+            .select("brandName email phoneNumber")
             .lean()
         : Promise.resolve([] as any[]),
     ]);
@@ -1910,12 +1842,6 @@ export class PaymentsPayoutsService {
     const repaidRows = rows.filter(
       (r: any) => Number(r.settlement?.hostRepaidAmount || 0) > 0,
     );
-    // Pay-to-join keeps its existing workflow: "refund to brand" still counts as refunded.
-    const payToJoinRefundRows = rows.filter(
-      (r: any) =>
-        r.transactionType === "pay_to_join" &&
-        r.resolveOutcome === "refund_to_brand",
-    );
 
     const collected = sum(verified, (r) => Number(r.payerTotal || 0));
     const hostRepayments = sum(repaidRows, (r) =>
@@ -1933,8 +1859,7 @@ export class PaymentsPayoutsService {
     const refundSent = sum(sentRows, (r) =>
       Number(r.refundAmount ?? r.payerTotal ?? 0),
     );
-    const refunded =
-      refundSent + sum(payToJoinRefundRows, (r) => Number(r.payerTotal || 0));
+    const refunded = refundSent;
     const refundDue = sum(refundDueRows, refundDueAmount);
     const refundOnHold = sum(onHoldRows, refundDueAmount);
     const legacyUnconfirmed = sum(legacyRows, refundDueAmount);
@@ -2913,7 +2838,6 @@ export class PaymentsPayoutsService {
 
     const getBrandLogoForRow = (r: any): string => {
       // Always show the brand logo in the avatar, regardless of viewer role.
-      // For paid_collab the brand is the payer; for pay_to_join the brand is the recipient.
       const brandRole = r.payerRole === "brand" ? "payer" : "recipient";
       const brandId = brandRole === "payer" ? r.payerId : r.recipientId;
       return getPartyLogo("brand", brandId);
@@ -4139,15 +4063,14 @@ export class PaymentsPayoutsService {
   }
 
   /**
-   * The host must accept the paid-collaboration terms when paying for a paid collab
-   * (pay-to-join keeps its existing flow). Stored per invite with the terms version.
+   * The host must accept the paid-collaboration terms when paying for a paid collab.
+   * Stored per invite with the terms version.
    */
   private async recordHostTermsAcceptance(
     calc: any,
     payerId: string,
     acceptTerms?: boolean,
   ) {
-    if (calc?.campaignType === "pay_to_join") return;
     // A platform fee isn't a paid collaboration — the paid-collab terms don't apply.
     if (calc?.isPlatformFee) return;
     if (acceptTerms !== true) {

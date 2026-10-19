@@ -3699,7 +3699,6 @@ export class UsersService implements OnModuleInit {
       "socialMedia",
       "contact",
       "promotionalPrice",
-      "payout",
     ];
     const updateData: any = {};
     for (const key of allowedFields) {

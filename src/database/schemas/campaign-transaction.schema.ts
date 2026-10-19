@@ -4,7 +4,7 @@ export const CampaignTransactionSchema = new Schema(
   {
     transactionType: {
       type: String,
-      enum: ["paid_collab", "pay_to_join", "platform_fee"],
+      enum: ["paid_collab", "platform_fee"],
       required: true,
       index: true,
     },

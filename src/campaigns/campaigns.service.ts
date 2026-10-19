@@ -701,7 +701,6 @@ export class CampaignsService {
       "in_person_event",
       "on_location_shoot",
       "remote_delivery",
-      "pay_to_join_program",
     ]);
     normalized.logisticsType = allowed.has(explicit)
       ? explicit
@@ -851,7 +850,6 @@ export class CampaignsService {
     const shipping = payload?.productShippingRequired === true;
 
     if (type === "invite_location") return "in_person_event";
-    if (type === "pay_to_join") return "pay_to_join_program";
     if (type === "product") {
       return shipping ? "ship_to_creator" : "none";
     }
@@ -1676,8 +1674,6 @@ export class CampaignsService {
     "deliverables",
     "specialInstructions",
     "inviteBenefits",
-    "payToJoinBenefits",
-    "payToJoinInstructions",
     "productDescription",
     "timelineStart",
     "venueName",

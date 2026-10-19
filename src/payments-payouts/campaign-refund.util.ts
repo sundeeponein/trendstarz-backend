@@ -16,7 +16,6 @@ import { withSession } from "../utils/mongo-transaction.util";
  * If a post is verified AFTER the refund was sent, the refund is never reversed silently:
  * a settlement case opens (host repays → creator paid, or an admin-recorded exception).
  *
- * Pay-to-join campaigns keep their existing workflow and are never touched here.
  */
 export const REFUND_HOLD_DAYS = 7;
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -295,7 +294,6 @@ export async function releaseToCreator(
               .findById(row._id, null, withSession({}, session))
               .lean();
       if (!current || current.payoutStatus === "paid") break;
-      if (current.transactionType === "pay_to_join") break;
       const status = current.refundStatus || "none";
       if (current.settlement?.status === SETTLEMENT_OPEN) break;
 

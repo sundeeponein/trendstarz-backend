@@ -53,10 +53,10 @@ describe("campaign refunds", () => {
       ]);
     });
 
-    it("skips unpaid collections, pay-to-join, paid-out and already-refunding rows", async () => {
+    it("skips unpaid collections, other row types, paid-out and already-refunding rows", async () => {
       const model = new FakeCollection([
         paidRow({ _id: "a", collectionStatus: "proof_submitted" }),
-        paidRow({ _id: "b", transactionType: "pay_to_join" }),
+        paidRow({ _id: "b", transactionType: "platform_fee" }),
         paidRow({ _id: "c", payoutStatus: "paid" }),
         paidRow({ _id: "d", refundStatus: "sent" }),
         paidRow({ _id: "e", refundStatus: "owed" }),
@@ -185,20 +185,6 @@ describe("campaign refunds", () => {
       ).toHaveLength(1);
     });
 
-    it("leaves pay-to-join rows alone", async () => {
-      const model = new FakeCollection([
-        paidRow({ transactionType: "pay_to_join", refundStatus: undefined }),
-      ]);
-      const res = await releaseToCreator(
-        model,
-        INVITE,
-        now,
-        { byRole: "admin" },
-        "ok",
-      );
-      expect(res.released).toHaveLength(0);
-      expect(model.get("tx1").payoutStatus).toBe("skipped");
-    });
   });
 
   describe("legacy rows", () => {
@@ -225,7 +211,7 @@ describe("campaign refunds", () => {
       expect(
         isLegacyUnconfirmedRefund({
           ...legacy,
-          transactionType: "pay_to_join",
+          transactionType: "platform_fee",
         }),
       ).toBe(false);
     });

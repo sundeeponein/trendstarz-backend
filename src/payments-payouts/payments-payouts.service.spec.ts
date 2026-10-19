@@ -216,35 +216,6 @@ describe("PaymentsPayoutsService", () => {
       expect(result.payerTotal).toBe(22000);
       expect(result.recipientPayoutTotal).toBe(20000);
     });
-
-    it("computes pay_to_join totals with fee deduction from recipient payout", async () => {
-      campaignModel.findById.mockReturnValue({
-        lean: jest.fn().mockResolvedValue({
-          _id: "camp2",
-          brandId: "brand1",
-          campaignType: "pay_to_join",
-          pricePerInfluencer: 15000,
-        }),
-      });
-      inviteModel.find.mockReturnValue({
-        lean: jest.fn().mockResolvedValue([{ _id: "i1" }]),
-      });
-      appSettingsModel.findOne.mockReturnValue({
-        lean: jest.fn().mockResolvedValue({
-          platformFeeEnabled: true,
-          platformFeePercent: 10,
-          // pay_to_join is paid by the creator; creator fees default to 0% unless set explicitly.
-          influencerFeePercent: 10,
-        }),
-      });
-
-      const result = await service.calculatePayment("camp2", "brand1");
-
-      expect(result.agreedAmount).toBe(15000);
-      expect(result.platformFee).toBe(1500);
-      expect(result.payerTotal).toBe(15000);
-      expect(result.recipientPayoutTotal).toBe(13500);
-    });
   });
 
   describe("one-by-one payment", () => {
@@ -1369,9 +1340,9 @@ describe("PaymentsPayoutsService", () => {
       });
       const tx: any = {
         _id: "tx9",
-        transactionType: "pay_to_join",
-        payerId: "inf1",
-        payerRole: "influencer",
+        transactionType: "platform_fee",
+        payerId: "brand1",
+        payerRole: "brand",
         collectionStatus: "proof_submitted",
       };
       const txs = useFakeTx([tx]);

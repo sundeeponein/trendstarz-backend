@@ -1785,7 +1785,7 @@ export class CampaignInvitesService {
       })
       .populate(
         "campaignId",
-        "title description script status campaignMode budgetMin budgetMax campaignType pricePerInfluencer maxInfluencers startDate endDate timelineStart timelineEnd acceptanceDeadline deliverables platforms socialMedia specialInstructions venueName venueAddress venueCity venueDistrict venueState venueGoogleMapUrl productValue productDescription productPaymentMode productPaymentAmount inviteBenefits payToJoinBenefits payToJoinInstructions ownerType createdByRole requestKind brandId image images galleryImages promotionUrlType promotionUrl suggestedCaption hashtags resourceImages campaignNumber",
+        "title description script status campaignMode budgetMin budgetMax campaignType pricePerInfluencer maxInfluencers startDate endDate timelineStart timelineEnd acceptanceDeadline deliverables platforms socialMedia specialInstructions venueName venueAddress venueCity venueDistrict venueState venueGoogleMapUrl productValue productDescription productPaymentMode productPaymentAmount inviteBenefits ownerType createdByRole requestKind brandId image images galleryImages promotionUrlType promotionUrl suggestedCaption hashtags resourceImages campaignNumber",
       )
       .populate(
         "brandId",
@@ -1880,7 +1880,7 @@ export class CampaignInvitesService {
       })
       .populate(
         "campaignId",
-        "title description script status campaignMode budgetMin budgetMax campaignType pricePerInfluencer maxInfluencers startDate endDate timelineStart timelineEnd acceptanceDeadline deliverables platforms socialMedia specialInstructions venueName venueAddress venueCity venueDistrict venueState venueGoogleMapUrl productValue productDescription productPaymentMode productPaymentAmount inviteBenefits payToJoinBenefits payToJoinInstructions image images galleryImages promotionUrlType promotionUrl suggestedCaption hashtags resourceImages campaignNumber",
+        "title description script status campaignMode budgetMin budgetMax campaignType pricePerInfluencer maxInfluencers startDate endDate timelineStart timelineEnd acceptanceDeadline deliverables platforms socialMedia specialInstructions venueName venueAddress venueCity venueDistrict venueState venueGoogleMapUrl productValue productDescription productPaymentMode productPaymentAmount inviteBenefits image images galleryImages promotionUrlType promotionUrl suggestedCaption hashtags resourceImages campaignNumber",
       )
       .populate(
         "brandId",
