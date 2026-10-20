@@ -51,27 +51,40 @@ export class PendingUploadCleanupService {
   // image/document reference actually stored in Mongo first.
   private async getReferencedPublicIds(): Promise<Set<string>> {
     const referenced = new Set<string>();
+    // Every way a profile stores a media id: {public_id}, {publicId} (galleryImages),
+    // a plain string, or the single profileImagePublicId field.
+    const add = (value: unknown) => {
+      if (typeof value === "string" && value.trim()) referenced.add(value.trim());
+    };
     const collect = (docs: any[], fields: string[]) => {
       for (const doc of docs) {
+        add(doc?.profileImagePublicId);
         for (const field of fields) {
           const arr = doc?.[field];
           if (!Array.isArray(arr)) continue;
           for (const item of arr) {
-            if (item?.public_id) referenced.add(String(item.public_id));
+            if (typeof item === "string") add(item);
+            else {
+              add(item?.public_id);
+              add(item?.publicId);
+            }
           }
         }
       }
     };
 
-    const projection = { profileImages: 1, verificationDocuments: 1 };
+    const creatorFields = ["profileImages", "galleryImages", "verificationDocuments"];
+    const brandFields = ["brandLogo", "products", "galleryImages"];
+    const projectionOf = (fields: string[]) =>
+      Object.fromEntries([...fields, "profileImagePublicId"].map((f) => [f, 1]));
     const [influencers, brands, photographers] = await Promise.all([
-      this.influencerModel.find({}, projection).lean(),
-      this.brandModel.find({}, { brandLogo: 1, products: 1 }).lean(),
-      this.photographerModel.find({}, projection).lean(),
+      this.influencerModel.find({}, projectionOf(creatorFields)).lean(),
+      this.brandModel.find({}, projectionOf(brandFields)).lean(),
+      this.photographerModel.find({}, projectionOf(creatorFields)).lean(),
     ]);
-    collect(influencers, ["profileImages", "verificationDocuments"]);
-    collect(brands, ["brandLogo", "products"]);
-    collect(photographers, ["profileImages", "verificationDocuments"]);
+    collect(influencers, creatorFields);
+    collect(brands, brandFields);
+    collect(photographers, creatorFields);
     return referenced;
   }
 
