@@ -14,6 +14,7 @@ import { CampaignSubmissionSchema } from "./campaign-submission.schema";
 import { PaymentsPayoutsService } from "../../payments-payouts/payments-payouts.service";
 import { PendingUserCleanupService } from "../../admin/pending-user-cleanup.service";
 import { ImageCleanupService } from "../../plans/image-cleanup.service";
+import { EarlyAccessAssignmentService } from "../../admin/early-access-assignment.service";
 import { openMoneyFilter, openWorkFilter } from "../../users/self-deletion.util";
 import { BrandSchema, InfluencerSchema, PhotographerSchema } from "./profile.schemas";
 import { idIn, idsIn } from "../../utils/id-match.util";
@@ -493,6 +494,42 @@ describe("data rules (real MongoDB)", () => {
       expect(after.status).toBe("deletion_pending");
       expect(after.profileImages.map((i: any) => i.public_id)).toEqual(["keep"]);
       expect(deleted).toEqual(["gone"]);
+    });
+  });
+
+  describe("Early Access (0% commission) auto-assignment", () => {
+    it("is once per account: an expired member isn't picked again, a newcomer is", async () => {
+      const Inf = db.conn.models.Influencer || db.conn.model("Influencer", InfluencerSchema, "influencers");
+      const Brand = db.conn.models.Brand || db.conn.model("Brand", BrandSchema, "brands");
+      const day = 24 * 3600e3;
+      const veteran = new Types.ObjectId();
+      const newcomer = new Types.ObjectId();
+      await Inf.collection.insertMany([
+        {
+          _id: veteran, email: "v@x.in", phoneNumber: "1", status: "accepted", isEmailVerified: true,
+          createdAt: new Date(Date.now() - 400 * day), commissionBadge: "early_access_creator", adminTags: ["Early Access"],
+          commissionOverride: {
+            enabled: true, overrideType: "fixed", value: 0, source: "early_access_program",
+            assignedAt: new Date(Date.now() - 40 * day), validUntil: new Date(Date.now() - 10 * day),
+          },
+        },
+        { _id: newcomer, email: "n@x.in", phoneNumber: "2", status: "accepted", isEmailVerified: true, createdAt: new Date(Date.now() - day) },
+      ]);
+      const service = new EarlyAccessAssignmentService(
+        Inf as any,
+        Brand as any,
+        {
+          findOne: () => ({ lean: async () => ({ earlyAccessAssignmentMode: "auto" }) }),
+          findOneAndUpdate: () => ({ lean: async () => ({}) }),
+        } as any,
+      );
+      await service.autoAssignEarlyAccess("test");
+      const v: any = await Inf.findById(veteran).lean();
+      const n: any = await Inf.findById(newcomer).lean();
+      expect(v.commissionOverride.enabled).toBe(false); // released, not re-assigned
+      expect(v.earlyAccessGrantedAt).toBeTruthy();
+      expect(n.commissionOverride.enabled).toBe(true);
+      expect(n.commissionBadge).toBe("early_access_creator");
     });
   });
 });

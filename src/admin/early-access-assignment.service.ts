@@ -281,7 +281,7 @@ export class EarlyAccessAssignmentService {
         "commissionOverride.source": "early_access_program",
         "commissionOverride.validUntil": { $lt: now },
       })
-      .select("_id adminTags")
+      .select("_id adminTags commissionOverride.assignedAt earlyAccessGrantedAt")
       .lean();
 
     if (!expiredUsers.length) {
@@ -302,6 +302,11 @@ export class EarlyAccessAssignmentService {
               adminTags: nextTags,
               commissionBadge: null,
               commissionOverride: this.getDefaultCommissionOverride(),
+              // Keep the record that they had it, so they aren't picked again.
+              earlyAccessGrantedAt:
+                user?.earlyAccessGrantedAt ||
+                user?.commissionOverride?.assignedAt ||
+                now,
             },
           },
         },
@@ -336,6 +341,8 @@ export class EarlyAccessAssignmentService {
       isDeleted: { $ne: true },
       isEmailVerified: true,
       "commissionOverride.enabled": { $ne: true },
+      // Early Access is once per account: never re-pick someone who already had it.
+      earlyAccessGrantedAt: null,
       commissionBadge: {
         $nin: [
           "early_access_creator",
@@ -449,6 +456,7 @@ export class EarlyAccessAssignmentService {
                 config,
                 assignedBy,
               ),
+              earlyAccessGrantedAt: new Date(),
             },
           },
         },
