@@ -1,7 +1,7 @@
 import { Injectable, Logger } from "@nestjs/common";
 import { InjectModel } from "@nestjs/mongoose";
 import { Cron, CronExpression } from "@nestjs/schedule";
-import { Model } from "mongoose";
+import { Model, Types } from "mongoose";
 import { FirebaseAdminService } from "../utils/firebase-admin.service";
 import { sendAppEmail } from "../utils/app-email.service";
 import { registrationReminderTemplate } from "../email/templates/auth.templates";
@@ -31,6 +31,26 @@ export class PendingUserCleanupService {
    * the cron backs off and leaves it to the "Premium Payments" approve/decline
    * queue (and the payment badge in User Management) instead.
    */
+  /**
+   * Accounts that ever took part in a collaboration (invite either side, or a payment
+   * row) aren't stale sign-ups — e.g. an approved creator an admin later declined.
+   * The cleanup leaves them to an admin.
+   */
+  private async getUserIdsWithCollaborations(userIds: string[]): Promise<Set<string>> {
+    if (!userIds.length) return new Set<string>();
+    const db = this.influencerModel.db;
+    const asIds = userIds.flatMap((id) =>
+      Types.ObjectId.isValid(id) ? [id, new Types.ObjectId(id)] : [id],
+    );
+    const [creators, hosts, payers, recipients] = await Promise.all([
+      db.collection("campaigninvites").distinct("influencerId", { influencerId: { $in: asIds } }),
+      db.collection("campaigninvites").distinct("brandId", { brandId: { $in: asIds } }),
+      db.collection("campaigntransactions").distinct("payerId", { payerId: { $in: asIds } }),
+      db.collection("campaigntransactions").distinct("recipientId", { recipientId: { $in: asIds } }),
+    ]);
+    return new Set([...creators, ...hosts, ...payers, ...recipients].map((id: any) => String(id)));
+  }
+
   private async getUserIdsWithPayments(userIds: string[]): Promise<Set<string>> {
     if (!userIds.length) return new Set<string>();
     const rows = await this.paymentModel.distinct("userId", {
@@ -65,6 +85,9 @@ export class PendingUserCleanupService {
       isDeleted: { $ne: true },
       $nor: [
         { status: "pending", isEmailVerified: true, isMobileVerified: true },
+        // Restored by an admin / cancelled their own deletion recently: the age
+        // counts from the restore, so a restored account isn't removed that night.
+        { restoredAt: { $gt: cutoff } },
       ],
       $or: [
         { firstRegisteredAt: { $lte: cutoff } },
@@ -404,6 +427,9 @@ export class PendingUserCleanupService {
       (u: any) => String(u._id),
     );
     const paidUserIds = await this.getUserIdsWithPayments(rawCandidateIds);
+    for (const id of await this.getUserIdsWithCollaborations(rawCandidateIds)) {
+      paidUserIds.add(id);
+    }
     const notPaid = (u: any) => !paidUserIds.has(String(u._id));
     const influencers = rawInfluencers.filter(notPaid);
     const brands = rawBrands.filter(notPaid);

@@ -2915,33 +2915,31 @@ export class UsersService implements OnModuleInit {
     return { message: "User not found", id };
   }
 
+  /**
+   * Undo a soft/self delete: the account returns to the status it had (an approved
+   * creator stays approved), else "pending" for older rows that didn't record it.
+   */
   async restoreUser(id: string) {
-    const influencer = await this.influencerModel.findByIdAndUpdate(
-      id,
-      { status: "pending", isDeleted: false, deletedAt: null, declineReason: "" },
-      { new: true },
-    );
-    if (influencer) {
+    for (const model of [this.influencerModel, this.brandModel, this.photographerModel]) {
+      const current: any = await model.findById(id).select("statusBeforeDeletion").lean();
+      if (!current) continue;
+      const previous = String(current.statusBeforeDeletion || "");
+      const status =
+        previous && !["deleted", "deletion_pending"].includes(previous) ? previous : "pending";
+      const user = await model.findByIdAndUpdate(
+        id,
+        {
+          status,
+          isDeleted: false,
+          deletedAt: null,
+          declineReason: "",
+          statusBeforeDeletion: "",
+          restoredAt: new Date(),
+        },
+        { new: true },
+      );
       invalidateAccountStatusCache(id);
-      return { message: "User restored", user: influencer };
-    }
-    const brand = await this.brandModel.findByIdAndUpdate(
-      id,
-      { status: "pending", isDeleted: false, deletedAt: null, declineReason: "" },
-      { new: true },
-    );
-    if (brand) {
-      invalidateAccountStatusCache(id);
-      return { message: "User restored", user: brand };
-    }
-    const photographer = await this.photographerModel.findByIdAndUpdate(
-      id,
-      { status: "pending", isDeleted: false, deletedAt: null, declineReason: "" },
-      { new: true },
-    );
-    if (photographer) {
-      invalidateAccountStatusCache(id);
-      return { message: "User restored", user: photographer };
+      return { message: "User restored", user };
     }
     return { message: "User not found", id };
   }
@@ -2991,6 +2989,9 @@ export class UsersService implements OnModuleInit {
 
     // Soft delete — saved BEFORE any media is removed, so a failed save can
     // never leave an active account with its images already gone.
+    if (!user.isDeleted && !["deleted", "deletion_pending"].includes(String(user.status))) {
+      user.statusBeforeDeletion = String(user.status || "");
+    }
     user.isDeleted = true;
     user.deletedAt = new Date();
     user.status = status;

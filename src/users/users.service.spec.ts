@@ -75,6 +75,21 @@ describe("UsersService profile update guards", () => {
     );
   };
 
+  it("restore brings an approved account back approved (not pending), and records when", async () => {
+    const update = jest.fn().mockResolvedValue({ _id: "inf-1" });
+    const influencerModel = {
+      findById: jest.fn(() => ({ select: () => ({ lean: async () => ({ statusBeforeDeletion: "accepted" }) }) })),
+      findByIdAndUpdate: update,
+    };
+    const service = makeService({ influencerModel });
+    await service.restoreUser("inf-1");
+    expect(update).toHaveBeenCalledWith(
+      "inf-1",
+      expect.objectContaining({ status: "accepted", isDeleted: false, restoredAt: expect.any(Date) }),
+      { new: true },
+    );
+  });
+
   it("resets influencer mobile verification when verified phone is changed", async () => {
     const doc: any = {
       phoneNumber: "9908763880",

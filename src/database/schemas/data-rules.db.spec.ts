@@ -12,6 +12,7 @@ import { PaymentSchema } from "./payment.schema";
 import { UsageCounterSchema } from "./usage-counter.schema";
 import { CampaignSubmissionSchema } from "./campaign-submission.schema";
 import { PaymentsPayoutsService } from "../../payments-payouts/payments-payouts.service";
+import { PendingUserCleanupService } from "../../admin/pending-user-cleanup.service";
 import { openMoneyFilter, openWorkFilter } from "../../users/self-deletion.util";
 import { BrandSchema, InfluencerSchema, PhotographerSchema } from "./profile.schemas";
 import { idIn, idsIn } from "../../utils/id-match.util";
@@ -429,6 +430,41 @@ describe("data rules (real MongoDB)", () => {
 
       await db.conn.collection("payments").insertOne({ transactionId: "432187651234" });
       await expect(check({ acceptedInviteIds: [String(invB)] })).rejects.toThrow(/already used/);
+    });
+  });
+
+  describe("pending-user cleanup (3 AM, when switched on)", () => {
+    it("leaves recently restored accounts and anyone with collaboration history alone", async () => {
+      const Inf = db.conn.models.Influencer || db.conn.model("Influencer", InfluencerSchema, "influencers");
+      const old = new Date(Date.now() - 100 * 24 * 3600e3);
+      const base = { status: "pending", isEmailVerified: false, firstRegisteredAt: old, createdAt: old, email: "", phoneNumber: "x" };
+      const stale = new Types.ObjectId();
+      const restored = new Types.ObjectId();
+      const collaborated = new Types.ObjectId();
+      await Inf.collection.insertMany([
+        { _id: stale, ...base, email: "a@x.in" },
+        { _id: restored, ...base, email: "b@x.in", restoredAt: new Date() },
+        { _id: collaborated, ...base, email: "c@x.in", status: "declined" },
+      ]);
+      await Invite.collection.insertOne({ campaignId: "camp-old", brandId: "b", influencerId: collaborated, status: "completed" });
+      const empty = { find: () => ({ select: () => ({ lean: async () => [] }) }), updateMany: async () => ({}) };
+      const service = Object.create(PendingUserCleanupService.prototype);
+      Object.assign(service, {
+        influencerModel: Inf,
+        brandModel: empty,
+        photographerModel: empty,
+        paymentModel: { distinct: async () => [] },
+        appSettingsModel: {
+          findOne: () => ({ lean: async () => ({ pendingUserAutoDeleteEnabled: true, pendingUserAutoDeleteDays: 45 }) }),
+          findOneAndUpdate: async () => ({}),
+        },
+        logger: { log: () => undefined },
+      });
+      await service.runCleanupNow("test");
+      const status = async (id: Types.ObjectId) => ((await Inf.findById(id).lean()) as any).status;
+      expect(await status(stale)).toBe("deleted");
+      expect(await status(restored)).toBe("pending");
+      expect(await status(collaborated)).toBe("declined");
     });
   });
 });

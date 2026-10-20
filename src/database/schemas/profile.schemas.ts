@@ -207,6 +207,10 @@ export const InfluencerSchema = new Schema(
     // Soft delete and media fields
     isDeleted: { type: Boolean, default: false },
     deletedAt: { type: Date },
+    // Status before a soft/self delete, so a restore brings the account back as it was.
+    statusBeforeDeletion: { type: String, default: "" },
+    // Last restore — the pending-user cleanup counts its age from here, not signup.
+    restoredAt: { type: Date, default: null },
     profileImage: { type: String },
     profileImagePublicId: { type: String },
     galleryImages: [
@@ -616,6 +620,10 @@ export const BrandSchema = new Schema(
     // Soft delete and media fields
     isDeleted: { type: Boolean, default: false },
     deletedAt: { type: Date },
+    // Status before a soft/self delete, so a restore brings the account back as it was.
+    statusBeforeDeletion: { type: String, default: "" },
+    // Last restore — the pending-user cleanup counts its age from here, not signup.
+    restoredAt: { type: Date, default: null },
     profileImage: { type: String },
     profileImagePublicId: { type: String },
     galleryImages: [
@@ -944,6 +952,10 @@ export const PhotographerSchema = new Schema(
     reminderDay30SentAt: { type: Date, default: null },
     isDeleted: { type: Boolean, default: false },
     deletedAt: { type: Date },
+    // Status before a soft/self delete, so a restore brings the account back as it was.
+    statusBeforeDeletion: { type: String, default: "" },
+    // Last restore — the pending-user cleanup counts its age from here, not signup.
+    restoredAt: { type: Date, default: null },
     status: {
       type: String,
       // deletion_pending = the user asked to delete their account and is in the
