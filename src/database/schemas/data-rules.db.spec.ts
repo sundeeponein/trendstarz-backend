@@ -13,6 +13,7 @@ import { UsageCounterSchema } from "./usage-counter.schema";
 import { CampaignSubmissionSchema } from "./campaign-submission.schema";
 import { PaymentsPayoutsService } from "../../payments-payouts/payments-payouts.service";
 import { PendingUserCleanupService } from "../../admin/pending-user-cleanup.service";
+import { ImageCleanupService } from "../../plans/image-cleanup.service";
 import { openMoneyFilter, openWorkFilter } from "../../users/self-deletion.util";
 import { BrandSchema, InfluencerSchema, PhotographerSchema } from "./profile.schemas";
 import { idIn, idsIn } from "../../utils/id-match.util";
@@ -465,6 +466,33 @@ describe("data rules (real MongoDB)", () => {
       expect(await status(stale)).toBe("deleted");
       expect(await status(restored)).toBe("pending");
       expect(await status(collaborated)).toBe("declined");
+    });
+  });
+
+  describe("deleted-account media purge (2 AM)", () => {
+    it("removes gallery media but never changes the status (a pending self-delete still gets anonymized)", async () => {
+      const Inf = db.conn.models.Influencer || db.conn.model("Influencer", InfluencerSchema, "influencers");
+      const id = new Types.ObjectId();
+      await Inf.collection.insertOne({
+        _id: id, email: "p@x.in", phoneNumber: "x", status: "deletion_pending", isDeleted: true,
+        deletedAt: new Date(Date.now() - 60 * 24 * 3600e3),
+        profileImages: [{ public_id: "keep" }, { public_id: "gone" }],
+      });
+      const deleted: string[] = [];
+      const empty = { find: () => ({ lean: async () => [] }) };
+      const service = Object.create(ImageCleanupService.prototype);
+      Object.assign(service, {
+        influencerModel: Inf,
+        brandModel: empty,
+        photographerModel: empty,
+        cloudinaryService: { deleteImage: async (pid: string) => deleted.push(pid) },
+        logger: { log: () => undefined, warn: () => undefined },
+      });
+      await service.cleanupSoftDeletedUsers(45);
+      const after: any = await Inf.findById(id).lean();
+      expect(after.status).toBe("deletion_pending");
+      expect(after.profileImages.map((i: any) => i.public_id)).toEqual(["keep"]);
+      expect(deleted).toEqual(["gone"]);
     });
   });
 });

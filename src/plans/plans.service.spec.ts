@@ -378,29 +378,6 @@ describe("PlansService", () => {
     });
   });
 
-  describe("getSubscriptionsForImageCleanup", () => {
-    it("applies endDate cutoff when retentionDays is provided", async () => {
-      await service.getSubscriptionsForImageCleanup(45);
-
-      expect(subscriptionModel.find).toHaveBeenCalledWith(
-        expect.objectContaining({
-          status: "expired",
-          imagesMarkedForDeletionAt: null,
-          endDate: expect.any(Object),
-        }),
-      );
-    });
-
-    it("omits endDate cutoff when retentionDays is not provided", async () => {
-      await service.getSubscriptionsForImageCleanup();
-
-      expect(subscriptionModel.find).toHaveBeenCalledWith({
-        status: "expired",
-        imagesMarkedForDeletionAt: null,
-      });
-    });
-  });
-
   describe("replaceAllFromConfig (seeder / admin Load from config)", () => {
     it("updates each plan in place by code, never deletes, and hides plans dropped from the config", async () => {
       planModel.deleteMany = jest.fn();
