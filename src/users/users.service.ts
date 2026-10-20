@@ -743,6 +743,14 @@ export class UsersService implements OnModuleInit {
   }
 
   async deletePermanently(id: string) {
+    // Permanent delete erases the profile (and its UPI ID): never while a
+    // collaboration is in progress or money to/from this person is unsettled.
+    const blocker = await this.selfDeletionBlocker(id);
+    if (blocker) {
+      throw new BadRequestException(
+        `Can't delete permanently yet — ${blocker.charAt(0).toLowerCase()}${blocker.slice(1)} Settle it in Payments/Campaigns first (soft delete still works).`,
+      );
+    }
     // Try influencer first
     let user = await this.influencerModel.findById(id);
     if (user) {

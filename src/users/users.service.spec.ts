@@ -31,8 +31,14 @@ describe("UsersService profile update guards", () => {
     const influencerModel = withExists(overrides?.influencerModel || ({} as any));
     const brandModel = withExists(overrides?.brandModel || ({} as any));
     const photographerModel = withExists(overrides?.photographerModel || ({} as any));
-    const campaignInviteModel =
-      overrides?.campaignInviteModel || ({} as any);
+    // `findOne` backs the open-work check before deletion: nothing open by default.
+    const noneOpen = (m: any) =>
+      m.findOne
+        ? m
+        : Object.assign(m, {
+            findOne: jest.fn(() => ({ select: () => ({ lean: async () => null }) })),
+          });
+    const campaignInviteModel = noneOpen(overrides?.campaignInviteModel || ({} as any));
     const campaignModel = overrides?.campaignModel || ({} as any);
     const profileFlagModel = overrides?.profileFlagModel || ({} as any);
     const collaborationAuditModel = overrides?.collaborationAuditModel || ({} as any);
@@ -62,7 +68,7 @@ describe("UsersService profile update guards", () => {
       plansService,
       metaOAuthService,
       overrides?.reviewModel || ({} as any),
-      overrides?.campaignTransactionModel || ({} as any),
+      noneOpen(overrides?.campaignTransactionModel || ({} as any)),
       overrides?.socialAccountVerification ||
         ({ reconcile: jest.fn().mockResolvedValue(0) } as any),
       noOtpStore,
@@ -446,6 +452,15 @@ describe("UsersService profile update guards", () => {
 
   describe("deletePermanently — Collaboration Score cascade cleanup", () => {
     const fakeInfluencer = { _id: "507f1f77bcf86cd799439011", profileImages: [], verificationDocuments: [] };
+
+    it("refuses while a collaboration is in progress or money is unsettled", async () => {
+      const influencerModel = { findById: jest.fn().mockResolvedValue({ _id: "inf-1" }) };
+      const open = { findOne: jest.fn(() => ({ select: () => ({ lean: async () => ({ _id: "x" }) }) })) };
+      const service = makeService({ influencerModel, campaignInviteModel: open });
+      await expect(service.deletePermanently("inf-1")).rejects.toThrow(
+        "Can't delete permanently yet",
+      );
+    });
 
     it("hard-deletes CollaborationAudit docs and archives (not deletes) reanalysis payments/transactions", async () => {
       const influencerModel = {
