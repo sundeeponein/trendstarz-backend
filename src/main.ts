@@ -7,6 +7,7 @@ if (!globalThis.crypto) {
 import { NestFactory } from "@nestjs/core";
 import { ExpressAdapter } from "@nestjs/platform-express";
 import express from "express";
+import { trustProxyHops } from "./utils/trust-proxy.util";
 import { AppModule } from "./app.module";
 import { ResponseInterceptor } from "./response.interceptor";
 import { ValidationPipe } from "@nestjs/common";
@@ -27,6 +28,13 @@ async function bootstrap() {
   }
 
   const server = express();
+  // Railway (and any CDN) sits in front of the app: without this every request looks
+  // like it comes from the proxy, so per-IP rate limits (login 5/min, general 60/min)
+  // would be shared by ALL users. Trust exactly the proxy hops we have (default 1:
+  // Railway's edge) so req.ip is the visitor's address and can't be spoofed by a
+  // client-sent X-Forwarded-For. Set TRUST_PROXY_HOPS=2 if a CDN (e.g. Cloudflare)
+  // is added in front of Railway.
+  server.set("trust proxy", trustProxyHops(process.env.TRUST_PROXY_HOPS));
   // Keep exact payload bytes for webhook signature verification.
   server.use(
     "/api/campaign-transactions/webhooks/razorpayx",
