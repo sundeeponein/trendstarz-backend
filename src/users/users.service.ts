@@ -3017,9 +3017,9 @@ export class UsersService implements OnModuleInit {
    * cleanupExpiredSelfDeletionRequests.
    */
   async requestSelfDeletion(id: string, password: string) {
-    let user: any = await this.influencerModel.findById(id);
-    if (!user) user = await this.brandModel.findById(id);
-    if (!user) user = await this.photographerModel.findById(id);
+    let user: any = await this.influencerModel.findById(id, "+password");
+    if (!user) user = await this.brandModel.findById(id, "+password");
+    if (!user) user = await this.photographerModel.findById(id, "+password");
     if (!user) throw new NotFoundException("User not found");
 
     const isMatch = await bcrypt.compare(password || "", user.password);

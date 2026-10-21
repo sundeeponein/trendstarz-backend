@@ -692,17 +692,17 @@ export class AuthService {
     if (normalizedRole === "admin") {
       user = await this.userModel.findById(userId);
     } else if (normalizedRole === "influencer") {
-      user = await this.influencerModel.findById(userId);
+      user = await this.influencerModel.findById(userId, "+password");
     } else if (normalizedRole === "brand") {
-      user = await this.brandModel.findById(userId);
+      user = await this.brandModel.findById(userId, "+password");
     } else if (normalizedRole === "photographer") {
-      user = await this.photographerModel.findById(userId);
+      user = await this.photographerModel.findById(userId, "+password");
     } else {
       const [adminUser, influencer, brand, photographer] = await Promise.all([
-        this.userModel.findById(userId),
-        this.influencerModel.findById(userId),
-        this.brandModel.findById(userId),
-        this.photographerModel.findById(userId),
+        this.userModel.findById(userId, "+password"),
+        this.influencerModel.findById(userId, "+password"),
+        this.brandModel.findById(userId, "+password"),
+        this.photographerModel.findById(userId, "+password"),
       ]);
       user = adminUser || influencer || brand || photographer;
     }
@@ -1498,10 +1498,10 @@ export class AuthService {
     // Fetch all collections in parallel to eliminate sequential DB round-trips
     // and prevent timing-based enumeration of which collection a user belongs to.
     const [adminUser, influencer, brand, photographer] = await Promise.all([
-      this.userModel.findOne({ email: normalizedEmail, role: "admin" }),
-      this.influencerModel.findOne({ email: normalizedEmail }),
-      this.brandModel.findOne({ email: normalizedEmail }),
-      this.photographerModel.findOne({ email: normalizedEmail }),
+      this.userModel.findOne({ email: normalizedEmail, role: "admin" }, "+password"),
+      this.influencerModel.findOne({ email: normalizedEmail }, "+password"),
+      this.brandModel.findOne({ email: normalizedEmail }, "+password"),
+      this.photographerModel.findOne({ email: normalizedEmail }, "+password"),
     ]);
 
     if (!adminUser && !influencer && !brand && !photographer) {

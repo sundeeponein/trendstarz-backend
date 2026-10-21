@@ -154,7 +154,9 @@ export const UserSchema = new Schema(
     email: { type: String, required: true, unique: true },
     publicId: { type: String, unique: true, sparse: true, index: true },
     firebaseUid: { type: String, default: null, index: true },
-    password: { type: String, required: true },
+    // Never returned unless a query asks for it with .select("+password") (login, password
+    // change, self-delete) — no endpoint can leak the hash by returning a whole profile.
+    password: { type: String, required: true, select: false },
     role: { type: String, enum: ["admin", "subadmin", "user"], default: "user" },
     firstRegisteredAt: { type: Date, default: Date.now },
     lastLoginAt: { type: Date, default: null },
@@ -178,7 +180,9 @@ export const UserModel = model("User", UserSchema);
 // All schema definitions go here (LanguageSchema, UserSchema, etc.)
 export const InfluencerSchema = new Schema(
   {
-    password: { type: String, required: true },
+    // Never returned unless a query asks for it with .select("+password") (login, password
+    // change, self-delete) — no endpoint can leak the hash by returning a whole profile.
+    password: { type: String, required: true, select: false },
     name: { type: String, required: true },
     email: { type: String, required: true, unique: true },
     firebaseUid: { type: String, default: null, index: true },
@@ -589,7 +593,9 @@ export const BrandSchema = new Schema(
       },
     ],
     googleMapAddress: { type: String },
-    password: { type: String, required: true },
+    // Never returned unless a query asks for it with .select("+password") (login, password
+    // change, self-delete) — no endpoint can leak the hash by returning a whole profile.
+    password: { type: String, required: true, select: false },
     brandName: { type: String, required: true },
     description: { type: String, default: "" },
     contactPersonName: { type: String, default: "" },
@@ -808,7 +814,9 @@ export const BrandModel = model("Brand", BrandSchema);
 // Photographer / Videographer schema
 export const PhotographerSchema = new Schema(
   {
-    password: { type: String, required: true },
+    // Never returned unless a query asks for it with .select("+password") (login, password
+    // change, self-delete) — no endpoint can leak the hash by returning a whole profile.
+    password: { type: String, required: true, select: false },
     name: { type: String, required: true },
     username: { type: String, default: "" },
     email: { type: String, required: true, unique: true },

@@ -563,4 +563,21 @@ describe("data rules (real MongoDB)", () => {
       expect(invite.status).toBe("withdrawn");
     });
   });
+
+  describe("password hash is never returned by default", () => {
+    it("normal reads omit it, login can ask for it, and saving a profile read without it still works", async () => {
+      const Inf = db.conn.models.Influencer || db.conn.model("Influencer", InfluencerSchema, "influencers");
+      const id = new Types.ObjectId();
+      await Inf.collection.insertOne({
+        _id: id, email: "pw@x.in", username: "u-pw", phoneNumber: "9", password: "$2b$10$hash", status: "accepted",
+      });
+      expect(((await Inf.findById(id).lean()) as any).password).toBeUndefined();
+      expect(((await Inf.findOne({ email: "pw@x.in" }, "+password").lean()) as any).password).toBe("$2b$10$hash");
+      // A profile edit loads the doc without the password and saves it: no "password required" error.
+      const doc: any = await Inf.findById(id);
+      doc.name = "Renamed";
+      await expect(doc.save()).resolves.toBeTruthy();
+      expect(((await Inf.findById(id).select("+password").lean()) as any).password).toBe("$2b$10$hash");
+    });
+  });
 });
