@@ -272,10 +272,11 @@ describe("ReviewsService", () => {
         reviews: reviewsFound,
       });
       expect(plansService.checkFeature).not.toHaveBeenCalled();
-      expect(reviewModel.find).toHaveBeenCalledWith({
-        targetId: "inf1",
-        status: "approved",
-      });
+      // Approved reviews only, without the moderator's private note.
+      expect(reviewModel.find).toHaveBeenCalledWith(
+        { targetId: "inf1", status: "approved" },
+        "-adminNote",
+      );
     });
 
     it("anyone else needs canReadReviews", async () => {

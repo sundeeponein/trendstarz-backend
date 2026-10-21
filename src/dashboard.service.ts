@@ -9,6 +9,15 @@ import { Model, Types } from "mongoose";
 import { latePostWindowsByInvite } from "./payments-payouts/campaign-refund.util";
 import { isActivePremium } from "./payments-payouts/fee-rates.util";
 
+/** Campaign fields a creator may see (same list as the creator's invite screens). */
+const CREATOR_CAMPAIGN_FIELDS =
+  "title description script status campaignMode budgetMin budgetMax campaignType pricePerInfluencer " +
+  "maxInfluencers startDate endDate timelineStart timelineEnd acceptanceDeadline deliverables platforms " +
+  "socialMedia specialInstructions venueName venueAddress venueCity venueDistrict venueState venueGoogleMapUrl " +
+  "productValue productDescription productPaymentMode productPaymentAmount inviteBenefits ownerType createdByRole " +
+  "requestKind brandId image images galleryImages promotionUrlType promotionUrl suggestedCaption hashtags " +
+  "resourceImages campaignNumber categories";
+
 @Injectable()
 export class DashboardService {
   constructor(
@@ -48,7 +57,9 @@ export class DashboardService {
     }
     const invites = await this.inviteModel
       .find({ influencerId: userId })
-      .populate("brandId campaignId")
+      // The creator's view of each campaign: brief, dates and money only — never the
+      // host's account or admin fields (moderation notes, overrides).
+      .populate("campaignId", CREATOR_CAMPAIGN_FIELDS)
       .lean();
     const stats: Record<string, number> = {
       invited: 0,
@@ -56,27 +67,16 @@ export class DashboardService {
       submitted: 0,
       completed: 0,
     };
-    const statusDebug: Record<string, number> = {};
-    const newInvites: any[] = [];
     const activeCampaigns: any[] = [];
     const completedCampaigns: any[] = [];
     const withdrawnCampaigns: any[] = [];
     for (const invite of invites) {
       const st = invite.status as string;
-      // Debug: count all raw statuses
-      statusDebug[st] = (statusDebug[st] || 0) + 1;
       // Map 'pending'/'invited' -> invited for display; accepted/submitted/completed are direct
       const mappedStatus =
         st === "pending" || st === "invited" ? "invited" : st;
       if (Object.prototype.hasOwnProperty.call(stats, mappedStatus)) {
         stats[mappedStatus] = (stats[mappedStatus] || 0) + 1;
-      }
-      if (st === "pending" || st === "invited") {
-        newInvites.push({
-          ...invite,
-          brand: invite.brandId,
-          campaign: invite.campaignId,
-        });
       }
       // Active: accepted, payment_confirmed, working, submitted
       if (
@@ -140,7 +140,6 @@ export class DashboardService {
       }
     }
     // Debug: log status counts
-    // console.log("[Dashboard Debug] Invite status counts:", statusDebug);
     return {
       user: {
         name: user?.name || "",
@@ -173,7 +172,7 @@ export class DashboardService {
           last30Days: await this.last30DaysTraffic("Influencer", user?._id),
         },
       },
-      invites: { ...stats, newInvites, statusDebug },
+      invites: { ...stats },
       activeCampaigns,
       completedCampaigns,
       withdrawnCampaigns,

@@ -152,7 +152,8 @@ export class ReviewsService {
     }
 
     const reviews = await this.reviewModel
-      .find({ targetId, status: "approved" })
+      // The moderator's note stays with admins.
+      .find({ targetId, status: "approved" }, "-adminNote")
       .sort({ createdAt: -1 })
       .lean();
 
