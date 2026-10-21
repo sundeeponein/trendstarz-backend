@@ -1,6 +1,14 @@
 import { Schema, model } from "mongoose";
 import { WORKFLOW_TIMING_DEFAULTS } from "../../utils/workflow-timing.util";
 
+/** Stamps passwordChangedAt whenever an existing account's password is saved. */
+function stampPasswordChanges(schema: Schema) {
+  schema.pre("save", function stampPasswordChange() {
+    const doc: any = this;
+    if (!doc.isNew && doc.isModified("password")) doc.passwordChangedAt = new Date();
+  });
+}
+
 const ProfileVerificationFields = {
   emailVerifiedAt: { type: Date, default: null },
   // When the last verification-email link was sent; drives the one-time
@@ -13,6 +21,9 @@ const ProfileVerificationFields = {
   // Snapshot of the last email that was actually verified, kept when the user
   // changes their email so admins can see what changed (fraud/support signal).
   previousVerifiedEmail: { type: String, default: "" },
+  // When the password last changed: login tokens issued before this stop working
+  // (a stolen session ends when the owner changes or resets the password).
+  passwordChangedAt: { type: Date, default: null },
   mobileVerified: { type: Boolean, default: false },
   mobileVerifiedAt: { type: Date, default: null },
   mobileVerificationMethod: { type: String, default: "" },
@@ -175,6 +186,7 @@ export const UserSchema = new Schema(
   { timestamps: true },
 );
 UserSchema.index({ resetToken: 1 }, { sparse: true });
+stampPasswordChanges(UserSchema);
 export const UserModel = model("User", UserSchema);
 
 // All schema definitions go here (LanguageSchema, UserSchema, etc.)
@@ -519,6 +531,7 @@ InfluencerSchema.pre("validate", function (next) {
   next();
 });
 
+stampPasswordChanges(InfluencerSchema);
 export const InfluencerModel = model("Influencer", InfluencerSchema);
 
 export const BrandSchema = new Schema(
@@ -809,6 +822,7 @@ BrandSchema.pre("validate", function (next) {
   next();
 });
 
+stampPasswordChanges(BrandSchema);
 export const BrandModel = model("Brand", BrandSchema);
 
 // Photographer / Videographer schema
@@ -1134,6 +1148,7 @@ PhotographerSchema.pre("validate", function (next) {
   next();
 });
 
+stampPasswordChanges(PhotographerSchema);
 export const PhotographerModel = model("Photographer", PhotographerSchema);
 
 export const AppSettingsSchema = new Schema({

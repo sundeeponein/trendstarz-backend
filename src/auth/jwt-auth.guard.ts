@@ -14,6 +14,8 @@ import { ALLOW_PENDING_DELETION_KEY } from "./allow-pending-deletion.decorator";
 interface AccountStatusEntry {
   isDeleted: boolean;
   status: string;
+  /** ms epoch; tokens issued before this second are refused. */
+  passwordChangedAt: number | null;
   expiresAt: number;
 }
 
@@ -59,6 +61,9 @@ const ROLE_MODEL_NAME: Record<string, string> = {
   influencer: "Influencer",
   brand: "Brand",
   photographer: "Photographer",
+  // Admin tokens are checked too (deleted admin, changed password).
+  admin: "User",
+  subadmin: "User",
 };
 
 function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
@@ -96,7 +101,7 @@ async function getAccountStatus(
   const doc: any = await withTimeout(
     model
       .findById(userId)
-      .select("isDeleted status")
+      .select("isDeleted status passwordChangedAt")
       .maxTimeMS(ACCOUNT_STATUS_QUERY_TIMEOUT_MS)
       .lean()
       .exec(),
@@ -107,6 +112,7 @@ async function getAccountStatus(
   const entry: AccountStatusEntry = {
     isDeleted: !!doc.isDeleted,
     status: String(doc.status || ""),
+    passwordChangedAt: doc.passwordChangedAt ? new Date(doc.passwordChangedAt).getTime() : null,
     expiresAt: Date.now() + ACCOUNT_STATUS_CACHE_TTL_MS,
   };
   accountStatusCache.set(userId, entry);
@@ -146,6 +152,16 @@ function logAccountStatusErrorThrottled(err: unknown): void {
 /** Called by UsersService whenever isDeleted/status changes, so a deletion
  * or restore takes effect on the very next request instead of waiting out
  * the cache TTL. */
+/** A token whose issue second is before the password change no longer counts. */
+export function tokenIssuedBeforePasswordChange(
+  iatSeconds: unknown,
+  passwordChangedAt: number | null | undefined,
+): boolean {
+  const iat = Number(iatSeconds);
+  if (!passwordChangedAt || !Number.isFinite(iat)) return false;
+  return iat < Math.floor(passwordChangedAt / 1000);
+}
+
 export function invalidateAccountStatusCache(userId: string): void {
   accountStatusCache.delete(String(userId));
 }
@@ -175,7 +191,6 @@ export class JwtAuthGuard implements CanActivate {
     }
     req.user = decoded;
 
-    // Admin/subadmin accounts aren't self-deletable — skip the lookup.
     const role = String(decoded?.role || "").toLowerCase();
     if (!decoded?.userId || !ROLE_MODEL_NAME[role]) {
       return true;
@@ -200,6 +215,10 @@ export class JwtAuthGuard implements CanActivate {
         accountStatusGuardMetrics.failOpenWithoutCache += 1;
         return true;
       }
+    }
+
+    if (tokenIssuedBeforePasswordChange(decoded?.iat, account?.passwordChangedAt)) {
+      throw new UnauthorizedException("Your password was changed. Please log in again.");
     }
 
     if (account?.isDeleted) {

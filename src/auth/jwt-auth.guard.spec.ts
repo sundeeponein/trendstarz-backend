@@ -67,7 +67,7 @@ describe("JwtAuthGuard account-status check", () => {
 
     await expect(guard.canActivate(context(token).ctx)).resolves.toBe(true);
     expect(influencer.findById).toHaveBeenCalledWith(id);
-    expect(influencer.chain.select).toHaveBeenCalledWith("isDeleted status");
+    expect(influencer.chain.select).toHaveBeenCalledWith("isDeleted status passwordChangedAt");
 
     await expect(guard.canActivate(context(token).ctx)).resolves.toBe(true);
     expect(influencer.findById).toHaveBeenCalledTimes(1); // cached for 60s
@@ -159,5 +159,17 @@ describe("JwtAuthGuard account-status check", () => {
       "Invalid token",
     );
     expect(influencer.findById).not.toHaveBeenCalled();
+  });
+});
+
+describe("tokenIssuedBeforePasswordChange", () => {
+  const { tokenIssuedBeforePasswordChange } = require("./jwt-auth.guard");
+  it("refuses tokens from before the change; accepts the same second and later; no change → fine", () => {
+    const changedAt = Date.parse("2026-10-21T10:00:00.700Z");
+    const sec = Math.floor(changedAt / 1000);
+    expect(tokenIssuedBeforePasswordChange(sec - 1, changedAt)).toBe(true);
+    expect(tokenIssuedBeforePasswordChange(sec, changedAt)).toBe(false); // the fresh token
+    expect(tokenIssuedBeforePasswordChange(sec + 5, changedAt)).toBe(false);
+    expect(tokenIssuedBeforePasswordChange(sec - 100, null)).toBe(false);
   });
 });

@@ -1,3 +1,4 @@
+import { invalidateAccountStatusCache } from "./jwt-auth.guard";
 import { graceHoursFromSettings } from "../campaigns/campaign-deadlines.util";
 import {
   Injectable,
@@ -691,7 +692,7 @@ export class AuthService {
     let user: any = null;
     const normalizedRole = String(role || "").toLowerCase();
     if (normalizedRole === "admin") {
-      user = await this.userModel.findById(userId);
+      user = await this.userModel.findById(userId, "+password");
     } else if (normalizedRole === "influencer") {
       user = await this.influencerModel.findById(userId, "+password");
     } else if (normalizedRole === "brand") {
@@ -727,9 +728,21 @@ export class AuthService {
     }
     user.password = await bcrypt.hash(newPassword, 10);
     this.clearTemporaryPassword(user);
-    await user.save();
+    await user.save(); // stamps passwordChangedAt → older sessions stop working
+    invalidateAccountStatusCache(String(user._id));
 
-    return { success: true, message: "Password changed successfully." };
+    // This device stays signed in: a fresh token issued after the change.
+    const tokenRole = normalizedRole === "admin" ? String(user.role || "admin") : normalizedRole;
+    const token = jwt.sign(
+      { userId: user._id, email: user.email, role: tokenRole },
+      getJwtSecret(),
+      { expiresIn: "90d" },
+    );
+    return {
+      success: true,
+      message: "Password changed. You've been signed out on other devices.",
+      token,
+    };
   }
 
   constructor(

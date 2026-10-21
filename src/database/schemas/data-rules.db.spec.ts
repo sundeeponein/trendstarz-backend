@@ -601,4 +601,20 @@ describe("data rules (real MongoDB)", () => {
       expect(withDob.payout).toBeUndefined();
     });
   });
+
+  describe("changing a password ends older sessions", () => {
+    it("saving a new password stamps passwordChangedAt; other saves and sign-ups don't", async () => {
+      const Inf = db.conn.models.Influencer || db.conn.model("Influencer", InfluencerSchema, "influencers");
+      const created: any = await Inf.create({ email: "pc@x.in", username: "u-pc", phoneNumber: "7", password: "h1", name: "A" });
+      expect(created.passwordChangedAt).toBeFalsy(); // a new account isn't a "change"
+      const doc: any = await Inf.findById(created._id);
+      doc.name = "B";
+      await doc.save();
+      expect(((await Inf.findById(created._id).lean()) as any).passwordChangedAt).toBeFalsy();
+      const withPw: any = await Inf.findById(created._id, "+password");
+      withPw.password = "h2";
+      await withPw.save();
+      expect(((await Inf.findById(created._id).lean()) as any).passwordChangedAt).toBeInstanceOf(Date);
+    });
+  });
 });
