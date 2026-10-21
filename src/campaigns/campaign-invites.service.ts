@@ -5788,8 +5788,11 @@ export class CampaignInvitesService {
     );
     if (!windows.size) return invites;
     return invites.map((inv) => {
-      const latePostWindow = windows.get(String(inv?._id));
-      return latePostWindow ? { ...inv, latePostWindow } : inv;
+      const window = windows.get(String(inv?._id));
+      // slotCounts: false once an admin excused the no-show (the slot is given back).
+      return window
+        ? { ...inv, latePostWindow: { ...window, slotCounts: !inv?.missExcused?.at } }
+        : inv;
     });
   }
 

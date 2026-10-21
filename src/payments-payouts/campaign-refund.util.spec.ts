@@ -224,6 +224,16 @@ describe("campaign refunds", () => {
       recipientId: recipient,
     });
 
+    it("two creators skipping the SAME campaign doesn't flag the host (e.g. CMP-28)", () => {
+      const recent = [
+        { ...row("t1", "h1", "c1"), campaignId: "cmp28" },
+        { ...row("t2", "h1", "c2"), campaignId: "cmp28" },
+      ];
+      expect(riskFlags(recent[0], recent)).not.toContain("host_repeat_refunds");
+      const twoCampaigns = [recent[0], { ...row("t3", "h1", "c3"), campaignId: "cmp30" }];
+      expect(riskFlags(twoCampaigns[0], twoCampaigns)).toContain("host_repeat_refunds");
+    });
+
     it("flags a repeat pair, a host with 2+ refunds and a creator with 2+ no-post closures", () => {
       const recent = [row("t1", "h1", "c1"), row("t2", "h1", "c1")];
       expect(riskFlags(recent[0], recent).sort()).toEqual(

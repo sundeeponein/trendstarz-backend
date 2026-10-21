@@ -502,6 +502,7 @@ export function riskFlags(
     _id: unknown;
     payerId: unknown;
     recipientId: unknown;
+    campaignId?: unknown;
     createdAt?: Date;
   }>,
   extra: { replacedAfterNoPost?: boolean; hostNoPostRate?: boolean } = {},
@@ -518,7 +519,14 @@ export function riskFlags(
   ) {
     flags.push("repeat_pair");
   }
-  if (recent.filter((r) => String(r.payerId) === payer).length >= 2) {
+  // Refunds across 2+ different campaigns — several creators skipping one
+  // campaign is not a pattern of the host's.
+  const hostRefundCampaigns = new Set(
+    recent
+      .filter((r) => String(r.payerId) === payer)
+      .map((r) => String(r.campaignId ?? r._id)),
+  );
+  if (hostRefundCampaigns.size >= 2) {
     flags.push("host_repeat_refunds");
   }
   if (recent.filter((r) => String(r.recipientId) === recipient).length >= 2) {

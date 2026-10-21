@@ -1,7 +1,7 @@
 import { BadRequestException, NotFoundException } from "@nestjs/common";
 import { getModelToken } from "@nestjs/mongoose";
 import { Test, TestingModule } from "@nestjs/testing";
-import { PaymentsPayoutsService, platformFeeGst } from "./payments-payouts.service";
+import { PaymentsPayoutsService, platformFeeGst, hostRefundView } from "./payments-payouts.service";
 import { PushService } from "../push/push.service";
 import { NotificationsService } from "../notifications/notifications.service";
 import { PlatformEventsService } from "../platform-events/platform-events.service";
@@ -1589,3 +1589,21 @@ describe("PaymentsPayoutsService – payout webhook retries (real PlatformEvents
 function moduleRefRazorpay(service: PaymentsPayoutsService): any {
   return (service as any).razorpayService;
 }
+
+describe("hostRefundView — what the host sees for a creator who didn't post", () => {
+  const base = { transactionType: "paid_collab", collectionStatus: "verified", payerTotal: 60000, agreedAmount: 60000 };
+
+  it("on hold → amount and until; sent → amount, date and UTR; none → nothing", () => {
+    const until = new Date("2026-10-28T00:00:00Z");
+    expect(hostRefundView({ ...base, refundStatus: "on_hold", refundHoldUntil: until })).toMatchObject({
+      state: "on_hold",
+      amount: 60000,
+      until,
+    });
+    expect(
+      hostRefundView({ ...base, refundStatus: "sent", refundAmount: 60000, refundUtr: "UTR1", refundTransferDate: until }),
+    ).toMatchObject({ state: "sent", amount: 60000, utr: "UTR1", sentAt: until });
+    expect(hostRefundView({ ...base })).toBeNull();
+  });
+});
+

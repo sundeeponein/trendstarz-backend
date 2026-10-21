@@ -362,7 +362,8 @@ describe("Refund lifecycle (PaymentsPayoutsService)", () => {
     it("lists each state with flags and history; legacy rows carry no flags", async () => {
       await build([
         row({ _id: "a", refundStatus: "owed", createdAt: new Date() }),
-        row({ _id: "b", refundStatus: "sent", createdAt: new Date() }),
+        // Another campaign of the same host: refunds across 2 campaigns flag the host.
+        row({ _id: "b", refundStatus: "sent", createdAt: new Date(), campaignId: "camp-other" }),
         row({
           _id: "c",
           resolveOutcome: "refund_to_brand",

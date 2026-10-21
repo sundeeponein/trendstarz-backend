@@ -103,6 +103,37 @@ export function platformFeeGst(feePaise: number, gstPercent: number): number {
   return Math.round((fee * pct) / 100);
 }
 
+/** Payment-row fields a host never receives (see getForCampaign). */
+const HOST_HIDDEN_TX_FIELDS =
+  "-payoutUpiId -payoutProofUrl -recipientFee -recipientFeeGst -recipientPayout " +
+  "-adminNotes -refundOwedBy -refundSentBy -refundHistory -gatewaySignature " +
+  "-payoutFailureReason -payoutRetryCount -payoutLastRetryAt";
+
+/**
+ * Where the host's money for a creator who didn't post stands, in plain words for
+ * the campaign card. null when there's no refund on this row.
+ */
+export function hostRefundView(tx: any): {
+  state: "on_hold" | "owed" | "sent" | "settlement" | "cancelled";
+  amount: number;
+  until: Date | null;
+  sentAt: Date | null;
+  utr: string | null;
+} | null {
+  const state = refundState(tx);
+  if (state === "none" || state === "legacy_unconfirmed") return null;
+  return {
+    state,
+    amount:
+      state === "sent"
+        ? Number(tx?.refundAmount ?? refundDueAmount(tx))
+        : refundDueAmount(tx),
+    until: state === "on_hold" ? tx?.refundHoldUntil || null : null,
+    sentAt: state === "sent" ? tx?.refundTransferDate || tx?.refundSentAt || null : null,
+    utr: state === "sent" ? tx?.refundUtr || null : null,
+  };
+}
+
 /** A RazorpayX payout may be on its way: nobody else may pay this row meanwhile. */
 export const GATEWAY_PAYOUT_IN_FLIGHT = ["initiating", "queued", "pending", "processing"];
 /** An "initiating" claim older than this was cut off (crash/deploy) and may be retried. */
@@ -3028,12 +3059,18 @@ export class PaymentsPayoutsService {
     if (!campaign) throw new NotFoundException("Campaign not found");
     await this.assertCampaignOwner(campaign, userId);
 
+    // The host's view: never the creator's UPI ID, payout proof, creator fee/net
+    // payout, admin notes or admin ids (contact details stay inside TrendStarZ).
     const rows = await this.transactionModel
       .find({ campaignId })
+      .select(HOST_HIDDEN_TX_FIELDS)
       .sort({ createdAt: -1 })
       .lean();
 
-    return { success: true, data: rows };
+    return {
+      success: true,
+      data: (rows as any[]).map((r) => ({ ...r, hostRefund: hostRefundView(r) })),
+    };
   }
 
   // ── Dispute — raise (brand or influencer), resolve (admin) ──────────────────
@@ -3902,7 +3939,7 @@ export class PaymentsPayoutsService {
           { resolveOutcome: "refund_to_brand" },
         ],
       })
-      .select("_id payerId recipientId createdAt")
+      .select("_id payerId recipientId campaignId createdAt")
       .lean();
 
     const inviteIds = view.flatMap((x) => [
@@ -4099,14 +4136,20 @@ export class PaymentsPayoutsService {
         })
         .sort({ createdAt: -1 })
         .limit(HOST_NO_POST_RATE.window)
-        .select("refundStatus noPostClosure")
+        .select("refundStatus noPostClosure campaignId")
         .lean();
-      const noPost = last.filter(
-        (r) =>
-          r.noPostClosure ||
-          ["on_hold", "owed", "sent"].includes(String(r.refundStatus)),
-      ).length;
-      out.set(payerId, noPost >= HOST_NO_POST_RATE.threshold);
+      // Count campaigns, not creators: several creators skipping one campaign is
+      // their pattern, not the host's.
+      const noPostCampaigns = new Set(
+        last
+          .filter(
+            (r) =>
+              r.noPostClosure ||
+              ["on_hold", "owed", "sent"].includes(String(r.refundStatus)),
+          )
+          .map((r) => String(r.campaignId)),
+      );
+      out.set(payerId, noPostCampaigns.size >= HOST_NO_POST_RATE.threshold);
     }
     return out;
   }
