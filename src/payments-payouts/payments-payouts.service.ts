@@ -2162,8 +2162,11 @@ export class PaymentsPayoutsService {
           .select("influencerId campaignId recipientRole")
           .lean();
         if (!confirmedInvite) {
-          await this.inviteModel.updateOne(
-            { _id: tx.inviteId },
+          // Already further along (working/submitted…): just unlock. But if the
+          // collaboration closed while the payment was on its way (creator withdrew,
+          // host cancelled), the money is due back — nothing is unlocked.
+          const unlocked = await this.inviteModel.updateOne(
+            { _id: tx.inviteId, status: { $nin: ["withdrawn", "declined"] } },
             {
               $set: {
                 unlocked: true,
@@ -2174,6 +2177,16 @@ export class PaymentsPayoutsService {
             },
             withSession({}, session),
           );
+          if (!unlocked.matchedCount) {
+            await markRefundsOwed(
+              this.transactionModel,
+              tx.inviteId,
+              now,
+              { byRole: "system" },
+              "The collaboration was closed before this payment arrived — refund the host.",
+              session,
+            );
+          }
         }
       }
 
@@ -2181,7 +2194,12 @@ export class PaymentsPayoutsService {
       // unlock contact/shipping details and start the creator's posting window.
       if (tx.transactionType === "platform_fee" && tx.feeInviteId) {
         await this.inviteModel.updateOne(
-          { _id: tx.feeInviteId, platformFeePaidAt: null },
+          // Not for a collaboration that closed meanwhile (nothing to unlock or start).
+          {
+            _id: tx.feeInviteId,
+            platformFeePaidAt: null,
+            status: { $nin: ["withdrawn", "declined"] },
+          },
           {
             $set: {
               platformFeePaidAt: now,

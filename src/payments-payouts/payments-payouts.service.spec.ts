@@ -689,7 +689,12 @@ describe("PaymentsPayoutsService", () => {
       const [filter, update] = inviteModel.updateOne.mock.calls.find(
         (c: any[]) => c[1]?.$set?.platformFeePaidAt,
       );
-      expect(filter).toEqual({ _id: "i1", platformFeePaidAt: null });
+      // Only a collaboration that's still open is started (not one closed meanwhile).
+      expect(filter).toEqual({
+        _id: "i1",
+        platformFeePaidAt: null,
+        status: { $nin: ["withdrawn", "declined"] },
+      });
       expect(update.$set).toMatchObject({ unlocked: true, unlockType: "platform_fee" });
     });
 

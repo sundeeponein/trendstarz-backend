@@ -444,9 +444,9 @@ describe("data rules (real MongoDB)", () => {
       const restored = new Types.ObjectId();
       const collaborated = new Types.ObjectId();
       await Inf.collection.insertMany([
-        { _id: stale, ...base, email: "a@x.in" },
-        { _id: restored, ...base, email: "b@x.in", restoredAt: new Date() },
-        { _id: collaborated, ...base, email: "c@x.in", status: "declined" },
+        { _id: stale, ...base, email: "a@x.in", username: "u-a" },
+        { _id: restored, ...base, email: "b@x.in", username: "u-b", restoredAt: new Date() },
+        { _id: collaborated, ...base, email: "c@x.in", username: "u-c", status: "declined" },
       ]);
       await Invite.collection.insertOne({ campaignId: "camp-old", brandId: "b", influencerId: collaborated, status: "completed" });
       const empty = { find: () => ({ select: () => ({ lean: async () => [] }) }), updateMany: async () => ({}) };
@@ -475,7 +475,7 @@ describe("data rules (real MongoDB)", () => {
       const Inf = db.conn.models.Influencer || db.conn.model("Influencer", InfluencerSchema, "influencers");
       const id = new Types.ObjectId();
       await Inf.collection.insertOne({
-        _id: id, email: "p@x.in", phoneNumber: "x", status: "deletion_pending", isDeleted: true,
+        _id: id, email: "p@x.in", username: "u-p", phoneNumber: "x", status: "deletion_pending", isDeleted: true,
         deletedAt: new Date(Date.now() - 60 * 24 * 3600e3),
         profileImages: [{ public_id: "keep" }, { public_id: "gone" }],
       });
@@ -506,14 +506,14 @@ describe("data rules (real MongoDB)", () => {
       const newcomer = new Types.ObjectId();
       await Inf.collection.insertMany([
         {
-          _id: veteran, email: "v@x.in", phoneNumber: "1", status: "accepted", isEmailVerified: true,
+          _id: veteran, email: "v@x.in", username: "u-v", phoneNumber: "1", status: "accepted", isEmailVerified: true,
           createdAt: new Date(Date.now() - 400 * day), commissionBadge: "early_access_creator", adminTags: ["Early Access"],
           commissionOverride: {
             enabled: true, overrideType: "fixed", value: 0, source: "early_access_program",
             assignedAt: new Date(Date.now() - 40 * day), validUntil: new Date(Date.now() - 10 * day),
           },
         },
-        { _id: newcomer, email: "n@x.in", phoneNumber: "2", status: "accepted", isEmailVerified: true, createdAt: new Date(Date.now() - day) },
+        { _id: newcomer, email: "n@x.in", username: "u-n", phoneNumber: "2", status: "accepted", isEmailVerified: true, createdAt: new Date(Date.now() - day) },
       ]);
       const service = new EarlyAccessAssignmentService(
         Inf as any,
@@ -530,6 +530,37 @@ describe("data rules (real MongoDB)", () => {
       expect(v.earlyAccessGrantedAt).toBeTruthy();
       expect(n.commissionOverride.enabled).toBe(true);
       expect(n.commissionBadge).toBe("early_access_creator");
+    });
+  });
+
+  describe("a payment that lands after the collaboration closed", () => {
+    it("is recorded, unlocks nothing, and is marked as a refund owed to the host", async () => {
+      const { insertedId: inviteId } = await Invite.collection.insertOne({
+        campaignId: "camp-late-pay", brandId: "b", influencerId: new Types.ObjectId(),
+        status: "withdrawn", unlocked: false,
+      });
+      const { insertedId: txId } = await Tx.collection.insertOne({
+        ...txBase(), inviteId, collectionStatus: "proof_submitted", payoutStatus: "pending", gateway: "manual_upi",
+      });
+      const service = Object.create(PaymentsPayoutsService.prototype);
+      Object.assign(service, {
+        transactionModel: Tx,
+        inviteModel: Invite,
+        connection: db.conn,
+        recordPaymentCompleted: async () => undefined,
+        recordCampaignPaymentConversion: async () => undefined,
+        // Host email after verifying (best-effort, not under test).
+        brandModel: { findById: () => ({ select: () => ({ lean: async () => null }) }) },
+        pushService: { sendToUser: async () => undefined },
+        notificationsService: { createForUser: async () => undefined },
+      });
+      await service.verifyCollectionById(String(txId), "UTR checked");
+      const tx: any = await Tx.findById(txId).lean();
+      const invite: any = await Invite.findById(inviteId).lean();
+      expect(tx.collectionStatus).toBe("verified");
+      expect(tx.refundStatus).toBe("owed");
+      expect(invite.unlocked).toBe(false);
+      expect(invite.status).toBe("withdrawn");
     });
   });
 });
