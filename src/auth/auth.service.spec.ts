@@ -293,6 +293,16 @@ describe("AuthService", () => {
       expect(mockUser.isEmailVerified).toBe(true);
       expect(mockUser.resetToken).toBeNull();
     });
+
+    it("looks up only the hash of the emailed token — the stored value itself never works as a token", async () => {
+      userModel.findOne.mockResolvedValue(null);
+      await service.validateResetToken("validtoken").catch(() => undefined);
+      const expectedHash = require("crypto").createHash("sha256").update("validtoken").digest("hex");
+      for (const call of userModel.findOne.mock.calls) {
+        expect(call[0].resetToken).toBe(expectedHash); // not { $in: [token, hash] }
+      }
+      expect(userModel.findOne).toHaveBeenCalled();
+    });
   });
 
   describe("forgotPassword", () => {

@@ -169,8 +169,8 @@ export const UserSchema = new Schema(
     isEmailVerified: { type: Boolean, default: false },
     isMobileVerified: { type: Boolean, default: false },
     ...ProfileVerificationFields,
-    resetToken: { type: String, default: null },
-    resetTokenExpires: { type: Number, default: null },
+    resetToken: { type: String, default: null, select: false }, // sha256 of the emailed token
+    resetTokenExpires: { type: Number, default: null, select: false },
   },
   { timestamps: true },
 );
@@ -488,8 +488,8 @@ export const InfluencerSchema = new Schema(
       enum: ["pending", "accepted", "declined", "deleted", "deletion_pending"],
       default: "pending",
     },
-    resetToken: { type: String, default: null },
-    resetTokenExpires: { type: Number, default: null },
+    resetToken: { type: String, default: null, select: false }, // sha256 of the emailed token
+    resetTokenExpires: { type: Number, default: null, select: false },
     // Admin-issued temporary password (support for users locked out after a reset).
     // While mustChangePassword is set, login succeeds only until tempPasswordExpiresAt
     // and the app forces a password change; any real password change clears these.
@@ -780,8 +780,8 @@ export const BrandSchema = new Schema(
     },
     // Growth: 1 free contact-unlock per brand before requiring premium/payment
     freeUnlocksUsed: { type: Number, default: 0 },
-    resetToken: { type: String, default: null },
-    resetTokenExpires: { type: Number, default: null },
+    resetToken: { type: String, default: null, select: false }, // sha256 of the emailed token
+    resetTokenExpires: { type: Number, default: null, select: false },
     // Admin-issued temporary password (support for users locked out after a reset).
     // While mustChangePassword is set, login succeeds only until tempPasswordExpiresAt
     // and the app forces a password change; any real password change clears these.
@@ -990,8 +990,8 @@ export const PhotographerSchema = new Schema(
       lastImpressionAt: { type: Date, default: null },
       lastClickAt: { type: Date, default: null },
     },
-    resetToken: { type: String, default: null },
-    resetTokenExpires: { type: Number, default: null },
+    resetToken: { type: String, default: null, select: false }, // sha256 of the emailed token
+    resetTokenExpires: { type: Number, default: null, select: false },
     // Admin-issued temporary password (support for users locked out after a reset).
     // While mustChangePassword is set, login succeeds only until tempPasswordExpiresAt
     // and the app forces a password change; any real password change clears these.

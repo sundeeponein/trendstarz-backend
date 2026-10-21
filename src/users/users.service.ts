@@ -52,8 +52,18 @@ import { takenAccountFields } from "../utils/account-uniqueness.util";
 import { SingleInstance } from "../utils/single-instance";
 import { idIn } from "../utils/id-match.util";
 import { openMoneyFilter, openWorkFilter } from "./self-deletion.util";
+import { privateProfileExclusion } from "../utils/public-profile.util";
 import { sendAppEmail } from "../utils/app-email.service";
 import { deleteAccountCodeTemplate } from "../email/templates/otp.templates";
+
+/**
+ * What another user may see of an influencer in a list (the public profile shows the
+ * same; contact details only there, and only to viewers allowed to contact them).
+ */
+const PUBLIC_INFLUENCER_CARD_FIELDS =
+  "name username profileImage profileImages categories influencerCategory creatorTypes " +
+  "professionalStatus expertiseArea verificationStatus verifiedByTrendStarz location " +
+  "socialMedia collaborationAvailability promotionalPrice isPremium premiumEnd";
 
 /** OTP-store key for a self-deletion code (kept apart from signup email/phone codes). */
 const selfDeletionCodeKey = (userId: string) => `self-delete:${userId}`;
@@ -2180,7 +2190,7 @@ export class UsersService implements OnModuleInit {
 
     if (lite) {
       const selection =
-        "name username profileImage profileImages categories influencerCategory creatorTypes verificationStatus verifiedByTrendStarz location socialMedia collaborationAvailability adminTags isPremium premiumEnd promotionalPrice dateOfBirth firstRegisteredAt createdAt lastLoginAt";
+        "name username profileImage profileImages categories influencerCategory creatorTypes verificationStatus verifiedByTrendStarz location socialMedia collaborationAvailability isPremium premiumEnd promotionalPrice dateOfBirth firstRegisteredAt createdAt lastLoginAt";
       const projection = this.selectStringToProjection(selection);
       const [pagedRows, total] = await Promise.all([
         this.influencerModel
@@ -2244,7 +2254,12 @@ export class UsersService implements OnModuleInit {
     }
 
     const receiveCapFor = await this.influencerReceiveCapFor();
-    const all = await this.influencerModel.find(baseFilter).lean();
+    // Never load private fields for another user's list (payout/UPI, documents, admin data).
+    const all = await this.influencerModel
+      .find(baseFilter)
+      // dateOfBirth only to compute ageRange — the output blanks it.
+      .select(privateProfileExclusion(["dateOfBirth"]))
+      .lean();
 
     // Invite lists hide creators whose monthly slots are all used (the send check refuses them).
     const fullyBooked = await fullyBookedCreatorIds(
@@ -2360,6 +2375,7 @@ export class UsersService implements OnModuleInit {
     state?: string;
     page?: number;
     limit?: number;
+    viewerId?: string | null;
   }) {
     const filter: any = { status: "accepted" };
     // This endpoint is JwtAuthGuard-protected — caller is always logged in.
@@ -2390,12 +2406,19 @@ export class UsersService implements OnModuleInit {
         "i",
       );
     }
-    const page = query.page || 1;
-    const limit = query.limit || 20;
+    const page = Math.max(1, Number(query.page) || 1);
+    const limit = Math.min(50, Math.max(1, Number(query.limit) || 20));
     const skip = (page - 1) * limit;
-    const [data, total] = await Promise.all([
-      this.influencerModel.find(filter).lean().skip(skip).limit(limit),
+    // Public card fields only — never email, phone, payout/UPI, documents or admin data.
+    const [data, total, allowSocial] = await Promise.all([
+      this.influencerModel
+        .find(filter)
+        .select(PUBLIC_INFLUENCER_CARD_FIELDS)
+        .lean()
+        .skip(skip)
+        .limit(limit),
       this.influencerModel.countDocuments(filter),
+      this.plansService.canViewSocialLinks(query.viewerId ?? null),
     ]);
     const normalized = await Promise.all(
       (data || []).map(async (inf: any) => {
@@ -2403,15 +2426,17 @@ export class UsersService implements OnModuleInit {
           inf._id,
           "Influencer",
         );
+        const { isPremium, premiumEnd, ...card } = inf;
         return {
-          ...inf,
+          ...card,
           profileImages: this.visibleInfluencerProfileImages(
             inf?.profileImages,
             hideGallery,
           ),
           isPremium: this.isCurrentlyPremium(inf),
-          gender: undefined,
-          dateOfBirth: undefined,
+          // Same as Search/profile: restricted viewers get platform + tier only.
+          socialMedia: allowSocial ? inf.socialMedia : restrictedSocialSummary(inf.socialMedia),
+          socialMediaRestricted: !allowSocial,
         };
       }),
     );

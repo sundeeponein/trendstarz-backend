@@ -15,6 +15,7 @@ import { PaymentsPayoutsService } from "../../payments-payouts/payments-payouts.
 import { PendingUserCleanupService } from "../../admin/pending-user-cleanup.service";
 import { ImageCleanupService } from "../../plans/image-cleanup.service";
 import { EarlyAccessAssignmentService } from "../../admin/early-access-assignment.service";
+import { PRIVATE_PROFILE_EXCLUSION, privateProfileExclusion } from "../../utils/public-profile.util";
 import { openMoneyFilter, openWorkFilter } from "../../users/self-deletion.util";
 import { BrandSchema, InfluencerSchema, PhotographerSchema } from "./profile.schemas";
 import { idIn, idsIn } from "../../utils/id-match.util";
@@ -578,6 +579,26 @@ describe("data rules (real MongoDB)", () => {
       doc.name = "Renamed";
       await expect(doc.save()).resolves.toBeTruthy();
       expect(((await Inf.findById(id).select("+password").lean()) as any).password).toBe("$2b$10$hash");
+    });
+  });
+
+  describe("other users' views never load private profile fields", () => {
+    it("the list exclusion drops payout, documents, admin data and reset tokens; contact stays for the gate", async () => {
+      const Inf = db.conn.models.Influencer || db.conn.model("Influencer", InfluencerSchema, "influencers");
+      const id = new Types.ObjectId();
+      await Inf.collection.insertOne({
+        _id: id, email: "priv@x.in", username: "u-priv", phoneNumber: "9", password: "h", status: "accepted",
+        payout: { upiId: "secret@ybl" }, adminTags: ["Internal/Test"], commissionOverride: { enabled: true },
+        verificationDocuments: [{ public_id: "doc" }], resetToken: "abc", dateOfBirth: new Date("2000-01-01"),
+      });
+      const row: any = await Inf.findById(id).select(PRIVATE_PROFILE_EXCLUSION).lean();
+      for (const field of ["payout", "adminTags", "commissionOverride", "verificationDocuments", "resetToken", "password", "dateOfBirth"]) {
+        expect(row[field]).toBeUndefined();
+      }
+      expect(row.email).toBe("priv@x.in"); // the list decides per viewer whether to show it
+      const withDob: any = await Inf.findById(id).select(privateProfileExclusion(["dateOfBirth"])).lean();
+      expect(withDob.dateOfBirth).toBeTruthy();
+      expect(withDob.payout).toBeUndefined();
     });
   });
 });

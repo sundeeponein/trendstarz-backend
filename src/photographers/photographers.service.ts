@@ -837,7 +837,8 @@ export class PhotographersService {
     };
 
     const projection = this.selectStringToProjection(
-      "name username email phoneNumber profileImage profileImages location skills pricing equipment socialMedia collaborationAvailability contact gender portfolio status adminTags isPremium commissionBadge commissionOverride verifiedByTrendStarz verificationStatus firstRegisteredAt createdAt lastLoginAt premiumStart premiumEnd",
+      // Public list (no login needed): never email, phone, gender or commission/admin data.
+      "name username profileImage profileImages location skills pricing equipment socialMedia collaborationAvailability contact portfolio status isPremium verifiedByTrendStarz verificationStatus firstRegisteredAt createdAt lastLoginAt premiumStart premiumEnd",
     );
 
     let docs = await this.photographerModel

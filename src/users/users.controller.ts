@@ -363,6 +363,7 @@ export class UsersController {
     @Query("state") state?: string,
     @Query("page") page?: string,
     @Query("limit") limit?: string,
+    @Req() req?: any,
   ) {
     return this.usersService.searchInfluencers({
       q,
@@ -371,6 +372,7 @@ export class UsersController {
       state,
       page: page ? parseInt(page, 10) : undefined,
       limit: limit ? parseInt(limit, 10) : undefined,
+      viewerId: req?.user?.userId ?? null,
     });
   }
 

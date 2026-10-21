@@ -490,19 +490,19 @@ export class AuthService {
     const now = Date.now();
     const [adminUser, influencer, brand, photographer] = await Promise.all([
       this.userModel.findOne({
-        resetToken: { $in: [token, tokenHash] },
+        resetToken: tokenHash,
         resetTokenExpires: { $gt: now },
       }),
       this.influencerModel.findOne({
-        resetToken: { $in: [token, tokenHash] },
+        resetToken: tokenHash,
         resetTokenExpires: { $gt: now },
       }),
       this.brandModel.findOne({
-        resetToken: { $in: [token, tokenHash] },
+        resetToken: tokenHash,
         resetTokenExpires: { $gt: now },
       }),
       this.photographerModel.findOne({
-        resetToken: { $in: [token, tokenHash] },
+        resetToken: tokenHash,
         resetTokenExpires: { $gt: now },
       }),
     ]);
@@ -520,23 +520,24 @@ export class AuthService {
     const now = Date.now();
 
     // Parallel lookup across collections.
-    // Accept both the legacy raw token and the hashed token so existing reset
-    // emails continue to work while new tokens are stored hashed.
+    // Only the hash of the emailed token matches. The stored value itself is never
+    // accepted as a token (it used to be, for legacy raw tokens — that let anyone who
+    // saw the stored hash reset the password). Raw tokens expired after 1 hour anyway.
     const [adminUser, influencer, brand, photographer] = await Promise.all([
       this.userModel.findOne({
-        resetToken: { $in: [token, tokenHash] },
+        resetToken: tokenHash,
         resetTokenExpires: { $gt: now },
       }),
       this.influencerModel.findOne({
-        resetToken: { $in: [token, tokenHash] },
+        resetToken: tokenHash,
         resetTokenExpires: { $gt: now },
       }),
       this.brandModel.findOne({
-        resetToken: { $in: [token, tokenHash] },
+        resetToken: tokenHash,
         resetTokenExpires: { $gt: now },
       }),
       this.photographerModel.findOne({
-        resetToken: { $in: [token, tokenHash] },
+        resetToken: tokenHash,
         resetTokenExpires: { $gt: now },
       }),
     ]);
