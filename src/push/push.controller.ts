@@ -7,6 +7,14 @@ function detectDeviceType(userAgent: string | undefined): "web" | "mobile" {
   return /Mobi|Android|iPhone|iPad|iPod/i.test(userAgent) ? "mobile" : "web";
 }
 
+/** The stored role comes from the login token, never from the request body. */
+function pushRoleFromToken(role: unknown): "brand" | "influencer" | "photographer" | "admin" {
+  const value = String(role || "").toLowerCase();
+  if (value === "admin" || value === "subadmin") return "admin";
+  if (value === "brand" || value === "photographer") return value;
+  return "influencer";
+}
+
 @Controller("push")
 export class PushController {
   constructor(private readonly pushService: PushService) {}
@@ -28,15 +36,14 @@ export class PushController {
         endpoint: string;
         keys: { p256dh: string; auth: string };
       };
-      userRole?: string;
     },
   ) {
     const userId: string = req.user?.userId || req.user?.sub;
     const deviceType = detectDeviceType(req.headers?.["user-agent"]);
     return this.pushService.subscribe(
       userId,
-      body.userRole || "influencer",
-      body.subscription,
+      pushRoleFromToken(req.user?.role),
+      body?.subscription,
       deviceType,
     );
   }
@@ -44,8 +51,9 @@ export class PushController {
   /** Remove a push subscription (e.g. on logout or permission revoke). */
   @Delete("unsubscribe")
   @UseGuards(JwtAuthGuard)
-  unsubscribe(@Body() body: { endpoint: string }) {
-    return this.pushService.unsubscribe(body.endpoint);
+  unsubscribe(@Req() req: any, @Body() body: { endpoint: string }) {
+    const userId: string = req.user?.userId || req.user?.sub;
+    return this.pushService.unsubscribe(userId, body?.endpoint);
   }
 
   /** Get the logged-in user's account-level push preference (device + category). */

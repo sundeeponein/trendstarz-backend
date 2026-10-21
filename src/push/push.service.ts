@@ -1,4 +1,4 @@
-import { Injectable, Logger, OnModuleInit } from "@nestjs/common";
+import { BadRequestException, Injectable, Logger, OnModuleInit } from "@nestjs/common";
 import { InjectModel } from "@nestjs/mongoose";
 import { Model } from "mongoose";
 import * as webpush from "web-push";
@@ -30,22 +30,46 @@ export class PushService implements OnModuleInit {
     );
   }
 
+  /**
+   * Store this browser's subscription for the signed-in account. Only the
+   * known fields are saved: spreading the request body let a caller attach
+   * someone else's userId to their own endpoint and receive that person's
+   * notifications. Re-subscribing an endpoint moves it to the current account
+   * (shared device, new login).
+   */
   async subscribe(
     userId: string,
     userRole: string,
     subscription: { endpoint: string; keys: { p256dh: string; auth: string } },
     deviceType: "web" | "mobile" = "web",
   ) {
+    const endpoint = subscription?.endpoint;
+    const p256dh = subscription?.keys?.p256dh;
+    const auth = subscription?.keys?.auth;
+    if (
+      !userId ||
+      typeof endpoint !== "string" ||
+      !/^https:\/\//i.test(endpoint) ||
+      endpoint.length > 2048 ||
+      typeof p256dh !== "string" ||
+      typeof auth !== "string" ||
+      !p256dh ||
+      !auth
+    ) {
+      throw new BadRequestException("Invalid push subscription");
+    }
     await this.subModel.findOneAndUpdate(
-      { endpoint: subscription.endpoint },
-      { userId, userRole, deviceType, ...subscription },
+      { endpoint },
+      { $set: { userId: String(userId), userRole, deviceType, endpoint, keys: { p256dh, auth } } },
       { upsert: true, new: true },
     );
     return { success: true };
   }
 
-  async unsubscribe(endpoint: string) {
-    await this.subModel.deleteOne({ endpoint });
+  /** Remove one of the caller's own subscriptions (logout, permission revoked). */
+  async unsubscribe(userId: string, endpoint: string) {
+    if (typeof endpoint !== "string" || !endpoint) return { success: true };
+    await this.subModel.deleteOne({ endpoint, userId: String(userId) });
     return { success: true };
   }
 

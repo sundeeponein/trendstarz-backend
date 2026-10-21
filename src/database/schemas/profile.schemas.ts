@@ -5,7 +5,24 @@ import { WORKFLOW_TIMING_DEFAULTS } from "../../utils/workflow-timing.util";
 function stampPasswordChanges(schema: Schema) {
   schema.pre("save", function stampPasswordChange() {
     const doc: any = this;
-    if (!doc.isNew && doc.isModified("password")) doc.passwordChangedAt = new Date();
+    if (!doc.isNew && doc.isModified("password")) {
+      doc.passwordChangedAt = new Date();
+      doc.$locals.passwordJustChanged = true;
+    }
+  });
+  // Devices signed out by the change must stop getting this account's push
+  // notifications too. The device that changed it re-subscribes on its own.
+  schema.post("save", async function forgetPushDevices() {
+    const doc: any = this;
+    if (!doc.$locals?.passwordJustChanged) return;
+    doc.$locals.passwordJustChanged = false;
+    try {
+      await (doc.constructor as any).db
+        .collection("pushsubscriptions")
+        .deleteMany({ userId: String(doc._id) });
+    } catch {
+      // Best effort: the password change itself has already been saved.
+    }
   });
 }
 

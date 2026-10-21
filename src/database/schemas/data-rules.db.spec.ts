@@ -617,6 +617,51 @@ describe("data rules (real MongoDB)", () => {
       await withPw.save();
       expect(((await Inf.findById(created._id).lean()) as any).passwordChangedAt).toBeInstanceOf(Date);
     });
+
+    it("a password change stops push notifications to the account's devices (other accounts untouched)", async () => {
+      const Inf = db.conn.models.Influencer || db.conn.model("Influencer", InfluencerSchema, "influencers");
+      const user: any = await Inf.create({ email: "pp@x.in", username: "u-pp", phoneNumber: "8", password: "h1", name: "P" });
+      const subs = db.conn.collection("pushsubscriptions");
+      await subs.insertMany([
+        { userId: String(user._id), endpoint: "https://push/pp-1" },
+        { userId: String(user._id), endpoint: "https://push/pp-2" },
+        { userId: "someone-else", endpoint: "https://push/other" },
+      ]);
+      const doc: any = await Inf.findById(user._id);
+      doc.name = "Q"; // not a password change
+      await doc.save();
+      expect(await subs.countDocuments({ userId: String(user._id) })).toBe(2);
+      const withPw: any = await Inf.findById(user._id, "+password");
+      withPw.password = "h2";
+      await withPw.save();
+      expect(await subs.countDocuments({ userId: String(user._id) })).toBe(0);
+      expect(await subs.countDocuments({ userId: "someone-else" })).toBe(1);
+    });
+  });
+
+  describe("push subscriptions belong to the signed-in account", () => {
+    it("ignores a userId smuggled in the subscription body and only unsubscribes the caller's own device", async () => {
+      const { PushService } = require("../../push/push.service");
+      const { PushSubscriptionSchema } = require("./push-subscription.schema");
+      const Sub = db.conn.models.PushSubscription || db.conn.model("PushSubscription", PushSubscriptionSchema, "pushsubscriptions");
+      const service = new PushService(Sub, {} as any);
+      await service.subscribe(
+        "attacker",
+        "influencer",
+        { endpoint: "https://push/attacker", keys: { p256dh: "k", auth: "a" }, userId: "victim" } as any,
+      );
+      const saved: any = await Sub.findOne({ endpoint: "https://push/attacker" }).lean();
+      expect(saved.userId).toBe("attacker");
+      await expect(
+        service.subscribe("attacker", "influencer", { endpoint: "javascript:x", keys: { p256dh: "k", auth: "a" } }),
+      ).rejects.toThrow("Invalid push subscription");
+
+      await Sub.create({ userId: "victim", endpoint: "https://push/victim", keys: { p256dh: "k", auth: "a" } });
+      await service.unsubscribe("attacker", "https://push/victim");
+      expect(await Sub.countDocuments({ endpoint: "https://push/victim" })).toBe(1);
+      await service.unsubscribe("victim", "https://push/victim");
+      expect(await Sub.countDocuments({ endpoint: "https://push/victim" })).toBe(0);
+    });
   });
 
   describe("the real guard after a password change (end to end)", () => {

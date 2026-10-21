@@ -57,7 +57,7 @@ describe("collaboration availability (Stage 3D-1d)", () => {
         enabled: false,
         state: "not_available",
         notAvailableUntil: LATER,
-      }),
+      }, NOW),
     ).toBe("not_available");
   });
 
