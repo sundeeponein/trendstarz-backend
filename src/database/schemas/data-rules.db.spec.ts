@@ -16,6 +16,7 @@ import { PendingUserCleanupService } from "../../admin/pending-user-cleanup.serv
 import { ImageCleanupService } from "../../plans/image-cleanup.service";
 import { EarlyAccessAssignmentService } from "../../admin/early-access-assignment.service";
 import { PRIVATE_PROFILE_EXCLUSION, privateProfileExclusion } from "../../utils/public-profile.util";
+import { JwtAuthGuard, invalidateAccountStatusCache } from "../../auth/jwt-auth.guard";
 import { openMoneyFilter, openWorkFilter } from "../../users/self-deletion.util";
 import { BrandSchema, InfluencerSchema, PhotographerSchema } from "./profile.schemas";
 import { idIn, idsIn } from "../../utils/id-match.util";
@@ -615,6 +616,34 @@ describe("data rules (real MongoDB)", () => {
       withPw.password = "h2";
       await withPw.save();
       expect(((await Inf.findById(created._id).lean()) as any).passwordChangedAt).toBeInstanceOf(Date);
+    });
+  });
+
+  describe("the real guard after a password change (end to end)", () => {
+    it("refuses the other browser's old token and accepts a token issued after the change", async () => {
+      const jwt = require("jsonwebtoken");
+      const { getJwtSecret } = require("../../auth/jwt-secret");
+      const Inf = db.conn.models.Influencer || db.conn.model("Influencer", InfluencerSchema, "influencers");
+      const user: any = await Inf.create({ name: "E2E", email: "e2e@x.in", username: "u-e2e", phoneNumber: "6", password: "h1", status: "accepted" });
+      const ctx = (token: string) => ({
+        switchToHttp: () => ({ getRequest: () => ({ headers: { authorization: `Bearer ${token}` } }) }),
+        getHandler: () => undefined,
+        getClass: () => undefined,
+      });
+      const guard = new JwtAuthGuard({ getAllAndOverride: () => false } as any, db.conn as any);
+      const sign = (iat: number) =>
+        jwt.sign({ userId: String(user._id), email: user.email, role: "influencer", iat }, getJwtSecret(), { expiresIn: "90d" });
+      const oldToken = sign(Math.floor(Date.now() / 1000) - 3600); // browser B, logged in an hour ago
+      await expect(guard.canActivate(ctx(oldToken) as any)).resolves.toBe(true);
+
+      const doc: any = await Inf.findById(user._id, "+password");
+      doc.password = "h2"; // browser A changes the password
+      await doc.save();
+      invalidateAccountStatusCache(String(user._id));
+
+      await expect(guard.canActivate(ctx(oldToken) as any)).rejects.toThrow("Your password was changed");
+      const freshToken = sign(Math.floor(Date.now() / 1000) + 1); // what change-password returns to A
+      await expect(guard.canActivate(ctx(freshToken) as any)).resolves.toBe(true);
     });
   });
 });
