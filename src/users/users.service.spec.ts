@@ -75,6 +75,38 @@ describe("UsersService profile update guards", () => {
     );
   };
 
+  describe("delete my account — password or emailed code", () => {
+    const setup = (otp: any) => {
+      const user = { _id: "inf-1", password: "hash" };
+      const influencerModel = {
+        findById: jest.fn().mockResolvedValue(user),
+      };
+      const service: any = makeService({ influencerModel });
+      service.otpStore = otp;
+      jest.spyOn(service, "selfDeletionBlocker").mockResolvedValue(null);
+      const deleteUser = jest.spyOn(service, "deleteUser").mockResolvedValue({});
+      return { service, deleteUser };
+    };
+
+    it("a valid emailed code confirms it without the password", async () => {
+      const verifyCode = jest.fn().mockResolvedValue({ ok: true, verificationToken: "t" });
+      const { service, deleteUser } = setup({ verifyCode });
+      await service.requestSelfDeletion("inf-1", "", " 123456 ");
+      expect(verifyCode).toHaveBeenCalledWith("self-delete", "self-delete:inf-1", "123456");
+      expect(deleteUser).toHaveBeenCalledWith("inf-1", "deletion_pending");
+    });
+
+    it("a wrong or expired code deletes nothing", async () => {
+      const { service, deleteUser } = setup({
+        verifyCode: jest.fn().mockResolvedValue({ ok: false, error: "Invalid or expired OTP" }),
+      });
+      await expect(service.requestSelfDeletion("inf-1", "", "000000")).rejects.toThrow(
+        "That code is wrong or has expired",
+      );
+      expect(deleteUser).not.toHaveBeenCalled();
+    });
+  });
+
   it("restore brings an approved account back approved (not pending), and records when", async () => {
     const update = jest.fn().mockResolvedValue({ _id: "inf-1" });
     const influencerModel = {

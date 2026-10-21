@@ -292,14 +292,29 @@ export class UsersController {
   @Post(":id/self-delete")
   async selfDeleteAccount(
     @Param("id") id: string,
-    @Body() body: { password?: string },
+    @Body() body: { password?: string; code?: string },
     @Req() req: Request,
   ) {
     const userId = (req as any).user?.userId;
     if (userId !== id) {
       throw new ForbiddenException("You can only delete your own account");
     }
-    return this.usersService.requestSelfDeletion(id, body?.password || "");
+    return this.usersService.requestSelfDeletion(
+      id,
+      body?.password || "",
+      body?.code || "",
+    );
+  }
+
+  /** Emails a one-time code that confirms deleting your own account (forgot password). */
+  @UseGuards(JwtAuthGuard)
+  @Post(":id/self-delete/code")
+  async sendSelfDeleteCode(@Param("id") id: string, @Req() req: Request) {
+    const userId = (req as any).user?.userId;
+    if (userId !== id) {
+      throw new ForbiddenException("You can only delete your own account");
+    }
+    return this.usersService.sendSelfDeletionCode(id);
   }
 
   /** Cancels a pending self-deletion request, during the grace period only. */

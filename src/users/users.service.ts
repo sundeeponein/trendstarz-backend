@@ -52,6 +52,19 @@ import { takenAccountFields } from "../utils/account-uniqueness.util";
 import { SingleInstance } from "../utils/single-instance";
 import { idIn } from "../utils/id-match.util";
 import { openMoneyFilter, openWorkFilter } from "./self-deletion.util";
+import { sendAppEmail } from "../utils/app-email.service";
+import { deleteAccountCodeTemplate } from "../email/templates/otp.templates";
+
+/** OTP-store key for a self-deletion code (kept apart from signup email/phone codes). */
+const selfDeletionCodeKey = (userId: string) => `self-delete:${userId}`;
+
+/** "sundeep@gmail.com" → "s*****p@gmail.com" — shown after sending a code. */
+function maskEmail(email: string): string {
+  const [name, domain] = email.split("@");
+  if (!domain) return email;
+  const masked = name.length <= 2 ? `${name[0] || ""}*` : `${name[0]}${"*".repeat(Math.min(name.length - 2, 5))}${name[name.length - 1]}`;
+  return `${masked}@${domain}`;
+}
 import { normalizeUpiId, upiIdError } from "../utils/upi.util";
 
 /** Self-service "Delete Account" grace period — see requestSelfDeletion. */
@@ -3016,14 +3029,47 @@ export class UsersService implements OnModuleInit {
    * automatically once the grace period passes — see
    * cleanupExpiredSelfDeletionRequests.
    */
-  async requestSelfDeletion(id: string, password: string) {
+  /**
+   * "Email me a code instead" — for a signed-in user who forgot their password.
+   * A 6-digit code (5 minutes, single use, rate-limited by the OTP store) goes to
+   * the account's own email; entering it confirms the deletion like the password.
+   */
+  async sendSelfDeletionCode(id: string): Promise<{ sentTo: string }> {
+    let user: any = await this.influencerModel.findById(id).select("email").lean();
+    if (!user) user = await this.brandModel.findById(id).select("email").lean();
+    if (!user) user = await this.photographerModel.findById(id).select("email").lean();
+    if (!user?.email) throw new NotFoundException("User not found");
+    // Say why now, rather than after they've typed the code.
+    const blocker = await this.selfDeletionBlocker(id);
+    if (blocker) throw new BadRequestException(blocker);
+    const code = await this.otpStore.issueCode(selfDeletionCodeKey(id));
+    await sendAppEmail({
+      to: String(user.email),
+      ...deleteAccountCodeTemplate({ otp: code, expiryMinutes: 5 }),
+    });
+    return { sentTo: maskEmail(String(user.email)) };
+  }
+
+  async requestSelfDeletion(id: string, password: string, code = "") {
     let user: any = await this.influencerModel.findById(id, "+password");
     if (!user) user = await this.brandModel.findById(id, "+password");
     if (!user) user = await this.photographerModel.findById(id, "+password");
     if (!user) throw new NotFoundException("User not found");
 
-    const isMatch = await bcrypt.compare(password || "", user.password);
-    if (!isMatch) throw new BadRequestException("Incorrect password");
+    // Either the password or the emailed code confirms it.
+    if (String(code || "").trim()) {
+      const result = await this.otpStore.verifyCode(
+        "self-delete",
+        selfDeletionCodeKey(id),
+        String(code).trim(),
+      );
+      if (!result.ok) {
+        throw new BadRequestException("That code is wrong or has expired. Request a new one.");
+      }
+    } else {
+      const isMatch = await bcrypt.compare(password || "", user.password);
+      if (!isMatch) throw new BadRequestException("Incorrect password");
+    }
 
     const blocker = await this.selfDeletionBlocker(id);
     if (blocker) throw new BadRequestException(blocker);
