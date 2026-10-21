@@ -913,7 +913,8 @@ export class PhotographersService {
     const rawDoc: any = await this.photographerModel
       .findOne({ _id: id, isDeleted: { $ne: true } })
       .select(
-        "name username email phoneNumber profileImage profileImages location skills pricing equipment socialMedia collaborationAvailability contact gender portfolio status adminTags isPremium commissionBadge commissionOverride verifiedByTrendStarz verificationStatus isEmailVerified isMobileVerified",
+        // Public profile: no gender, admin tags or commission data; contact is gated below.
+        "name username email phoneNumber profileImage profileImages location skills pricing equipment socialMedia collaborationAvailability contact portfolio status isPremium verifiedByTrendStarz verificationStatus isEmailVerified isMobileVerified",
       )
       .lean();
     if (!rawDoc || Array.isArray(rawDoc)) {
@@ -999,7 +1000,8 @@ export class PhotographersService {
     const rawDoc: any = await this.photographerModel
       .findOne({ username, isDeleted: { $ne: true } })
       .select(
-        "name username email phoneNumber profileImage profileImages location skills pricing equipment socialMedia collaborationAvailability contact gender portfolio status adminTags isPremium commissionBadge commissionOverride verifiedByTrendStarz verificationStatus isEmailVerified isMobileVerified",
+        // Public profile: no gender, admin tags or commission data; contact is gated below.
+        "name username email phoneNumber profileImage profileImages location skills pricing equipment socialMedia collaborationAvailability contact portfolio status isPremium verifiedByTrendStarz verificationStatus isEmailVerified isMobileVerified",
       )
       .lean();
     if (!rawDoc || Array.isArray(rawDoc)) {
