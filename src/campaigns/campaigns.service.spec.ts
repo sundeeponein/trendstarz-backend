@@ -591,6 +591,40 @@ describe("CampaignsService", () => {
     });
   });
 
+  describe("edit locks after approval", () => {
+    const live = (over: any = {}) => ({
+      ...mockCampaign,
+      status: "active",
+      campaignType: "product",
+      productPaymentMode: "product_plus_payment",
+      productPaymentAmount: 50000,
+      ...over,
+    });
+
+    it("Product + Paid can't be switched to barter (or its cash changed) once approved — also while paused", async () => {
+      for (const status of ["active", "pending"]) {
+        campaignModel.findById.mockResolvedValueOnce(live({ status }));
+        await expect(
+          service.update(mockCampaign._id, mockBrand._id, { productPaymentMode: "product_only" } as any),
+        ).rejects.toThrow('"productPaymentMode" cannot be changed');
+      }
+      campaignModel.findById.mockResolvedValueOnce(live());
+      await expect(
+        service.update(mockCampaign._id, mockBrand._id, { productPaymentAmount: 10000 } as any),
+      ).rejects.toThrow('"productPaymentAmount" cannot be changed');
+    });
+
+    it("an older product campaign with no stored mode can still be edited (form sends product_only)", async () => {
+      campaignInviteModel.countDocuments = jest.fn().mockResolvedValue(0);
+      await expect(
+        (service as any).assertEditableFields(
+          live({ productPaymentMode: undefined, productPaymentAmount: undefined }),
+          { productPaymentMode: "product_only" },
+        ),
+      ).resolves.toBeUndefined();
+    });
+  });
+
   describe("remove", () => {
     it("should delete campaign owned by brand", async () => {
       const result = await service.remove(mockCampaign._id, mockBrand._id);

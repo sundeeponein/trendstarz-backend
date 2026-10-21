@@ -1665,6 +1665,12 @@ export class CampaignsService {
     "budgetMax",
     "image",
     "images",
+    // Product + Paid vs barter, and the cash part: switching would turn creators'
+    // agreed payment into barter (or change it).
+    "productPaymentMode",
+    "productPaymentAmount",
+    "productShippingRequired",
+    "inviteRecipientRole",
   ] as const;
 
   /**
@@ -1730,12 +1736,23 @@ export class CampaignsService {
 
   private async assertEditableFields(campaign: any, incoming: any): Promise<void> {
     const status = String(campaign.status || "");
-    const isApproved = status === "active" || status === "completed";
+    // "pending" = paused by the host after approval (resuming skips re-review), so it
+    // keeps the approval locks — otherwise pause → edit price/type → resume slips past them.
+    const isApproved = ["active", "pending", "completed"].includes(status);
     if (!isApproved) return; // draft / pending_review / needs_changes → all editable
 
     // Check fields locked on approval
     for (const field of this.LOCKED_ON_APPROVAL) {
       if (!(field in incoming)) continue;
+      // Older product campaigns stored no mode; the app treats that as product-only
+      // (barter) everywhere, and the form sends "product_only" for it.
+      if (
+        field === "productPaymentMode" &&
+        !campaign.productPaymentMode &&
+        String(incoming[field] || "product_only") === "product_only"
+      ) {
+        continue;
+      }
       if (!this.sameCampaignValue(campaign, field, incoming[field])) {
         throw new BadRequestException(
           `"${field}" cannot be changed after the campaign is approved.`,
