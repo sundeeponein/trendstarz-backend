@@ -66,6 +66,9 @@ function toObjectId(value: string) {
   return new Types.ObjectId(value);
 }
 
+
+const META_CONNECT_STATE_PURPOSE = "meta_connect_state";
+
 @Injectable()
 export class CollaborationScoreService {
   private readonly collectors: Record<
@@ -1078,7 +1081,7 @@ export class CollaborationScoreService {
       throw new BadRequestException("Unsupported platform");
     }
     const state = jwt.sign(
-      { userId: String(userId), role, platform },
+      { userId: String(userId), role, platform, purpose: META_CONNECT_STATE_PURPOSE },
       getJwtSecret(),
       { expiresIn: "10m" },
     );
@@ -1106,6 +1109,8 @@ export class CollaborationScoreService {
     };
     try {
       decoded = jwt.verify(state, getJwtSecret()) as any;
+      // A login token is not a connect request (and vice versa, see JwtAuthGuard).
+      if ((decoded as any)?.purpose !== META_CONNECT_STATE_PURPOSE) throw new Error("wrong purpose");
     } catch {
       throw new BadRequestException(
         "Invalid or expired connect request. Please try again.",

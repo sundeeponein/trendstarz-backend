@@ -107,7 +107,17 @@ async function getAccountStatus(
       .exec(),
     ACCOUNT_STATUS_QUERY_TIMEOUT_MS,
   );
-  if (!doc) return null;
+  if (!doc) {
+    // The account was permanently removed: its old tokens must stop working.
+    const gone: AccountStatusEntry = {
+      isDeleted: true,
+      status: "removed",
+      passwordChangedAt: null,
+      expiresAt: Date.now() + ACCOUNT_STATUS_CACHE_TTL_MS,
+    };
+    accountStatusCache.set(userId, gone);
+    return gone;
+  }
 
   const entry: AccountStatusEntry = {
     isDeleted: !!doc.isDeleted,
@@ -191,9 +201,12 @@ export class JwtAuthGuard implements CanActivate {
     }
     req.user = decoded;
 
+    // Only login tokens open the API. Link tokens signed with the same secret
+    // (email verification, Meta connect state) carry a `purpose` and no
+    // account, and used to pass here unchecked.
     const role = String(decoded?.role || "").toLowerCase();
-    if (!decoded?.userId || !ROLE_MODEL_NAME[role]) {
-      return true;
+    if (decoded?.purpose || !decoded?.userId || !ROLE_MODEL_NAME[role]) {
+      throw new UnauthorizedException("Invalid token");
     }
 
     let account: AccountStatusEntry | null = null;

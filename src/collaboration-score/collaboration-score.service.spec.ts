@@ -787,6 +787,19 @@ describe("CollaborationScoreService", () => {
       expect(metaOAuthService.exchangeCodeForToken).not.toHaveBeenCalled();
     });
 
+    it("handleOAuthCallback refuses a login token passed as the state", async () => {
+      const jwt = require("jsonwebtoken");
+      const { getJwtSecret } = require("../auth/jwt-secret");
+      const loginToken = jwt.sign(
+        { userId: "507f1f77bcf86cd799439011", email: "a@x.in", role: "influencer" },
+        getJwtSecret(),
+        { expiresIn: "90d" },
+      );
+      await expect(service.handleOAuthCallback("code", loginToken)).rejects.toThrow(
+        "Invalid or expired connect request",
+      );
+    });
+
     it("handleOAuthCallback exchanges tokens, resolves the Page, and upserts the connection", async () => {
       metaOAuthService.resolveFacebookPages.mockResolvedValue([
         { id: "page-1", name: "Creator Page", followersCount: 100, instagramBusinessAccountId: "ig-1" },
@@ -794,7 +807,7 @@ describe("CollaborationScoreService", () => {
       const jwt = require("jsonwebtoken");
       const { getJwtSecret } = require("../auth/jwt-secret");
       const signedState = jwt.sign(
-        { userId: "507f1f77bcf86cd799439011", role: "influencer", platform: "instagram" },
+        { userId: "507f1f77bcf86cd799439011", role: "influencer", platform: "instagram", purpose: "meta_connect_state" },
         getJwtSecret(),
         { expiresIn: "10m" },
       );
@@ -827,7 +840,7 @@ describe("CollaborationScoreService", () => {
       const jwt = require("jsonwebtoken");
       const { getJwtSecret } = require("../auth/jwt-secret");
       const signedState = jwt.sign(
-        { userId: "507f1f77bcf86cd799439011", role: "influencer", platform: "facebook" },
+        { userId: "507f1f77bcf86cd799439011", role: "influencer", platform: "facebook", purpose: "meta_connect_state" },
         getJwtSecret(),
         { expiresIn: "10m" },
       );
@@ -859,7 +872,7 @@ describe("CollaborationScoreService", () => {
       const jwt = require("jsonwebtoken");
       const { getJwtSecret } = require("../auth/jwt-secret");
       const signedState = jwt.sign(
-        { userId: "507f1f77bcf86cd799439011", role: "influencer", platform: "instagram" },
+        { userId: "507f1f77bcf86cd799439011", role: "influencer", platform: "instagram", purpose: "meta_connect_state" },
         getJwtSecret(),
         { expiresIn: "10m" },
       );
@@ -886,7 +899,7 @@ describe("CollaborationScoreService", () => {
       const jwt = require("jsonwebtoken");
       const { getJwtSecret } = require("../auth/jwt-secret");
       const signedState = jwt.sign(
-        { userId: "507f1f77bcf86cd799439011", role: "influencer", platform: "instagram" },
+        { userId: "507f1f77bcf86cd799439011", role: "influencer", platform: "instagram", purpose: "meta_connect_state" },
         getJwtSecret(),
         { expiresIn: "10m" },
       );

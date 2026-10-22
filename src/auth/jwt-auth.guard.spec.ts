@@ -146,6 +146,27 @@ describe("JwtAuthGuard account-status check", () => {
     }
   });
 
+  it("refuses a token for an account that no longer exists (permanently deleted)", async () => {
+    const guard = guardWith({ Influencer: modelReturning(null) });
+    await expect(
+      guard.canActivate(context(sign({ userId: freshId(), role: "influencer" })).ctx),
+    ).rejects.toThrow("Your account has been deleted");
+  });
+
+  it("refuses link tokens and tokens without an account (email verification, Meta connect state)", async () => {
+    const influencer = modelReturning({ isDeleted: false, status: "accepted" });
+    const guard = guardWith({ Influencer: influencer });
+    for (const payload of [
+      { email: "a@x.in", purpose: "email_verification" },
+      { userId: freshId(), role: "influencer", platform: "instagram", purpose: "meta_connect_state" },
+      { userId: freshId() },
+      { userId: freshId(), role: "user" },
+    ]) {
+      await expect(guard.canActivate(context(sign(payload)).ctx)).rejects.toThrow("Invalid token");
+    }
+    expect(influencer.findById).not.toHaveBeenCalled();
+  });
+
   it("rejects a missing or invalid token before any lookup", async () => {
     const influencer = modelReturning({});
     const guard = guardWith({ Influencer: influencer });

@@ -10,6 +10,8 @@ import { PlansService } from "../plans/plans.service";
 
 /** Work is finished: the post was approved (payout released → "approved") or the collaboration completed. */
 export const HOST_REVIEWABLE_INVITE_STATUSES = ["completed", "approved"];
+export const REVIEW_COMMENT_MAX_LENGTH = 1000;
+
 /** A creator can review the host once paid, through to the end of the collaboration. */
 export const CREATOR_REVIEWABLE_INVITE_STATUSES = [
   "payment_confirmed",
@@ -52,8 +54,15 @@ export class ReviewsService {
     }
 
     if (!data.inviteId) throw new BadRequestException("inviteId is required");
-    if (!data.rating || data.rating < 1 || data.rating > 5) {
-      throw new BadRequestException("Rating must be between 1 and 5");
+    const rating = Number(data.rating);
+    if (!Number.isInteger(rating) || rating < 1 || rating > 5) {
+      throw new BadRequestException("Rating must be a whole number of stars from 1 to 5");
+    }
+    const comment = typeof data.comment === "string" ? data.comment.trim() : "";
+    if (comment.length > REVIEW_COMMENT_MAX_LENGTH) {
+      throw new BadRequestException(
+        `Please keep the review under ${REVIEW_COMMENT_MAX_LENGTH} characters`,
+      );
     }
 
     const invite = (await this.inviteModel
@@ -123,8 +132,8 @@ export class ReviewsService {
         targetType,
         campaignId: String(invite.campaignId),
         inviteId: data.inviteId,
-        rating: data.rating,
-        comment: data.comment || "",
+        rating,
+        comment,
         status: "pending",
       });
     } catch (err: any) {

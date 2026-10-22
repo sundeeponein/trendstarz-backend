@@ -64,22 +64,37 @@ export class OtpStoreService {
     }
     const otp = randomInt(100000, 1000000).toString();
     const salt = randomBytes(16).toString("hex");
-    await this.codeModel.updateOne(
-      { key },
-      {
-        $set: {
-          key,
-          hash: sha256(`${salt}:${otp}`),
-          salt,
-          expiresAt: new Date(now.getTime() + OTP_TTL_MS),
-          attempts: 0,
-          sendHistory: [...history, now],
-          // Keep the row while the hourly send limit still needs its history.
-          purgeAt: new Date(now.getTime() + SEND_WINDOW_MS),
+    const tooSoon = () =>
+      new HttpException(
+        { error: "Please wait a moment before requesting another OTP." },
+        HttpStatus.TOO_MANY_REQUESTS,
+      );
+    // Only write if no other send landed since we read the row: purgeAt changes
+    // on every send, so two simultaneous requests can't both pass the limits.
+    try {
+      const written = await this.codeModel.updateOne(
+        // First send: the filter never matches a row, so the upsert inserts
+        // and a simultaneous second insert hits the unique key (11000).
+        existing ? { key, purgeAt: existing.purgeAt } : { key, purgeAt: { $exists: false } },
+        {
+          $set: {
+            key,
+            hash: sha256(`${salt}:${otp}`),
+            salt,
+            expiresAt: new Date(now.getTime() + OTP_TTL_MS),
+            attempts: 0,
+            sendHistory: [...history, now],
+            // Keep the row while the hourly send limit still needs its history.
+            purgeAt: new Date(now.getTime() + SEND_WINDOW_MS),
+          },
         },
-      },
-      { upsert: true },
-    );
+        { upsert: !existing },
+      );
+      if (existing && !written.matchedCount) throw tooSoon();
+    } catch (err: any) {
+      if (err?.code === 11000) throw tooSoon(); // a simultaneous first send won
+      throw err;
+    }
     return otp;
   }
 
@@ -102,29 +117,30 @@ export class OtpStoreService {
       await this.clearCode(stored);
       return invalid;
     }
-    if (Number(stored.attempts || 0) >= MAX_VERIFY_ATTEMPTS) {
+    const lockedOut = async () => {
       await this.clearCode(stored);
-      throw new HttpException(
+      return new HttpException(
         { error: "Too many incorrect attempts. Please request a new OTP." },
         HttpStatus.TOO_MANY_REQUESTS,
       );
+    };
+    // Count the attempt BEFORE comparing, atomically: checking first let a
+    // burst of simultaneous guesses all pass the limit and try far more codes.
+    const claimed: any = await this.codeModel
+      .findOneAndUpdate(
+        { _id: stored._id, hash: stored.hash, attempts: { $lt: MAX_VERIFY_ATTEMPTS } },
+        { $inc: { attempts: 1 } },
+        { new: true },
+      )
+      .lean();
+    if (!claimed) {
+      const current: any = await this.codeModel.findById(stored._id).lean();
+      if (current?.hash === stored.hash) throw await lockedOut();
+      return invalid; // used, replaced or cleared meanwhile
     }
     const candidate = sha256(`${stored.salt}:${String(otp)}`);
     if (!safeEqualHex(candidate, stored.hash)) {
-      const updated: any = await this.codeModel
-        .findOneAndUpdate(
-          { _id: stored._id, hash: stored.hash },
-          { $inc: { attempts: 1 } },
-          { new: true },
-        )
-        .lean();
-      if (Number(updated?.attempts || 0) >= MAX_VERIFY_ATTEMPTS) {
-        await this.clearCode(stored);
-        throw new HttpException(
-          { error: "Too many incorrect attempts. Please request a new OTP." },
-          HttpStatus.TOO_MANY_REQUESTS,
-        );
-      }
+      if (Number(claimed.attempts) >= MAX_VERIFY_ATTEMPTS) throw await lockedOut();
       return invalid;
     }
     // Consume: only one request can turn this code into a token.

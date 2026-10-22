@@ -81,6 +81,27 @@ describe("OtpStoreService (real MongoDB)", () => {
     expect((await serverA.verifyCode("email", "lock@x.com", otp)).ok).toBe(false);
   });
 
+  it("simultaneous wrong guesses can't get past the attempt limit", async () => {
+    const otp = await serverA.issueCode("burst@x.com");
+    const guesses = Array.from({ length: 40 }, (_, i) => String(100000 + i)).filter((g) => g !== otp);
+    await Promise.allSettled(guesses.map((g) => serverA.verifyCode("email", "burst@x.com", g)));
+    const row: any = await codes.findOne({ key: "burst@x.com" }).lean();
+    expect(row.hash).toBeUndefined(); // locked: the code is gone
+    expect((await serverB.verifyCode("email", "burst@x.com", otp)).ok).toBe(false);
+  });
+
+  it("two sends at the same moment send only one code", async () => {
+    const t = new Date("2026-10-22T10:00:00Z");
+    const results = await Promise.allSettled([
+      serverA.issueCode("twice@x.com", t),
+      serverB.issueCode("twice@x.com", t),
+      serverA.issueCode("twice@x.com", t),
+    ]);
+    expect(results.filter((r) => r.status === "fulfilled")).toHaveLength(1);
+    const row: any = await codes.findOne({ key: "twice@x.com" }).lean();
+    expect(row.sendHistory).toHaveLength(1);
+  });
+
   it("rate-limits sends across servers (30s gap, hourly cap)", async () => {
     const t0 = new Date("2026-10-17T10:00:00Z");
     await serverA.issueCode("rate@x.com", t0);
