@@ -2,6 +2,7 @@ import {
   Injectable,
   BadRequestException,
   NotFoundException,
+  ForbiddenException,
   Logger,
 } from "@nestjs/common";
 import {
@@ -1067,6 +1068,40 @@ export class CampaignInvitesService {
   ): Date | null {
     const hours = submission?.hostAutoCompleteEnabled ? waitHours : waitHours + silentHours;
     return this.getHostAutoCompleteAt(submission, hours);
+  }
+
+  /**
+   * Where a proof image (posted screenshot, payment screenshot) may be stored,
+   * and whether this caller may upload it. `id` is an invite id (creator
+   * proofs) or a campaign id (the host's payment screenshot). Admins upload
+   * payout proofs with any id.
+   */
+  async proofUploadCampaignId(
+    id: string,
+    requesterId: string,
+    role?: string,
+  ): Promise<string | null> {
+    const isAdmin = ["admin", "subadmin"].includes(String(role || "").toLowerCase());
+    if (Types.ObjectId.isValid(id)) {
+      const invite: any = await this.inviteModel
+        .findById(id)
+        .select("campaignId brandId influencerId")
+        .lean();
+      if (invite) {
+        const party = [String(invite.brandId), String(invite.influencerId)].includes(requesterId);
+        if (!party && !isAdmin) throw new ForbiddenException("This invite does not belong to you");
+        return invite.campaignId ? String(invite.campaignId) : null;
+      }
+      const campaign: any = await this.campaignModel.findById(id).select("brandId").lean();
+      if (campaign) {
+        if (String(campaign.brandId) !== requesterId && !isAdmin) {
+          throw new ForbiddenException("This campaign does not belong to you");
+        }
+        return String(campaign._id);
+      }
+    }
+    if (isAdmin) return null; // payout proofs: shared folder
+    throw new NotFoundException("Invite or campaign not found");
   }
 
   async getCampaignIdForInvite(inviteId: string): Promise<string | null> {

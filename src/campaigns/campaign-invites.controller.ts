@@ -81,7 +81,12 @@ export class CampaignInvitesController {
     @Req() req: any,
   ) {
     const submitterId = this.requesterId(req);
-    const campaignId = await this.invitesService.getCampaignIdForInvite(id);
+    if (!file) throw new BadRequestException("No file uploaded");
+    const campaignId = await this.invitesService.proofUploadCampaignId(
+      id,
+      submitterId,
+      req?.user?.role,
+    );
     const folder = campaignId
       ? CloudinaryFolders.campaign.proofs(campaignId, submitterId)
       : "campaign_proofs";
