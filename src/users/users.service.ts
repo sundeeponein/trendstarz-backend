@@ -1847,7 +1847,18 @@ export class UsersService implements OnModuleInit {
     let user = await this.influencerModel.findById(id);
     if (user) {
       if (images.profileImages) {
-        // ...existing code for influencer...
+        // Delete replaced photos from Cloudinary (the brand branch below and
+        // updateInfluencerProfile already do; this path left them behind).
+        for (const oldImg of Array.isArray(user.profileImages) ? user.profileImages : []) {
+          const oldId = oldImg?.public_id;
+          if (oldId && !images.profileImages.some((img: any) => img?.public_id === oldId)) {
+            try {
+              await this.cloudinaryService.deleteImage(oldId);
+            } catch (err) {
+              console.error("[PATCH] Error deleting old influencer image:", err);
+            }
+          }
+        }
         const shouldReviewPhoto = this.hasPrimaryProfileImageChanged(
           user.profileImages,
           images.profileImages,
