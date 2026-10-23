@@ -46,3 +46,21 @@ export function privateProfileExclusion(keep: string[] = []): string {
     .map((f) => `-${f}`)
     .join(" ");
 }
+
+/** Admin tags that describe commission/test status — never shown to other users. */
+const INTERNAL_ADMIN_TAGS = new Set(["early access", "partner", "internal/test", "internal test"]);
+
+/** The admin tags other users may see (badges like "Top Brand"); internal ones removed. */
+export function publicAdminTags(tags: unknown): string[] {
+  return Array.isArray(tags)
+    ? tags
+        .map((t) => String(t || "").trim())
+        .filter((t) => t && !INTERNAL_ADMIN_TAGS.has(t.toLowerCase()))
+    : [];
+}
+
+/**
+ * Brand rows in other users' lists: the private fields plus account-activity
+ * fields. adminTags is kept and passed through publicAdminTags().
+ */
+export const BRAND_LIST_EXCLUSION = `${privateProfileExclusion(["adminTags"])} -freeUnlocksUsed -passwordChangedAt -lastLoginAt -lastOpenedAt -founderOfferSeenAt -socialConfirmPromptedAt -featuredInMarketing -premiumDuration`;

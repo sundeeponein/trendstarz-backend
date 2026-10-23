@@ -52,7 +52,7 @@ import { takenAccountFields } from "../utils/account-uniqueness.util";
 import { SingleInstance } from "../utils/single-instance";
 import { idIn } from "../utils/id-match.util";
 import { openMoneyFilter, openWorkFilter } from "./self-deletion.util";
-import { privateProfileExclusion } from "../utils/public-profile.util";
+import { BRAND_LIST_EXCLUSION, privateProfileExclusion, publicAdminTags } from "../utils/public-profile.util";
 import { sendAppEmail } from "../utils/app-email.service";
 import { deleteAccountCodeTemplate } from "../email/templates/otp.templates";
 
@@ -2829,7 +2829,7 @@ export class UsersService implements OnModuleInit {
       requirePublic: true,
     });
     this.applyExcludedIds(filter, await this.publicProfileBlockedIds("Brand"));
-    return fetchFeaturedProfilesByScore(
+    const featured: any[] = await fetchFeaturedProfilesByScore(
       this.brandModel,
       filter,
       UsersService.FEATURED_BRAND_FIELDS,
@@ -2843,6 +2843,8 @@ export class UsersService implements OnModuleInit {
       },
       viewerLocation,
     );
+    // Shown on the public homepage: internal tags (partner, early access, test) stay private.
+    return featured.map((brand) => ({ ...brand, adminTags: publicAdminTags(brand.adminTags) }));
   }
 
   async getBrands(
@@ -2872,6 +2874,7 @@ export class UsersService implements OnModuleInit {
 
       const data = (rows || []).map((brand: any) => ({
         ...brand,
+        adminTags: publicAdminTags(brand.adminTags),
         isPremium: this.isCurrentlyPremium(brand),
         socialMedia: Array.isArray(brand?.socialMedia)
           ? brand.socialMedia.map((sm: any) => ({
@@ -2888,11 +2891,19 @@ export class UsersService implements OnModuleInit {
       return { data, total, page, limit };
     }
     const [data, total] = await Promise.all([
-      this.brandModel.find(filter).lean().skip(skip).limit(limit),
+      this.brandModel
+        .find(filter)
+        // Other users' view: no payout, admin notes, commission, verification
+        // documents or account-activity fields (this returned whole records).
+        .select(BRAND_LIST_EXCLUSION)
+        .lean()
+        .skip(skip)
+        .limit(limit),
       this.brandModel.countDocuments(filter),
     ]);
     const filtered = await Promise.all(
-      (data || []).map(async (brand: any) => {
+      (data || []).map(async (rawBrand: any) => {
+        const brand = { ...rawBrand, adminTags: publicAdminTags(rawBrand.adminTags) };
         const { foundedYear, companySize, ...brandForList } = brand;
         const isPremium = this.isCurrentlyPremium(brand);
         const hideGallery = await this.hasOpenGalleryBlock(brand._id, "Brand");

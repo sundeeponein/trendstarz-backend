@@ -603,6 +603,30 @@ describe("data rules (real MongoDB)", () => {
     });
   });
 
+  describe("brand rows in other users' lists", () => {
+    it("leave out payout, admin/commission fields, documents and activity; keep what the card shows", async () => {
+      const { BRAND_LIST_EXCLUSION } = require("../../utils/public-profile.util");
+      const Brand = db.conn.models.Brand || db.conn.model("Brand", BrandSchema, "brands");
+      const created: any = await Brand.create({
+        brandName: "Listed",
+        brandUsername: "listed-brand",
+        email: "lb@x.in",
+        phoneNumber: "99",
+        password: "h",
+        adminTags: ["Top Brand", "Partner"],
+        commissionOverride: { enabled: true },
+        freeUnlocksUsed: 2,
+        lastLoginAt: new Date(),
+      } as any);
+      const row: any = await Brand.findById(created._id).select(BRAND_LIST_EXCLUSION).lean();
+      for (const f of ["payout", "commissionOverride", "verificationDocuments", "freeUnlocksUsed", "lastLoginAt", "password", "resetToken", "firebaseUid"]) {
+        expect(row[f]).toBeUndefined();
+      }
+      expect(row.brandName).toBe("Listed");
+      expect(row.adminTags).toEqual(["Top Brand", "Partner"]); // filtered to public ones in code
+    });
+  });
+
   describe("changing a password ends older sessions", () => {
     it("saving a new password stamps passwordChangedAt; other saves and sign-ups don't", async () => {
       const Inf = db.conn.models.Influencer || db.conn.model("Influencer", InfluencerSchema, "influencers");
