@@ -503,8 +503,10 @@ export class UsersController {
     return { ...(result || {}), usage: { search: usage } };
   }
 
+  // Brand discovery is switched off for users (the Search tab is hidden), so
+  // the list is admin-only: brands could otherwise list their competitors.
   @Get("brands")
-  @UseGuards(JwtAuthGuard, DailyUsageGuard)
+  @UseGuards(JwtAuthGuard, RolesGuard, DailyUsageGuard)
   @UsageLimit("search", "dailySearchLimit")
   async getBrands(
     @Query("page") page?: string,
