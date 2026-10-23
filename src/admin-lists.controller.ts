@@ -46,6 +46,7 @@ import {
 } from "./utils/whatsapp-community-config.util";
 import { PendingUserCleanupService } from "./admin/pending-user-cleanup.service";
 import { PendingUploadCleanupService } from "./admin/pending-upload-cleanup.service";
+import { ProfileMediaCleanupService } from "./admin/profile-media-cleanup.service";
 import { AssetFolderBackfillService } from "./admin/asset-folder-backfill.service";
 import { CampaignsService } from "./campaigns/campaigns.service";
 import { PlatformEventsService } from "./platform-events/platform-events.service";
@@ -232,6 +233,7 @@ export class AdminListsController {
     private readonly campaignsService: CampaignsService,
     private readonly platformEvents: PlatformEventsService,
     @Optional() @InjectConnection() private readonly connection?: Connection,
+    @Optional() private readonly profileMediaCleanupService?: ProfileMediaCleanupService,
   ) {
     // Load plans-config.json on initialization
     this.loadPlansConfig();
@@ -663,6 +665,13 @@ export class AdminListsController {
   @Get("pending-upload-cleanup/preview")
   async previewPendingUploadCleanup() {
     return this.pendingUploadCleanupService.runCleanupNow("admin_preview", true);
+  }
+
+  // Unused profile media (replaced photos, abandoned gallery uploads): what the
+  // nightly sweep would delete, without deleting anything.
+  @Get("profile-media-cleanup/preview")
+  async previewProfileMediaCleanup() {
+    return this.profileMediaCleanupService?.runCleanupNow("admin_preview", true);
   }
 
   @Post("pending-upload-cleanup/run")

@@ -59,6 +59,7 @@ import { AdminUserTableController } from "./admin/admin-user-table.controller";
 import { EarlyAccessAssignmentService } from "./admin/early-access-assignment.service";
 import { PendingUserCleanupService } from "./admin/pending-user-cleanup.service";
 import { PendingUploadCleanupService } from "./admin/pending-upload-cleanup.service";
+import { ProfileMediaCleanupService } from "./admin/profile-media-cleanup.service";
 import { AssetFolderBackfillService } from "./admin/asset-folder-backfill.service";
 import { PaymentModule } from "./payment/payment.module";
 import { UsersModule } from "./users/users.module";
@@ -241,6 +242,7 @@ import { CronLockInitializer } from "./utils/single-instance";
     EarlyAccessAssignmentService,
     PendingUserCleanupService,
     PendingUploadCleanupService,
+    ProfileMediaCleanupService,
     AssetFolderBackfillService,
     MongoLogger,
     CloudinaryService,

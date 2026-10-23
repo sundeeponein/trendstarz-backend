@@ -1197,6 +1197,12 @@ export const AppSettingsSchema = new Schema({
   pendingUploadAutoDeleteLastRunAt: { type: Date, default: null },
   pendingUploadAutoDeleteLastRunCount: { type: Number, default: 0 },
   pendingUploadAutoDeleteLastRunBy: { type: String, default: "" },
+  // Nightly sweep of unused profile media (replaced photos, abandoned gallery
+  // uploads) — admin/profile-media-cleanup.service.ts.
+  profileMediaCleanupEnabled: { type: Boolean, default: true },
+  profileMediaCleanupLastRunAt: { type: Date, default: null },
+  profileMediaCleanupLastRunCount: { type: Number, default: 0 },
+  profileMediaCleanupLastRunNote: { type: String, default: "" },
   campaignApprovalMode: {
     type: String,
     enum: ["manual", "auto_live"],
