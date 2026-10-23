@@ -10,6 +10,21 @@ type IncomingAnalyticsEvent = {
   metadata?: Record<string, unknown>;
 };
 
+const MAX_EVENTS_PER_REQUEST = 50;
+const MAX_METADATA_BYTES = 2048;
+
+/** Plain values only (no nested objects), and small: metadata is stored as sent. */
+function smallFlatMetadata(raw: unknown): Record<string, string | number | boolean | null> {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {};
+  const out: Record<string, string | number | boolean | null> = {};
+  for (const [key, value] of Object.entries(raw as Record<string, unknown>).slice(0, 30)) {
+    if (key.startsWith("$") || key.includes(".")) continue;
+    if (value === null || typeof value === "number" || typeof value === "boolean") out[key] = value as any;
+    else if (typeof value === "string") out[key] = value.slice(0, 200);
+  }
+  return JSON.stringify(out).length <= MAX_METADATA_BYTES ? out : {};
+}
+
 @Injectable()
 export class AnalyticsEventsService {
   private readonly logger = new Logger(AnalyticsEventsService.name);
@@ -23,14 +38,18 @@ export class AnalyticsEventsService {
     private readonly analyticsEventModel: Model<any>,
   ) {}
 
-  async ingestEvents(payload: { events?: IncomingAnalyticsEvent[] }) {
-    const rows = Array.isArray(payload?.events) ? payload.events : [];
+  async ingestEvents(
+    payload: { events?: IncomingAnalyticsEvent[] },
+    sender?: { userId: string; role: string },
+  ) {
+    // One page flush is a handful of events; more is not a real browser.
+    const rows = Array.isArray(payload?.events) ? payload.events.slice(0, MAX_EVENTS_PER_REQUEST) : [];
     if (!rows.length) {
       return { accepted: 0, dropped: 0 };
     }
 
     const docs = rows
-      .map((row) => this.normalizeEvent(row))
+      .map((row) => this.normalizeEvent(row, sender))
       .filter((row) => !!row);
 
     if (!docs.length) {
@@ -72,7 +91,10 @@ export class AnalyticsEventsService {
     return { accepted: docs.length, dropped };
   }
 
-  private normalizeEvent(row: IncomingAnalyticsEvent | null | undefined) {
+  private normalizeEvent(
+    row: IncomingAnalyticsEvent | null | undefined,
+    sender?: { userId: string; role: string },
+  ) {
     if (!row?.eventType || !this.allowedEventTypes.has(String(row.eventType))) {
       return null;
     }
@@ -85,10 +107,9 @@ export class AnalyticsEventsService {
     return {
       eventType: String(row.eventType),
       timestamp,
-      userId: row.userId ? String(row.userId) : undefined,
-      userRole: row.userRole ? String(row.userRole) : undefined,
-      metadata:
-        row.metadata && typeof row.metadata === "object" ? row.metadata : {},
+      userId: sender?.userId || undefined,
+      userRole: sender?.role || undefined,
+      metadata: smallFlatMetadata(row.metadata),
       receivedAt: new Date(),
     };
   }
