@@ -23,8 +23,10 @@ export class WhatsAppWebhookController {
     const token = query["hub.verify_token"];
     const challenge = query["hub.challenge"];
 
-    if (mode === "subscribe" && token === process.env.WHATSAPP_VERIFY_TOKEN) {
-      return res.status(200).send(challenge);
+    // An unset verify token must never match a request that omits the token.
+    const expected = process.env.WHATSAPP_VERIFY_TOKEN;
+    if (mode === "subscribe" && expected && token === expected) {
+      return res.status(200).type("text/plain").send(String(challenge ?? ""));
     }
     this.logger.warn(`WhatsApp webhook verification failed: mode=${mode}`);
     return res.status(403).send("Forbidden");
