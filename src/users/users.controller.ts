@@ -16,6 +16,7 @@ import {
 import { InjectModel } from "@nestjs/mongoose";
 import { JwtAuthGuard } from "../auth/jwt-auth.guard";
 import { RolesGuard } from "../auth/roles.guard";
+import { Throttle } from "@nestjs/throttler";
 import { AllowPendingDeletion } from "../auth/allow-pending-deletion.decorator";
 import { InfluencerProfileDto, BrandProfileDto } from "./dto/profile.dto";
 import { UsersService } from "./users.service";
@@ -202,6 +203,9 @@ export class UsersController {
     return this.usersService.checkUsername(username);
   }
 
+  // Says whether an email/phone is taken: keep it slow enough that it can't be
+  // used to test long lists of emails.
+  @Throttle({ default: { ttl: 60000, limit: 20 } })
   @Get("check-registration-conflicts")
   async checkRegistrationConflicts(
     @Query("userType") userType?: string,
@@ -341,17 +345,11 @@ export class UsersController {
     return this.usersService.getSelfDeletionStatus(id);
   }
 
-  @Post("register")
-  async registerUser(@Body() body: any) {
-    // Determine type by presence of brandName or other logic
-    if (body.brandName) {
-      // Brand registration
-      return this.usersService.registerBrand(body);
-    } else {
-      // Influencer registration
-      return this.usersService.registerInfluencer(body);
-    }
-  }
+  // POST /users/register was removed (2026-10-23): an unused legacy signup that
+  // stored the request body as-is (Premium, approval, verification…) and read
+  // any server file named as a "photo" into the public assets folder.
+  // Registration is /auth/register-influencer|brand|photographer.
+
 
   @Get("influencers/search")
   @UseGuards(JwtAuthGuard, DailyUsageGuard)

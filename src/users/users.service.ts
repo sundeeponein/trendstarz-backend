@@ -5,7 +5,6 @@ import * as fs from "fs";
 import * as path from "path";
 import { randomUUID } from "crypto";
 import { CloudinaryService } from "../cloudinary.service";
-import { InfluencerProfileDto, BrandProfileDto } from "./dto/profile.dto";
 import * as bcrypt from "bcryptjs";
 import { InjectModel } from "@nestjs/mongoose";
 import { Model, Types } from "mongoose";
@@ -1956,126 +1955,6 @@ export class UsersService implements OnModuleInit {
       }
     }
     return { message: "Image not found or already removed" };
-  }
-
-  async registerInfluencer(dto: InfluencerProfileDto) {
-    try {
-      if (dto.profileImages && dto.profileImages.length) {
-        const uploadedImages = [];
-        for (const img of dto.profileImages) {
-          const imgStr = img as unknown as string;
-          const buffer = imgStr.startsWith("data:")
-            ? Buffer.from(imgStr.split(",")[1], "base64")
-            : fs.readFileSync(imgStr);
-          const filename = randomUUID() + ".jpg";
-          const filePath = path.join(LOCAL_IMAGE_DIR, filename);
-          fs.writeFileSync(filePath, buffer);
-          uploadedImages.push({
-            url: `/assets/local-images/${filename}`,
-            public_id: filename,
-          });
-        }
-
-        dto.profileImages = uploadedImages;
-      }
-      // Hash password before saving
-      if (dto.password) {
-        dto.password = await bcrypt.hash(dto.password, 10);
-      }
-      // Save influencer to DB
-      if ("price" in dto) {
-        (dto as any).promotionalPrice = (dto as any).price;
-        delete (dto as any).price;
-      }
-      const mobileOtpVerified = await this.otpStore.consumeVerificationToken(
-        "phone",
-        (dto as any).phoneNumber,
-        (dto as any).mobileOtpVerificationToken,
-      );
-      (dto as any).isMobileVerified = mobileOtpVerified;
-      (dto as any).mobileVerified = mobileOtpVerified;
-      (dto as any).mobileVerifiedAt = mobileOtpVerified ? new Date() : null;
-      (dto as any).mobileVerificationMethod = mobileOtpVerified ? "OTP" : "";
-      delete (dto as any).mobileOtpVerificationToken;
-      (dto as any).firstRegisteredAt =
-        (dto as any).firstRegisteredAt || new Date();
-      const influencer = new this.influencerModel(dto);
-      const savedInfluencer = await influencer.save();
-      return savedInfluencer;
-    } catch (err) {
-      if ((err as { code?: number }).code === 11000) {
-        const field = Object.keys(
-          (err as { keyPattern?: Record<string, unknown> }).keyPattern ?? {},
-        )[0];
-        throw new Error(`${field} already exists`);
-      }
-      throw err;
-    }
-  }
-
-  async registerBrand(dto: BrandProfileDto) {
-    if (Array.isArray(dto.categories) && dto.categories.length > 5) {
-      dto.categories = dto.categories.slice(0, 5);
-    }
-    try {
-      if (dto.brandLogo && dto.brandLogo.length) {
-        const uploadedImages = [];
-        for (const img of dto.brandLogo) {
-          const imgStr = img as unknown as string;
-          const buffer = imgStr.startsWith("data:")
-            ? Buffer.from(imgStr.split(",")[1], "base64")
-            : fs.readFileSync(imgStr);
-          const filename = randomUUID() + ".jpg";
-          const filePath = path.join(LOCAL_IMAGE_DIR, filename);
-          fs.writeFileSync(filePath, buffer);
-          uploadedImages.push({
-            url: `/assets/local-images/${filename}`,
-            public_id: filename,
-          });
-        }
-        dto.brandLogo = uploadedImages;
-      }
-      if (dto.products && dto.products.length) {
-        const uploadedProducts = [];
-        for (const img of dto.products) {
-          const imgStr = img as unknown as string;
-          const buffer = imgStr.startsWith("data:")
-            ? Buffer.from(imgStr.split(",")[1], "base64")
-            : fs.readFileSync(imgStr);
-          const filename = randomUUID() + ".jpg";
-          const filePath = path.join(LOCAL_IMAGE_DIR, filename);
-          fs.writeFileSync(filePath, buffer);
-          uploadedProducts.push({
-            url: `/assets/local-images/${filename}`,
-            public_id: filename,
-          });
-        }
-        dto.products = uploadedProducts;
-      }
-      // Hash password before saving
-      if (dto.password) {
-        dto.password = await bcrypt.hash(dto.password, 10);
-      }
-      // Save brand to DB
-      if ("price" in dto) {
-        (dto as any).promotionalPrice = (dto as any).price;
-        delete (dto as any).price;
-      }
-      (dto as any).firstRegisteredAt =
-        (dto as any).firstRegisteredAt || new Date();
-      const brand = new this.brandModel(dto);
-      const savedBrand = await brand.save();
-      return savedBrand;
-    } catch (err) {
-      if ((err as { code?: number }).code === 11000) {
-        // Find which field is duplicated
-        const field = Object.keys(
-          (err as { keyPattern?: Record<string, unknown> }).keyPattern ?? {},
-        )[0];
-        throw new Error(`${field} already exists`);
-      }
-      throw err;
-    }
   }
 
   async getInfluencers(
