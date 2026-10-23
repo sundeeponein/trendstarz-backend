@@ -37,6 +37,7 @@ describe("CollaborationScoreService", () => {
         lean: jest.fn().mockResolvedValue(null),
       }),
       updateOne: jest.fn().mockResolvedValue({}),
+      updateMany: jest.fn().mockResolvedValue({}),
       create: jest.fn().mockResolvedValue(createdDoc),
       find: jest.fn(),
       countDocuments: jest.fn().mockResolvedValue(0),
@@ -103,7 +104,8 @@ describe("CollaborationScoreService", () => {
     paymentModel = {
       deleteMany: jest.fn().mockResolvedValue({}),
       create: jest.fn().mockResolvedValue({}),
-      findOne: jest.fn().mockResolvedValue(null),
+      findOne: jest.fn().mockReturnValue({ lean: jest.fn().mockResolvedValue(null) }),
+      updateOne: jest.fn().mockResolvedValue({}),
       find: jest.fn().mockReturnValue({
         sort: jest.fn().mockReturnValue({
           select: jest.fn().mockReturnValue({ lean: jest.fn().mockResolvedValue([]) }),
@@ -231,13 +233,26 @@ describe("CollaborationScoreService", () => {
 
     await service.runAudit("user-1", "influencer", "USER");
 
-    expect(auditModel.updateOne).toHaveBeenCalledWith(
-      { _id: "old-doc" },
-      { $set: { isCurrent: false } },
-    );
     const createCallArg = auditModel.create.mock.calls[0][0];
     expect(createCallArg.version).toBe(4);
     expect(createCallArg.isCurrent).toBe(true);
+    // Older versions are retired only after the new one is saved.
+    const [filter, update] = auditModel.updateMany.mock.calls[0];
+    expect(filter).toMatchObject({ userId: "user-1", isCurrent: true });
+    expect(update).toEqual({ $set: { isCurrent: false } });
+    expect(auditModel.create.mock.invocationCallOrder[0]).toBeLessThan(
+      auditModel.updateMany.mock.invocationCallOrder[0],
+    );
+  });
+
+  it("keeps the previous score current when saving the new one fails", async () => {
+    auditModel.findOne.mockReturnValue({
+      lean: jest.fn().mockResolvedValue({ _id: "old-doc", version: 3, isCurrent: true }),
+    });
+    auditModel.create.mockRejectedValueOnce(new Error("db down"));
+    await expect(service.runAudit("user-1", "influencer", "USER")).rejects.toThrow("db down");
+    expect(auditModel.updateMany).not.toHaveBeenCalled();
+    expect(auditModel.updateOne).not.toHaveBeenCalled();
   });
 
   describe("paid re-analysis gating", () => {
@@ -371,7 +386,9 @@ describe("CollaborationScoreService", () => {
     it("verifyReanalysisPayment is idempotent on a repeat call for an already-captured payment", async () => {
       // Already approved → the guarded claim matches nothing; no second audit runs.
       paymentModel.findOneAndUpdate = jest.fn(() => ({ lean: jest.fn().mockResolvedValue(null) }));
-      paymentModel.exists = jest.fn().mockResolvedValue({ _id: "p1" });
+      paymentModel.findOne = jest.fn(() => ({
+        lean: jest.fn().mockResolvedValue({ _id: "p1", status: "approved", reanalysisDeliveredAt: new Date() }),
+      }));
       auditModel.create.mockClear();
       auditModel.findOne.mockReturnValue({
         lean: jest.fn().mockResolvedValue({ userId: "507f1f77bcf86cd799439011", collaborationScore: 82 }),
@@ -384,6 +401,45 @@ describe("CollaborationScoreService", () => {
       });
 
       expect(auditModel.create).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("paid re-analysis that failed after payment", () => {
+    const paid = {
+      _id: "p1",
+      userId: "507f1f77bcf86cd799439011",
+      userType: "Influencer",
+      status: "approved",
+      reanalysisDeliveredAt: null,
+      gatewayVerifiedAt: new Date(),
+    };
+
+    it("a repeat verify (or the webhook) produces the audit and records it as delivered", async () => {
+      paymentModel.findOne = jest.fn(() => ({ lean: jest.fn().mockResolvedValue(paid) }));
+      paymentModel.findOneAndUpdate = jest
+        .fn()
+        .mockReturnValueOnce({ lean: jest.fn().mockResolvedValue(null) }) // already approved
+        .mockResolvedValueOnce({ _id: "p1" }); // delivery lease
+      await service.completeReanalysisOrder({ orderId: "order_1", paymentId: "pay_1" });
+      expect(auditModel.create).toHaveBeenCalledWith(expect.objectContaining({ isPaid: true }));
+      expect(paymentModel.updateOne).toHaveBeenCalledWith(
+        { _id: "p1" },
+        { $set: expect.objectContaining({ reanalysisDeliveredAt: expect.any(Date) }) },
+      );
+    });
+
+    it("if the audit fails, the lease is released so it can be retried", async () => {
+      paymentModel.findOne = jest.fn(() => ({ lean: jest.fn().mockResolvedValue(paid) }));
+      paymentModel.findOneAndUpdate = jest
+        .fn()
+        .mockReturnValueOnce({ lean: jest.fn().mockResolvedValue(null) })
+        .mockResolvedValueOnce({ _id: "p1" });
+      auditModel.create.mockRejectedValueOnce(new Error("db down"));
+      await expect(
+        service.completeReanalysisOrder({ orderId: "order_1", paymentId: "pay_1" }),
+      ).rejects.toThrow("db down");
+      const release = paymentModel.updateOne.mock.calls.find((c: any[]) => c[1]?.$set?.reanalysisDeliveryStartedAt === null);
+      expect(release).toBeTruthy();
     });
   });
 

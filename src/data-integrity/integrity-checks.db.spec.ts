@@ -54,7 +54,7 @@ describe("data integrity checks (real MongoDB)", () => {
 
     const checks = await runIntegrityChecks(db);
     expect(checks.filter((c) => c.status === "warn")).toEqual([]);
-    expect(checks).toHaveLength(14);
+    expect(checks).toHaveLength(15);
   });
 
   it("flags each kind of problem in its own check", async () => {
@@ -149,6 +149,27 @@ describe("data integrity checks (real MongoDB)", () => {
     const c = (await byKey()).utr_used_twice;
     expect(c.count).toBe(2);
     expect(c.refs).toEqual(expect.arrayContaining(["utr:UTR222", "utr:UTR444"]));
+  });
+
+  it("flags a paid TrendScore re-analysis that never produced a score", async () => {
+    const old = new Date(Date.now() - 60 * 60_000);
+    const delivered = new Types.ObjectId();
+    const missing = new Types.ObjectId();
+    const recent = new Types.ObjectId();
+    const pay = (userId: Types.ObjectId, at: Date, extra: any = {}) => ({
+      userId, purpose: "collab_score_reanalysis", status: "approved", gatewayVerifiedAt: at,
+      amount: 9900, amountPaise: 9900, ...extra,
+    });
+    const missingPayment = await db.collection("payments").insertOne(pay(missing, old));
+    await db.collection("payments").insertMany([
+      pay(delivered, old),
+      pay(recent, new Date()), // still within 15 minutes
+      pay(new Types.ObjectId(), old, { reanalysisDeliveredAt: new Date() }),
+    ]);
+    await db.collection("collaboration_audits").insertOne({ userId: String(delivered), isPaid: true, createdAt: new Date(old.getTime() + 5000) });
+    const c = (await byKey()).paid_rescore_delivered;
+    expect(c.count).toBe(1);
+    expect(c.refs).toEqual([String(missingPayment.insertedId)]);
   });
 
   it("checks that every TrendStarZ credit lot adds up", async () => {

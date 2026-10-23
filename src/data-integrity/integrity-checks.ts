@@ -555,6 +555,44 @@ async function utrUsedTwice(db: Db, explained: ExplainedSet): Promise<IntegrityC
   );
 }
 
+/**
+ * A paid TrendScore re-analysis must produce a paid audit. Approved payments
+ * older than 15 minutes with no paid audit since mean the creator was charged
+ * and got nothing (the next verify/webhook retries; this makes it visible).
+ */
+async function paidRescoreDelivered(db: Db, explained: ExplainedSet): Promise<IntegrityCheck> {
+  const cutoff = new Date(Date.now() - 15 * 60_000);
+  const payments = await db
+    .collection("payments")
+    .find(
+      {
+        purpose: "collab_score_reanalysis",
+        status: "approved",
+        reanalysisDeliveredAt: { $in: [null] },
+        gatewayVerifiedAt: { $lt: cutoff },
+      },
+      { projection: { userId: 1, gatewayVerifiedAt: 1, orderId: 1 } },
+    )
+    .toArray();
+  const found: Array<{ ref: string; text: string }> = [];
+  for (const p of payments as any[]) {
+    const since = new Date(new Date(p.gatewayVerifiedAt).getTime() - 60_000);
+    const delivered = await db
+      .collection("collaboration_audits")
+      .countDocuments({ userId: String(p.userId), isPaid: true, createdAt: { $gte: since } }, { limit: 1 });
+    if (!delivered) {
+      found.push({ ref: String(p._id), text: `payment ${p._id} (order ${p.orderId || "?"}) for user ${p.userId}` });
+    }
+  }
+  return explainableCheck(
+    "paid_rescore_delivered",
+    "Paid TrendScore re-analyses were delivered",
+    "A creator paid for a TrendScore re-analysis but no new score was produced (it is retried when they reopen the page or Razorpay resends the payment). Run a new score from that user's admin TrendScore page, or refund, then mark it as explained.",
+    found,
+    explained,
+  );
+}
+
 async function sharedEmails(db: Db): Promise<IntegrityCheck> {
   const rows = await db
     .collection("influencers")
@@ -599,5 +637,6 @@ export async function runIntegrityChecks(db: Db): Promise<IntegrityCheck[]> {
     sharedEmails(db),
     utrUsedTwice(db, explained),
     creditLedgerAddsUp(db, explained),
+    paidRescoreDelivered(db, explained),
   ]);
 }

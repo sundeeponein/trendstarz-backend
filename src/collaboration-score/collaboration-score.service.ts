@@ -280,13 +280,16 @@ export class CollaborationScoreService {
     userId: string,
     role: any,
     trigger: AuditTrigger = "USER",
-    opts: { skipFreeGate?: boolean; isPaid?: boolean } = {},
+    opts: { skipFreeGate?: boolean; skipCooldown?: boolean; isPaid?: boolean } = {},
   ) {
     const startedAt = Date.now();
     const settings = await this.settingsService.getSettings();
 
     if (trigger === "USER") {
-      await this.assertCooldownElapsed(userId, settings.reanalysisCooldownDays);
+      // A paid re-analysis already passed the cooldown when it was ordered.
+      if (!opts.skipCooldown) {
+        await this.assertCooldownElapsed(userId, settings.reanalysisCooldownDays);
+      }
       if (!opts.skipFreeGate) {
         await this.assertFreeAuditAvailable(userId, settings.freeAuditCount);
       }
@@ -358,12 +361,6 @@ export class CollaborationScoreService {
       .findOne({ userId: String(userId), isCurrent: true })
       .lean();
     const nextVersion = (previousCurrent?.version || 0) + 1;
-    if (previousCurrent) {
-      await this.auditModel.updateOne(
-        { _id: previousCurrent._id },
-        { $set: { isCurrent: false } },
-      );
-    }
 
     let created: any;
     try {
@@ -422,6 +419,13 @@ export class CollaborationScoreService {
       }
       throw err;
     }
+
+    // Retire the older version only once the new one is saved: retiring it
+    // first left the user with no current score whenever the save failed.
+    await this.auditModel.updateMany(
+      { userId: String(userId), isCurrent: true, _id: { $ne: created._id } },
+      { $set: { isCurrent: false } },
+    );
 
     await this.recordSyncBaseline(String(userId), collectedPlatforms);
 
@@ -764,7 +768,7 @@ export class CollaborationScoreService {
       ...(input.userId ? { userId: toObjectId(input.userId) } : {}),
     };
     // Claim once: a second verify (callback + refresh, or webhook) is a no-op.
-    const payment: any = await this.paymentModel
+    const claimed: any = await this.paymentModel
       .findOneAndUpdate(
         { ...filter, status: { $ne: "approved" } },
         {
@@ -779,26 +783,77 @@ export class CollaborationScoreService {
         { new: true },
       )
       .lean();
-    if (!payment) {
-      if (!(await this.paymentModel.exists(filter))) {
-        throw new NotFoundException("Payment order not found");
-      }
-      return false; // already completed
+    if (claimed) {
+      await this.transactionModel.updateMany(
+        { orderId: input.orderId },
+        {
+          $set: { paymentId: input.paymentId, paymentStatus: "captured" },
+          $push: { logs: { at: new Date(), event: "payment_captured" } },
+        },
+      );
     }
-    await this.transactionModel.updateMany(
-      { orderId: input.orderId },
-      {
-        $set: { paymentId: input.paymentId, paymentStatus: "captured" },
-        $push: { logs: { at: new Date(), event: "payment_captured" } },
-      },
-    );
+    const payment: any = claimed || (await this.paymentModel.findOne(filter).lean());
+    if (!payment) throw new NotFoundException("Payment order not found");
+    // Already paid: still produce the audit if an earlier attempt failed
+    // after the payment was recorded (restart, DB error) — the next verify or
+    // the Razorpay webhook retries it.
+    return this.deliverPaidReanalysis(payment);
+  }
+
+  /** Runs the paid audit for an approved re-analysis payment, exactly once. */
+  private async deliverPaidReanalysis(payment: any): Promise<boolean> {
+    if (payment.status !== "approved" || payment.reanalysisDeliveredAt) return false;
     const userId = String(payment.userId);
+    const now = new Date();
+    // Payments approved before delivery was tracked: a paid audit after the
+    // payment means it was delivered.
+    const verifiedAt = payment.gatewayVerifiedAt ? new Date(payment.gatewayVerifiedAt) : null;
+    if (verifiedAt && verifiedAt.getTime() < now.getTime() - 60_000) {
+      const delivered: any = await this.auditModel
+        .findOne({ userId, isPaid: true, createdAt: { $gte: new Date(verifiedAt.getTime() - 60_000) } })
+        .select("version")
+        .lean();
+      if (delivered) {
+        await this.paymentModel.updateOne(
+          { _id: payment._id, reanalysisDeliveredAt: null },
+          { $set: { reanalysisDeliveredAt: now, reanalysisAuditVersion: delivered.version } },
+        );
+        return false;
+      }
+    }
+    // Lease: only one caller runs it; a crashed attempt is retried after 10 min.
+    const lease = await this.paymentModel.findOneAndUpdate(
+      {
+        _id: payment._id,
+        reanalysisDeliveredAt: null,
+        $or: [
+          { reanalysisDeliveryStartedAt: null },
+          { reanalysisDeliveryStartedAt: { $lt: new Date(now.getTime() - 10 * 60_000) } },
+        ],
+      },
+      { $set: { reanalysisDeliveryStartedAt: now } },
+      { new: true },
+    );
+    if (!lease) return false;
     const role = String(payment.userType || "Influencer").toLowerCase();
-    await this.runAudit(userId, role as any, "USER", {
-      skipFreeGate: true,
-      isPaid: true,
-    });
-    return true;
+    try {
+      const audit: any = await this.runAudit(userId, role as any, "USER", {
+        skipFreeGate: true,
+        skipCooldown: true,
+        isPaid: true,
+      });
+      await this.paymentModel.updateOne(
+        { _id: payment._id },
+        { $set: { reanalysisDeliveredAt: new Date(), reanalysisAuditVersion: audit?.version ?? null } },
+      );
+      return true;
+    } catch (err) {
+      await this.paymentModel.updateOne(
+        { _id: payment._id, reanalysisDeliveryStartedAt: now },
+        { $set: { reanalysisDeliveryStartedAt: null } },
+      );
+      throw err;
+    }
   }
 
   /**

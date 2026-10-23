@@ -42,6 +42,11 @@ export const PaymentSchema = new Schema(
     },
     gatewaySignature: { type: String },
     gatewayVerifiedAt: { type: Date },
+    // Paid TrendScore re-analysis: when the paid audit was actually produced,
+    // and a short lease while it runs. Approved but not delivered = retry.
+    reanalysisDeliveredAt: { type: Date, default: null },
+    reanalysisDeliveryStartedAt: { type: Date, default: null },
+    reanalysisAuditVersion: { type: Number, default: null },
     feeBreakdown: {
       baseAmount: { type: Number, min: 0, default: 0 },
       commissionPercent: { type: Number, default: 0 },
