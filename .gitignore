@@ -39,3 +39,6 @@ yarn-error.log*
 test-results.json
 auth_test_results.json
 auth_test.log
+
+# Local logs from cron/cloudinaryOrphans.js --apply (contain user ids)
+cloudinary-orphans-deleted-*.json
