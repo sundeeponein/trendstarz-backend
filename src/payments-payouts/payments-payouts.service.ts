@@ -3093,13 +3093,12 @@ export class PaymentsPayoutsService {
     const tx = await this.transactionModel.findById(txId);
     if (!tx) throw new NotFoundException("Transaction not found");
 
-    // Guard: only parties involved in the transaction can raise a dispute
-    const isBrand = userRole === "brand" && String(tx.payerId) === userId;
-    const isInfluencer =
-      userRole === "influencer" && String(tx.recipientId) === userId;
-    const isPhotographer =
-      userRole === "photographer" && String(tx.recipientId) === userId;
-    if (!isBrand && !isInfluencer && !isPhotographer) {
+    // Guard: only parties involved in the transaction can raise a dispute.
+    // The side comes from the transaction, not the account type: a
+    // photographer or influencer can be the paying host of their own campaign.
+    const isPayer = String(tx.payerId) === String(userId);
+    const isRecipient = String(tx.recipientId) === String(userId);
+    if (!isPayer && !isRecipient) {
       throw new BadRequestException("You are not a party to this transaction");
     }
     if (tx.disputeStatus === "open") {
@@ -3143,9 +3142,8 @@ export class PaymentsPayoutsService {
       );
     }
 
-    const counterpartId =
-      userRole === "brand" ? String(tx.recipientId) : String(tx.payerId);
-    const counterpartRole = userRole === "brand" ? tx.recipientRole : "brand";
+    const counterpartId = isPayer ? String(tx.recipientId) : String(tx.payerId);
+    const counterpartRole: any = isPayer ? tx.recipientRole : tx.payerRole || "brand";
     const disputeRaisedUrl =
       counterpartRole === "brand"
         ? "/transactions"

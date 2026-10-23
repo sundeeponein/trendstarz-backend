@@ -214,9 +214,15 @@ export class PaymentController {
    */
   @UseGuards(JwtAuthGuard)
   @Get(":id")
-  async getPaymentById(@Param("id") paymentId: string) {
+  async getPaymentById(@Param("id") paymentId: string, @Req() req: any) {
     const result = await this.paymentService.getPaymentById(paymentId);
-    if (!result.payment) throw new BadRequestException("Payment not found");
+    // Only the payer or an admin (it carries the payer's email and phone).
+    const role = String(req?.user?.role || "").toLowerCase();
+    const payerId = String((result.payment as any)?.userId?._id || (result.payment as any)?.userId || "");
+    const isAdmin = role === "admin" || role === "subadmin";
+    if (!result.payment || (!isAdmin && payerId !== String(req?.user?.userId || ""))) {
+      throw new BadRequestException("Payment not found");
+    }
     return result;
   }
 }
