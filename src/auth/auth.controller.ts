@@ -26,6 +26,7 @@ import { CloudinaryFolders } from "../cloudinary-folders";
 import { JwtAuthGuard } from "./jwt-auth.guard";
 import { Throttle } from "@nestjs/throttler";
 import { isLocalAuthBypassRequest } from "../utils/local-auth-bypass.util";
+import { resolveUploadFolder, uploadCallerFrom } from "../utils/upload-folder.util";
 import {
   LoginDto,
   ForgotPasswordDto,
@@ -37,7 +38,6 @@ import {
 // Allows slash-delimited entity-scoped paths (e.g. "influencers/_pending/profile",
 // "brands/64f.../logo") while structurally blocking path traversal — "." isn't
 // in the allowed character class, so ".." segments can't be constructed.
-const CLOUDINARY_FOLDER_PATTERN = /^[a-zA-Z0-9_-]+(\/[a-zA-Z0-9_-]+)*$/;
 
 @Controller("auth")
 export class AuthController {
@@ -158,6 +158,8 @@ export class AuthController {
   }
 
   @Post("upload-image")
+  // Open without login (registration), so keep it well under the general limit.
+  @Throttle({ default: { ttl: 60000, limit: 20 } })
   @UseInterceptors(
     FileInterceptor("file", {
       storage: diskStorage({
@@ -187,13 +189,16 @@ export class AuthController {
     }),
   )
   async uploadImage(
+    @Req() req: any,
     @UploadedFile() file: Express.Multer.File,
     @Body("folder") folder?: string,
   ) {
-    const targetFolder =
-      typeof folder === "string" && CLOUDINARY_FOLDER_PATTERN.test(folder)
-        ? folder
-        : "registration_images";
+    if (!file) throw new BadRequestException("No file uploaded");
+    const targetFolder = resolveUploadFolder(
+      folder,
+      uploadCallerFrom(req?.headers?.authorization),
+      "registration_images",
+    );
 
     const uploaded = await this.cloudinaryService.uploadImage(
       file.path,
@@ -285,6 +290,7 @@ export class AuthController {
   }
 
   @Post("upload-verification")
+  @Throttle({ default: { ttl: 60000, limit: 20 } })
   @UseInterceptors(
     FileInterceptor("file", {
       storage: diskStorage({
@@ -314,13 +320,16 @@ export class AuthController {
     }),
   )
   async uploadVerification(
+    @Req() req: any,
     @UploadedFile() file: Express.Multer.File,
     @Body("folder") folder?: string,
   ) {
-    const targetFolder =
-      typeof folder === "string" && CLOUDINARY_FOLDER_PATTERN.test(folder)
-        ? folder
-        : "influencer-verifications";
+    if (!file) throw new BadRequestException("No file uploaded");
+    const targetFolder = resolveUploadFolder(
+      folder,
+      uploadCallerFrom(req?.headers?.authorization),
+      "influencer-verifications",
+    );
     const uploaded = await this.cloudinaryService.uploadFile(
       file.path,
       targetFolder,
