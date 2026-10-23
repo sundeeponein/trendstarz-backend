@@ -188,11 +188,13 @@ export class UsersController {
     );
   }
 
+  @Throttle({ default: { ttl: 60000, limit: 30 } }) // view counters: public
   @Post("influencers/username/:username/track-impression")
   async trackInfluencerProfileImpression(@Param("username") username: string) {
     return this.usersService.trackInfluencerProfileImpression(username);
   }
 
+  @Throttle({ default: { ttl: 60000, limit: 30 } }) // view counters: public
   @Post("influencers/username/:username/track-click")
   async trackInfluencerProfileClick(@Param("username") username: string) {
     return this.usersService.trackInfluencerProfileClick(username);
@@ -374,11 +376,13 @@ export class UsersController {
     });
   }
 
+  @Throttle({ default: { ttl: 60000, limit: 30 } }) // view counters: public
   @Post("brands/name/:brandName/track-impression")
   async trackBrandProfileImpression(@Param("brandName") brandName: string) {
     return this.usersService.trackBrandProfileImpression(brandName);
   }
 
+  @Throttle({ default: { ttl: 60000, limit: 30 } }) // view counters: public
   @Post("brands/name/:brandName/track-click")
   async trackBrandProfileClick(@Param("brandName") brandName: string) {
     return this.usersService.trackBrandProfileClick(brandName);

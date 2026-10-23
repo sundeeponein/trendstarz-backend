@@ -349,6 +349,7 @@ export class AuthController {
   }
 
   @Post("send-email-verification")
+  @Throttle({ default: { ttl: 60000, limit: 3 } })
   @UsePipes(new ValidationPipe({ whitelist: true, transform: true }))
   async sendEmailVerification(@Body() body: SendEmailVerificationDto) {
     return this.authService.sendEmailVerificationLink(body.email);

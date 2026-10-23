@@ -222,6 +222,14 @@ export class AuthService {
     if (user.isEmailVerified) {
       return { success: true, message: "Email is already verified." };
     }
+    // One link a minute per account: stops someone flooding a user's inbox.
+    const lastSent = user.emailVerificationSentAt ? new Date(user.emailVerificationSentAt).getTime() : 0;
+    if (Date.now() - lastSent < 60_000) {
+      return {
+        success: true,
+        message: "A verification link was just sent. Please check your inbox (and spam) or try again in a minute.",
+      };
+    }
 
     const verifyUrl = await this.generateVerifyUrl(normalizedEmail, match.role);
     const { subject, html, text } = verifyEmailTemplate(verifyUrl);

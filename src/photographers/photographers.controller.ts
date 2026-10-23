@@ -11,6 +11,7 @@ import {
   UseGuards,
 } from "@nestjs/common";
 import { InjectModel } from "@nestjs/mongoose";
+import { Throttle } from "@nestjs/throttler";
 import { JwtAuthGuard } from "../auth/jwt-auth.guard";
 import { PhotographersService } from "./photographers.service";
 import { Request } from "express";
@@ -242,6 +243,7 @@ export class PhotographersController {
   }
 
   /** Public: count a profile view (profile page loaded). Same as the influencer endpoint. */
+  @Throttle({ default: { ttl: 60000, limit: 30 } }) // view counters: public
   @Post("username/:username/track-impression")
   async trackPhotographerProfileImpression(
     @Param("username") username: string,
@@ -252,6 +254,7 @@ export class PhotographersController {
   }
 
   /** Public: count a profile card click (Search / Welcome). */
+  @Throttle({ default: { ttl: 60000, limit: 30 } }) // view counters: public
   @Post("username/:username/track-click")
   async trackPhotographerProfileClick(@Param("username") username: string) {
     return this.photographersService.trackPhotographerProfileClick(username);
