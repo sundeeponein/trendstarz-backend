@@ -61,9 +61,13 @@ export class CampaignsController {
     return this.campaignsService.campaignSlotUsage(String(req.user?.userId || ""));
   }
 
+  @UseGuards(JwtAuthGuard)
   @Get(":id")
-  async findOne(@Param("id") id: string) {
-    return this.campaignsService.findById(id);
+  async findOne(@Param("id") id: string, @Req() req: any) {
+    return this.campaignsService.findForViewer(id, {
+      id: String(req.user?.userId || ""),
+      role: String(req.user?.role || ""),
+    });
   }
 
   @UseGuards(JwtAuthGuard)

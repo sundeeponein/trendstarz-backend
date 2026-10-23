@@ -512,8 +512,11 @@ export class CampaignInvitesController {
   @UseGuards(JwtAuthGuard)
   @UseGuards(JwtAuthGuard)
   @Get(":id/submission")
-  async getSubmission(@Param("id") id: string) {
-    return this.invitesService.getSubmissionByInvite(id);
+  async getSubmission(@Param("id") id: string, @Req() req: any) {
+    return this.invitesService.getSubmissionByInvite(id, {
+      id: this.requesterId(req),
+      role: String(req?.user?.role || ""),
+    });
   }
 
   @UseGuards(JwtAuthGuard)

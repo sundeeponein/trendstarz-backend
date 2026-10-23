@@ -153,6 +153,16 @@ export function withoutServerOwnedCampaignFields(data: any): any {
   return clean;
 }
 
+
+/**
+ * Moderation and admin-override fields: shown to the campaign owner and admins,
+ * never to creators or other users.
+ */
+export const CAMPAIGN_ADMIN_FIELDS_EXCLUSION =
+  "-moderationNote -moderatedBy -moderatedAt -adminOverrideAction -adminOverrideReason -adminOverrideBy -adminOverrideAt -slotUsedAt -completedBy";
+/** Campaigns other users may see (live or finished). Drafts, pending and rejected stay private. */
+export const PUBLIC_CAMPAIGN_STATUSES = ["active", "completed"];
+
 @Injectable()
 export class CampaignsService {
   constructor(
@@ -1357,6 +1367,7 @@ export class CampaignsService {
     }
     const campaigns: any[] = await this.campaignModel
       .find(query)
+      .select(CAMPAIGN_ADMIN_FIELDS_EXCLUSION)
       .sort({ createdAt: -1 })
       .lean();
 
@@ -1527,6 +1538,7 @@ export class CampaignsService {
       .lean();
     if (!brand) return [];
     // Fetch campaigns by ObjectId, string version of ObjectId, and brandUsername
+    // Public (no login): live and finished campaigns only, without admin fields.
     return this.campaignModel
       .find({
         $or: [
@@ -1534,7 +1546,9 @@ export class CampaignsService {
           { brandId: String(brand._id) },
           { brandId: brand.brandUsername },
         ],
+        status: { $in: PUBLIC_CAMPAIGN_STATUSES },
       })
+      .select(CAMPAIGN_ADMIN_FIELDS_EXCLUSION)
       .sort({ createdAt: -1 })
       .lean();
   }
@@ -1648,6 +1662,36 @@ export class CampaignsService {
 
   async findById(id: string) {
     return this.campaignModel.findById(id).lean();
+  }
+
+  /**
+   * One campaign as this viewer may see it: the owner and admins get the whole
+   * record; a creator invited to it, or anyone for a live/finished campaign,
+   * gets it without moderation/admin fields; drafts, pending and rejected
+   * campaigns of others are "not found".
+   */
+  async findForViewer(id: string, viewer: { id: string; role: string }) {
+    if (!Types.ObjectId.isValid(id)) throw new NotFoundException("Campaign not found");
+    const campaign: any = await this.campaignModel.findById(id).lean();
+    if (!campaign) throw new NotFoundException("Campaign not found");
+    const role = String(viewer.role || "").toLowerCase();
+    if (role === "admin" || role === "subadmin" || String(campaign.brandId) === String(viewer.id)) {
+      return campaign;
+    }
+    const invited =
+      Types.ObjectId.isValid(viewer.id) &&
+      (await this.campaignInviteModel.exists({
+        campaignId: String(campaign._id),
+        influencerId: new Types.ObjectId(viewer.id),
+      }));
+    if (!invited && !PUBLIC_CAMPAIGN_STATUSES.includes(String(campaign.status))) {
+      throw new NotFoundException("Campaign not found");
+    }
+    const visible = await this.campaignModel
+      .findById(id)
+      .select(CAMPAIGN_ADMIN_FIELDS_EXCLUSION)
+      .lean();
+    return visible;
   }
 
   /**

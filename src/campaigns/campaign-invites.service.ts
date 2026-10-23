@@ -4291,7 +4291,19 @@ export class CampaignInvitesService {
     return { success: true, submission };
   }
 
-  async getSubmissionByInvite(inviteId: string) {
+  async getSubmissionByInvite(inviteId: string, viewer?: { id: string; role: string }) {
+    // The creator, the host and admins only (any logged-in user could read it).
+    if (viewer) {
+      const isAdmin = ["admin", "subadmin"].includes(String(viewer.role || "").toLowerCase());
+      if (!isAdmin) {
+        const invite: any = Types.ObjectId.isValid(inviteId)
+          ? await this.inviteModel.findById(inviteId).select("brandId influencerId").lean()
+          : null;
+        if (!invite || ![String(invite.brandId), String(invite.influencerId)].includes(String(viewer.id))) {
+          throw new NotFoundException("Submission not found");
+        }
+      }
+    }
     const submission = await this.submissionModel
       .findOne({ inviteId })
       .populate("influencerId", "name username profileImages")
