@@ -563,6 +563,32 @@ export class CampaignsService {
       normalized.maxInfluencers = Math.round(m);
     }
 
+    // Product campaigns: the mode is one of two values, and the money shown to
+    // creators (product value, Product + Paid cash) is whole paise ≥ 0.
+    if (data.productPaymentMode !== undefined && data.productPaymentMode !== null && data.productPaymentMode !== "") {
+      const mode = String(data.productPaymentMode);
+      if (mode !== "product_only" && mode !== "product_plus_payment") {
+        throw new BadRequestException("productPaymentMode must be product_only or product_plus_payment");
+      }
+      normalized.productPaymentMode = mode;
+    }
+    for (const field of ["productValue", "productPaymentAmount"] as const) {
+      const raw = data[field];
+      if (raw === undefined || raw === null || raw === "") continue;
+      const v = Number(raw);
+      if (!Number.isFinite(v) || v < 0 || v > 1_000_000_000) {
+        throw new BadRequestException(`${field} must be an amount in paise (0 or more)`);
+      }
+      normalized[field] = Math.round(v);
+    }
+    if (
+      (normalized.productPaymentMode ?? data.productPaymentMode) === "product_plus_payment" &&
+      normalized.productPaymentAmount !== undefined &&
+      normalized.productPaymentAmount <= 0
+    ) {
+      throw new BadRequestException("Enter the cash amount for a Product + Paid campaign");
+    }
+
     if (data.minInfluencers !== undefined && data.minInfluencers !== null) {
       const min = Number(data.minInfluencers);
       if (!Number.isFinite(min) || min <= 0) {
