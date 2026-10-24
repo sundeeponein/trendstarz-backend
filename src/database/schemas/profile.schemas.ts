@@ -1,3 +1,4 @@
+import { externalUrlSetter } from "../../utils/external-url.util";
 import { Schema, model } from "mongoose";
 import { WORKFLOW_TIMING_DEFAULTS } from "../../utils/workflow-timing.util";
 
@@ -457,7 +458,7 @@ export const InfluencerSchema = new Schema(
       lastClickAt: { type: Date, default: null },
     },
     promotionalPrice: { type: Number, min: 0 },
-    website: { type: String },
+    website: { type: String, set: externalUrlSetter },
     // Payout details (where admin sends earned money)
     payout: {
       upiId: { type: String, default: "" },
@@ -709,7 +710,7 @@ export const BrandSchema = new Schema(
     categories: [{ type: String }],
     languages: [{ type: String }],
     adminTags: [{ type: String }],
-    website: { type: String },
+    website: { type: String, set: externalUrlSetter },
     location: {
       state: { type: String },
       district: { type: String },
@@ -1565,7 +1566,7 @@ export const CampaignSchema = new Schema(
     // photographer collaboration location fields
     shootLocationType: { type: String },
     shootLocationAddress: { type: String },
-    shootLocationMapUrl: { type: String },
+    shootLocationMapUrl: { type: String, set: externalUrlSetter },
     shootLocationNotes: { type: String },
     // invite_location specific fields
     venueName: { type: String },
@@ -1573,7 +1574,7 @@ export const CampaignSchema = new Schema(
     venueCity: { type: String },
     venueDistrict: { type: String },
     venueState: { type: String },
-    venueGoogleMapUrl: { type: String },
+    venueGoogleMapUrl: { type: String, set: externalUrlSetter },
     productValue: { type: Number, min: 0 },
     productDescription: { type: String },
     productPaymentMode: { type: String },
@@ -1594,7 +1595,7 @@ export const CampaignSchema = new Schema(
         "other",
       ],
     },
-    promotionUrl: { type: String },
+    promotionUrl: { type: String, set: externalUrlSetter },
     suggestedCaption: { type: String },
     hashtags: { type: String },
     resourceImages: [

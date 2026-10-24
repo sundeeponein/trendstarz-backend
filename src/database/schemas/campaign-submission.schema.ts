@@ -1,3 +1,4 @@
+import { externalUrlSetter } from "../../utils/external-url.util";
 import { Schema, Document } from "mongoose";
 
 export const CampaignSubmissionSchema = new Schema(
@@ -15,7 +16,7 @@ export const CampaignSubmissionSchema = new Schema(
       required: true,
     },
 
-    postUrl: { type: String, required: true },
+    postUrl: { type: String, required: true, set: externalUrlSetter },
     postPlatform: { type: String }, // auto-detected from URL
     postType: {
       type: String,

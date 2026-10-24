@@ -13,6 +13,7 @@ import { meetsMinimumTier, resolveTier } from "../utils/tier-ranges.util";
 import { Cron, CronExpression } from "@nestjs/schedule";
 import { InjectModel } from "@nestjs/mongoose";
 import { Model, Types } from "mongoose";
+import { normalizeExternalUrl } from "../utils/external-url.util";
 import { receivedInvitesPerMonthFrom } from "../plans/invite-limits.util";
 import {
   awaitingPlatformFee,
@@ -4008,6 +4009,9 @@ export class CampaignInvitesService {
     this.assertCampaignLiveForRecipient(campaign, "submit work");
     this.assertCampaignNotEnded(campaign, "submit work");
     if (!data.postUrl) throw new BadRequestException("Post URL is required");
+    // Same rule as the stored field: a web link ("instagram.com/p/…" gets https://).
+    data.postUrl = normalizeExternalUrl(data.postUrl);
+    if (!data.postUrl) throw new BadRequestException("Enter the full post link (https://…).");
 
     // Late-submission handling: allowed within the campaign's grace window, marked late;
     // blocked entirely once the window (strict or grace) has fully passed.

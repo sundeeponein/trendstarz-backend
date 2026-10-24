@@ -1,3 +1,4 @@
+import { externalUrlSetter } from "../../utils/external-url.util";
 import { Schema } from "mongoose";
 
 export const CampaignInviteSchema = new Schema({
@@ -180,7 +181,7 @@ export const CampaignInviteSchema = new Schema({
   latePostApproval: {
     approvedAt: { type: Date },
     approvedBy: { type: String },
-    postUrl: { type: String },
+    postUrl: { type: String, set: externalUrlSetter },
     note: { type: String },
     originalDeadline: { type: Date },
     withdrawnAt: { type: Date },

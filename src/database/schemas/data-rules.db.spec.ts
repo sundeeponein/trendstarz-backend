@@ -603,6 +603,18 @@ describe("data rules (real MongoDB)", () => {
     });
   });
 
+  describe("links people type are stored as full web addresses", () => {
+    it("adds https:// on create and update, and never stores javascript: links", async () => {
+      const Brand = db.conn.models.Brand || db.conn.model("Brand", BrandSchema, "brands");
+      const b: any = await Brand.create({ brandName: "Linky", brandUsername: "linky", email: "l@x.in", phoneNumber: "91", password: "h", website: "linky.in" } as any);
+      expect(b.website).toBe("https://linky.in");
+      await Brand.updateOne({ _id: b._id }, { $set: { website: "javascript:alert(1)" } });
+      expect(((await Brand.findById(b._id).lean()) as any).website).toBe("");
+      await Brand.findOneAndUpdate({ _id: b._id }, { $set: { website: "www.linky.in/shop" } });
+      expect(((await Brand.findById(b._id).lean()) as any).website).toBe("https://www.linky.in/shop");
+    });
+  });
+
   describe("brand rows in other users' lists", () => {
     it("leave out payout, admin/commission fields, documents and activity; keep what the card shows", async () => {
       const { BRAND_LIST_EXCLUSION } = require("../../utils/public-profile.util");
