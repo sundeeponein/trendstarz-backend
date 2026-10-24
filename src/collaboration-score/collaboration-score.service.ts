@@ -1,3 +1,4 @@
+import { endOfIstDay } from "../campaigns/campaign-deadlines.util";
 import {
   BadRequestException,
   ForbiddenException,
@@ -1029,8 +1030,8 @@ export class CollaborationScoreService {
         result.summary.totalAiOutputTokens = null;
       }
 
-      const startOfToday = new Date();
-      startOfToday.setHours(0, 0, 0, 0);
+      // Midnight India time (the server clock is UTC).
+      const startOfToday = new Date(endOfIstDay(new Date()).getTime() + 1 - 24 * 60 * 60 * 1000);
       // Every run created today, not just each user's current one — this is
       // a cost/volume counter, not a per-user snapshot.
       const todayAgg = await this.auditModel.aggregate([

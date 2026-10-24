@@ -3,7 +3,7 @@ import {
   BadRequestException,
   NotFoundException,
 } from "@nestjs/common";
-import { campaignEndsAt } from "./campaign-deadlines.util";
+import { campaignEndsAt, endOfIstDay } from "./campaign-deadlines.util";
 import {
   CANONICAL_TIERS,
   meetsMinimumTier,
@@ -491,8 +491,10 @@ export class CampaignsService {
         existing.startDate || existing.timelineStart,
       );
     if (normalized.startDate && !startUnchanged) {
-      const today = new Date();
-      today.setUTCHours(0, 0, 0, 0);
+      // Today's India calendar date, as the UTC midnight that date-only start
+      // dates are stored at (UTC "today" lagged India by up to 5.5 hours).
+      const istNow = new Date(Date.now() + 5.5 * 60 * 60 * 1000);
+      const today = new Date(Date.UTC(istNow.getUTCFullYear(), istNow.getUTCMonth(), istNow.getUTCDate()));
       const minStart = new Date(today.getTime() + minStartDays * 24 * 60 * 60 * 1000);
       if (new Date(normalized.startDate) < minStart) {
         throw new BadRequestException(
@@ -523,19 +525,14 @@ export class CampaignsService {
     // day before the campaign start date — for both invite-only and open
     // campaigns. Any client-supplied value is ignored; it's only recomputed
     // when startDate is part of this create/update payload.
+    // India time: "end of the day before" is 23:59:59 IST (it used to be 23:59
+    // UTC, i.e. 5:29 AM IST on the start day itself).
+    delete normalized.acceptanceDeadline;
     if (normalized.startDate) {
       const start = new Date(normalized.startDate);
-      normalized.acceptanceDeadline = new Date(
-        Date.UTC(
-          start.getUTCFullYear(),
-          start.getUTCMonth(),
-          start.getUTCDate() - 1,
-          23,
-          59,
-          59,
-          999,
-        ),
-      );
+      if (Number.isFinite(start.getTime())) {
+        normalized.acceptanceDeadline = endOfIstDay(new Date(start.getTime() - 24 * 60 * 60 * 1000));
+      }
     }
 
     if (data.campaignType) {

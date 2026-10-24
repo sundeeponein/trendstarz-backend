@@ -264,7 +264,7 @@ describe("CampaignsService", () => {
           endDate: new Date("2026-07-15"),
           timelineStart: new Date("2026-06-30"),
           timelineEnd: new Date("2026-07-15"),
-          acceptanceDeadline: new Date("2026-06-29T23:59:59.999Z"),
+          acceptanceDeadline: new Date("2026-06-29T18:29:59.999Z") // 11:59:59 PM IST, the day before the start,
         }),
       );
     });
