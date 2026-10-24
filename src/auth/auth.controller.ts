@@ -93,7 +93,11 @@ export class AuthController {
         body.email,
         body.password,
         body.firebaseIdToken,
-        { localAuthBypass: this.isLocalAuthBypassRequest(req) },
+        {
+          localAuthBypass: this.isLocalAuthBypassRequest(req),
+          clientIp: req?.ip,
+          userAgent: String(req?.headers?.["user-agent"] || ""),
+        },
       );
       return res.status(200).json(result);
     } catch (err: any) {

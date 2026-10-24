@@ -1531,14 +1531,18 @@ export class AuthService {
     email: string,
     password: string,
     firebaseIdToken?: string,
-    options?: { localAuthBypass?: boolean },
+    options?: { localAuthBypass?: boolean; clientIp?: string; userAgent?: string },
   ) {
     const key = (email || "").trim().toLowerCase();
     const attempts = this.loginAttempts;
     await attempts.assertNotLocked(key);
     try {
-      const result = await this.loginChecked(email, password, firebaseIdToken, options);
+      const result: any = await this.loginChecked(email, password, firebaseIdToken, options);
       await attempts.clear(key).catch(() => undefined);
+      const role = String(result?.user?.role || result?.userType || "").toLowerCase();
+      if (role === "admin" || role === "subadmin") {
+        this.recordAdminSignIn(result.user, options).catch(() => undefined);
+      }
       return result;
     } catch (err) {
       if (err instanceof UnauthorizedException && /invalid credentials/i.test(String((err as any)?.message))) {
@@ -1546,6 +1550,21 @@ export class AuthService {
       }
       throw err;
     }
+  }
+
+  /**
+   * Admin sign-ins can change everything: each one is emailed to that admin
+   * (a stolen password is noticed at once) and logged for 180 days.
+   */
+  private async recordAdminSignIn(user: any, client?: { clientIp?: string; userAgent?: string }) {
+    const ip = String(client?.clientIp || "unknown").slice(0, 64);
+    const browser = String(client?.userAgent || "unknown").slice(0, 160);
+    const log = (this.userModel as any)?.db?.collection?.("admin_sign_ins");
+    if (log) {
+      await log.createIndex({ at: 1 }, { expireAfterSeconds: 180 * 24 * 60 * 60 }).catch(() => undefined);
+      await log.insertOne({ adminId: String(user?.id || user?._id || ""), email: user?.email, at: new Date(), ip, userAgent: browser });
+    }
+    sendSecurityAlert(user?.email, `New admin sign-in from IP ${ip} (${browser}).`, user?.name);
   }
 
   private async loginChecked(
