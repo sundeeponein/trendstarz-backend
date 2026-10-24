@@ -1,0 +1,36 @@
+jest.mock("razorpay", () => jest.fn().mockImplementation(() => ({ orders: { all: jest.fn().mockRejectedValue({ statusCode: 401, error: { code: "BAD_REQUEST_ERROR" } }) } })));
+jest.mock("cloudinary", () => ({ v2: { config: jest.fn(), api: { ping: jest.fn().mockResolvedValue({ status: "ok" }) } } }));
+jest.mock("axios", () => ({ get: jest.fn().mockRejectedValue({ response: { status: 403 } }) }));
+
+import { runConfigChecks } from "./config-health.util";
+
+describe("admin configuration check", () => {
+  const saved = { ...process.env };
+  afterEach(() => { process.env = { ...saved }; });
+
+  it("reports missing settings, optional services as off, a rejected key as failing, and never the secret", async () => {
+    process.env = {
+      ...saved,
+      MONGODB_URI: "mongodb://x",
+      JWT_SECRET: "s".repeat(40),
+      RAZORPAY_KEY_ID: "rzp_live_x",
+      RAZORPAY_KEY_SECRET: "super-secret-value",
+      CLOUDINARY_CLOUD_NAME: "c", CLOUDINARY_API_KEY: "k", CLOUDINARY_API_SECRET: "s",
+      BREVO_API_KEY: "xkeysib-x",
+      FRONTEND_URL: "https://trendstarz.in",
+    };
+    for (const k of ["RAZORPAY_PAYMENTS_WEBHOOK_SECRET", "RAZORPAYX_KEY_ID", "RAZORPAYX_KEY_SECRET", "RAZORPAYX_ACCOUNT_NUMBER", "RAZORPAYX_WEBHOOK_SECRET", "FIREBASE_PROJECT_ID", "FIREBASE_CLIENT_EMAIL", "FIREBASE_PRIVATE_KEY", "VAPID_PUBLIC_KEY", "VAPID_PRIVATE_KEY"]) delete process.env[k];
+    const ping = jest.fn().mockResolvedValue({});
+    const checks = await runConfigChecks({ db: { admin: () => ({ ping }) } } as any);
+    const by = Object.fromEntries(checks.map((c) => [c.service, c]));
+    expect(by["Database (MongoDB)"].status).toBe("working");
+    expect(by["Razorpay payments"]).toMatchObject({ status: "failing" });
+    expect(by["Razorpay payments"].detail).toContain("HTTP 401");
+    expect(by["Razorpay payments webhook secret"]).toMatchObject({ status: "missing" });
+    expect(by["RazorpayX payouts"].status).toBe("off");
+    expect(by["Cloudinary (images)"].status).toBe("working");
+    expect(by["Brevo (emails)"].status).toBe("working"); // send-only key: 403 on stats still proves the key
+    expect(by["Firebase (login/password reset)"].status).toBe("missing");
+    expect(JSON.stringify(checks)).not.toContain("super-secret-value");
+  });
+});
