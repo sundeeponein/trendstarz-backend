@@ -105,6 +105,19 @@ describe("PushService", () => {
     expect(result).toEqual({ sent: 0, failed: 1 });
   });
 
+  it("also removes subscriptions made with old VAPID keys (403 after a key rotation)", async () => {
+    (webpush.sendNotification as jest.Mock).mockRejectedValue({ statusCode: 403 });
+    await service.sendToUser("user-1", { title: "x", body: "y" }, "campaign");
+    expect(subModel.deleteOne).toHaveBeenCalledWith({ _id: mockSub._id });
+  });
+
+  it("keeps a subscription on a temporary failure (e.g. 429/500)", async () => {
+    subModel.deleteOne.mockClear();
+    (webpush.sendNotification as jest.Mock).mockRejectedValue({ statusCode: 429 });
+    await service.sendToUser("user-1", { title: "x", body: "y" }, "campaign");
+    expect(subModel.deleteOne).not.toHaveBeenCalled();
+  });
+
   it("defaults preferences to enabled when the user has never set any", async () => {
     const prefs = await service.getPreferences("user-1");
     expect(prefs).toEqual({

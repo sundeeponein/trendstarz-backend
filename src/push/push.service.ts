@@ -154,8 +154,10 @@ export class PushService implements OnModuleInit {
             swPayload,
           )
           .catch(async (err: any) => {
-            // Subscription gone (410) — clean it up
-            if (err.statusCode === 410 || err.statusCode === 404) {
+            // Gone (404/410), or made with other VAPID keys (401/403 — e.g. after
+            // a key rotation): it can never work again. The browser subscribes
+            // afresh at the next login.
+            if ([401, 403, 404, 410].includes(Number(err.statusCode))) {
               await this.subModel.deleteOne({ _id: sub._id });
             }
             throw err;
