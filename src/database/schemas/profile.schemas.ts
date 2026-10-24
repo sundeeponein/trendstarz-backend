@@ -1,3 +1,4 @@
+import { phoneSetter } from "../../utils/phone.util";
 import { externalUrlSetter } from "../../utils/external-url.util";
 import { Schema, model } from "mongoose";
 import { WORKFLOW_TIMING_DEFAULTS } from "../../utils/workflow-timing.util";
@@ -216,7 +217,7 @@ export const InfluencerSchema = new Schema(
     name: { type: String, required: true },
     email: { type: String, required: true, unique: true },
     firebaseUid: { type: String, default: null, index: true },
-    phoneNumber: { type: String, required: true },
+    phoneNumber: { type: String, required: true, set: phoneSetter },
     username: { type: String, required: true, unique: true },
     publicId: { type: String, unique: true, sparse: true, index: true },
     isEmailVerified: { type: Boolean, default: false },
@@ -636,7 +637,7 @@ export const BrandSchema = new Schema(
     email: { type: String, required: true, unique: true },
     publicId: { type: String, unique: true, sparse: true, index: true },
     firebaseUid: { type: String, default: null, index: true },
-    phoneNumber: { type: String, required: true },
+    phoneNumber: { type: String, required: true, set: phoneSetter },
     isEmailVerified: { type: Boolean, default: false },
     isMobileVerified: { type: Boolean, default: false },
     ...ProfileVerificationFields,
@@ -854,7 +855,7 @@ export const PhotographerSchema = new Schema(
     email: { type: String, required: true, unique: true },
     publicId: { type: String, unique: true, sparse: true, index: true },
     firebaseUid: { type: String, default: null, index: true },
-    phoneNumber: { type: String, required: true },
+    phoneNumber: { type: String, required: true, set: phoneSetter },
     isEmailVerified: { type: Boolean, default: false },
     isMobileVerified: { type: Boolean, default: false },
     ...ProfileVerificationFields,

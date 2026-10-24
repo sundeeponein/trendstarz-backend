@@ -1,3 +1,4 @@
+import { canonicalPhone } from "../utils/phone.util";
 import {
   PROFILE_TRAFFIC_DAILY_COLLECTION,
   TrafficKind,
@@ -184,9 +185,8 @@ export class PhotographersService {
         : null;
     const phoneNumber =
       Object.prototype.hasOwnProperty.call(update, "phoneNumber") &&
-      String(update.phoneNumber ?? "").trim() !==
-        String(current?.phoneNumber ?? "").trim()
-        ? String(update.phoneNumber ?? "").trim()
+      canonicalPhone(update.phoneNumber) !== canonicalPhone(current?.phoneNumber)
+        ? canonicalPhone(update.phoneNumber)
         : null;
     if (!email && !phoneNumber) return;
     const taken = await takenAccountFields(
@@ -208,7 +208,8 @@ export class PhotographersService {
   }
 
   private normalizePhone(value: any): string {
-    return String(value ?? "").replace(/\D/g, "");
+    // Same 10-digit form as stored, so "+91…" isn't a "changed" number.
+    return canonicalPhone(value);
   }
 
   private normalizeEmail(value: any): string {

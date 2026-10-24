@@ -1,3 +1,4 @@
+import { canonicalPhone } from "../utils/phone.util";
 import { invalidateAccountStatusCache } from "./jwt-auth.guard";
 import { graceHoursFromSettings } from "../campaigns/campaign-deadlines.util";
 import {
@@ -1818,8 +1819,9 @@ export class AuthService {
     const normalizedEmail = data.email
       ? String(data.email).trim().toLowerCase()
       : null;
+    // 10-digit form: the same as stored (phoneSetter) and as the OTP was issued for.
     const normalizedPhone = data.phoneNumber
-      ? String(data.phoneNumber).trim()
+      ? canonicalPhone(data.phoneNumber) || null
       : null;
     // Case-insensitive exact email match — handles legacy records saved with mixed case.
     const emailRegex = normalizedEmail
@@ -2096,8 +2098,9 @@ export class AuthService {
     const normalizedEmail = data.email
       ? String(data.email).trim().toLowerCase()
       : null;
+    // 10-digit form: the same as stored (phoneSetter) and as the OTP was issued for.
     const normalizedPhone = data.phoneNumber
-      ? String(data.phoneNumber).trim()
+      ? canonicalPhone(data.phoneNumber) || null
       : null;
     // Case-insensitive exact email match — handles legacy records saved with mixed case.
     const emailRegex = normalizedEmail
@@ -2289,8 +2292,9 @@ export class AuthService {
     const normalizedEmail = data.email
       ? String(data.email).trim().toLowerCase()
       : null;
+    // 10-digit form: the same as stored (phoneSetter) and as the OTP was issued for.
     const normalizedPhone = data.phoneNumber
-      ? String(data.phoneNumber).trim()
+      ? canonicalPhone(data.phoneNumber) || null
       : null;
     const emailRegex = normalizedEmail
       ? new RegExp(

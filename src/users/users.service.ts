@@ -1,3 +1,4 @@
+import { canonicalPhone } from "../utils/phone.util";
 import { publicScoreFields } from "../utils/public-score-fields.util";
 import { Injectable, BadRequestException, NotFoundException, OnModuleInit } from "@nestjs/common";
 import { Cron, CronExpression } from "@nestjs/schedule";
@@ -158,9 +159,8 @@ export class UsersService implements OnModuleInit {
         : null;
     const phoneNumber =
       Object.prototype.hasOwnProperty.call(update, "phoneNumber") &&
-      String(update.phoneNumber ?? "").trim() !==
-        String(current?.phoneNumber ?? "").trim()
-        ? String(update.phoneNumber ?? "").trim()
+      canonicalPhone(update.phoneNumber) !== canonicalPhone(current?.phoneNumber)
+        ? canonicalPhone(update.phoneNumber)
         : null;
     if (!email && !phoneNumber) return;
     const taken = await takenAccountFields(
@@ -182,7 +182,8 @@ export class UsersService implements OnModuleInit {
   }
 
   private normalizePhone(value: any): string {
-    return String(value ?? "").replace(/\D/g, "");
+    // Same 10-digit form as stored, so "+91…" isn't a "changed" number.
+    return canonicalPhone(value);
   }
 
   private normalizeEmail(value: any): string {
@@ -650,30 +651,25 @@ export class UsersService implements OnModuleInit {
 
     if (email) {
       const emailRegex = new RegExp(`^${this.escapeRegex(email)}$`, "i");
-      const [influencerByEmail, brandByEmail] = await Promise.all([
-        this.influencerModel
-          .findOne({ email: emailRegex })
-          .select("_id")
-          .lean(),
-        this.brandModel.findOne({ email: emailRegex }).select("_id").lean(),
-      ]);
-      result.email = !!influencerByEmail || !!brandByEmail;
+      // Every account type, as signup enforces (photographers were left out).
+      const matches = await Promise.all(
+        [this.influencerModel, this.brandModel, this.photographerModel].map((m) =>
+          m.findOne({ email: emailRegex }).select("_id").lean(),
+        ),
+      );
+      result.email = matches.some(Boolean);
       if (result.email) result.duplicateFields.push("email");
     }
 
     if (phoneNumber) {
-      const phoneRegex = new RegExp(`^${this.escapeRegex(phoneNumber)}$`, "i");
-      const [influencerByPhone, brandByPhone] = await Promise.all([
-        this.influencerModel
-          .findOne({ phoneNumber: phoneRegex })
-          .select("_id")
-          .lean(),
-        this.brandModel
-          .findOne({ phoneNumber: phoneRegex })
-          .select("_id")
-          .lean(),
-      ]);
-      result.phoneNumber = !!influencerByPhone || !!brandByPhone;
+      // Same 10-digit form as stored; every account type (as signup enforces).
+      const phone = canonicalPhone(phoneNumber);
+      const matches = await Promise.all(
+        [this.influencerModel, this.brandModel, this.photographerModel].map((m) =>
+          m.findOne({ phoneNumber: phone }).select("_id").lean(),
+        ),
+      );
+      result.phoneNumber = matches.some(Boolean);
       if (result.phoneNumber) result.duplicateFields.push("phoneNumber");
     }
 

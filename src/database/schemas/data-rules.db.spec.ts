@@ -603,6 +603,19 @@ describe("data rules (real MongoDB)", () => {
     });
   });
 
+  describe("one stored form for phone numbers", () => {
+    it("stores 10 digits and finds the account whichever way the number is typed", async () => {
+      const Inf = db.conn.models.Influencer || db.conn.model("Influencer", InfluencerSchema, "influencers");
+      const created: any = await Inf.create({ email: "ph@x.in", username: "u-ph", phoneNumber: "+91 98765 43210", password: "h", name: "P" });
+      expect(created.phoneNumber).toBe("9876543210");
+      for (const typed of ["9876543210", "+91 98765 43210", "098765-43210", "91 9876543210"]) {
+        expect(await Inf.findOne({ phoneNumber: typed }).lean()).toBeTruthy();
+      }
+      await Inf.updateOne({ _id: created._id }, { $set: { phoneNumber: "+91-90000 00001" } });
+      expect(((await Inf.findById(created._id).lean()) as any).phoneNumber).toBe("9000000001");
+    });
+  });
+
   describe("links people type are stored as full web addresses", () => {
     it("adds https:// on create and update, and never stores javascript: links", async () => {
       const Brand = db.conn.models.Brand || db.conn.model("Brand", BrandSchema, "brands");

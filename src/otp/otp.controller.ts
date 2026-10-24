@@ -6,6 +6,7 @@ import {
   Inject,
 } from "@nestjs/common";
 import { Throttle } from "@nestjs/throttler";
+import { canonicalPhone } from "../utils/phone.util";
 import { otpTemplate } from "../email/templates/otp.templates";
 import { sendAppEmail } from "../utils/app-email.service";
 import type { SmsProvider } from "../services/smsProvider.service";
@@ -40,7 +41,9 @@ export class OtpController {
     if (type === "email" ? !EMAIL_PATTERN.test(text) || text.length > 254 : type === "phone" ? !PHONE_PATTERN.test(text) : true) {
       throw new BadRequestException(type === "phone" ? "Enter a valid mobile number" : "Enter a valid email address");
     }
-    const otp = await this.otpStore.issueCode(value);
+    // Phones are keyed by their 10-digit form (the same form signup checks).
+    const key = type === "phone" ? canonicalPhone(text) : text;
+    const otp = await this.otpStore.issueCode(key);
     const minutes = OTP_TTL_MS / 60 / 1000;
     if (type === "email") {
       const template = otpTemplate({ otp, expiryMinutes: minutes });
@@ -52,7 +55,7 @@ export class OtpController {
       });
     } else if (type === "phone") {
       await this.smsProvider.send(
-        value,
+        key,
         `Your TrendStarz OTP is ${otp}. It expires in ${minutes} minutes.`,
       );
     }
@@ -66,7 +69,11 @@ export class OtpController {
     if (!type || !value || !otp) {
       return { error: "Missing type, value, or otp" };
     }
-    const result = await this.otpStore.verifyCode(type, value, otp);
+    const result = await this.otpStore.verifyCode(
+      type,
+      type === "phone" ? canonicalPhone(value) : value,
+      otp,
+    );
     if (!result.ok) return { error: result.error };
     return {
       message: "OTP verified successfully",
