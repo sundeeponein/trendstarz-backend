@@ -1,3 +1,4 @@
+import { sendSecurityAlert } from "../utils/security-alert.util";
 import { canonicalPhone } from "../utils/phone.util";
 import { invalidateAccountStatusCache } from "./jwt-auth.guard";
 import { graceHoursFromSettings } from "../campaigns/campaign-deadlines.util";
@@ -590,6 +591,7 @@ export class AuthService {
     user.resetTokenExpires = null;
     this.clearTemporaryPassword(user);
     await user.save();
+    sendSecurityAlert(user.email, "Your password was reset using a reset link.", user.name || user.brandName);
     return { success: true, message: "Password reset successfully." };
   }
 
@@ -661,6 +663,7 @@ export class AuthService {
           )
         : false;
     await match.user.save();
+    sendSecurityAlert(match.user.email, "Your password was reset using a reset link.", match.user.name || match.user.brandName);
 
     return {
       success: true,
@@ -739,6 +742,7 @@ export class AuthService {
     this.clearTemporaryPassword(user);
     await user.save(); // stamps passwordChangedAt → older sessions stop working
     invalidateAccountStatusCache(String(user._id));
+    sendSecurityAlert(user.email, "Your password was changed from your account settings.", user.name || user.brandName);
 
     // This device stays signed in: a fresh token issued after the change.
     const tokenRole = normalizedRole === "admin" ? String(user.role || "admin") : normalizedRole;

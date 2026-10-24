@@ -54,6 +54,7 @@ import { idIn } from "../utils/id-match.util";
 import { openMoneyFilter, openWorkFilter } from "./self-deletion.util";
 import { BRAND_LIST_EXCLUSION, privateProfileExclusion, publicAdminTags } from "../utils/public-profile.util";
 import { sendAppEmail } from "../utils/app-email.service";
+import { sendSecurityAlert } from "../utils/security-alert.util";
 import { deleteAccountCodeTemplate } from "../email/templates/otp.templates";
 
 /**
@@ -70,7 +71,7 @@ const selfDeletionCodeKey = (userId: string) => `self-delete:${userId}`;
 
 /** "sundeep@gmail.com" → "s*****p@gmail.com" — shown after sending a code. */
 function maskEmail(email: string): string {
-  const [name, domain] = email.split("@");
+  const [name, domain] = String(email ?? "").split("@");
   if (!domain) return email;
   const masked = name.length <= 2 ? `${name[0] || ""}*` : `${name[0]}${"*".repeat(Math.min(name.length - 2, 5))}${name[name.length - 1]}`;
   return `${masked}@${domain}`;
@@ -3563,10 +3564,12 @@ export class UsersService implements OnModuleInit {
       }
     }
 
+    let emailChangedFrom = "";
     if (Object.prototype.hasOwnProperty.call(updateData, "email")) {
       const existingEmail = this.normalizeEmail(userDoc.email);
       const incomingEmail = this.normalizeEmail(updateData.email);
       if (existingEmail !== incomingEmail) {
+        emailChangedFrom = existingEmail;
         if (userDoc.isEmailVerified) {
           userDoc.set("previousVerifiedEmail", existingEmail);
         }
@@ -3638,6 +3641,10 @@ export class UsersService implements OnModuleInit {
     }
 
     const updated = await userDoc.save();
+    if (emailChangedFrom) {
+      // To the OLD address: a takeover changes the email first.
+      sendSecurityAlert(emailChangedFrom, `Your login email was changed to ${maskEmail(updated.email)}.`, updated.name);
+    }
     if (upiChange["payout.previousUpiId"]) {
       this.notifyPayoutUpiChanged(updated, upiChange["payout.previousUpiId"]);
     }
@@ -3797,10 +3804,12 @@ export class UsersService implements OnModuleInit {
       }
     }
 
+    let brandEmailChangedFrom = "";
     if (Object.prototype.hasOwnProperty.call(updateData, "email")) {
       const existingEmail = this.normalizeEmail(existingBrand.email);
       const incomingEmail = this.normalizeEmail(updateData.email);
       if (existingEmail !== incomingEmail) {
+        brandEmailChangedFrom = existingEmail;
         if (existingBrand.isEmailVerified) {
           updateData.previousVerifiedEmail = existingEmail;
         }
@@ -3831,6 +3840,10 @@ export class UsersService implements OnModuleInit {
       { new: true },
     );
     if (!updated) return { message: "Brand not found", userId };
+    if (brandEmailChangedFrom) {
+      // To the OLD address: a takeover changes the email first.
+      sendSecurityAlert(brandEmailChangedFrom, `Your login email was changed to ${maskEmail((updated as any).email)}.`, (updated as any).brandName);
+    }
     await recordCreatorUpdate(this.brandModel, userId, changedSections);
     if (shouldClearBrandGallery) {
       await this.clearGalleryFlags(userId, "Brand");

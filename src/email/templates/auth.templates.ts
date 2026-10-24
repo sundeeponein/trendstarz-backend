@@ -170,3 +170,27 @@ export function payoutUpiChangedTemplate(params: {
   const text = `${params.name ? `Hi ${params.name},` : "Hi,"}\n\nThe UPI ID your TrendStarZ earnings are paid to was changed from ${params.previousMasked} to ${params.newMasked}.\nIf it wasn't you, change your password now and reply to this email so we hold your payouts.\n\n${params.settingsUrl}`;
   return { subject, html, text };
 }
+
+/** A sign-in detail changed (email or password) — so a takeover gets noticed. */
+export function securityAlertTemplate(params: {
+  name?: string;
+  /** Plain sentence, e.g. "Your password was changed." */
+  change: string;
+  settingsUrl: string;
+}): EmailTemplate {
+  const subject = "Security alert: your TrendStarZ account was changed";
+  const greeting = params.name ? `Hi ${escapeHtml(params.name)},` : "Hi,";
+  const when = new Date().toLocaleString("en-IN", { timeZone: "Asia/Kolkata", dateStyle: "medium", timeStyle: "short" });
+  const html = wrapEmail(
+    h2("Your account was changed") +
+      p(greeting) +
+      p(`${escapeHtml(params.change)} (${escapeHtml(when)} IST)`) +
+      p("If this was you, nothing else is needed.") +
+      p(
+        "<strong>If it wasn't you</strong>, reset your password straight away from the login page and reply to this email so we can secure your account and hold any payouts.",
+      ) +
+      btn("Open my settings", params.settingsUrl),
+  );
+  const text = `${params.name ? `Hi ${params.name},` : "Hi,"}\n\n${params.change} (${when} IST)\nIf it wasn't you, reset your password from the login page and reply to this email so we can secure your account.\n\n${params.settingsUrl}`;
+  return { subject, html, text };
+}

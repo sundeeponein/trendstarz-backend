@@ -45,6 +45,7 @@ import {
 import { idIn } from "../utils/id-match.util";
 import { takenAccountFields } from "../utils/account-uniqueness.util";
 import { sendAppEmail } from "../utils/app-email.service";
+import { maskEmail, sendSecurityAlert } from "../utils/security-alert.util";
 import { maskUpiId, normalizeUpiId, upiChangeFields, upiIdError } from "../utils/upi.util";
 import { payoutUpiChangedTemplate } from "../email/templates/auth.templates";
 
@@ -658,10 +659,12 @@ export class PhotographersService {
       }
     }
 
+    let emailChangedFrom = "";
     if (Object.prototype.hasOwnProperty.call(update, "email")) {
       const existingEmail = this.normalizeEmail(current.email);
       const incomingEmail = this.normalizeEmail(update.email);
       if (existingEmail !== incomingEmail) {
+        emailChangedFrom = existingEmail;
         if (current.isEmailVerified) {
           update.previousVerifiedEmail = existingEmail;
         }
@@ -689,6 +692,10 @@ export class PhotographersService {
       .findByIdAndUpdate(userId, { $set: update }, { new: true })
       .lean();
     if (!updated) throw new NotFoundException("Photographer not found");
+    if (emailChangedFrom) {
+      // To the OLD address: a takeover changes the email first.
+      sendSecurityAlert(emailChangedFrom, `Your login email was changed to ${maskEmail((updated as any).email)}.`, (updated as any).name);
+    }
     if (upiChange["payout.previousUpiId"] && (updated as any).email) {
       const frontend = process.env.FRONTEND_URL || "https://www.trendstarz.in";
       sendAppEmail({
