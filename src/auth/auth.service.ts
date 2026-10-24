@@ -1,4 +1,5 @@
 import { sendSecurityAlert } from "../utils/security-alert.util";
+import { LoginAttempts } from "./login-attempts.util";
 import { canonicalPhone } from "../utils/phone.util";
 import { invalidateAccountStatusCache } from "./jwt-auth.guard";
 import { graceHoursFromSettings } from "../campaigns/campaign-deadlines.util";
@@ -592,6 +593,7 @@ export class AuthService {
     this.clearTemporaryPassword(user);
     await user.save();
     sendSecurityAlert(user.email, "Your password was reset using a reset link.", user.name || user.brandName);
+    await this.loginAttempts.clear(String(user.email || "").toLowerCase()).catch(() => undefined);
     return { success: true, message: "Password reset successfully." };
   }
 
@@ -664,6 +666,7 @@ export class AuthService {
         : false;
     await match.user.save();
     sendSecurityAlert(match.user.email, "Your password was reset using a reset link.", match.user.name || match.user.brandName);
+    await this.loginAttempts.clear(String(match.user.email || "").toLowerCase()).catch(() => undefined);
 
     return {
       success: true,
@@ -1514,7 +1517,38 @@ export class AuthService {
     };
   }
 
+  private loginAttemptsIndexed = false;
+  private get loginAttempts(): LoginAttempts {
+    const collection = (this.userModel as any)?.db?.collection?.("login_failures") ?? null;
+    if (collection && !this.loginAttemptsIndexed) {
+      this.loginAttemptsIndexed = true;
+      LoginAttempts.init(collection).catch(() => (this.loginAttemptsIndexed = false));
+    }
+    return new LoginAttempts(collection);
+  }
+
   async login(
+    email: string,
+    password: string,
+    firebaseIdToken?: string,
+    options?: { localAuthBypass?: boolean },
+  ) {
+    const key = (email || "").trim().toLowerCase();
+    const attempts = this.loginAttempts;
+    await attempts.assertNotLocked(key);
+    try {
+      const result = await this.loginChecked(email, password, firebaseIdToken, options);
+      await attempts.clear(key).catch(() => undefined);
+      return result;
+    } catch (err) {
+      if (err instanceof UnauthorizedException && /invalid credentials/i.test(String((err as any)?.message))) {
+        await attempts.recordFailure(key).catch(() => undefined);
+      }
+      throw err;
+    }
+  }
+
+  private async loginChecked(
     email: string,
     password: string,
     firebaseIdToken?: string,
