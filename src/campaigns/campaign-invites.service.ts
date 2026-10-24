@@ -1941,7 +1941,7 @@ export class CampaignInvitesService {
       })
       .populate(
         "campaignId",
-        "title description script status campaignMode budgetMin budgetMax campaignType pricePerInfluencer maxInfluencers startDate endDate timelineStart timelineEnd acceptanceDeadline deliverables platforms socialMedia specialInstructions venueName venueAddress venueCity venueDistrict venueState venueGoogleMapUrl productValue productDescription productPaymentMode productPaymentAmount inviteBenefits image images galleryImages promotionUrlType promotionUrl suggestedCaption hashtags resourceImages campaignNumber",
+        "title description script status campaignMode budgetMin budgetMax campaignType pricePerInfluencer maxInfluencers startDate endDate timelineStart timelineEnd acceptanceDeadline deliverables platforms socialMedia specialInstructions venueName venueAddress venueCity venueDistrict venueState venueGoogleMapUrl productValue productDescription productPaymentMode productPaymentAmount inviteBenefits image images galleryImages promotionUrlType promotionUrl suggestedCaption hashtags resourceImages campaignNumber brandId",
       )
       .populate(
         "brandId",
@@ -1966,7 +1966,19 @@ export class CampaignInvitesService {
       photographerId,
     );
 
-    return visibleWithSubmissions.map((rawInv: any) => {
+    // Who sent it: a brand, or an influencer asking for a shoot (their requests
+    // are stored like brand campaigns, so the Brand lookup above finds nobody).
+    const senders = new Map<string, { role: string; name: string }>();
+    for (const inv of visibleWithSubmissions as any[]) {
+      if (inv?.brandId?.brandName) continue;
+      const ownerId = String(inv?.campaignId?.brandId || "");
+      if (ownerId && !senders.has(ownerId)) {
+        const sender = await this.resolveSenderProfile(ownerId).catch(() => null);
+        if (sender) senders.set(ownerId, { role: sender.role, name: sender.name });
+      }
+    }
+
+    const rows = visibleWithSubmissions.map((rawInv: any) => {
       const inv = {
         ...CampaignInvitesService.forParty(
           this.applyRecipientLocationVisibility(rawInv),
@@ -1989,6 +2001,13 @@ export class CampaignInvitesService {
         return { ...inv, brandId: safeBrand };
       }
       return inv;
+    });
+    return rows.map((inv: any) => {
+      const brandName = inv?.brandId?.brandName;
+      const sender = brandName
+        ? { role: "brand", name: brandName }
+        : senders.get(String(inv?.campaignId?.brandId || "")) || { role: "brand", name: "Brand" };
+      return { ...inv, sender };
     });
   }
 
