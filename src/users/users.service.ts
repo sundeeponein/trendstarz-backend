@@ -3158,6 +3158,12 @@ export class UsersService implements OnModuleInit {
         );
       }
     }
+    // What the profile said before, so a failed grant can put it back exactly
+    // (switching Premium off would also hit a user who is paying).
+    const premiumFields = "isPremium premiumDuration premiumStart premiumEnd premiumSource";
+    const previousModel =
+      type === "brand" ? this.brandModel : type === "photographer" ? this.photographerModel : this.influencerModel;
+    const previous: any = await previousModel.findById(id).select(premiumFields).lean();
     let user = null;
     let userType: "Influencer" | "Brand" | "Photographer" = "Influencer";
     if (type === "brand") {
@@ -3199,13 +3205,13 @@ export class UsersService implements OnModuleInit {
           }
         }
       } catch (e) {
-        // Roll back legacy flags to keep user status and capabilities consistent.
+        // Put the profile back exactly as it was before this grant.
         const rollback = {
-          isPremium: false,
-          premiumDuration: null,
-          premiumStart: null,
-          premiumEnd: null,
-          premiumSource: null,
+          isPremium: !!previous?.isPremium,
+          premiumDuration: previous?.premiumDuration ?? null,
+          premiumStart: previous?.premiumStart ?? null,
+          premiumEnd: previous?.premiumEnd ?? null,
+          premiumSource: previous?.premiumSource ?? null,
         };
         if (userType === "Brand") {
           await this.brandModel.findByIdAndUpdate(id, rollback);

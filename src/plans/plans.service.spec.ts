@@ -234,11 +234,11 @@ describe("PlansService", () => {
       );
     });
 
-    const currentSubEndingAt = (end: Date | null) =>
+    const currentSubEndingAt = (end: Date | null, source = "payment") =>
       subscriptionModel.findOne.mockReturnValueOnce({
         sort: jest.fn().mockReturnValue({
           select: jest.fn().mockReturnValue({
-            lean: jest.fn().mockResolvedValue(end ? { endDate: end } : null),
+            lean: jest.fn().mockResolvedValue(end ? { endDate: end, source } : null),
           }),
         }),
       });
@@ -253,8 +253,17 @@ describe("PlansService", () => {
       expect(createdEnd().getTime()).toBe(expected.getTime());
     });
 
-    it("an admin grant keeps its exact length from today (doesn't stack)", async () => {
-      subscriptionModel.findOne.mockClear();
+    it("an admin grant on top of PAID time starts after it (paid days are never lost)", async () => {
+      const paidEnd = new Date(Date.now() + 300 * 86400000); // ~10 paid months left
+      currentSubEndingAt(paidEnd, "payment");
+      await service.activateSubscription(VALID_USER_ID, "Influencer", VALID_PLAN_ID, "1m", "admin");
+      const expected = new Date(paidEnd);
+      expected.setMonth(expected.getMonth() + 1);
+      expect(createdEnd().getTime()).toBe(expected.getTime());
+    });
+
+    it("re-granting on top of an admin grant keeps its exact length from today (doesn't stack)", async () => {
+      currentSubEndingAt(new Date(Date.now() + 20 * 86400000), "admin");
       const before = Date.now();
       await service.activateSubscription(VALID_USER_ID, "Influencer", VALID_PLAN_ID, "1m", "admin");
       const lo = new Date(before); lo.setMonth(lo.getMonth() + 1);

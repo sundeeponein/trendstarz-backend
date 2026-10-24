@@ -306,18 +306,21 @@ export class PlansService {
     // A paid renewal while Premium is still running extends from the current end
     // date — the user keeps the days they already paid for. Admin grants keep the
     // exact requested length from today.
+    // An admin grant on top of PAID time starts after it (replacing it lost the
+    // days the user paid for); on top of another admin grant it still resets to
+    // the exact length from today.
     let base = now;
-    if (source === "payment") {
-      const current: any = await this.subscriptionModel
-        .findOne({
-          userId: new Types.ObjectId(userId),
-          status: "active",
-          endDate: { $gt: now },
-        })
-        .sort({ endDate: -1 })
-        .select("endDate")
-        .lean();
-      if (current?.endDate) base = new Date(current.endDate);
+    const current: any = await this.subscriptionModel
+      .findOne({
+        userId: new Types.ObjectId(userId),
+        status: "active",
+        endDate: { $gt: now },
+      })
+      .sort({ endDate: -1 })
+      .select("endDate source")
+      .lean();
+    if (current?.endDate && (source === "payment" || current.source !== "admin")) {
+      base = new Date(current.endDate);
     }
 
     // Expire any existing active subscription (replaced by the one below)
