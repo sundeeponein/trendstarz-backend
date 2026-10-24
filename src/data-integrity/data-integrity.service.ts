@@ -22,6 +22,8 @@ export const EXPLAINABLE_CHECKS = [
   "money_adds_up",
   "utr_used_twice",
   "credit_ledger_adds_up",
+  "paid_rescore_delivered",
+  "dangling_references",
 ];
 import { sendAppEmail } from "../utils/app-email.service";
 import { SingleInstance } from "../utils/single-instance";

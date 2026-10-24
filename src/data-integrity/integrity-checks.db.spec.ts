@@ -57,6 +57,14 @@ describe("data integrity checks (real MongoDB)", () => {
     expect(checks).toHaveLength(16);
   });
 
+  it("every check with 'Mark as explained' buttons is accepted by the explain endpoint", async () => {
+    const { EXPLAINABLE_CHECKS } = require("./data-integrity.service");
+    const checks = await runIntegrityChecks(db);
+    for (const c of checks.filter((x) => x.refs !== undefined)) {
+      expect(EXPLAINABLE_CHECKS).toContain(c.key);
+    }
+  });
+
   it("flags each kind of problem in its own check", async () => {
     await db.collection("reviews").dropIndex(REQUIRED_INDEXES[1][1]);
     const camp = new Types.ObjectId().toHexString();
