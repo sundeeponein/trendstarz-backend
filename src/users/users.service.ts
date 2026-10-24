@@ -3304,6 +3304,8 @@ export class UsersService implements OnModuleInit {
       firstRegisteredAt: user.firstRegisteredAt || user.createdAt || null,
       lastLoginAt: user.lastLoginAt || null,
       lastOpenedAt: user.lastOpenedAt || null,
+      // The dashboard shows the one-time welcome popup only while this is empty.
+      founderOfferSeenAt: user.founderOfferSeenAt || null,
       promotionalPrice: user.promotionalPrice,
       payout: user.payout || {
         upiId: "",
@@ -3383,6 +3385,8 @@ export class UsersService implements OnModuleInit {
       firstRegisteredAt: user.firstRegisteredAt || user.createdAt || null,
       lastLoginAt: user.lastLoginAt || null,
       lastOpenedAt: user.lastOpenedAt || null,
+      // The dashboard shows the one-time welcome popup only while this is empty.
+      founderOfferSeenAt: user.founderOfferSeenAt || null,
       isEmailVerified: user.isEmailVerified || false,
       isMobileVerified: user.isMobileVerified || false,
       planCapabilities,

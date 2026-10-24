@@ -1,6 +1,7 @@
 import { Injectable, NotFoundException } from "@nestjs/common";
 import { InjectModel } from "@nestjs/mongoose";
 import { Model } from "mongoose";
+import { creatorNotificationUrl } from "../utils/notification-target.util";
 
 @Injectable()
 export class NotificationsService {
@@ -21,7 +22,7 @@ export class NotificationsService {
       userRole: data.userRole,
       title: data.title,
       body: data.body,
-      url: data.url || "",
+      url: creatorNotificationUrl(data.url || "", data.title, data.body),
       read: false,
     });
   }

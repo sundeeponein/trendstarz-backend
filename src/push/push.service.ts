@@ -2,6 +2,7 @@ import { BadRequestException, Injectable, Logger, OnModuleInit } from "@nestjs/c
 import { InjectModel } from "@nestjs/mongoose";
 import { Model } from "mongoose";
 import * as webpush from "web-push";
+import { creatorNotificationUrl } from "../utils/notification-target.util";
 
 @Injectable()
 export class PushService implements OnModuleInit {
@@ -138,7 +139,7 @@ export class PushService implements OnModuleInit {
         body: payload.body,
         icon: payload.icon,
         data: payload.url
-          ? { onActionClick: { default: { url: payload.url } } }
+          ? { onActionClick: { default: { url: creatorNotificationUrl(payload.url, payload.title, payload.body) } } }
           : undefined,
       },
     });
