@@ -2499,7 +2499,7 @@ export class CampaignsService {
     const dashboardPath =
       String(inviteRecipientRole || "influencer") === "photographer"
         ? "/photographer-dashboard"
-        : "/influencer-dashboard/invites";
+        : "/influencer-dashboard"; // (was /influencer-dashboard/invites — no such page)
     const campaignUrl = `${frontendBase}${dashboardPath}`;
     const acceptedCount = ENABLE_CAMPAIGN_WHATSAPP
       ? await this.campaignInviteModel.countDocuments({
@@ -2541,7 +2541,7 @@ export class CampaignsService {
             userRole,
             title: "New campaign invite",
             body,
-            url: dashboardPath,
+            url: `${dashboardPath}?invite=${invite._id}`,
           })
           .catch(() => {});
 
@@ -2549,7 +2549,7 @@ export class CampaignsService {
           .sendToUser(String(recipient._id), {
             title: "New campaign invite",
             body,
-            url: dashboardPath,
+            url: `${dashboardPath}?invite=${invite._id}`,
           }, 'campaign')
           .catch(() => {});
 

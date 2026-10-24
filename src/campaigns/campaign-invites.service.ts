@@ -1441,10 +1441,8 @@ export class CampaignInvitesService {
             {
               title: "New Campaign Invite 🎉",
               body: `${sender.name || "A creator"} invited you to "${campaign.title}"`,
-              url:
-                recipientRole === "photographer"
-                  ? "/photographer-dashboard"
-                  : "/influencer-dashboard",
+              // Opens this invite directly on the dashboard.
+              url: `${recipientRole === "photographer" ? "/photographer-dashboard" : "/influencer-dashboard"}?invite=${saved._id}`,
             },
             "campaign",
           )
@@ -1457,10 +1455,8 @@ export class CampaignInvitesService {
             userRole: recipientRole,
             title: "New Campaign Invite",
             body: `${sender.name || "A creator"} invited you to "${campaign.title}"`,
-            url:
-              recipientRole === "photographer"
-                ? "/photographer-dashboard"
-                : "/influencer-dashboard",
+            // Opens this invite directly on the dashboard.
+            url: `${recipientRole === "photographer" ? "/photographer-dashboard" : "/influencer-dashboard"}?invite=${saved._id}`,
           })
           .catch(() => {
             /* non-critical */
@@ -2418,7 +2414,7 @@ export class CampaignInvitesService {
           (process.env.FRONTEND_URL || "https://trendstarz.in").replace(
             /\/$/,
             "",
-          ) + "/influencer-dashboard/invites";
+          ) + `/influencer-dashboard?invite=${invite._id}`; // opens this invite (/invites didn't exist)
         const reminderTpl = inviteReminderTemplate({
           recipientName: influencer.name || "",
           brandName,
