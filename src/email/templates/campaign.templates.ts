@@ -1,4 +1,4 @@
-import { wrapEmail, h2, p, btn, TEXT_MUTED, EmailTemplate } from "../layout";
+import { escapeHtmlFields, wrapEmail, h2, p, btn, TEXT_MUTED, EmailTemplate } from "../layout";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // 1. New Campaign Invite
@@ -13,15 +13,17 @@ export interface NewInviteData {
 
 export function newCampaignInviteTemplate(data: NewInviteData): EmailTemplate {
   const { recipientName, senderName, campaignTitle, dashboardUrl } = data;
+  // HTML-escaped copies of the user-typed values, for the html body only.
+  const e = escapeHtmlFields(data);
   const subject = "New Campaign Invite";
 
   const html = wrapEmail(
     h2("You have a new invite! 🎉") +
-      p(`Hi <strong>${recipientName}</strong>,`) +
+      p(`Hi <strong>${e.recipientName}</strong>,`) +
       p(
-        `<strong>${senderName}</strong> has invited you to collaborate on the campaign:`,
+        `<strong>${e.senderName}</strong> has invited you to collaborate on the campaign:`,
       ) +
-      `<p style="margin:12px 0;padding:12px 16px;background:#f0f4ff;border-left:4px solid #0d6efd;border-radius:4px;font-weight:600;">"${campaignTitle}"</p>` +
+      `<p style="margin:12px 0;padding:12px 16px;background:#f0f4ff;border-left:4px solid #0d6efd;border-radius:4px;font-weight:600;">"${e.campaignTitle}"</p>` +
       p("Log in to TrendStarz to review the invite and respond.") +
       btn("View my invites", dashboardUrl) +
       p(
@@ -49,6 +51,8 @@ export interface ReminderData {
 
 export function inviteReminderTemplate(data: ReminderData): EmailTemplate {
   const { recipientName, brandName, campaignTitle, dueDate, inviteUrl } = data;
+  // HTML-escaped copies of the user-typed values, for the html body only.
+  const e = escapeHtmlFields(data);
   const subject = `Reminder: ${brandName} is waiting on "${campaignTitle}"`;
 
   const dueLine = dueDate
@@ -60,9 +64,9 @@ export function inviteReminderTemplate(data: ReminderData): EmailTemplate {
 
   const html = wrapEmail(
     h2("Friendly reminder") +
-      p(`Hi <strong>${recipientName}</strong>,`) +
+      p(`Hi <strong>${e.recipientName}</strong>,`) +
       p(
-        `<strong>${brandName}</strong> is waiting on your response for the campaign <strong>"${campaignTitle}"</strong>.`,
+        `<strong>${e.brandName}</strong> is waiting on your response for the campaign <strong>"${e.campaignTitle}"</strong>.`,
       ) +
       dueHtml +
       btn("Open my invites", inviteUrl) +
@@ -92,15 +96,17 @@ export function inviteAcceptedTemplate(
   data: InviteAcceptedData,
 ): EmailTemplate {
   const { brandName, recipientName, campaignTitle, dashboardUrl } = data;
+  // HTML-escaped copies of the user-typed values, for the html body only.
+  const e = escapeHtmlFields(data);
   const subject = "Campaign Invite Accepted ✅";
 
   const html = wrapEmail(
     h2("Invite accepted!") +
-      p(`Hi <strong>${brandName}</strong>,`) +
+      p(`Hi <strong>${e.brandName}</strong>,`) +
       p(
-        `<strong>${recipientName}</strong> has accepted your campaign invite for:`,
+        `<strong>${e.recipientName}</strong> has accepted your campaign invite for:`,
       ) +
-      `<p style="margin:12px 0;padding:12px 16px;background:#f0fdf4;border-left:4px solid #16a34a;border-radius:4px;font-weight:600;">"${campaignTitle}"</p>` +
+      `<p style="margin:12px 0;padding:12px 16px;background:#f0fdf4;border-left:4px solid #16a34a;border-radius:4px;font-weight:600;">"${e.campaignTitle}"</p>` +
       p("You can monitor their progress from your campaign dashboard.") +
       btn("Go to campaign management", dashboardUrl) +
       p(
@@ -127,13 +133,15 @@ export interface PostSubmittedData {
 
 export function postSubmittedTemplate(data: PostSubmittedData): EmailTemplate {
   const { brandName, influencerName, campaignTitle, dashboardUrl } = data;
+  // HTML-escaped copies of the user-typed values, for the html body only.
+  const e = escapeHtmlFields(data);
   const subject = "Post Submitted for Review";
 
   const html = wrapEmail(
     h2("A post is ready for your review") +
-      p(`Hi <strong>${brandName}</strong>,`) +
-      p(`<strong>${influencerName}</strong> has submitted their post for:`) +
-      `<p style="margin:12px 0;padding:12px 16px;background:#f0f4ff;border-left:4px solid #0d6efd;border-radius:4px;font-weight:600;">"${campaignTitle}"</p>` +
+      p(`Hi <strong>${e.brandName}</strong>,`) +
+      p(`<strong>${e.influencerName}</strong> has submitted their post for:`) +
+      `<p style="margin:12px 0;padding:12px 16px;background:#f0f4ff;border-left:4px solid #0d6efd;border-radius:4px;font-weight:600;">"${e.campaignTitle}"</p>` +
       p("Please review it and mark it as approved or raise a dispute.") +
       btn("Review submission", dashboardUrl),
   );
@@ -155,13 +163,15 @@ export interface PostApprovedData {
 
 export function postApprovedTemplate(data: PostApprovedData): EmailTemplate {
   const { influencerName, campaignTitle, dashboardUrl } = data;
+  // HTML-escaped copies of the user-typed values, for the html body only.
+  const e = escapeHtmlFields(data);
   const subject = "Brand approved your post! 🎉";
 
   const html = wrapEmail(
     h2("Your post has been approved!") +
-      p(`Hi <strong>${influencerName}</strong>,`) +
+      p(`Hi <strong>${e.influencerName}</strong>,`) +
       p(`Great news — the brand has reviewed and approved your post for:`) +
-      `<p style="margin:12px 0;padding:12px 16px;background:#f0fdf4;border-left:4px solid #16a34a;border-radius:4px;font-weight:600;">"${campaignTitle}"</p>` +
+      `<p style="margin:12px 0;padding:12px 16px;background:#f0fdf4;border-left:4px solid #16a34a;border-radius:4px;font-weight:600;">"${e.campaignTitle}"</p>` +
       p(
         "Your payout is now being processed. You will receive a confirmation once it has been sent.",
       ) +
@@ -185,13 +195,15 @@ export interface AutoApprovedData {
 
 export function autoApprovedTemplate(data: AutoApprovedData): EmailTemplate {
   const { influencerName, campaignTitle, dashboardUrl } = data;
+  // HTML-escaped copies of the user-typed values, for the html body only.
+  const e = escapeHtmlFields(data);
   const subject = "Your post was auto-approved ✅";
 
   const html = wrapEmail(
     h2("Auto-approved after 48 hours") +
-      p(`Hi <strong>${influencerName}</strong>,`) +
+      p(`Hi <strong>${e.influencerName}</strong>,`) +
       p(
-        `Your submission for <strong>"${campaignTitle}"</strong> was automatically approved after 48 hours with no brand review.`,
+        `Your submission for <strong>"${e.campaignTitle}"</strong> was automatically approved after 48 hours with no brand review.`,
       ) +
       p(
         "Your payout is now queued for processing. You will receive a confirmation email once payment is sent.",
@@ -225,14 +237,16 @@ export function openCampaignLiveTemplate(
 ): EmailTemplate {
   const { influencerName, campaignTitle, brandName, location, campaignUrl } =
     data;
+  // HTML-escaped copies of the user-typed values, for the html body only.
+  const e = escapeHtmlFields(data);
   const hasLocation = !!location;
   const subject = hasLocation
     ? `New campaign opportunity in ${location} 🎯`
     : `New open campaign — apply now! 🎯`;
 
   const locationLine = hasLocation
-    ? p(`<strong>${brandName}</strong> has launched a new open campaign that matches your location (<strong>${location}</strong>):`)
-    : p(`<strong>${brandName}</strong> has launched a new open campaign — open to creators across India:`);
+    ? p(`<strong>${e.brandName}</strong> has launched a new open campaign that matches your location (<strong>${e.location}</strong>):`)
+    : p(`<strong>${e.brandName}</strong> has launched a new open campaign — open to creators across India:`);
 
   const footerNote = hasLocation
     ? `You are receiving this because your profile location matches the campaign's target area.`
@@ -240,9 +254,9 @@ export function openCampaignLiveTemplate(
 
   const html = wrapEmail(
     h2(hasLocation ? "A new campaign is live near you!" : "A new campaign is live!") +
-      p(`Hi <strong>${influencerName}</strong>,`) +
+      p(`Hi <strong>${e.influencerName}</strong>,`) +
       locationLine +
-      `<p style="margin:12px 0;padding:12px 16px;background:#fff7ed;border-left:4px solid #f97316;border-radius:4px;font-weight:600;">"${campaignTitle}"</p>` +
+      `<p style="margin:12px 0;padding:12px 16px;background:#fff7ed;border-left:4px solid #f97316;border-radius:4px;font-weight:600;">"${e.campaignTitle}"</p>` +
       p(
         "This is an open campaign — you can apply directly from your dashboard. Spots are limited, so apply early!",
       ) +
@@ -271,13 +285,15 @@ export function inviteCampaignLiveTemplate(
   data: InviteCampaignLiveData,
 ): EmailTemplate {
   const { recipientName, campaignTitle, brandName, campaignUrl } = data;
+  // HTML-escaped copies of the user-typed values, for the html body only.
+  const e = escapeHtmlFields(data);
   const subject = `Your invited campaign is live! 🚀`;
 
   const html = wrapEmail(
     h2("Your campaign is live!") +
-      p(`Hi <strong>${recipientName}</strong>,`) +
+      p(`Hi <strong>${e.recipientName}</strong>,`) +
       p(
-        `Great news! The campaign <strong>"${campaignTitle}"</strong> from <strong>${brandName}</strong> is now live and ready for you to respond to.`,
+        `Great news! The campaign <strong>"${e.campaignTitle}"</strong> from <strong>${e.brandName}</strong> is now live and ready for you to respond to.`,
       ) +
       `<p style="margin:12px 0;padding:12px 16px;background:#f0fdf4;border-left:4px solid #16a34a;border-radius:4px;font-weight:600;"><i class="bi bi-lightning-charge"></i> Campaign is now active</p>` +
       p(

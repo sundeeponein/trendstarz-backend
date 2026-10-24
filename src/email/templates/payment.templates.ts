@@ -1,4 +1,4 @@
-import { wrapEmail, h2, p, btn, kv, TEXT_MUTED, EmailTemplate } from '../layout';
+import { escapeHtmlFields, wrapEmail, h2, p, btn, kv, TEXT_MUTED, EmailTemplate } from '../layout';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // 1. New Payment Proof — Admin Alert
@@ -13,13 +13,15 @@ export interface PaymentProofAdminData {
 
 export function paymentProofAdminTemplate(data: PaymentProofAdminData): EmailTemplate {
   const { campaignTitle, utrNumber, recipientCount, adminUrl } = data;
+  // HTML-escaped copies of the user-typed values, for the html body only.
+  const e = escapeHtmlFields(data);
   const subject = `[TrendStarz] New payment proof — ${campaignTitle}`;
 
   const html = wrapEmail(
     h2('New payment proof submitted') +
     p(`A brand has submitted a UTR reference for:`) +
-    `<p style="margin:12px 0;padding:12px 16px;background:#f0f4ff;border-left:4px solid #0d6efd;border-radius:4px;font-weight:600;">"${campaignTitle}"</p>` +
-    kv('UTR', utrNumber) +
+    `<p style="margin:12px 0;padding:12px 16px;background:#f0f4ff;border-left:4px solid #0d6efd;border-radius:4px;font-weight:600;">"${e.campaignTitle}"</p>` +
+    kv('UTR', e.utrNumber) +
     kv('Recipients', String(recipientCount)) +
     btn('Review in admin panel', adminUrl),
   );
@@ -41,13 +43,15 @@ export interface PaymentVerifiedInfluencerData {
 
 export function paymentVerifiedInfluencerTemplate(data: PaymentVerifiedInfluencerData): EmailTemplate {
   const { recipientName, campaignTitle, dashboardUrl } = data;
+  // HTML-escaped copies of the user-typed values, for the html body only.
+  const e = escapeHtmlFields(data);
   const subject = '[TrendStarz] Verified — you can start posting';
 
   const html = wrapEmail(
     h2('Payment verified — you can start posting! ✅') +
-    p(`Hi <strong>${recipientName}</strong>,`) +
+    p(`Hi <strong>${e.recipientName}</strong>,`) +
     p(`Good news! The brand payment has been verified for:`) +
-    `<p style="margin:12px 0;padding:12px 16px;background:#f0fdf4;border-left:4px solid #16a34a;border-radius:4px;font-weight:600;">"${campaignTitle}"</p>` +
+    `<p style="margin:12px 0;padding:12px 16px;background:#f0fdf4;border-left:4px solid #16a34a;border-radius:4px;font-weight:600;">"${e.campaignTitle}"</p>` +
     p('You can now start creating and posting your content.') +
     btn('Open my dashboard', dashboardUrl) +
     p('Thank you for collaborating with TrendStarz!', `color:${TEXT_MUTED};font-size:13px;`),
@@ -69,11 +73,13 @@ export interface PaymentVerifiedBrandData {
 
 export function paymentVerifiedBrandTemplate(data: PaymentVerifiedBrandData): EmailTemplate {
   const { brandName, dashboardUrl } = data;
+  // HTML-escaped copies of the user-typed values, for the html body only.
+  const e = escapeHtmlFields(data);
   const subject = '[TrendStarz] Payment verified — influencers can now begin work';
 
   const html = wrapEmail(
     h2('Payment verified! 🎉') +
-    p(`Hi <strong>${brandName}</strong>,`) +
+    p(`Hi <strong>${e.brandName}</strong>,`) +
     p('Your campaign payment has been verified. Influencers have been notified and can now begin creating content.') +
     btn('Monitor campaign progress', dashboardUrl) +
     p('You will receive updates as creators submit their work.', `color:${TEXT_MUTED};font-size:13px;`),
@@ -96,14 +102,16 @@ export interface PaymentRejectedData {
 
 export function paymentRejectedTemplate(data: PaymentRejectedData): EmailTemplate {
   const { brandName, reason, resubmitUrl } = data;
+  // HTML-escaped copies of the user-typed values, for the html body only.
+  const e = escapeHtmlFields(data);
   const subject = '[TrendStarz] Action required — payment proof could not be verified';
 
   const html = wrapEmail(
     h2('Payment proof could not be verified') +
-    p(`Hi <strong>${brandName}</strong>,`) +
+    p(`Hi <strong>${e.brandName}</strong>,`) +
     p('Unfortunately, your payment proof could not be verified.') +
     `<p style="margin:12px 0;padding:12px 16px;background:#fff7ed;border-left:4px solid #f97316;border-radius:4px;">
-      <strong>Reason:</strong> ${reason || 'No reason provided.'}
+      <strong>Reason:</strong> ${e.reason || 'No reason provided.'}
     </p>` +
     p('Please resubmit with a valid UTR reference.') +
     btn('Resubmit payment proof', resubmitUrl) +
@@ -128,14 +136,16 @@ export interface PayoutSentData {
 
 export function payoutSentTemplate(data: PayoutSentData): EmailTemplate {
   const { recipientName, amount, upiId, payoutUtr } = data;
+  // HTML-escaped copies of the user-typed values, for the html body only.
+  const e = escapeHtmlFields(data);
   const subject = '[TrendStarz] Your payout has been sent! 🎉';
 
   const html = wrapEmail(
     h2('Your payout has been sent!') +
-    p(`Hi <strong>${recipientName}</strong>,`) +
-    p(`Great news! <strong>${amount}</strong> has been sent to your UPI account:`) +
-    kv('UPI account', upiId || 'on file') +
-    kv('UTR Reference', payoutUtr) +
+    p(`Hi <strong>${e.recipientName}</strong>,`) +
+    p(`Great news! <strong>${e.amount}</strong> has been sent to your UPI account:`) +
+    kv('UPI account', e.upiId || 'on file') +
+    kv('UTR Reference', e.payoutUtr) +
     p('Funds typically arrive within minutes. Contact your bank if they do not arrive within 24 hours.', `color:${TEXT_MUTED};font-size:13px;margin-top:16px;`) +
     p('Thank you for collaborating with TrendStarz!', `color:${TEXT_MUTED};font-size:13px;`),
   );

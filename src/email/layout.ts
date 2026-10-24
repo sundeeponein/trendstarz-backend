@@ -18,6 +18,23 @@ export const BG_FOOTER = "#f9fafb";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
+/** Text typed by users (names, campaign titles, reasons) must not become HTML in an email. */
+export function escapeHtml(value: unknown): string {
+  return String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+/** Every string field of `data`, HTML-escaped — use these inside the html body only. */
+export function escapeHtmlFields<T extends object>(data: T): { [K in keyof T]: T[K] } {
+  const out: any = {};
+  for (const [k, v] of Object.entries(data || {})) out[k] = typeof v === "string" ? escapeHtml(v) : v;
+  return out;
+}
+
 /** Heading inside an email card */
 export function h2(text: string): string {
   return `<h2 style="margin:0 0 12px 0;font-size:20px;color:${TEXT_MAIN};">${text}</h2>`;
