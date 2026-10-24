@@ -187,6 +187,11 @@ export class MonetizationService {
   }) {
     const invite: any = await this.inviteModel.findById(input.inviteId).lean();
     if (!invite) throw new NotFoundException("Invite not found");
+    // Paying unlocks this invite: only its host or creator may (anyone could
+    // otherwise change someone else's invite).
+    if (![String(invite.brandId), String(invite.influencerId)].includes(String(input.payerId))) {
+      throw new NotFoundException("Invite not found");
+    }
 
     if (!["accepted", "payment_confirmed", "working", "submitted", "completed"].includes(String(invite.status || ""))) {
       throw new BadRequestException("Invite must be accepted before unlock payment.");
