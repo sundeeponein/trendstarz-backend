@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Post, Req, UseGuards } from "@nestjs/common";
+import { Body, Controller, Get, Post, Query, Req, UseGuards } from "@nestjs/common";
 import { JwtAuthGuard } from "../auth/jwt-auth.guard";
 import { RolesGuard } from "../auth/roles.guard";
 import { DataIntegrityService } from "./data-integrity.service";
@@ -26,6 +26,12 @@ export class DataIntegrityController {
     @Body() body: { check?: string; ref?: string; reason?: string },
   ) {
     return this.service.explain(body, String(req.user?.userId || ""));
+  }
+
+  /** Captured Razorpay payments of the last ?days=N (default 7, max 60) that TrendStarZ didn't complete. */
+  @Get("razorpay-reconcile")
+  reconcile(@Query("days") days?: string) {
+    return this.service.reconcileRazorpay(Number(days) || 7);
   }
 
   @Get("explanations")

@@ -26,6 +26,7 @@ export const EXPLAINABLE_CHECKS = [
   "dangling_references",
 ];
 import { sendAppEmail } from "../utils/app-email.service";
+import { reconcileRazorpay } from "./razorpay-reconcile";
 import { SingleInstance } from "../utils/single-instance";
 
 const RUNS = "data_integrity_runs";
@@ -52,6 +53,19 @@ export class DataIntegrityService implements OnModuleInit {
   private readonly logger = new Logger(DataIntegrityService.name);
 
   constructor(@InjectConnection() private readonly connection: Connection) {}
+
+  /** Razorpay vs TrendStarZ for the last `days` days (read-only). */
+  async reconcileRazorpay(days: number) {
+    try {
+      return { success: true, data: await reconcileRazorpay(this.connection.db as any, days) };
+    } catch (err: any) {
+      // Reduced to a status — never the key or the request.
+      const status = err?.statusCode || err?.error?.code || "";
+      throw new BadRequestException(
+        `Couldn't read payments from Razorpay${status ? ` (${status})` : ""}: ${err?.error?.description || err?.message || "error"}`.slice(0, 200),
+      );
+    }
+  }
 
   async onModuleInit() {
     try {
