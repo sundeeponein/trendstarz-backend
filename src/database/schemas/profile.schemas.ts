@@ -466,6 +466,10 @@ export const InfluencerSchema = new Schema(
       mobile: { type: String, default: "" },
       accountHolderName: { type: String, default: "" },
       lastConfirmedAt: { type: Date, default: null },
+      // When the UPI ID last changed and what it was — admins see "changed
+      // recently" before paying, and the creator is emailed about the change.
+      upiChangedAt: { type: Date, default: null },
+      previousUpiId: { type: String, default: "" },
     },
     // Self-service "please call me to verify my mobile" ask — cleared once
     // the number is verified. Surfaced to admins in the Admin Users table.
@@ -982,6 +986,10 @@ export const PhotographerSchema = new Schema(
       mobile: { type: String, default: "" },
       accountHolderName: { type: String, default: "" },
       lastConfirmedAt: { type: Date, default: null },
+      // When the UPI ID last changed and what it was — admins see "changed
+      // recently" before paying, and the creator is emailed about the change.
+      upiChangedAt: { type: Date, default: null },
+      previousUpiId: { type: String, default: "" },
     },
     // Self-service "please call me to verify my mobile" ask — cleared once
     // the number is verified. Surfaced to admins in the Admin Users table.

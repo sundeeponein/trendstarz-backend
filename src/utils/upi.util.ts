@@ -35,3 +35,22 @@ export function payoutFromInput(
     accountHolderName: String(input?.accountHolderName ?? "").trim(),
   };
 }
+
+/**
+ * The extra fields to save when a creator's payout UPI ID changes (nothing when
+ * it's the same or only newly added): when, and what it was before.
+ */
+export function upiChangeFields(previous: unknown, next: unknown, now = new Date()): Record<string, any> {
+  const before = normalizeUpiId(previous);
+  const after = normalizeUpiId(next);
+  if (!before || before === after) return {};
+  return { "payout.upiChangedAt": now, "payout.previousUpiId": before };
+}
+
+/** "ab***@okaxis" — enough for the owner to recognise, not enough to reuse. */
+export function maskUpiId(value: unknown): string {
+  const upi = normalizeUpiId(value);
+  const [name, bank] = upi.split("@");
+  if (!name || !bank) return upi ? "***" : "";
+  return `${name.slice(0, 2)}***@${bank}`;
+}

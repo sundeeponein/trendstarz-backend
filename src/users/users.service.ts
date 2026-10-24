@@ -75,7 +75,8 @@ function maskEmail(email: string): string {
   const masked = name.length <= 2 ? `${name[0] || ""}*` : `${name[0]}${"*".repeat(Math.min(name.length - 2, 5))}${name[name.length - 1]}`;
   return `${masked}@${domain}`;
 }
-import { normalizeUpiId, upiIdError } from "../utils/upi.util";
+import { maskUpiId, normalizeUpiId, upiChangeFields, upiIdError } from "../utils/upi.util";
+import { payoutUpiChangedTemplate } from "../email/templates/auth.templates";
 
 /** Self-service "Delete Account" grace period — see requestSelfDeletion. */
 export const SELF_DELETION_GRACE_PERIOD_DAYS =
@@ -3387,6 +3388,21 @@ export class UsersService implements OnModuleInit {
     };
   }
 
+  /** Emails the owner that their payout UPI ID changed (best effort). */
+  private notifyPayoutUpiChanged(user: any, previousUpiId: string) {
+    if (!user?.email) return;
+    const frontend = process.env.FRONTEND_URL || "https://www.trendstarz.in";
+    sendAppEmail({
+      to: user.email,
+      ...payoutUpiChangedTemplate({
+        name: user.name || user.username || "",
+        previousMasked: maskUpiId(previousUpiId),
+        newMasked: maskUpiId(user.payout?.upiId),
+        settingsUrl: `${frontend}/settings`,
+      }),
+    }).catch((err: unknown) => console.error("[payout] UPI change email failed:", err));
+  }
+
   async updateInfluencerProfile(
     userId: string,
     update: any,
@@ -3565,6 +3581,13 @@ export class UsersService implements OnModuleInit {
       }
     }
 
+    // A changed payout UPI ID is recorded (admins see it) and the owner is told.
+    const upiChange =
+      updateData["payout.upiId"] !== undefined
+        ? upiChangeFields(userDoc.payout?.upiId, updateData["payout.upiId"])
+        : {};
+    Object.assign(updateData, upiChange);
+
     for (const [key, value] of Object.entries(updateData)) {
       userDoc.set(key, value);
     }
@@ -3615,6 +3638,9 @@ export class UsersService implements OnModuleInit {
     }
 
     const updated = await userDoc.save();
+    if (upiChange["payout.previousUpiId"]) {
+      this.notifyPayoutUpiChanged(updated, upiChange["payout.previousUpiId"]);
+    }
     await recordCreatorUpdate(this.influencerModel, userId, changedSections);
     if (shouldReviewPhoto) {
       await this.clearProfilePhotoFlags(userId, "Influencer");

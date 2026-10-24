@@ -44,7 +44,9 @@ import {
 } from "../utils/profile-eligibility.util";
 import { idIn } from "../utils/id-match.util";
 import { takenAccountFields } from "../utils/account-uniqueness.util";
-import { normalizeUpiId, upiIdError } from "../utils/upi.util";
+import { sendAppEmail } from "../utils/app-email.service";
+import { maskUpiId, normalizeUpiId, upiChangeFields, upiIdError } from "../utils/upi.util";
+import { payoutUpiChangedTemplate } from "../email/templates/auth.templates";
 
 const PROFILE_PHOTO_VISIBILITY_BLOCK_FLAG_CODES = [
   "PROFILE_PHOTO_PENDING_REVIEW",
@@ -591,7 +593,7 @@ export class PhotographersService {
     const current: any = await this.photographerModel
       .findById(userId)
       .select(
-        "phoneNumber email isMobileVerified isEmailVerified profileImages socialMedia collaborationAvailability",
+        "phoneNumber email isMobileVerified isEmailVerified profileImages socialMedia collaborationAvailability payout",
       )
       .lean();
     if (!current) throw new NotFoundException("Photographer not found");
@@ -679,10 +681,26 @@ export class PhotographersService {
       .select(sectionsProjection(update))
       .lean();
     const changedSections = changedProfileSections(photographerBefore, update);
+    // A changed payout UPI ID is recorded (admins see it) and the owner is told.
+    const upiChange =
+      update["payout.upiId"] !== undefined ? upiChangeFields(current?.payout?.upiId, update["payout.upiId"]) : {};
+    Object.assign(update, upiChange);
     const updated = await this.photographerModel
       .findByIdAndUpdate(userId, { $set: update }, { new: true })
       .lean();
     if (!updated) throw new NotFoundException("Photographer not found");
+    if (upiChange["payout.previousUpiId"] && (updated as any).email) {
+      const frontend = process.env.FRONTEND_URL || "https://www.trendstarz.in";
+      sendAppEmail({
+        to: (updated as any).email,
+        ...payoutUpiChangedTemplate({
+          name: (updated as any).name || "",
+          previousMasked: maskUpiId(upiChange["payout.previousUpiId"]),
+          newMasked: maskUpiId((updated as any).payout?.upiId),
+          settingsUrl: `${frontend}/settings`,
+        }),
+      }).catch((err: unknown) => console.error("[payout] UPI change email failed:", err));
+    }
     await recordCreatorUpdate(this.photographerModel, userId, changedSections);
     if (
       Object.prototype.hasOwnProperty.call(update, "profileImages") &&

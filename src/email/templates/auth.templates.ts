@@ -145,3 +145,28 @@ export function temporaryPasswordTemplate(params: {
 
   return { subject, html, text };
 }
+
+/** Payout UPI changed — so the owner notices if it wasn't them. */
+export function payoutUpiChangedTemplate(params: {
+  name?: string;
+  previousMasked: string;
+  newMasked: string;
+  settingsUrl: string;
+}): EmailTemplate {
+  const subject = "Your TrendStarZ payout UPI ID was changed";
+  const greeting = params.name ? `Hi ${escapeHtml(params.name)},` : "Hi,";
+  const html = wrapEmail(
+    h2("Payout UPI ID changed") +
+      p(greeting) +
+      p(
+        `The UPI ID your TrendStarZ earnings are paid to was changed from <strong>${escapeHtml(params.previousMasked)}</strong> to <strong>${escapeHtml(params.newMasked)}</strong>.`,
+      ) +
+      p("If you made this change, nothing else is needed.") +
+      p(
+        "<strong>If it wasn't you</strong>, change your password now and reply to this email so we hold your payouts.",
+      ) +
+      btn("Open my settings", params.settingsUrl),
+  );
+  const text = `${params.name ? `Hi ${params.name},` : "Hi,"}\n\nThe UPI ID your TrendStarZ earnings are paid to was changed from ${params.previousMasked} to ${params.newMasked}.\nIf it wasn't you, change your password now and reply to this email so we hold your payouts.\n\n${params.settingsUrl}`;
+  return { subject, html, text };
+}

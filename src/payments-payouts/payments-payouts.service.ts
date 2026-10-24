@@ -1810,6 +1810,8 @@ export class PaymentsPayoutsService {
       payoutMobile?: string;
       payoutName?: string;
       lastConfirmedAt?: Date | null;
+      /** When the creator last changed the UPI ID — admins double-check recent changes before paying. */
+      payoutUpiChangedAt?: Date | null;
     } | null => {
       if (!id) return null;
       const sid = String(id);
@@ -1826,6 +1828,7 @@ export class PaymentsPayoutsService {
           payoutMobile: i.payout?.mobile || "",
           payoutName: i.payout?.accountHolderName || "",
           lastConfirmedAt: i.payout?.lastConfirmedAt || null,
+          payoutUpiChangedAt: i.payout?.upiChangedAt || null,
         };
       }
       if (role === "brand") {
@@ -1856,6 +1859,7 @@ export class PaymentsPayoutsService {
           payoutMobile: p.payout?.mobile || "",
           payoutName: p.payout?.accountHolderName || "",
           lastConfirmedAt: p.payout?.lastConfirmedAt || null,
+          payoutUpiChangedAt: p.payout?.upiChangedAt || null,
         };
       }
       return null;
