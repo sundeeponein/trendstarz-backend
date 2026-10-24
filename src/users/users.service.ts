@@ -148,6 +148,16 @@ const PUBLIC_PROFILE_VISIBILITY_BLOCK_FLAG_CODES = [
   ...LOCATION_VISIBILITY_BLOCK_FLAG_CODES,
 ];
 
+
+/** The homepage shows "Creator Escrow" from ₹1,00,000 (welcome page threshold). */
+export const PUBLIC_ESCROW_MIN_RUPEES = 100000;
+
+/** Collected paise → whole rupees, or undefined while below the public threshold. */
+export function publicEscrowRupees(totalPaise: number): number | undefined {
+  const rupees = Math.floor(Number(totalPaise || 0) / 100);
+  return rupees >= PUBLIC_ESCROW_MIN_RUPEES ? rupees : undefined;
+}
+
 @Injectable()
 export class UsersService implements OnModuleInit {
   /** Refuses an email/phone change to a value another account (any role) already uses. */
@@ -2635,7 +2645,9 @@ export class UsersService implements OnModuleInit {
         ? Math.round(ratingAgg[0].avg * 10) / 10
         : 0,
       ratingCount: ratingAgg[0]?.count || 0,
-      creatorEscrowTotal: escrowAgg[0]?.total || 0,
+      // Rupees (rows store paise), and public only once it's big enough to be a
+      // homepage stat — below that the exact business figure stays private.
+      creatorEscrowTotal: publicEscrowRupees(escrowAgg[0]?.total || 0),
       totalCities,
       influencerCategoryCounts,
     };

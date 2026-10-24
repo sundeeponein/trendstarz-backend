@@ -374,7 +374,7 @@ describe("UsersService profile update guards", () => {
       expect.objectContaining({
         averageRating: 4.9,
         ratingCount: 12,
-        creatorEscrowTotal: 250000,
+        creatorEscrowTotal: undefined, // ₹2,500 collected (250000 paise): below the public ₹1,00,000 threshold
         totalCities: 2,
         influencerCategoryCounts: { Fashion: 2 },
       }),
