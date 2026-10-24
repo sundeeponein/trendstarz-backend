@@ -92,6 +92,10 @@ export const CampaignTransactionSchema = new Schema(
       index: true,
     },
     collectedAt: { type: Date },
+    // Which admin confirmed / rejected the payment (empty for Razorpay-verified).
+    collectionVerifiedBy: { type: String },
+    collectionRejectedBy: { type: String },
+    collectionRejectedAt: { type: Date },
 
     // ── Payout to influencer (Phase 6: admin sends UPI manually) ─────────────
     payoutUpiId: { type: String },
@@ -110,6 +114,8 @@ export const CampaignTransactionSchema = new Schema(
     payoutLastRetryAt: { type: Date },
     payoutInitiatedAt: { type: Date },
     payoutSettledAt: { type: Date },
+    // Which admin recorded the manual payout.
+    payoutMarkedPaidBy: { type: String },
     payoutStatus: {
       type: String,
       // frozen = payment confirmed but dispute raised; admin must resolve before releasing

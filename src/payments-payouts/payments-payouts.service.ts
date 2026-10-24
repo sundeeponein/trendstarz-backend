@@ -2089,8 +2089,8 @@ export class PaymentsPayoutsService {
     };
   }
 
-  async verifyCollection(transactionId: string, notes?: string) {
-    return this.verifyCollectionById(transactionId, notes, false);
+  async verifyCollection(transactionId: string, notes?: string, actorId?: string) {
+    return this.verifyCollectionById(transactionId, notes, false, actorId);
   }
 
   // Best-effort: if this brand originally joined through a referral tracking link,
@@ -2125,6 +2125,7 @@ export class PaymentsPayoutsService {
     transactionId: string,
     notes?: string,
     allowGatewayVerification = false,
+    actorId?: string,
   ) {
     // One transaction: the row turns verified AND the invite it pays for is
     // confirmed/unlocked, or neither (no verified payment with a locked invite).
@@ -2155,6 +2156,7 @@ export class PaymentsPayoutsService {
             $set: {
               collectionStatus: "verified",
               collectedAt: now,
+              ...(actorId ? { collectionVerifiedBy: actorId } : {}),
               ...(notes ? { adminNotes: notes } : {}),
               payoutStatus:
                 current.workStatus === "approved"
@@ -2405,6 +2407,7 @@ export class PaymentsPayoutsService {
     transactionId: string,
     reason: string,
     notifyPayer = true,
+    actorId?: string,
   ) {
     // One transaction: the row fails AND the credit it used goes back to the host.
     const tx: any = await inTransaction(this.connection, async (session) => {
@@ -2425,6 +2428,8 @@ export class PaymentsPayoutsService {
             $set: {
               collectionStatus: "failed",
               adminNotes: reason || "Payment proof rejected",
+              collectionRejectedAt: new Date(),
+              ...(actorId ? { collectionRejectedBy: actorId } : {}),
             },
           },
           withSession({ new: true }, session),
@@ -2500,19 +2505,19 @@ export class PaymentsPayoutsService {
     return txs;
   }
 
-  async verifyCollectionBatch(batchId: string, notes?: string) {
+  async verifyCollectionBatch(batchId: string, notes?: string, actorId?: string) {
     const txs = await this.pendingBatchTransactions(batchId);
     const results: any[] = [];
     for (const tx of txs) {
-      results.push(await this.verifyCollection(String(tx._id), notes));
+      results.push(await this.verifyCollection(String(tx._id), notes, actorId));
     }
     return { success: true, count: results.length, results };
   }
 
-  async rejectCollectionBatch(batchId: string, reason: string) {
+  async rejectCollectionBatch(batchId: string, reason: string, actorId?: string) {
     const txs = await this.pendingBatchTransactions(batchId);
     for (const tx of txs) {
-      await this.rejectCollection(String(tx._id), reason, false);
+      await this.rejectCollection(String(tx._id), reason, false, actorId);
     }
     // One email for the whole payment, not one per creator.
     this.notifyPaymentRejected(txs[0].payerId, reason);
@@ -2527,6 +2532,7 @@ export class PaymentsPayoutsService {
       payoutUpiId?: string;
       notes?: string;
     },
+    actorId?: string,
   ) {
     const tx = await this.transactionModel.findById(transactionId);
     if (!tx) throw new NotFoundException("Transaction not found");
@@ -2577,6 +2583,7 @@ export class PaymentsPayoutsService {
                 paidOutAt: now,
                 payoutSettledAt: now,
                 payoutUtr: body.payoutUtr,
+                ...(actorId ? { payoutMarkedPaidBy: actorId } : {}),
                 ...(body.payoutProofUrl
                   ? { payoutProofUrl: body.payoutProofUrl }
                   : {}),

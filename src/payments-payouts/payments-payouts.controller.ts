@@ -134,8 +134,9 @@ export class PaymentsPayoutsController {
   async verifyBatch(
     @Param("batchId") batchId: string,
     @Body() body: { notes?: string },
+    @Req() req: any,
   ) {
-    return this.paymentsPayoutsService.verifyCollectionBatch(batchId, body?.notes);
+    return this.paymentsPayoutsService.verifyCollectionBatch(batchId, body?.notes, String(req.user?.userId || ""));
   }
 
   /** Admin: reject one whole payment (its UTR/proof covers every creator in it). */
@@ -144,8 +145,9 @@ export class PaymentsPayoutsController {
   async rejectBatch(
     @Param("batchId") batchId: string,
     @Body() body: { reason: string },
+    @Req() req: any,
   ) {
-    return this.paymentsPayoutsService.rejectCollectionBatch(batchId, body?.reason);
+    return this.paymentsPayoutsService.rejectCollectionBatch(batchId, body?.reason, String(req.user?.userId || ""));
   }
 
   /** Admin: return a no-show creator's platform fee to the host as TrendStarZ credit. */
@@ -160,14 +162,14 @@ export class PaymentsPayoutsController {
 
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Post(":id/verify")
-  async verify(@Param("id") id: string, @Body() body: { notes?: string }) {
-    return this.paymentsPayoutsService.verifyCollection(id, body?.notes);
+  async verify(@Param("id") id: string, @Body() body: { notes?: string }, @Req() req: any) {
+    return this.paymentsPayoutsService.verifyCollection(id, body?.notes, String(req.user?.userId || ""));
   }
 
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Post(":id/reject")
-  async reject(@Param("id") id: string, @Body() body: { reason: string }) {
-    return this.paymentsPayoutsService.rejectCollection(id, body?.reason);
+  async reject(@Param("id") id: string, @Body() body: { reason: string }, @Req() req: any) {
+    return this.paymentsPayoutsService.rejectCollection(id, body?.reason, true, String(req.user?.userId || ""));
   }
 
   @UseGuards(JwtAuthGuard, RolesGuard)
@@ -181,8 +183,9 @@ export class PaymentsPayoutsController {
       payoutUpiId?: string;
       notes?: string;
     },
+    @Req() req: any,
   ) {
-    return this.paymentsPayoutsService.markPayoutPaid(id, body);
+    return this.paymentsPayoutsService.markPayoutPaid(id, body, String(req.user?.userId || ""));
   }
 
   /** Admin Refunds queue — ?state=on_hold|owed|sent|settlement|legacy_unconfirmed */

@@ -144,18 +144,18 @@ describe("PaymentsPayoutsController", () => {
   it("verify passes id and optional notes", async () => {
     service.verifyCollection.mockResolvedValue({ success: true } as any);
 
-    const result = await controller.verify("tx1", { notes: "ok" });
+    const result = await controller.verify("tx1", { notes: "ok" }, { user: { userId: "admin1" } });
 
-    expect(service.verifyCollection).toHaveBeenCalledWith("tx1", "ok");
+    expect(service.verifyCollection).toHaveBeenCalledWith("tx1", "ok", "admin1");
     expect(result).toEqual({ success: true });
   });
 
   it("reject passes id and reason", async () => {
     service.rejectCollection.mockResolvedValue({ success: true } as any);
 
-    const result = await controller.reject("tx1", { reason: "invalid" });
+    const result = await controller.reject("tx1", { reason: "invalid" }, { user: { userId: "admin1" } });
 
-    expect(service.rejectCollection).toHaveBeenCalledWith("tx1", "invalid");
+    expect(service.rejectCollection).toHaveBeenCalledWith("tx1", "invalid", true, "admin1");
     expect(result).toEqual({ success: true });
   });
 
@@ -168,9 +168,9 @@ describe("PaymentsPayoutsController", () => {
       payoutProofUrl: "https://proof",
       notes: "done",
     };
-    const result = await controller.markPaid("tx1", body);
+    const result = await controller.markPaid("tx1", body, { user: { userId: "admin1" } });
 
-    expect(service.markPayoutPaid).toHaveBeenCalledWith("tx1", body);
+    expect(service.markPayoutPaid).toHaveBeenCalledWith("tx1", body, "admin1");
     expect(result).toEqual({ success: true });
   });
 
