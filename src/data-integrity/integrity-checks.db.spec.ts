@@ -54,7 +54,7 @@ describe("data integrity checks (real MongoDB)", () => {
 
     const checks = await runIntegrityChecks(db);
     expect(checks.filter((c) => c.status === "warn")).toEqual([]);
-    expect(checks).toHaveLength(15);
+    expect(checks).toHaveLength(16);
   });
 
   it("flags each kind of problem in its own check", async () => {
@@ -170,6 +170,21 @@ describe("data integrity checks (real MongoDB)", () => {
     const c = (await byKey()).paid_rescore_delivered;
     expect(c.count).toBe(1);
     expect(c.refs).toEqual([String(missingPayment.insertedId)]);
+  });
+
+  it("flags open invites and unsettled payments whose records were deleted", async () => {
+    const live = new Types.ObjectId();
+    await db.collection("campaigns").insertOne({ _id: live, brandId: "h", status: "active" });
+    const goneCampaign = new Types.ObjectId().toHexString();
+    const openOrphan = await db.collection("campaigninvites").insertOne({ campaignId: goneCampaign, status: "accepted" });
+    await db.collection("campaigninvites").insertOne({ campaignId: goneCampaign, status: "declined" }); // closed: fine
+    await db.collection("campaigninvites").insertOne({ campaignId: String(live), status: "accepted" }); // fine
+    const txRow = (extra: any) => ({ transactionType: "paid_collab", inviteId: new Types.ObjectId(), campaignId: String(live), collectionStatus: "verified", agreedAmount: 100, payerTotal: 100, recipientPayout: 100, ...extra });
+    const stuck = await db.collection("campaigntransactions").insertOne(txRow({ payoutStatus: "pending" }));
+    await db.collection("campaigntransactions").insertOne(txRow({ payoutStatus: "skipped", refundStatus: "sent" })); // settled: fine
+    const c = (await byKey()).dangling_references;
+    expect(c.count).toBe(2);
+    expect(c.refs).toEqual(expect.arrayContaining([`invite:${openOrphan.insertedId}`, `tx:${stuck.insertedId}`]));
   });
 
   it("checks that every TrendStarZ credit lot adds up", async () => {

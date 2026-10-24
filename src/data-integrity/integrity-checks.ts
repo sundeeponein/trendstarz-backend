@@ -593,6 +593,60 @@ async function paidRescoreDelivered(db: Db, explained: ExplainedSet): Promise<In
   );
 }
 
+/** Invite statuses with nothing left to do (the rest still expect the campaign). */
+const CLOSED_INVITE_STATUSES = ["declined", "withdrawn", "expired", "cancelled", "completed", "approved", "rejected"];
+
+/**
+ * Records that point to something that no longer exists, where it still
+ * matters: an open/accepted invite whose campaign is gone (the creator sees
+ * work that can't happen), and a payment whose invite is gone while its payout
+ * or refund is still unsettled (it can never be completed from the app).
+ */
+async function danglingReferences(db: Db, explained: ExplainedSet): Promise<IntegrityCheck> {
+  const campaignIds = new Set(
+    (await db.collection("campaigns").find({}, { projection: { _id: 1 } }).toArray()).map((c: any) => String(c._id)),
+  );
+  const found: Array<{ ref: string; text: string }> = [];
+  const openInvites = await db
+    .collection("campaigninvites")
+    .find({ status: { $nin: CLOSED_INVITE_STATUSES } }, { projection: { campaignId: 1, status: 1 } })
+    .toArray();
+  for (const inv of openInvites as any[]) {
+    if (!campaignIds.has(String(inv.campaignId))) {
+      found.push({ ref: `invite:${inv._id}`, text: `${inv.status} invite ${inv._id} → campaign ${inv.campaignId} no longer exists` });
+    }
+  }
+  const unsettled = await db
+    .collection("campaigntransactions")
+    .find(
+      {
+        transactionType: { $ne: "platform_fee" },
+        collectionStatus: "verified",
+        $or: [{ payoutStatus: { $in: ["pending", "processing", "frozen"] } }, { refundStatus: { $in: ["on_hold", "owed"] } }],
+      },
+      { projection: { inviteId: 1, payoutStatus: 1, refundStatus: 1, payerTotal: 1 } },
+    )
+    .toArray();
+  for (const tx of unsettled as any[]) {
+    const exists = tx.inviteId
+      ? await db.collection("campaigninvites").countDocuments({ _id: tx.inviteId }, { limit: 1 })
+      : 0;
+    if (!exists) {
+      found.push({
+        ref: `tx:${tx._id}`,
+        text: `payment ${tx._id} (₹${Math.round(Number(tx.payerTotal || 0) / 100)}, payout ${tx.payoutStatus}, refund ${tx.refundStatus || "none"}) → its invite no longer exists`,
+      });
+    }
+  }
+  return explainableCheck(
+    "dangling_references",
+    "Open work and unsettled money point to existing records",
+    "An open invite's campaign, or an unsettled payment's invite, was deleted. Settle the money (pay out, refund, or mark the payout skipped in Payments) or close the invite; test data can be marked as explained.",
+    found,
+    explained,
+  );
+}
+
 async function sharedEmails(db: Db): Promise<IntegrityCheck> {
   const rows = await db
     .collection("influencers")
@@ -638,5 +692,6 @@ export async function runIntegrityChecks(db: Db): Promise<IntegrityCheck[]> {
     utrUsedTwice(db, explained),
     creditLedgerAddsUp(db, explained),
     paidRescoreDelivered(db, explained),
+    danglingReferences(db, explained),
   ]);
 }
