@@ -819,11 +819,13 @@ export class PaymentsPayoutsService {
           ? "photographer"
           : "influencer";
       // Payer: the campaign owner's actual role (brand or photographer or influencer).
-      const campaignOwnerRole = this.resolveCampaignOwnerRole(campaign);
-      const invitePayerRole: "brand" | "influencer" | "photographer" = campaignOwnerRole;
-      const invitePayerUserId = String(campaign.brandId || "");
-      // Rate role: like invitePayerRole, but an influencer host pays the influencer rate.
+      // The real payer: an influencer's shoot request is saved with ownerType
+      // "brand", so look at who owns it (it used to be recorded as a brand, and
+      // admin contacts, payer emails, credit and refunds looked for a brand account).
       const inviteFeeRole = await this.resolveHostFeeRole(campaign);
+      const campaignOwnerRole = inviteFeeRole;
+      const invitePayerRole: "brand" | "influencer" | "photographer" = inviteFeeRole;
+      const invitePayerUserId = String(campaign.brandId || "");
       const inviteBaseFeePercent = calc.feeSettings
         ? this.getRoleBaseFeePercent(
             calc.feeSettings,
@@ -1083,7 +1085,7 @@ export class PaymentsPayoutsService {
       .find({ _id: { $in: calc.acceptedInviteIds } })
       .lean();
     const campaignId = String(campaign._id || "");
-    const payerRole = this.resolveCampaignOwnerRole(campaign);
+    const payerRole = await this.resolveHostFeeRole(campaign); // the real payer (see above)
     const gstPercent = Number(calc.gstPercent || 0);
     const saved: any[] = [];
     for (const invite of invites) {
