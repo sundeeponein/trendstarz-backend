@@ -10,6 +10,16 @@ import { SubscriptionPrice } from "../plans/subscription-price.util";
 
 import { utrMatchValues } from "../utils/utr.util";
 
+
+/** `end` minus one paid Premium period ("1m" | "3m" | "1y"). */
+export function subtractPremiumDuration(end: Date, duration: string): Date {
+  const d = new Date(end);
+  if (duration === "1y") d.setFullYear(d.getFullYear() - 1);
+  else if (duration === "3m") d.setMonth(d.getMonth() - 3);
+  else d.setMonth(d.getMonth() - 1);
+  return d;
+}
+
 @Injectable()
 export class PaymentService {
   constructor(
@@ -363,31 +373,42 @@ export class PaymentService {
       return { success: false, message: "Payment is already refunded" };
     }
 
-    await this.plansService.subscriptionModel.updateMany(
-      {
-        userId: payment.userId,
-        status: "active",
-        source: "payment",
-      },
-      {
-        $set: {
-          status: "cancelled",
-          endDate: refundedAt,
-        },
-      },
-    );
-
+    // Take back only what this payment bought: renewals stack on one active
+    // subscription, so shorten it by the refunded period (cancel it when nothing
+    // is left). An admin-granted subscription is not touched.
+    const now = refundedAt;
+    const subs = this.plansService.subscriptionModel;
+    const active: any = await subs
+      .findOne({ userId: payment.userId, status: "active", endDate: { $gt: now } })
+      .sort({ endDate: -1 })
+      .lean();
+    if (active && active.source !== "admin") {
+      const shortened = subtractPremiumDuration(new Date(active.endDate), String(payment.premiumDuration || "1m"));
+      await subs.updateOne(
+        { _id: active._id },
+        shortened > now ? { $set: { endDate: shortened } } : { $set: { status: "cancelled", endDate: now } },
+      );
+    }
+    // The profile follows whatever subscription is still running (if any).
+    const remaining: any = await subs
+      .findOne({ userId: payment.userId, status: "active", endDate: { $gt: now } })
+      .sort({ endDate: -1 })
+      .lean();
     const userModel = this.userModelForType(payment.userType);
-    await userModel.findByIdAndUpdate(payment.userId, {
-      $set: {
-        isPremium: false,
-        premiumDuration: null,
-        premiumStart: null,
-        premiumEnd: null,
-        premiumSource: null,
-      },
-    });
-
+    await userModel.findByIdAndUpdate(
+      payment.userId,
+      remaining
+        ? { $set: { isPremium: true, premiumEnd: remaining.endDate, premiumSource: remaining.source || "payment" } }
+        : {
+            $set: {
+              isPremium: false,
+              premiumDuration: null,
+              premiumStart: null,
+              premiumEnd: null,
+              premiumSource: null,
+            },
+          },
+    );
     const normalizedUserType = String(payment.userType).toLowerCase();
     const userRole = normalizedUserType === "brand"
       ? "brand"
@@ -415,7 +436,12 @@ export class PaymentService {
         /* non-critical */
       });
 
-    return { success: true, message: "Payment marked refunded and premium removed." };
+    return {
+      success: true,
+      message: remaining
+        ? `Payment marked refunded. Premium now ends ${new Date(remaining.endDate).toDateString()}.`
+        : "Payment marked refunded and premium removed.",
+    };
   }
 
   async getPaymentsByStatus(
