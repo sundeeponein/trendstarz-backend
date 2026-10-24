@@ -1,5 +1,14 @@
 jest.mock("razorpay", () => jest.fn().mockImplementation(() => ({ orders: { all: jest.fn().mockRejectedValue({ statusCode: 401, error: { code: "BAD_REQUEST_ERROR" } }) } })));
 jest.mock("cloudinary", () => ({ v2: { config: jest.fn(), api: { ping: jest.fn().mockResolvedValue({ status: "ok" }) } } }));
+jest.mock("dns", () => ({
+  promises: {
+    resolveCname: jest.fn(async (name: string) => {
+      if (name.endsWith("._domainkey.trendstarz.in")) return ["b1.trendstarz-in.dkim.brevo.com"];
+      throw Object.assign(new Error("ENODATA"), { code: "ENODATA" });
+    }),
+    resolveTxt: jest.fn(async () => { throw Object.assign(new Error("ENODATA"), { code: "ENODATA" }); }),
+  },
+}));
 jest.mock("axios", () => ({ get: jest.fn().mockRejectedValue({ response: { status: 403 } }) }));
 
 import { runConfigChecks } from "./config-health.util";
@@ -32,5 +41,14 @@ describe("admin configuration check", () => {
     expect(by["Brevo (emails)"].status).toBe("working"); // send-only key: 403 on stats still proves the key
     expect(by["Firebase (login/password reset)"].status).toBe("missing");
     expect(JSON.stringify(checks)).not.toContain("super-secret-value");
+    // Default sender is on the Brevo-verified domain.
+    expect(by["Email sender domain (trendstarz.in)"].status).toBe("working");
+  });
+
+  it("flags a sender on a domain without Brevo DKIM (mail would go to spam)", async () => {
+    process.env = { ...saved, BREVO_FROM: "noreply@trendstarz.com" };
+    const checks = await runConfigChecks(null);
+    const sender = checks.find((c) => c.service.startsWith("Email sender domain"));
+    expect(sender).toMatchObject({ service: "Email sender domain (trendstarz.com)", status: "failing" });
   });
 });

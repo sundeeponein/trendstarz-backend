@@ -1,4 +1,6 @@
 import axios from "axios";
+import { promises as dns } from "dns";
+import { DEFAULT_SENDER } from "./brevo-email.service";
 import Razorpay from "razorpay";
 import { v2 as cloudinary } from "cloudinary";
 import type { Connection } from "mongoose";
@@ -99,6 +101,31 @@ export async function runConfigChecks(connection?: Connection | null): Promise<C
         throw err;
       }
     }),
+    // The sender's domain must be verified in Brevo (DKIM), or OTPs, resets and
+    // alerts land in spam. Checked live in DNS.
+    (async (): Promise<ConfigCheck> => {
+      const sender = String(process.env.BREVO_FROM || DEFAULT_SENDER).trim();
+      const domain = sender.split("@")[1] || "";
+      const service = `Email sender domain (${domain || "?"})`;
+      try {
+        const records = await withTimeout(
+          Promise.any([
+            dns.resolveCname(`brevo1._domainkey.${domain}`),
+            dns.resolveTxt(`brevo1._domainkey.${domain}`),
+            dns.resolveCname(`brevo2._domainkey.${domain}`),
+          ]),
+        );
+        return records && (records as any[]).length
+          ? { service, status: "working", detail: `Brevo DKIM found for ${domain}` }
+          : { service, status: "failing", detail: `No Brevo DKIM for ${domain} — emails may go to spam` };
+      } catch {
+        return {
+          service,
+          status: "failing",
+          detail: `No Brevo DKIM for ${domain} — emails may go to spam. Use an @trendstarz.in sender (BREVO_FROM) or authenticate ${domain} in Brevo.`,
+        };
+      }
+    })(),
     check("Firebase (login/password reset)", ["FIREBASE_PROJECT_ID", "FIREBASE_CLIENT_EMAIL", "FIREBASE_PRIVATE_KEY"], async () => {
       const key = String(process.env.FIREBASE_PRIVATE_KEY).replace(/\\n/g, "\n");
       if (!key.includes("BEGIN PRIVATE KEY")) throw new Error("FIREBASE_PRIVATE_KEY is not a private key");
