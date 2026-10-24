@@ -68,7 +68,11 @@ export async function reconcileRazorpay(db: Db, days: number): Promise<Reconcile
       db.collection("payments").findOne({ orderId: row.orderId }, { projection: { status: 1, purpose: 1 } }),
       db
         .collection("campaigntransactions")
-        .find({ gatewayOrderId: row.orderId }, { projection: { collectionStatus: 1 } })
+        // Same lookup as the payments webhook (the batch id is the Razorpay order id).
+        .find(
+          { $or: [{ paymentBatchId: row.orderId }, { gatewayOrderId: row.orderId }, { gatewayOrderIds: row.orderId }] },
+          { projection: { collectionStatus: 1 } },
+        )
         .toArray(),
     ]);
     if (payment) {

@@ -218,7 +218,7 @@ describe("PaymentService", () => {
       const result = await service.approvePayment("pay1", "admin1");
       expect(result.success).toBe(true);
       const [filter, update] = paymentModel.findOneAndUpdate.mock.calls[0];
-      expect(filter).toEqual({ _id: "pay1", status: "pending" });
+      expect(filter).toEqual({ _id: "pay1", status: "pending", paymentMethod: { $ne: "razorpay" } }); // never an unpaid Razorpay checkout
       expect(update.$set).toMatchObject({ status: "approved", approvedBy: "admin1" });
     });
 

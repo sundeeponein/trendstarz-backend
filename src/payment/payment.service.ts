@@ -25,8 +25,11 @@ export class PaymentService {
 
   private subscriptionPurposeFilter() {
     // Keep legacy rows (created before `purpose` existed) visible as subscription history.
+    // An unpaid Razorpay checkout is not a payment: it completes by itself when
+    // Razorpay confirms it, so it's never listed for admin approval or history.
     return {
       $or: [{ purpose: "subscription" }, { purpose: { $exists: false } }],
+      $nor: [{ paymentMethod: "razorpay", status: "pending" }],
     };
   }
 
@@ -206,7 +209,9 @@ export class PaymentService {
     // double click or two admins can't activate Premium twice.
     const payment: any = await this.paymentModel
       .findOneAndUpdate(
-        { _id: paymentId, status: "pending" },
+        // Only manual UPI payments are approved by an admin: approving an unpaid
+        // Razorpay checkout would grant Premium without any money.
+        { _id: paymentId, status: "pending", paymentMethod: { $ne: "razorpay" } },
         { $set: { status: "approved", approvedBy: adminId, approvedAt: new Date() } },
         { new: true },
       )

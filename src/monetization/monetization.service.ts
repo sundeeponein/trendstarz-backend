@@ -121,15 +121,10 @@ export class MonetizationService {
     const amount = price.finalRupees;
     const amountPaise = amount * 100;
 
-    // Retrying/refreshing the payment page calls this again — drop any earlier pending
-    // razorpay order for this user's subscription so it doesn't pile up as orphaned
-    // "pending" rows (razorpay payments are auto-verified, never manually reviewed).
-    await this.paymentModel.deleteMany({
-      userId: toObjectId(input.userId),
-      purpose: "subscription",
-      paymentMethod: "razorpay",
-      status: "pending",
-    });
+    // Earlier unpaid orders are kept: one paid late (a second tab, a slow
+    // Razorpay window) must still activate Premium. Deleting them left the money
+    // captured with nothing to complete. Unpaid checkouts are hidden from admin
+    // approval and history (PaymentService.subscriptionPurposeFilter).
 
     const order = await this.razorpayService.createOrder(amountPaise, {
       userId: input.userId,

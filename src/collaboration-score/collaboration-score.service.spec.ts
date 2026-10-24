@@ -328,12 +328,10 @@ describe("CollaborationScoreService", () => {
       expect(razorpayService.createOrder).not.toHaveBeenCalled();
     });
 
-    it("createReanalysisOrder dedupes stale pending orders and creates a fresh Razorpay order at the configured fee", async () => {
+    it("createReanalysisOrder keeps earlier unpaid orders (a late payment must still complete) and creates a fresh order at the configured fee", async () => {
       const result = await service.createReanalysisOrder("507f1f77bcf86cd799439011", "influencer");
 
-      expect(paymentModel.deleteMany).toHaveBeenCalledWith(
-        expect.objectContaining({ purpose: "collab_score_reanalysis", status: "pending" }),
-      );
+      expect(paymentModel.deleteMany).not.toHaveBeenCalled();
       expect(razorpayService.createOrder).toHaveBeenCalledWith(9900, expect.any(Object));
       expect(paymentModel.create).toHaveBeenCalledWith(
         expect.objectContaining({ purpose: "collab_score_reanalysis", orderId: "order_1" }),

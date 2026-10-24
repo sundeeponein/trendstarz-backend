@@ -684,11 +684,8 @@ export class CollaborationScoreService {
       }
     }
 
-    await this.paymentModel.deleteMany({
-      userId: toObjectId(userId),
-      purpose: "collab_score_reanalysis",
-      status: "pending",
-    });
+    // Earlier unpaid orders are kept so one paid late still delivers the audit
+    // (deleting them left captured money with nothing to complete).
 
     const amountPaise = Math.round(settings.reanalysisFeeRupees * 100);
     const order = await this.razorpayService.createOrder(amountPaise, {
