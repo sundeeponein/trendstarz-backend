@@ -1341,3 +1341,92 @@ describe("UsersService creator saves record changed sections", () => {
     );
   });
 });
+
+describe("UsersService creator saves vs admin verification (documents)", () => {
+  const make = (influencerModel: any) =>
+    new UsersService(
+      {} as any,
+      {} as any,
+      {} as any,
+      influencerModel,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      { updateMany: jest.fn().mockResolvedValue({}) } as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {
+        canViewSocialLinks: jest.fn().mockResolvedValue(true),
+        listActive: jest.fn().mockResolvedValue({ plans: [] }),
+      } as any,
+      { revokePermissions: jest.fn() } as any,
+      {} as any,
+      {} as any,
+      { reconcile: jest.fn().mockResolvedValue(0) } as any,
+      noOtpStore,
+    );
+
+  const approvedDoc = (docs: any[] = []) => {
+    const doc: any = {
+      phoneNumber: "9000000000",
+      email: "c@example.com",
+      name: "Asha",
+      socialMedia: [],
+      verificationDocuments: docs,
+      verificationStatus: "approved",
+      verifiedByTrendStarz: true,
+      verificationDisclaimerAccepted: false,
+      verificationAuditLog: [{ action: "approved", status: "approved" }],
+      set: jest.fn((k: string, v: any) => {
+        doc[k] = v;
+      }),
+      get: (k: string) => doc[k],
+      save: jest.fn(() => Promise.resolve(doc)),
+    };
+    doc.toObject = () => ({ ...doc });
+    return doc;
+  };
+  const save = async (doc: any, update: any) =>
+    make({ findById: jest.fn().mockResolvedValue(doc), updateOne: jest.fn().mockResolvedValue({}) }).updateInfluencerProfile(
+      "inf-1",
+      update,
+    );
+
+  it("an approved creator without documents stays approved when the form re-sends an empty list", async () => {
+    const doc = approvedDoc([]);
+    await save(doc, { name: "Asha R", verificationDocuments: [] });
+    expect(doc.verificationStatus).toBe("approved");
+    expect(doc.verifiedByTrendStarz).toBe(true);
+    expect(doc.verificationAuditLog).toHaveLength(1);
+  });
+
+  it("re-sending the same documents changes nothing", async () => {
+    const id = { url: "https://res.cloudinary.com/x/id.jpg", public_id: "influencers/1/verification/id" };
+    const doc = approvedDoc([id]);
+    await save(doc, { verificationDocuments: [{ ...id }], verificationDisclaimerAccepted: true });
+    expect(doc.verificationStatus).toBe("approved");
+    expect(doc.verifiedByTrendStarz).toBe(true);
+  });
+
+  it("new documents with the declaration still go to review", async () => {
+    const doc = approvedDoc([]);
+    await save(doc, {
+      verificationDocuments: [{ url: "https://res.cloudinary.com/x/new.jpg", public_id: "influencers/1/verification/new" }],
+      verificationDisclaimerAccepted: true,
+    });
+    expect(doc.verificationStatus).toBe("pending");
+    expect(doc.verifiedByTrendStarz).toBe(false);
+  });
+
+  it("documents uploaded earlier are submitted once the declaration is accepted", async () => {
+    const id = { url: "https://res.cloudinary.com/x/id.jpg", public_id: "influencers/1/verification/id" };
+    const doc = approvedDoc([id]);
+    doc.verificationStatus = "not_submitted";
+    doc.verifiedByTrendStarz = false;
+    await save(doc, { verificationDocuments: [id], verificationDisclaimerAccepted: true });
+    expect(doc.verificationStatus).toBe("pending");
+  });
+});

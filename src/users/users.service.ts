@@ -3599,11 +3599,35 @@ export class UsersService implements OnModuleInit {
         : {};
     Object.assign(updateData, upiChange);
 
+    // Read before the loop below copies the incoming fields onto the document.
+    const previousDocs = userDoc.verificationDocuments;
+    const previousVerificationStatus = String(userDoc.verificationStatus || "not_submitted");
+    const previousDisclaimer = userDoc.verificationDisclaimerAccepted === true;
+
     for (const [key, value] of Object.entries(updateData)) {
       userDoc.set(key, value);
     }
 
-    if (updateData.verificationDocuments !== undefined) {
+    // The profile form sends verificationDocuments on EVERY save. Re-deciding the
+    // verification status each time un-approved creators approved without
+    // documents (13 on prod, 2026-10-25). Only an actual change of documents, or
+    // a first submission (documents + declaration while not yet submitted), counts.
+    const docIds = (docs: any) =>
+      (Array.isArray(docs) ? docs : [])
+        .map((d: any) => String(d?.public_id || ""))
+        .filter(Boolean)
+        .sort()
+        .join("|");
+    const docsChanged =
+      updateData.verificationDocuments !== undefined &&
+      docIds(updateData.verificationDocuments) !== docIds(previousDocs);
+    const firstSubmission =
+      updateData.verificationDocuments !== undefined &&
+      !docsChanged &&
+      docIds(updateData.verificationDocuments) !== "" &&
+      previousVerificationStatus === "not_submitted" &&
+      (updateData.verificationDisclaimerAccepted === true || previousDisclaimer);
+    if (docsChanged || firstSubmission) {
       const sanitizedDocs = Array.isArray(updateData.verificationDocuments)
         ? updateData.verificationDocuments
             .filter((doc: any) => doc?.url && doc?.public_id)
