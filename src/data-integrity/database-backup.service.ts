@@ -108,7 +108,8 @@ export class DatabaseBackupService {
       this.logger.log(`Database backup ok: ${records} records, ${(enc.length / 1024).toFixed(0)} KB`);
       return { success: true, data: row };
     } catch (err: any) {
-      const message = describeCloudinaryError(err).slice(0, 300);
+      const probe = await this.probeCloudinary().catch(() => "");
+      const message = `${describeCloudinaryError(err)}${probe ? ` — Cloudinary allows: ${probe}` : ""}`.slice(0, 500);
       await log.insertOne({ at: startedAt, trigger, status: "failed", error: message });
       this.logger.error(`Database backup failed: ${message}`);
       const to = process.env.ADMIN_EMAIL;
@@ -121,6 +122,39 @@ export class DatabaseBackupService {
       }
       throw new BadRequestException(`Backup failed: ${message}`);
     }
+  }
+
+  /**
+   * On failure: which kinds of upload this Cloudinary account accepts (tiny test
+   * files, deleted straight away) — tells which account setting blocks backups.
+   */
+  async probeCloudinary(): Promise<string> {
+    const c = this.cloud();
+    const pixel = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=";
+    const bytes = "data:text/plain;base64," + Buffer.from("probe").toString("base64");
+    const combos: Array<[string, string, string, string]> = [
+      ["raw/upload", bytes, "raw", "upload"],
+      ["raw/authenticated", bytes, "raw", "authenticated"],
+      ["raw/private", bytes, "raw", "private"],
+      ["image/authenticated", pixel, "image", "authenticated"],
+      ["image/upload", pixel, "image", "upload"],
+    ];
+    const out: string[] = [];
+    for (const [label, file, resource_type, type] of combos) {
+      try {
+        const r: any = await c.uploader.upload(file, {
+          resource_type,
+          type,
+          folder: `${BACKUP_FOLDER}/probe`,
+          public_id: `probe-${Date.now()}-${label.replace("/", "-")}`,
+        } as any);
+        out.push(`${label} ok`);
+        await c.uploader.destroy(r.public_id, { resource_type, type } as any).catch(() => undefined);
+      } catch (e: any) {
+        out.push(`${label} ${e?.error?.http_code || e?.http_code || "no"}`);
+      }
+    }
+    return out.join(", ");
   }
 
   /** Binary upload as a private raw file; "authenticated" first, then "private". */
