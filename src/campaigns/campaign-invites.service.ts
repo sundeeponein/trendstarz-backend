@@ -3904,7 +3904,7 @@ export class CampaignInvitesService {
       {
         title: "New Campaign Application 📩",
         body: `${(influencer as any).fullName || "An influencer"} applied to your campaign "${campaign.title}".`,
-        url: "/brand/campaigns",
+        url: "/campaigns", // (was /brand/campaigns — no such page)
       },
       "campaign",
     );
