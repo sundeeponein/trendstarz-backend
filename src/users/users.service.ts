@@ -51,6 +51,7 @@ import {
 import { takenAccountFields } from "../utils/account-uniqueness.util";
 import { SingleInstance } from "../utils/single-instance";
 import { idIn } from "../utils/id-match.util";
+import { PERSONAL_TRACES } from "./personal-traces";
 import { openMoneyFilter, openWorkFilter } from "./self-deletion.util";
 import { BRAND_LIST_EXCLUSION, privateProfileExclusion, publicAdminTags } from "../utils/public-profile.util";
 import { sendAppEmail } from "../utils/app-email.service";
@@ -742,21 +743,24 @@ export class UsersService implements OnModuleInit {
   }
 
   /**
-   * Personal data about a deleted account kept OUTSIDE its profile: their
-   * notifications, push/notification settings, and the shipping address
+   * Personal data about a deleted account kept OUTSIDE its profile (the
+   * PERSONAL_TRACES list: notifications, push/notification settings, moderation
+   * flags, social-account checks, profile statistics), and the shipping address
    * (name, phone, home address) they gave on product collaborations. The
    * invites themselves stay (campaign and payment history), minus the address.
    * Financial records (payments, campaign transactions) are kept for accounting.
    */
   private async removePersonalTraces(userId: string): Promise<void> {
     const id = String(userId);
-    const conn: any = this.influencerModel.db;
-    const collection = (model: string, fallback: string) =>
-      conn.models?.[model]?.collection ?? conn.collection(fallback);
+    const db: any = this.influencerModel.db;
     const steps: Array<[string, () => Promise<unknown>]> = [
-      ["notifications", () => collection("Notification", "notifications").deleteMany({ userId: id })],
-      ["push subscriptions", () => collection("PushSubscription", "pushsubscriptions").deleteMany({ userId: id })],
-      ["notification preferences", () => collection("NotificationPreference", "notificationpreferences").deleteMany({ userId: id })],
+      ...PERSONAL_TRACES.map(([name, field, idType]): [string, () => Promise<unknown>] => [
+        name,
+        () =>
+          db.collection(name).deleteMany({
+            [field]: idType === "objectId" && Types.ObjectId.isValid(id) ? new Types.ObjectId(id) : id,
+          }),
+      ]),
       ["shipping addresses", () =>
         this.campaignInviteModel.updateMany(
           { influencerId: idIn(id), shippingAddress: { $exists: true } },

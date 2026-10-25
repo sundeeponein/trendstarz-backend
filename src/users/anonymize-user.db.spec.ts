@@ -2,6 +2,7 @@ import { Schema, Types } from "mongoose";
 import { UsersService } from "./users.service";
 import { InfluencerSchema } from "../database/schemas/profile.schemas";
 import { CampaignInviteSchema } from "../database/schemas/campaign-invite.schema";
+import { PERSONAL_TRACES } from "./personal-traces";
 import {
   DB_TEST_TIMEOUT_MS,
   startTestDb,
@@ -58,6 +59,15 @@ describe("anonymizeUser leaves no personal data behind (real MongoDB)", () => {
       shippingAddress: { contactName: "Asha Rao", contactMobile: "9999999999", line1: "12 MG Road", city: "Hyderabad", pincode: "500001" },
     });
 
+    const other = new Types.ObjectId();
+    const as = (who: Types.ObjectId, t: string) => (t === "objectId" ? who : String(who));
+    for (const [col, field, t] of PERSONAL_TRACES) {
+      await db.conn.collection(col).insertMany([
+        { [field]: as(id, t), note: "about Asha" },
+        { [field]: as(other, t), note: "someone else" },
+      ]);
+    }
+
     await service.anonymizeUser(String(id));
 
     const u: any = await db.conn.collection("influencers").findOne({ _id: id });
@@ -68,6 +78,10 @@ describe("anonymizeUser leaves no personal data behind (real MongoDB)", () => {
     expect(u).toMatchObject({ anonymized: true, status: "deleted", username: `deleted-${id}` });
     expect(await db.conn.collection("notifications").countDocuments({ userId: String(id) })).toBe(0);
     expect(await db.conn.collection("pushsubscriptions").countDocuments({ userId: String(id) })).toBe(0);
+    for (const [col, field, t] of PERSONAL_TRACES) {
+      expect({ col, left: await db.conn.collection(col).countDocuments({ [field]: as(id, t) }) }).toEqual({ col, left: 0 });
+      expect({ col, kept: await db.conn.collection(col).countDocuments({ [field]: as(other, t) }) }).toEqual({ col, kept: 1 });
+    }
     const inv: any = await db.conn.collection("campaigninvites").findOne({ influencerId: id });
     expect(inv.status).toBe("completed"); // history kept
     expect(inv.shippingAddress).toBeUndefined(); // address gone

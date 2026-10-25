@@ -1,5 +1,6 @@
 import { normalizeUtr } from "../utils/utr.util";
-import type { Db } from "mongodb";
+import { ObjectId, type Db } from "mongodb";
+import { PERSONAL_TRACES } from "../users/personal-traces";
 import { ACTIVE_INVITE_STATUSES } from "../campaigns/reinvite-rule.util";
 import { isActivePremium } from "../payments-payouts/fee-rates.util";
 
@@ -701,6 +702,38 @@ async function sharedEmails(db: Db): Promise<IntegrityCheck> {
   );
 }
 
+/**
+ * Personal records (flags, notifications, social checks, statistics) whose
+ * account no longer exists or was anonymized. Account deletion removes them;
+ * anything found here was left by an older deletion or a failed cleanup step.
+ */
+async function personalDataAfterDelete(db: Db): Promise<IntegrityCheck> {
+  const live: string[] = [];
+  for (const name of ["influencers", "brands", "photographers", "users"]) {
+    const rows = await db.collection(name).find({ anonymized: { $ne: true } }, { projection: { _id: 1 } }).toArray();
+    for (const r of rows) live.push(String(r._id));
+  }
+  const samples: string[] = [];
+  let total = 0;
+  if (live.length) {
+    for (const [collection, field, idType] of PERSONAL_TRACES) {
+      const ids = idType === "objectId" ? live.filter((id) => ObjectId.isValid(id)).map((id) => new ObjectId(id)) : live;
+      const n = await db.collection(collection).countDocuments({ [field]: { $exists: true, $nin: [null, "", ...ids] } });
+      if (n) {
+        total += n;
+        samples.push(`${collection}: ${n}`);
+      }
+    }
+  }
+  return check(
+    "personal_data_after_delete",
+    "Deleted accounts left no personal records behind",
+    total,
+    "Flags, notifications or social checks still exist for accounts that were deleted or anonymized. Clear them with: node cron/orphanPersonalData.js --apply",
+    samples,
+  );
+}
+
 export async function runIntegrityChecks(db: Db): Promise<IntegrityCheck[]> {
   const explained = await loadExplained(db);
   return Promise.all([
@@ -721,5 +754,6 @@ export async function runIntegrityChecks(db: Db): Promise<IntegrityCheck[]> {
     paidRescoreDelivered(db, explained),
     danglingReferences(db, explained),
     recentBackup(db),
+    personalDataAfterDelete(db),
   ]);
 }

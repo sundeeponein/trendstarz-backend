@@ -56,7 +56,7 @@ describe("data integrity checks (real MongoDB)", () => {
     await db.collection("database_backups").insertOne({ at: new Date(), status: "ok" });
     const checks = await runIntegrityChecks(db);
     expect(checks.filter((c) => c.status === "warn")).toEqual([]);
-    expect(checks).toHaveLength(17);
+    expect(checks).toHaveLength(18);
   });
 
   it("every check with 'Mark as explained' buttons is accepted by the explain endpoint", async () => {
@@ -88,6 +88,10 @@ describe("data integrity checks (real MongoDB)", () => {
     await db.collection("payments").insertOne({ amount: 499 });
     const premium = await db.collection("influencers").insertOne({ email: "free@x.com", isPremium: true });
     await db.collection("brands").insertOne({ email: "FREE@x.com " });
+    const anon = new Types.ObjectId();
+    await db.collection("photographers").insertOne({ _id: anon, anonymized: true });
+    await db.collection("profile_flags").insertMany([{ userId: new Types.ObjectId().toHexString() }, { userId: String(premium.insertedId) }]);
+    await db.collection("notifications").insertOne({ userId: String(anon) });
 
     const c = await byKey();
     expect(c.id_types.status).toBe("warn"); // ObjectId campaignId + username brandId
@@ -99,6 +103,7 @@ describe("data integrity checks (real MongoDB)", () => {
     expect(c.unexplained_premium.samples[0]).toContain(String(premium.insertedId));
     expect(c.unpaid_unlocks.count).toBe(1);
     expect(c.shared_emails.samples[0]).toContain("free@x.com");
+    expect(c.personal_data_after_delete.samples).toEqual(["notifications: 1", "profile_flags: 1"]);
   });
 
   it("catches Premium removed from a profile while its subscription stays active, and invite/payment drift", async () => {
