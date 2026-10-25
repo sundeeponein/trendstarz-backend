@@ -31,6 +31,14 @@ export function encryptBackup(plain: Buffer, hexKey: string): Buffer {
   return Buffer.concat([MAGIC, iv, cipher.getAuthTag(), body]);
 }
 
+/** Cloudinary's own reason (the SDK's "unexpected status code" hides it). */
+export function describeCloudinaryError(err: any): string {
+  const inner = err?.error || err;
+  const code = inner?.http_code || err?.http_code;
+  const msg = inner?.message || err?.message || String(err);
+  return code ? `${msg} (HTTP ${code})` : msg;
+}
+
 /**
  * Nightly, automatic copy of the whole database — the free Atlas plan has no
  * backups. Same content as cron/exportDatabase.js, encrypted, stored as a
@@ -90,20 +98,17 @@ export class DatabaseBackupService {
       const { gz, records, collections, exportedAt } = await this.buildExport();
       const enc = encryptBackup(gz, String(process.env.BACKUP_ENCRYPTION_KEY));
       const publicId = `trendstarz-${exportedAt.replace(/[:.]/g, "-")}.json.gz.enc`;
-      const uploaded: any = await this.cloud().uploader.upload(
-        `data:application/octet-stream;base64,${enc.toString("base64")}`,
-        { resource_type: "raw", type: "authenticated", folder: BACKUP_FOLDER, public_id: publicId, overwrite: false },
-      );
+      const uploaded: any = await this.uploadPrivate(enc, publicId);
       const removedOld = await this.pruneOld().catch((err) => {
         this.logger.warn(`Backup pruning failed: ${err?.message || err}`);
         return 0;
       });
-      const row = { at: startedAt, trigger, status: "ok", records, collections, bytes: enc.length, publicId: uploaded.public_id, removedOld };
+      const row = { at: startedAt, trigger, status: "ok", records, collections, bytes: enc.length, publicId: uploaded.public_id, deliveryType: uploaded.deliveryType, removedOld };
       await log.insertOne(row);
       this.logger.log(`Database backup ok: ${records} records, ${(enc.length / 1024).toFixed(0)} KB`);
       return { success: true, data: row };
     } catch (err: any) {
-      const message = String(err?.message || err?.error?.message || err).slice(0, 300);
+      const message = describeCloudinaryError(err).slice(0, 300);
       await log.insertOne({ at: startedAt, trigger, status: "failed", error: message });
       this.logger.error(`Database backup failed: ${message}`);
       const to = process.env.ADMIN_EMAIL;
@@ -118,30 +123,49 @@ export class DatabaseBackupService {
     }
   }
 
+  /** Binary upload as a private raw file; "authenticated" first, then "private". */
+  private async uploadPrivate(file: Buffer, publicId: string): Promise<any> {
+    const attempt = (type: "authenticated" | "private") =>
+      new Promise<any>((resolve, reject) => {
+        const stream = this.cloud().uploader.upload_stream(
+          { resource_type: "raw", type, folder: BACKUP_FOLDER, public_id: publicId, overwrite: false },
+          (err: any, result: any) => (err ? reject(err) : resolve({ ...result, deliveryType: type })),
+        );
+        stream.end(file);
+      });
+    try {
+      return await attempt("authenticated");
+    } catch (err: any) {
+      const code = Number(err?.http_code || err?.error?.http_code || 0);
+      if (code !== 401 && code !== 403) throw err;
+      this.logger.warn(`Backup upload as "authenticated" refused (${code}: ${describeCloudinaryError(err)}); trying "private"`);
+      return attempt("private");
+    }
+  }
+
   /** Keeps the last BACKUP_KEEP_DAYS days, and never fewer than BACKUP_KEEP_MIN files. */
   async pruneOld(now = new Date()): Promise<number> {
     const files = await this.listFiles();
     const cutoff = now.getTime() - BACKUP_KEEP_DAYS * 24 * 3600 * 1000;
     const old = files.slice(BACKUP_KEEP_MIN).filter((f) => new Date(f.created_at).getTime() < cutoff);
     if (!old.length) return 0;
-    await this.cloud().api.delete_resources(
-      old.map((f) => f.public_id),
-      { resource_type: "raw", type: "authenticated" },
-    );
+    for (const type of ["authenticated", "private"]) {
+      const ids = old.filter((f: any) => (f.type || "authenticated") === type).map((f) => f.public_id);
+      if (ids.length) await this.cloud().api.delete_resources(ids, { resource_type: "raw", type });
+    }
     return old.length;
   }
 
   /** Stored backup files, newest first. */
-  async listFiles(): Promise<Array<{ public_id: string; created_at: string; bytes: number }>> {
-    const res: any = await this.cloud().api.resources({
-      resource_type: "raw",
-      type: "authenticated",
-      prefix: `${BACKUP_FOLDER}/`,
-      max_results: 100,
-    });
-    return (res?.resources || [])
-      .map((r: any) => ({ public_id: r.public_id, created_at: r.created_at, bytes: r.bytes }))
-      .sort((a: any, b: any) => String(b.created_at).localeCompare(String(a.created_at)));
+  async listFiles(): Promise<Array<{ public_id: string; created_at: string; bytes: number; type: string }>> {
+    const all: any[] = [];
+    for (const type of ["authenticated", "private"]) {
+      const res: any = await this.cloud()
+        .api.resources({ resource_type: "raw", type, prefix: `${BACKUP_FOLDER}/`, max_results: 100 })
+        .catch(() => ({ resources: [] }));
+      for (const r of res?.resources || []) all.push({ public_id: r.public_id, created_at: r.created_at, bytes: r.bytes, type });
+    }
+    return all.sort((a, b) => String(b.created_at).localeCompare(String(a.created_at)));
   }
 
   /** Admin page: the latest runs and stored files, with 10-minute download links. */
@@ -156,7 +180,7 @@ export class DatabaseBackupService {
         name: f.public_id.split("/").pop(),
         downloadUrl: c.utils.private_download_url(f.public_id, "", {
           resource_type: "raw",
-          type: "authenticated",
+          type: (f as any).type || "authenticated",
           expires_at: Math.floor(Date.now() / 1000) + 600,
         } as any),
       }));

@@ -77,3 +77,24 @@ describe("keeping 14 days of backups", () => {
     expect(deleted).toEqual(["f30"]); // f20 is old but one of the newest 3
   });
 });
+
+describe("uploading the backup", () => {
+  it("falls back to a private file when Cloudinary refuses an authenticated one (403)", async () => {
+    const service: any = new DatabaseBackupService({} as any);
+    const tried: string[] = [];
+    service.cloud = () => ({
+      uploader: {
+        upload_stream: (opts: any, cb: any) => ({
+          end: () => {
+            tried.push(opts.type);
+            if (opts.type === "authenticated") cb({ error: { message: "Forbidden", http_code: 403 } });
+            else cb(null, { public_id: `system/db-backups/${opts.public_id}` });
+          },
+        }),
+      },
+    });
+    const res = await service.uploadPrivate(Buffer.from("x"), "f.enc");
+    expect(tried).toEqual(["authenticated", "private"]);
+    expect(res).toMatchObject({ deliveryType: "private" });
+  });
+});
