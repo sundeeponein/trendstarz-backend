@@ -4,6 +4,10 @@ import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 import { DailyUsageGuard } from '../monetization/guards/daily-usage.guard';
 import { UsageLimit } from '../monetization/decorators/usage-limit.decorator';
+import { applySearchEligibilityFilter } from '../utils/profile-eligibility.util';
+
+/** The brand dashboard shows a short list; full results live in Search. */
+export const DASHBOARD_SEARCH_LIMIT = 50;
 
 @Controller('users/influencers')
 export class InfluencersController {
@@ -16,7 +20,14 @@ export class InfluencersController {
   @UseGuards(JwtAuthGuard, DailyUsageGuard)
   @UsageLimit('search', 'dailySearchLimit')
   async searchInfluencers(@Query() query: any) {
-    const filter: any = { status: 'accepted' };
+    // Same bar as Influencer Search (approved, verified, not Private, photo,
+    // location, social tier). Before 2026-10-25 only status was checked, so
+    // unapproved and Private creators showed up here.
+    const filter: any = applySearchEligibilityFilter({}, {
+      photoField: 'profileImages',
+      requireSocialTier: true,
+      viewerIsAuthenticated: true,
+    });
     const blockedRows = await this.profileFlagModel
       .find({
         userType: 'Influencer',
@@ -42,6 +53,8 @@ export class InfluencersController {
     if (query.state) filter['location.state'] = query.state;
     const docs = await this.influencerModel.find(filter)
       .select('name categories location profileImages isPremium premiumEnd')
+      .sort({ profileCompletion: -1, _id: 1 })
+      .limit(DASHBOARD_SEARCH_LIMIT)
       .lean();
     const now = new Date();
     return (docs || []).map((doc: any) => ({

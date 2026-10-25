@@ -46,17 +46,17 @@ describe("data integrity checks (real MongoDB)", () => {
     await db.collection("campaigntransactions").insertOne({ transactionType: "paid_collab", campaignId: camp, inviteId: inv, payerId: new Types.ObjectId().toHexString(), recipientId: new Types.ObjectId().toHexString(), agreedAmount: 100000, payerTotal: 100000, recipientPayout: 100000, collectionStatus: "verified", payoutStatus: "paid" });
     await db.collection("campaigninvites").updateOne({ _id: inv }, { $set: { status: "approved", paidOutAt: new Date() } });
     const premiumUser = new Types.ObjectId();
-    await db.collection("brands").insertOne({ _id: premiumUser, email: "p@x.com", isPremium: true, premiumSource: "admin", premiumEnd: new Date(Date.now() + 86400000) });
+    await db.collection("brands").insertOne({ _id: premiumUser, email: "p@x.com", publicId: "BRD100001", isPremium: true, premiumSource: "admin", premiumEnd: new Date(Date.now() + 86400000) });
     await db.collection("subscriptions").insertOne({ userId: premiumUser, userType: "BRAND", status: "active", endDate: new Date(Date.now() + 86400000) });
     await db.collection("payments").insertOne({ amount: 499, amountPaise: 49900, status: "approved" });
-    await db.collection("influencers").insertOne({ email: "a@x.com", isPremium: true, premiumSource: "admin" });
-    await db.collection("brands").insertOne({ email: "b@x.com" });
+    await db.collection("influencers").insertOne({ email: "a@x.com", publicId: "INF100001", isPremium: true, premiumSource: "admin" });
+    await db.collection("brands").insertOne({ email: "b@x.com", publicId: "BRD100002" });
 
     process.env.BACKUP_ENCRYPTION_KEY = "a".repeat(64);
     await db.collection("database_backups").insertOne({ at: new Date(), status: "ok" });
     const checks = await runIntegrityChecks(db);
     expect(checks.filter((c) => c.status === "warn")).toEqual([]);
-    expect(checks).toHaveLength(20);
+    expect(checks).toHaveLength(22);
   });
 
   it("finds collected money with no way out, and invites waiting on an ended campaign", async () => {
@@ -125,6 +125,10 @@ describe("data integrity checks (real MongoDB)", () => {
     await db.collection("photographers").insertOne({ _id: anon, anonymized: true });
     await db.collection("profile_flags").insertMany([{ userId: new Types.ObjectId().toHexString() }, { userId: String(premium.insertedId) }]);
     await db.collection("notifications").insertOne({ userId: String(anon) });
+    await db.collection("brands").insertMany([
+      { email: "half@x.in", publicId: "BRD1", status: "accepted", verificationStatus: "approved", verifiedByTrendStarz: false },
+      { email: "pending@x.in", publicId: "BRD2", status: "pending", verificationStatus: "approved", verifiedByTrendStarz: true },
+    ]);
 
     const c = await byKey();
     expect(c.id_types.status).toBe("warn"); // ObjectId campaignId + username brandId
@@ -137,6 +141,9 @@ describe("data integrity checks (real MongoDB)", () => {
     expect(c.unpaid_unlocks.count).toBe(1);
     expect(c.shared_emails.samples[0]).toContain("free@x.com");
     expect(c.personal_data_after_delete.samples).toEqual(["notifications: 1", "profile_flags: 1"]);
+    expect(c.approval_fields_agree.samples.join(" ")).toMatch(/half@x\.in.*|pending@x\.in/);
+    expect(c.approval_fields_agree.count).toBe(2);
+    expect(c.public_ids_present.status).toBe("warn"); // the accounts above have no ID number
   });
 
   it("catches Premium removed from a profile while its subscription stays active, and invite/payment drift", async () => {
@@ -259,7 +266,7 @@ describe("data integrity checks (real MongoDB)", () => {
       _id: inv, campaignId: new Types.ObjectId().toHexString(), brandId: new Types.ObjectId().toHexString(),
       influencerId: new Types.ObjectId(), status: "completed", unlocked: true, unlockType: "paid_collab_payment",
     });
-    const service = new DataIntegrityService(tdb.conn as any);
+    const service = new DataIntegrityService(tdb.conn as any, {} as any);
     await service.onModuleInit();
 
     await expect(

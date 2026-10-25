@@ -815,6 +815,77 @@ async function invitesCloseWithCampaign(db: Db, explained: ExplainedSet): Promis
   );
 }
 
+const ACCOUNT_COLLECTIONS: Array<[collection: string, label: string]> = [
+  ["influencers", "influencer"],
+  ["brands", "brand"],
+  ["photographers", "photographer"],
+];
+
+/**
+ * The two approval fields say the same thing, and an approved account is
+ * active. A profile save once flipped approval silently (2026-10-25), and a
+ * half-applied admin action could leave the fields disagreeing.
+ */
+async function approvalFieldsAgree(db: Db, explained: ExplainedSet): Promise<IntegrityCheck> {
+  const found: Array<{ ref: string; text: string }> = [];
+  for (const [collection, label] of ACCOUNT_COLLECTIONS) {
+    const rows = await db
+      .collection(collection)
+      .find(
+        {
+          isDeleted: { $ne: true },
+          anonymized: { $ne: true },
+          $or: [
+            { verificationStatus: "approved", verifiedByTrendStarz: { $ne: true } },
+            { verifiedByTrendStarz: true, verificationStatus: { $ne: "approved" } },
+            {
+              $or: [{ verificationStatus: "approved" }, { verifiedByTrendStarz: true }],
+              status: { $nin: ["accepted", "deleted", "deletion_pending", "suspended"] },
+            },
+          ],
+        },
+        { projection: { email: 1, status: 1, verificationStatus: 1, verifiedByTrendStarz: 1 } },
+      )
+      .toArray();
+    for (const r of rows as any[]) {
+      found.push({
+        ref: `${collection}:${r._id}`,
+        text: `${label} ${r.email || r._id}: verification ${r.verificationStatus || "—"}, TrendStarZ-verified ${!!r.verifiedByTrendStarz}, account ${r.status || "—"}`,
+      });
+    }
+  }
+  return explainableCheck(
+    "approval_fields_agree",
+    "Approval fields agree with each other",
+    "An account's approval fields disagree (approved in one place, not in the other), or an approved account isn't active. Open it in Admin → Users and set the approval again; if it is right as it stands, mark it as explained.",
+    found,
+    explained,
+  );
+}
+
+/** Every live account has its INF / BRD / PHO number (admin search and references use it). */
+async function publicIdsPresent(db: Db): Promise<IntegrityCheck> {
+  const samples: string[] = [];
+  let total = 0;
+  for (const [collection] of ACCOUNT_COLLECTIONS) {
+    const n = await db.collection(collection).countDocuments({
+      isDeleted: { $ne: true },
+      $or: [{ publicId: { $exists: false } }, { publicId: null }, { publicId: "" }],
+    });
+    if (n) {
+      total += n;
+      samples.push(`${collection}: ${n}`);
+    }
+  }
+  return check(
+    "public_ids_present",
+    "Every account has its ID number",
+    total,
+    "Some accounts have no INF / BRD / PHO number. New accounts get one automatically; give the rest theirs with: node cron/backfillPublicIds.js --apply",
+    samples,
+  );
+}
+
 export async function runIntegrityChecks(db: Db): Promise<IntegrityCheck[]> {
   const explained = await loadExplained(db);
   return Promise.all([
@@ -838,5 +909,7 @@ export async function runIntegrityChecks(db: Db): Promise<IntegrityCheck[]> {
     personalDataAfterDelete(db),
     collectedMoneySettles(db, explained),
     invitesCloseWithCampaign(db, explained),
+    approvalFieldsAgree(db, explained),
+    publicIdsPresent(db),
   ]);
 }

@@ -15,6 +15,7 @@ import {
 
 /** Checks whose findings point at one record an admin can explain. */
 export const EXPLAINABLE_CHECKS = [
+  "approval_fields_agree",
   "collected_money_settles",
   "invites_close_with_campaign",
   "unexplained_premium",
@@ -29,6 +30,9 @@ export const EXPLAINABLE_CHECKS = [
 ];
 import { sendAppEmail } from "../utils/app-email.service";
 import { reconcileRazorpay } from "./razorpay-reconcile";
+import { reconcileFirebase } from "./firebase-reconcile";
+import { fetchBlockedContacts, matchEmailBlocks } from "./email-blocks";
+import { FirebaseAdminService } from "../utils/firebase-admin.service";
 import { SingleInstance } from "../utils/single-instance";
 
 const RUNS = "data_integrity_runs";
@@ -54,7 +58,42 @@ export function warningSignature(checks: IntegrityCheck[]): string {
 export class DataIntegrityService implements OnModuleInit {
   private readonly logger = new Logger(DataIntegrityService.name);
 
-  constructor(@InjectConnection() private readonly connection: Connection) {}
+  constructor(
+    @InjectConnection() private readonly connection: Connection,
+    private readonly firebaseAdmin: FirebaseAdminService,
+  ) {}
+
+  /** Live accounts whose email Brevo refuses to deliver to (read-only). */
+  async emailBlocks() {
+    const key = String(process.env.BREVO_API_KEY || "").trim();
+    if (!key) throw new BadRequestException("BREVO_API_KEY is not set in Railway.");
+    try {
+      const blocked = await fetchBlockedContacts(key);
+      return { success: true, data: await matchEmailBlocks(this.connection.db as any, blocked) };
+    } catch (err: any) {
+      // Reduced to a status — never the key.
+      const status = err?.response?.status;
+      throw new BadRequestException(
+        status === 401 || status === 403
+          ? `Brevo refused to list blocked emails (HTTP ${status}) — the API key may not allow it.`
+          : `Couldn't read Brevo's blocked list: ${status ? `HTTP ${status}` : err?.code || "error"}`,
+      );
+    }
+  }
+
+  /** Firebase logins vs TrendStarZ accounts (read-only). */
+  async reconcileFirebase() {
+    if (!this.firebaseAdmin.isConfigured()) {
+      throw new BadRequestException("Firebase Admin is not configured (FIREBASE_* in Railway).");
+    }
+    try {
+      const users = await this.firebaseAdmin.listEmailUsers(100000);
+      const lite = users.map((u) => ({ uid: u.uid, email: u.email, emailVerified: u.emailVerified }));
+      return { success: true, data: await reconcileFirebase(this.connection.db as any, lite) };
+    } catch (err: any) {
+      throw new BadRequestException(`Couldn't read Firebase users: ${err?.code || err?.message || "error"}`.slice(0, 200));
+    }
+  }
 
   /** Razorpay vs TrendStarZ for the last `days` days (read-only). */
   async reconcileRazorpay(days: number) {

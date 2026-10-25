@@ -38,6 +38,18 @@ export class DataIntegrityController {
     return this.service.reconcileRazorpay(Number(days) || 7);
   }
 
+  /** Live accounts whose email Brevo won't deliver to (bounced, complained, unsubscribed). */
+  @Get("email-blocks")
+  emailBlocks() {
+    return this.service.emailBlocks();
+  }
+
+  /** Firebase logins vs TrendStarZ accounts: mismatched links, logins kept after deletion. */
+  @Get("firebase-reconcile")
+  firebaseReconcile() {
+    return this.service.reconcileFirebase();
+  }
+
   /** Nightly encrypted backups: recent runs and stored files (10-minute download links). */
   @Get("backups")
   backupOverview() {
