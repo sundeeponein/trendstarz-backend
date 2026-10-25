@@ -1,7 +1,7 @@
 import { canonicalPhone } from "../utils/phone.util";
 import { publicScoreFields } from "../utils/public-score-fields.util";
 import { Injectable, BadRequestException, NotFoundException, OnModuleInit } from "@nestjs/common";
-import { Cron, CronExpression } from "@nestjs/schedule";
+import { Cron } from "@nestjs/schedule";
 import * as fs from "fs";
 import * as path from "path";
 import { randomUUID } from "crypto";
@@ -3103,7 +3103,7 @@ export class UsersService implements OnModuleInit {
    * admin action via the existing Deleted Users → Delete Permanently flow,
    * which is a genuine hard delete for explicit GDPR/DPDP erasure requests.
    */
-  @Cron(CronExpression.EVERY_DAY_AT_1AM)
+  @Cron("0 1 * * *", { timeZone: "Asia/Kolkata" })
   @SingleInstance()
   async cleanupExpiredSelfDeletionRequestsCron() {
     try {

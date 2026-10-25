@@ -171,7 +171,7 @@ export class ProfileMediaCleanupService {
   }
 
   // 03:30 server time, away from the 06:00 pending-upload cleanup.
-  @Cron("30 3 * * *")
+  @Cron("30 3 * * *", { timeZone: "Asia/Kolkata" })
   @SingleInstance()
   async runScheduledCleanup() {
     try {

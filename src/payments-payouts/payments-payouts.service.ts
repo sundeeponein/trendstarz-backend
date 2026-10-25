@@ -3822,7 +3822,7 @@ export class PaymentsPayoutsService {
     };
   }
 
-  @Cron("0 30 1 * * *")
+  @Cron("0 30 1 * * *", { timeZone: "Asia/Kolkata" })
   @SingleInstance()
   async expireCreditCron() {
     try {

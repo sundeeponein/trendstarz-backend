@@ -1,6 +1,6 @@
 import { Injectable, Logger } from "@nestjs/common";
 import { InjectModel } from "@nestjs/mongoose";
-import { Cron, CronExpression } from "@nestjs/schedule";
+import { Cron } from "@nestjs/schedule";
 import { Model, Types } from "mongoose";
 import { FirebaseAdminService } from "../utils/firebase-admin.service";
 import { sendAppEmail } from "../utils/app-email.service";
@@ -655,7 +655,7 @@ export class PendingUserCleanupService {
     return { success: true, triggeredBy, total, counts: { day7, day15, day30 } };
   }
 
-  @Cron(CronExpression.EVERY_DAY_AT_3AM)
+  @Cron("0 3 * * *", { timeZone: "Asia/Kolkata" })
   @SingleInstance()
   async runScheduledCleanup() {
     try {
@@ -668,7 +668,7 @@ export class PendingUserCleanupService {
     }
   }
 
-  @Cron(CronExpression.EVERY_DAY_AT_7AM)
+  @Cron("0 7 * * *", { timeZone: "Asia/Kolkata" })
   @SingleInstance()
   async runScheduledVerificationReminders() {
     try {
@@ -681,7 +681,7 @@ export class PendingUserCleanupService {
     }
   }
 
-  @Cron(CronExpression.EVERY_DAY_AT_4AM)
+  @Cron("0 4 * * *", { timeZone: "Asia/Kolkata" })
   @SingleInstance()
   async runScheduledPendingUnverifiedReport() {
     try {
@@ -708,7 +708,7 @@ export class PendingUserCleanupService {
     }
   }
 
-  @Cron(CronExpression.EVERY_DAY_AT_5AM)
+  @Cron("0 5 * * *", { timeZone: "Asia/Kolkata" })
   @SingleInstance()
   async runScheduledFirebaseEmailSync() {
     try {

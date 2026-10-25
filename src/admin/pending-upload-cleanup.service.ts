@@ -1,6 +1,6 @@
 import { Injectable, Logger } from "@nestjs/common";
 import { InjectModel } from "@nestjs/mongoose";
-import { Cron, CronExpression } from "@nestjs/schedule";
+import { Cron } from "@nestjs/schedule";
 import { Model } from "mongoose";
 import { CloudinaryService } from "../cloudinary.service";
 import { CloudinaryFolders } from "../cloudinary-folders";
@@ -198,7 +198,7 @@ export class PendingUploadCleanupService {
     };
   }
 
-  @Cron(CronExpression.EVERY_DAY_AT_6AM)
+  @Cron("0 6 * * *", { timeZone: "Asia/Kolkata" })
   @SingleInstance()
   async runScheduledCleanup() {
     try {

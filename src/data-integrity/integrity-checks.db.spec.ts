@@ -56,7 +56,7 @@ describe("data integrity checks (real MongoDB)", () => {
     await db.collection("database_backups").insertOne({ at: new Date(), status: "ok" });
     const checks = await runIntegrityChecks(db);
     expect(checks.filter((c) => c.status === "warn")).toEqual([]);
-    expect(checks).toHaveLength(22);
+    expect(checks).toHaveLength(25);
   });
 
   it("finds collected money with no way out, and invites waiting on an ended campaign", async () => {
@@ -90,6 +90,46 @@ describe("data integrity checks (real MongoDB)", () => {
     expect(c.collected_money_settles.samples.join(" ")).toContain("closed without deciding");
     expect(c.collected_money_settles.samples.join(" ")).toContain("invite is withdrawn");
     expect(c.invites_close_with_campaign.samples).toEqual([expect.stringContaining("campaign 7 is completed")]);
+  });
+
+  it("flags payouts and refunds waiting longer than the allowed days, not recent ones", async () => {
+    const day = 86400000;
+    const old = new Date(Date.now() - 5 * day);
+    const recent = new Date(Date.now() - 1 * day);
+    const party = () => ({ campaignId: new Types.ObjectId().toHexString(), influencerId: new Types.ObjectId() });
+    const lateInv = new Types.ObjectId();
+    const freshInv = new Types.ObjectId();
+    const openInv = new Types.ObjectId();
+    await db.collection("campaigninvites").insertMany([
+      { _id: lateInv, ...party(), status: "completed", completedAt: old },
+      { _id: freshInv, ...party(), status: "completed", completedAt: recent },
+      { _id: openInv, ...party(), status: "accepted" }, // not payable yet
+    ]);
+    const pay = { transactionType: "paid_collab", collectionStatus: "verified", payoutStatus: "processing", recipientPayout: 95000 };
+    await db.collection("campaigntransactions").insertMany([
+      { ...pay, inviteId: lateInv },
+      { ...pay, inviteId: freshInv },
+      { ...pay, inviteId: openInv, payoutStatus: "pending" },
+      { transactionType: "paid_collab", inviteId: new Types.ObjectId(), refundStatus: "owed", refundOwedAt: old, payerTotal: 60000 },
+      { transactionType: "paid_collab", inviteId: new Types.ObjectId(), refundStatus: "owed", refundOwedAt: recent, payerTotal: 60000 },
+      { transactionType: "paid_collab", inviteId: new Types.ObjectId(), refundStatus: "owed", refundOwedAt: old, latePost: { status: "pending" } },
+    ]);
+
+    const c = await byKey();
+    expect(c.payouts_overdue.count).toBe(1);
+    expect(c.payouts_overdue.samples[0]).toMatch(/₹950 due to the creator for 5 days/);
+    expect(c.refunds_overdue.count).toBe(1);
+    expect(c.refunds_overdue.samples[0]).toMatch(/₹600 owed to the host for 5 days/);
+  });
+
+  it("repeats money alerts every Monday (IST) while they last", () => {
+    const { moneyReminderDue } = require("./data-integrity.service");
+    const warn = (key: string) => ({ key, label: key, status: "warn", count: 1, help: "", samples: [] });
+    const mondayIst = new Date("2026-10-26T02:45:00+05:30");
+    const tuesdayIst = new Date("2026-10-27T02:45:00+05:30");
+    expect(moneyReminderDue([warn("payouts_overdue")], mondayIst)).toBe(true);
+    expect(moneyReminderDue([warn("payouts_overdue")], tuesdayIst)).toBe(false);
+    expect(moneyReminderDue([warn("shared_emails")], mondayIst)).toBe(false);
   });
 
   it("every check with 'Mark as explained' buttons is accepted by the explain endpoint", async () => {
@@ -144,6 +184,12 @@ describe("data integrity checks (real MongoDB)", () => {
     expect(c.approval_fields_agree.samples.join(" ")).toMatch(/half@x\.in.*|pending@x\.in/);
     expect(c.approval_fields_agree.count).toBe(2);
     expect(c.public_ids_present.status).toBe("warn"); // the accounts above have no ID number
+    expect(c.shared_phones.count).toBe(0);
+    await db.collection("photographers").insertOne({ email: "ph@x.in", phoneNumber: "9876543210" });
+    await db.collection("brands").insertOne({ email: "br@x.in", phoneNumber: "9876543210" });
+    await db.collection("brands").insertOne({ email: "gone@x.in", phoneNumber: "9876543210", isDeleted: true });
+    const again = await byKey();
+    expect(again.shared_phones.samples).toEqual([expect.stringMatching(/^98\*{6}10: /)]);
   });
 
   it("catches Premium removed from a profile while its subscription stays active, and invite/payment drift", async () => {

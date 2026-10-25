@@ -1,6 +1,6 @@
 import { Injectable } from "@nestjs/common";
 import { InjectModel } from "@nestjs/mongoose";
-import { Cron, CronExpression } from "@nestjs/schedule";
+import { Cron } from "@nestjs/schedule";
 import { Model } from "mongoose";
 import { SingleInstance } from "../utils/single-instance";
 
@@ -517,7 +517,7 @@ export class EarlyAccessAssignmentService {
     };
   }
 
-  @Cron(CronExpression.EVERY_DAY_AT_1AM)
+  @Cron("0 1 * * *", { timeZone: "Asia/Kolkata" })
   @SingleInstance()
   async runScheduledEarlyAccessAutoAssign() {
     try {

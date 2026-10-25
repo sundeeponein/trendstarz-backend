@@ -886,6 +886,109 @@ async function publicIdsPresent(db: Db): Promise<IntegrityCheck> {
   );
 }
 
+/** Money owed for longer than this is flagged (payouts to creators, refunds to hosts). */
+export const MONEY_OVERDUE_DAYS = 3;
+
+/** Checks about money someone is waiting for; while they warn, the alert email repeats weekly. */
+export const MONEY_CHECKS = ["collected_money_settles", "payouts_overdue", "refunds_overdue"];
+
+/**
+ * A creator's payout is due once the collaboration completed. Nothing reminded the
+ * admin before: a ₹1,000 payout sat unnoticed for months (2026-10).
+ */
+async function payoutsOverdue(db: Db, explained: ExplainedSet, now = new Date()): Promise<IntegrityCheck> {
+  const cutoff = now.getTime() - MONEY_OVERDUE_DAYS * 86400000;
+  const txs = await db
+    .collection("campaigntransactions")
+    .find(
+      { transactionType: { $ne: "platform_fee" }, collectionStatus: "verified", payoutStatus: { $in: ["pending", "processing"] } },
+      { projection: { inviteId: 1, recipientPayout: 1, updatedAt: 1 } },
+    )
+    .toArray();
+  const found: Array<{ ref: string; text: string }> = [];
+  for (const tx of txs as any[]) {
+    if (!tx.inviteId) continue;
+    const inv: any = await db
+      .collection("campaigninvites")
+      .findOne({ _id: tx.inviteId }, { projection: { status: 1, completedAt: 1 } });
+    if (!inv || !["completed", "approved"].includes(inv.status)) continue;
+    const since = new Date(inv.completedAt || tx.updatedAt || 0);
+    if (since.getTime() > cutoff) continue;
+    const days = Math.floor((now.getTime() - since.getTime()) / 86400000);
+    found.push({
+      ref: `tx:${tx._id}`,
+      text: `payout ${tx._id}: ₹${Math.round(Number(tx.recipientPayout || 0) / 100)} due to the creator for ${days} days`,
+    });
+  }
+  return explainableCheck(
+    "payouts_overdue",
+    `Creator payouts are paid within ${MONEY_OVERDUE_DAYS} days`,
+    "These collaborations are complete but the creator hasn't been paid. Pay them in Payments → Payout pending and press Mark paid with the UTR.",
+    found,
+    explained,
+  );
+}
+
+/** A refund owed to a host should be sent within a few days of being approved. */
+async function refundsOverdue(db: Db, explained: ExplainedSet, now = new Date()): Promise<IntegrityCheck> {
+  const cutoff = new Date(now.getTime() - MONEY_OVERDUE_DAYS * 86400000);
+  const rows = await db
+    .collection("campaigntransactions")
+    .find(
+      {
+        refundStatus: "owed",
+        "latePost.status": { $ne: "pending" },
+        $or: [{ refundOwedAt: { $lte: cutoff } }, { refundOwedAt: null, updatedAt: { $lte: cutoff } }],
+      },
+      { projection: { payerTotal: 1, refundOwedAt: 1, updatedAt: 1 } },
+    )
+    .toArray();
+  const found = (rows as any[]).map((tx) => {
+    const since = new Date(tx.refundOwedAt || tx.updatedAt);
+    const days = Math.floor((now.getTime() - since.getTime()) / 86400000);
+    return {
+      ref: `tx:${tx._id}`,
+      text: `refund ${tx._id}: ₹${Math.round(Number(tx.payerTotal || 0) / 100)} owed to the host for ${days} days`,
+    };
+  });
+  return explainableCheck(
+    "refunds_overdue",
+    `Refunds are sent within ${MONEY_OVERDUE_DAYS} days`,
+    "These refunds are approved but not sent. Send them by UPI and press Mark refund sent in Payments → Refunds → Owed.",
+    found,
+    explained,
+  );
+}
+
+/** One mobile number per live account across all roles (sign-up and edits check the same). */
+async function sharedPhones(db: Db): Promise<IntegrityCheck> {
+  const rows = await db
+    .collection("influencers")
+    .aggregate([
+      { $match: { isDeleted: { $ne: true }, anonymized: { $ne: true }, phoneNumber: { $regex: /^\d{10}$/ } } },
+      { $project: { phone: "$phoneNumber", src: { $literal: "influencers" } } },
+      ...["brands", "photographers", "users"].map((c) => ({
+        $unionWith: {
+          coll: c,
+          pipeline: [
+            { $match: { isDeleted: { $ne: true }, anonymized: { $ne: true }, phoneNumber: { $regex: /^\d{10}$/ } } },
+            { $project: { phone: "$phoneNumber", src: { $literal: c } } },
+          ],
+        },
+      })),
+      { $group: { _id: "$phone", n: { $sum: 1 }, where: { $push: { $concat: ["$src", ":", { $toString: "$_id" }] } } } },
+      { $match: { n: { $gt: 1 } } },
+    ])
+    .toArray();
+  return check(
+    "shared_phones",
+    "Each mobile number belongs to one account",
+    rows.length,
+    "The same mobile number is on more than one live account — OTPs and WhatsApp messages can reach the wrong person. Change it on the account that doesn't own it.",
+    rows.map((r: any) => `${String(r._id).slice(0, 2)}******${String(r._id).slice(-2)}: ${r.where.join(" ")}`),
+  );
+}
+
 export async function runIntegrityChecks(db: Db): Promise<IntegrityCheck[]> {
   const explained = await loadExplained(db);
   return Promise.all([
@@ -911,5 +1014,8 @@ export async function runIntegrityChecks(db: Db): Promise<IntegrityCheck[]> {
     invitesCloseWithCampaign(db, explained),
     approvalFieldsAgree(db, explained),
     publicIdsPresent(db),
+    payoutsOverdue(db, explained),
+    refundsOverdue(db, explained),
+    sharedPhones(db),
   ]);
 }

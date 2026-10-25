@@ -10,11 +10,14 @@ import type { Connection } from "mongoose";
 import {
   EXPLANATIONS,
   IntegrityCheck,
+  MONEY_CHECKS,
   runIntegrityChecks,
 } from "./integrity-checks";
 
 /** Checks whose findings point at one record an admin can explain. */
 export const EXPLAINABLE_CHECKS = [
+  "payouts_overdue",
+  "refunds_overdue",
   "approval_fields_agree",
   "collected_money_settles",
   "invites_close_with_campaign",
@@ -46,6 +49,12 @@ export interface IntegrityRun {
 }
 
 /** Fingerprint of what is wrong, so a repeat of the same result doesn't re-alert. */
+/** Monday (IST) and a money check still warns: repeat the alert even if nothing changed. */
+export function moneyReminderDue(checks: IntegrityCheck[], now = new Date()): boolean {
+  const istDay = new Date(now.getTime() + 5.5 * 3600000).getUTCDay();
+  return istDay === 1 && checks.some((c) => c.status === "warn" && MONEY_CHECKS.includes(c.key));
+}
+
 export function warningSignature(checks: IntegrityCheck[]): string {
   return checks
     .filter((c) => c.status === "warn")
@@ -197,9 +206,10 @@ export class DataIntegrityService implements OnModuleInit {
       this.logger.warn(
         `Data integrity: ${run.warnCount} check(s) need attention — ${warningSignature(run.checks)}`,
       );
-      // Alert only when what's wrong changed, not every night for the same thing.
-      if (previous && warningSignature(previous.checks) === warningSignature(run.checks)) return;
-      await this.alert(run);
+      // Alert when what's wrong changed — and, while someone is still waiting for
+      // money, again every Monday so it can't be forgotten.
+      const changed = !previous || warningSignature(previous.checks) !== warningSignature(run.checks);
+      if (changed || moneyReminderDue(run.checks)) await this.alert(run);
     } catch (err: any) {
       this.logger.error(`Nightly data integrity run failed: ${err?.message || err}`);
     }

@@ -1,5 +1,5 @@
 import { Injectable, Logger } from "@nestjs/common";
-import { Cron, CronExpression } from "@nestjs/schedule";
+import { Cron } from "@nestjs/schedule";
 import { InjectModel } from "@nestjs/mongoose";
 import { Model } from "mongoose";
 import { PlansService } from "./plans.service";
@@ -132,8 +132,8 @@ export class ImageCleanupService {
     };
   }
 
-  /** Runs daily at 2 AM */
-  @Cron(CronExpression.EVERY_DAY_AT_2AM)
+  /** Runs daily at 2 AM IST — before the 2:45 data checks, so they see expired Premium. */
+  @Cron("0 2 * * *", { timeZone: "Asia/Kolkata" })
   @SingleInstance()
   async runCleanup() {
     this.logger.log("[ImageCleanup] Starting daily image cleanup job");

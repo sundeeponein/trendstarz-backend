@@ -260,3 +260,7 @@ CampaignInviteSchema.index({ campaignId: 1, influencerId: 1 });
 CampaignInviteSchema.index({ campaignId: 1, status: 1 });
 CampaignInviteSchema.index({ influencerId: 1, status: 1 });
 CampaignInviteSchema.index({ brandId: 1, status: 1 });
+// Open reports (admin disputes queue + count, creators' "needs attention") and the
+// still-disputed list scanned every invite before (2026-10-25).
+CampaignInviteSchema.index({ "reportedIssue.reportedAt": 1 });
+CampaignInviteSchema.index({ status: 1 });

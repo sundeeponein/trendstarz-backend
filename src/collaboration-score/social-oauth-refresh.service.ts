@@ -1,6 +1,6 @@
 import { Injectable, Logger } from "@nestjs/common";
 import { InjectModel } from "@nestjs/mongoose";
-import { Cron, CronExpression } from "@nestjs/schedule";
+import { Cron } from "@nestjs/schedule";
 import { Model } from "mongoose";
 import { MetaOAuthService } from "../meta-oauth/meta-oauth.service";
 import { SingleInstance } from "../utils/single-instance";
@@ -23,7 +23,7 @@ export class SocialOAuthRefreshService {
     private readonly metaOAuthService: MetaOAuthService,
   ) {}
 
-  @Cron(CronExpression.EVERY_DAY_AT_3AM)
+  @Cron("0 3 * * *", { timeZone: "Asia/Kolkata" })
   @SingleInstance()
   async refreshExpiringConnectionsCron(): Promise<void> {
     try {
