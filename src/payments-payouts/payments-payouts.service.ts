@@ -3249,11 +3249,13 @@ export class PaymentsPayoutsService {
           session,
         );
       }
-      // Releasing to the creator also completes the invite.
+      // Releasing to the creator also completes the invite. completedAt starts the
+      // 7-day contact window; without it the window ran from updatedAt, which
+      // every later edit moves.
       if (outcome === "release_to_influencer" && resolved.inviteId) {
         await this.inviteModel.updateOne(
           { _id: resolved.inviteId },
-          { $set: { status: "completed" } },
+          { $set: { status: "completed", completedAt: now } },
           withSession({}, session),
         );
       }
