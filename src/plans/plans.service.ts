@@ -554,6 +554,32 @@ export class PlansService {
     return result.modifiedCount;
   }
 
+  /**
+   * Profiles whose Premium end date has passed stop saying isPremium: true, so the
+   * stored flag tells the truth (readers already check premiumEnd; this keeps any
+   * new reader from showing an expired member as Premium — 14 did on 2026-10-25).
+   * Skips anyone with an active subscription still running.
+   */
+  async clearLapsedPremiumFlags(now = new Date()): Promise<number> {
+    let cleared = 0;
+    for (const model of [this.influencerModel, this.brandModel, this.photographerModel]) {
+      const lapsed = { isPremium: true, premiumEnd: { $lt: now } };
+      const ids = (await model.find(lapsed).select("_id").lean()).map((p: any) => p._id);
+      if (!ids.length) continue;
+      const running = await this.subscriptionModel.distinct("userId", {
+        userId: { $in: ids },
+        status: "active",
+        endDate: { $gt: now },
+      });
+      const keep = new Set(running.map(String));
+      const clear = ids.filter((id: any) => !keep.has(String(id)));
+      if (!clear.length) continue;
+      const res = await model.updateMany({ _id: { $in: clear }, ...lapsed }, { $set: { isPremium: false } });
+      cleared += res.modifiedCount || 0;
+    }
+    return cleared;
+  }
+
   /** Historical subscriptions for a user */
   async getUserSubscriptions(userId: string) {
     const subs = await this.subscriptionModel

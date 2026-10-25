@@ -143,6 +143,9 @@ export class ImageCleanupService {
       const expired = await this.plansService.expireStaleSubscriptions();
       if (expired)
         this.logger.log(`[ImageCleanup] Expired ${expired} subscriptions`);
+      const lapsed = await this.plansService.clearLapsedPremiumFlags();
+      if (lapsed)
+        this.logger.log(`[ImageCleanup] Cleared Premium on ${lapsed} lapsed profiles`);
 
       // Media of members whose Premium lapsed is kept (decided 2026-10-20): plan
       // limits only stop new uploads beyond the Free limit, and nothing is lost on renewal.
