@@ -28,6 +28,23 @@ function stampPasswordChanges(schema: Schema) {
   });
 }
 
+/**
+ * Every new account gets its INF / BRD / PHO public ID, whichever path creates
+ * it (sign-up sets it itself; the admin Firebase import did not, 2026-10-25).
+ * Same counters and +100000 offset as AuthService.nextPublicId.
+ */
+function assignPublicIdOnCreate(schema: Schema, prefix: string, counterKey: string) {
+  schema.pre("save", async function assignPublicId() {
+    const doc: any = this;
+    if (!doc.isNew || doc.publicId) return;
+    const counter: any = await (doc.constructor as any).db
+      .collection("counters")
+      .findOneAndUpdate({ _id: counterKey }, { $inc: { seq: 1 } }, { upsert: true, returnDocument: "after" });
+    const seq = (counter?.value ?? counter)?.seq;
+    if (seq) doc.publicId = `${prefix}${100000 + seq}`;
+  });
+}
+
 const ProfileVerificationFields = {
   emailVerifiedAt: { type: Date, default: null },
   // When the last verification-email link was sent; drives the one-time
@@ -555,6 +572,7 @@ InfluencerSchema.pre("validate", function (next) {
 });
 
 stampPasswordChanges(InfluencerSchema);
+assignPublicIdOnCreate(InfluencerSchema, "INF", "influencer_public_id");
 export const InfluencerModel = model("Influencer", InfluencerSchema);
 
 export const BrandSchema = new Schema(
@@ -846,6 +864,7 @@ BrandSchema.pre("validate", function (next) {
 });
 
 stampPasswordChanges(BrandSchema);
+assignPublicIdOnCreate(BrandSchema, "BRD", "brand_public_id");
 export const BrandModel = model("Brand", BrandSchema);
 
 // Photographer / Videographer schema
@@ -1176,6 +1195,7 @@ PhotographerSchema.pre("validate", function (next) {
 });
 
 stampPasswordChanges(PhotographerSchema);
+assignPublicIdOnCreate(PhotographerSchema, "PHO", "photographer_public_id");
 export const PhotographerModel = model("Photographer", PhotographerSchema);
 
 export const AppSettingsSchema = new Schema({
