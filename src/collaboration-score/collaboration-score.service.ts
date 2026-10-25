@@ -423,14 +423,25 @@ export class CollaborationScoreService {
 
     // Retire the older version only once the new one is saved: retiring it
     // first left the user with no current score whenever the save failed.
-    await this.auditModel.updateMany(
-      { userId: String(userId), isCurrent: true, _id: { $ne: created._id } },
-      { $set: { isCurrent: false } },
-    );
+    await this.retireOlderAudits(String(userId), created._id);
 
     await this.recordSyncBaseline(String(userId), collectedPlatforms);
 
     return created.toObject();
+  }
+
+  /**
+   * Leaves only the highest version current — not "the one this call made":
+   * when two runs overlap, the one that finishes last may hold the older version.
+   */
+  async retireOlderAudits(userId: string, fallbackId: unknown): Promise<void> {
+    const newest: any = await this.auditModel
+      .findOne({ userId, isCurrent: true }, "_id", { sort: { version: -1 } })
+      .lean();
+    await this.auditModel.updateMany(
+      { userId, isCurrent: true, _id: { $ne: newest?._id ?? fallbackId } },
+      { $set: { isCurrent: false } },
+    );
   }
 
   /**
