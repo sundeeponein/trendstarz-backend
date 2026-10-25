@@ -1,6 +1,7 @@
 import { Module } from "@nestjs/common";
 import { MongooseModule } from "@nestjs/mongoose";
 import { PhotographersController } from "./photographers.controller";
+import { FirebaseAdminService } from "../utils/firebase-admin.service";
 import { PhotographersService } from "./photographers.service";
 import {
   PhotographerSchema,
@@ -48,7 +49,7 @@ import { SocialAccountVerificationModule } from "../social-account-verification/
     ]),
   ],
   controllers: [PhotographersController],
-  providers: [PhotographersService, CloudinaryService],
+  providers: [PhotographersService, CloudinaryService, FirebaseAdminService],
   exports: [PhotographersService],
 })
 export class PhotographersModule {}

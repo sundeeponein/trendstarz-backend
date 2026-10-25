@@ -10,7 +10,9 @@ import {
   Injectable,
   BadRequestException,
   NotFoundException,
+  Optional,
 } from "@nestjs/common";
+import { FirebaseAdminService } from "../utils/firebase-admin.service";
 import { InjectModel } from "@nestjs/mongoose";
 import { Model, Types } from "mongoose";
 import { CloudinaryService } from "../cloudinary.service";
@@ -115,6 +117,8 @@ export class PhotographersService {
     @InjectModel("Influencer") private readonly influencerModel: Model<any>,
     @InjectModel("Brand") private readonly brandModel: Model<any>,
     @InjectModel("User") private readonly userModel: Model<any>,
+    // Optional so existing unit tests can build the service without it.
+    @Optional() private readonly firebaseAdminService?: FirebaseAdminService,
   ) {}
 
   /** Brand-safe Collaboration Score fields only — see UsersService's sibling helper. */
@@ -695,6 +699,15 @@ export class PhotographersService {
     if (emailChangedFrom) {
       // To the OLD address: a takeover changes the email first.
       sendSecurityAlert(emailChangedFrom, `Your login email was changed to ${maskEmail((updated as any).email)}.`, (updated as any).name);
+      // The Firebase login follows the new email (same as UsersService.followLoginEmail).
+      try {
+        const uid = await this.firebaseAdminService?.moveLoginEmail(emailChangedFrom, (updated as any).email);
+        if (uid && uid !== (updated as any).firebaseUid) {
+          await this.photographerModel.updateOne({ _id: userId }, { $set: { firebaseUid: uid } });
+        }
+      } catch (err: any) {
+        console.error(`[updatePhotographer] Firebase login not moved for ${userId}: ${err?.code || err?.message || err}`);
+      }
     }
     if (upiChange["payout.previousUpiId"] && (updated as any).email) {
       const frontend = process.env.FRONTEND_URL || "https://www.trendstarz.in";

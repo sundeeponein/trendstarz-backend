@@ -3885,6 +3885,55 @@ export class PaymentsPayoutsService {
     return { success: true, moved, waiting };
   }
 
+  /**
+   * Admin checked and the creator did not post: end the 7-day hold now and make the
+   * refund owed (the same move the hourly job makes when the hold runs out). Refused
+   * while a late post waits for review or the collaboration has an open report.
+   */
+  async approveRefundNow(transactionId: string, adminId: string, reason: string) {
+    const note = String(reason || "").trim();
+    if (note.length < 10) {
+      throw new BadRequestException("Write what you checked (e.g. no post found on Instagram).");
+    }
+    const tx: any = await this.transactionModel.findById(transactionId).select("_id inviteId refundStatus latePost").lean();
+    if (!tx) throw new NotFoundException("Transaction not found");
+    if (tx.refundStatus !== "on_hold") {
+      throw new BadRequestException("Only a refund on hold can be approved early.");
+    }
+    if (tx.latePost?.status === "pending") {
+      throw new BadRequestException("A late post is waiting for review. Approve or reject it first.");
+    }
+    if (await this.hasOpenReport(tx.inviteId)) {
+      throw new BadRequestException("This collaboration has an open report. Resolve it on the Disputes page first.");
+    }
+    const now = new Date();
+    const updated: any = await this.transactionModel
+      .findOneAndUpdate(
+        { _id: tx._id, refundStatus: "on_hold", "latePost.status": { $ne: "pending" } },
+        {
+          $set: {
+            refundStatus: "owed",
+            refundOwedAt: now,
+            refundOwedBy: String(adminId || ""),
+            refundOwedReason: `No post (checked by admin): ${note}`,
+          },
+          $push: {
+            refundHistory: historyEntry(
+              "refund_approved_early",
+              { by: adminId, byRole: "admin" },
+              { from: "on_hold", to: "owed", note },
+              now,
+            ),
+          },
+        },
+        { new: true },
+      )
+      .lean();
+    if (!updated) throw new BadRequestException("This refund changed meanwhile — refresh and try again.");
+    await this.setFinancialCaseOpen(anyId(updated.inviteId), false);
+    return { success: true, refundStatus: "owed" };
+  }
+
   @Cron("0 15 * * * *")
   @SingleInstance()
   async expireRefundHoldsCron() {

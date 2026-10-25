@@ -215,6 +215,17 @@ export class PaymentsPayoutsController {
     );
   }
 
+  /** Admin confirmed the creator did not post: the refund on hold becomes owed now (reason required). */
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Post(":id/approve-refund-now")
+  async approveRefundNow(
+    @Param("id") id: string,
+    @Req() req: any,
+    @Body() body: { reason?: string },
+  ) {
+    return this.paymentsPayoutsService.approveRefundNow(id, String(req.user?.userId || ""), String(body?.reason || ""));
+  }
+
   /** Admin issues a fee credit that was parked for review. */
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Post(":id/fee-credit/approve")

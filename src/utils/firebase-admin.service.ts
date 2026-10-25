@@ -103,6 +103,32 @@ export class FirebaseAdminService {
     }
   }
 
+  /**
+   * A login email changed: the Firebase login follows it. Moves the old login to the
+   * new address (unverified, like the account), or — when a login for the new address
+   * already exists — deletes the old one. Returns the uid that now holds the new
+   * address, or null. Before 2026-10-25 the old login stayed behind under the old email.
+   */
+  async moveLoginEmail(oldEmail: string, newEmail: string): Promise<string | null> {
+    const from = String(oldEmail || "").trim().toLowerCase();
+    const to = String(newEmail || "").trim().toLowerCase();
+    if (!this.isConfigured() || !from || !to || from === to) return null;
+    const auth = this.getApp().auth();
+    const find = (email: string) =>
+      auth.getUserByEmail(email).catch((error: any) => {
+        if (error?.code === "auth/user-not-found") return null;
+        throw error;
+      });
+    const [oldUser, newUser] = await Promise.all([find(from), find(to)]);
+    if (!oldUser) return newUser?.uid ?? null;
+    if (newUser) {
+      await auth.deleteUser(oldUser.uid);
+      return newUser.uid;
+    }
+    await auth.updateUser(oldUser.uid, { email: to, emailVerified: false });
+    return oldUser.uid;
+  }
+
   async deleteUserByUid(uid: string): Promise<boolean> {
     const cleanUid = String(uid || "").trim();
     if (!cleanUid) return false;

@@ -216,6 +216,21 @@ export class UsersService implements OnModuleInit {
       .replace(/-+$/, "");
   }
 
+  /**
+   * After a login-email change the Firebase login moves to the new address too, and the
+   * account points at whichever login now holds it. Best effort: the change itself is saved.
+   */
+  private async followLoginEmail(model: Model<any>, account: any, oldEmail: string): Promise<void> {
+    try {
+      const uid = await this.firebaseAdminService.moveLoginEmail(oldEmail, account?.email);
+      if (uid && uid !== account?.firebaseUid) {
+        await model.updateOne({ _id: account._id }, { $set: { firebaseUid: uid } });
+      }
+    } catch (err: any) {
+      console.error(`[followLoginEmail] Firebase login not moved for ${account?._id}: ${err?.code || err?.message || err}`);
+    }
+  }
+
   private async deleteFirebaseAuthUserForPermanentDelete(user: any): Promise<{
     firebaseDeleted: boolean;
     firebaseDeleteSkipped: boolean;
@@ -3676,6 +3691,7 @@ export class UsersService implements OnModuleInit {
     if (emailChangedFrom) {
       // To the OLD address: a takeover changes the email first.
       sendSecurityAlert(emailChangedFrom, `Your login email was changed to ${maskEmail(updated.email)}.`, updated.name);
+      await this.followLoginEmail(this.influencerModel, updated, emailChangedFrom);
     }
     if (upiChange["payout.previousUpiId"]) {
       this.notifyPayoutUpiChanged(updated, upiChange["payout.previousUpiId"]);
@@ -3875,6 +3891,7 @@ export class UsersService implements OnModuleInit {
     if (brandEmailChangedFrom) {
       // To the OLD address: a takeover changes the email first.
       sendSecurityAlert(brandEmailChangedFrom, `Your login email was changed to ${maskEmail((updated as any).email)}.`, (updated as any).brandName);
+      await this.followLoginEmail(this.brandModel, updated, brandEmailChangedFrom);
     }
     await recordCreatorUpdate(this.brandModel, userId, changedSections);
     if (shouldClearBrandGallery) {
