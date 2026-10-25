@@ -6,6 +6,8 @@ import {
 } from "@nestjs/common";
 import { resolveTier, tierForFollowers } from "../utils/tier-ranges.util";
 import { InjectModel } from "@nestjs/mongoose";
+import { Cron } from "@nestjs/schedule";
+import { SingleInstance } from "../utils/single-instance";
 import { Model, Types } from "mongoose";
 import { WhatsAppService } from "../whatsapp/whatsapp.service";
 import { upiIdError } from "../utils/upi.util";
@@ -968,8 +970,14 @@ export class ProfileVerificationService {
     return `${siteBase}/${route}?utm_source=${encodeURIComponent(slug)}&utm_medium=social&utm_campaign=${campaign}`;
   }
 
-  async getDashboard(userId: string, role: any) {
-    const { userType, profile } = await this.loadProfile(userId, role);
+  /**
+   * Refreshes automatic flags, then recomputes and stores profileCompletion /
+   * profileQualityScore / profileTier. Search ranking and Featured read the
+   * stored values, so this runs on every dashboard open AND nightly for every
+   * profile (before, a profile edited elsewhere kept stale values until its
+   * owner or an admin opened the dashboard — 22 of 261 on 2026-10-25).
+   */
+  private async refreshStoredQuality(userId: string, userType: ProfileUserType, profile: any) {
     await this.refreshAutomaticFlags(userId, userType, profile);
     const flags = await this.flagModel
       .find({ userId: String(userId), userType, status: "Open" })
@@ -978,9 +986,6 @@ export class ProfileVerificationService {
     const completion = this.computeCompletion(profile, userType, flags);
     const qualityFlags = flags.filter(
       (flag) => !ADMIN_ONLY_FLAG_CODES.has(String(flag.flagCode || "")),
-    );
-    const visibleActionFlags = flags.filter(
-      (flag) => !HIDDEN_ACTION_FLAG_CODES.has(String(flag.flagCode || "")),
     );
     const quality = this.qualityFromFlags(qualityFlags, completion);
     const tier =
@@ -998,6 +1003,37 @@ export class ProfileVerificationService {
         mobileVerified: this.isMobileVerified(profile),
       },
     });
+    return { flags, completion, quality, tier };
+  }
+
+  /** Nightly: keeps every live profile's stored completion/score/tier current. */
+  @Cron("0 4 * * *", { timeZone: "Asia/Kolkata", name: "profileQualityRefresh" })
+  @SingleInstance()
+  async refreshAllStoredQuality(): Promise<{ checked: number; failed: number }> {
+    let checked = 0;
+    let failed = 0;
+    for (const userType of ["Influencer", "Brand", "Photographer"] as ProfileUserType[]) {
+      const rows: any[] = await this.modelForUserType(userType)
+        .find({ isDeleted: { $ne: true }, anonymized: { $ne: true } })
+        .lean();
+      for (const profile of rows) {
+        try {
+          await this.refreshStoredQuality(String(profile._id), userType, profile);
+          checked += 1;
+        } catch {
+          failed += 1;
+        }
+      }
+    }
+    return { checked, failed };
+  }
+
+  async getDashboard(userId: string, role: any) {
+    const { userType, profile } = await this.loadProfile(userId, role);
+    const { flags, completion, quality, tier } = await this.refreshStoredQuality(userId, userType, profile);
+    const visibleActionFlags = flags.filter(
+      (flag: any) => !HIDDEN_ACTION_FLAG_CODES.has(String(flag.flagCode || "")),
+    );
 
     return {
       userId,
