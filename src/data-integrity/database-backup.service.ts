@@ -8,6 +8,7 @@ import { EJSON } from "bson";
 import { v2 as cloudinary } from "cloudinary";
 import { SingleInstance } from "../utils/single-instance";
 import { sendAppEmail } from "../utils/app-email.service";
+import { cloudinaryUploadTest } from "../utils/cloudinary-upload-test";
 
 /** Log of backup runs (status, size, file) — Data health reads the latest. */
 export const BACKUP_LOG = "database_backups";
@@ -109,7 +110,7 @@ export class DatabaseBackupService {
       return { success: true, data: row };
     } catch (err: any) {
       const probe = await this.probeCloudinary().catch(() => "");
-      const message = `${describeCloudinaryError(err)}${probe ? ` — Cloudinary allows: ${probe}` : ""}`.slice(0, 500);
+      const message = `${describeCloudinaryError(err)}${probe ? ` — Cloudinary allows: ${probe}` : ""}`.slice(0, 800);
       await log.insertOne({ at: startedAt, trigger, status: "failed", error: message });
       this.logger.error(`Database backup failed: ${message}`);
       const to = process.env.ADMIN_EMAIL;
@@ -154,7 +155,11 @@ export class DatabaseBackupService {
         out.push(`${label} ${e?.error?.http_code || e?.http_code || "no"}`);
       }
     }
-    return out.join(", ");
+    const direct = await cloudinaryUploadTest(`${BACKUP_FOLDER}/probe`).then(
+      () => "direct upload ok",
+      (e: any) => `direct ${e?.message || e}`,
+    );
+    return `${out.join(", ")}; ${direct}`;
   }
 
   /** Binary upload as a private raw file; "authenticated" first, then "private". */

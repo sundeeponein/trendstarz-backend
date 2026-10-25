@@ -9,9 +9,11 @@ jest.mock("dns", () => ({
     resolveTxt: jest.fn(async () => { throw Object.assign(new Error("ENODATA"), { code: "ENODATA" }); }),
   },
 }));
+jest.mock("./cloudinary-upload-test", () => ({ cloudinaryUploadTest: jest.fn().mockResolvedValue(undefined) }));
 jest.mock("axios", () => ({ get: jest.fn().mockRejectedValue({ response: { status: 403 } }) }));
 
 import { runConfigChecks } from "./config-health.util";
+import { cloudinaryUploadTest } from "./cloudinary-upload-test";
 
 describe("admin configuration check", () => {
   const saved = { ...process.env };
@@ -50,5 +52,14 @@ describe("admin configuration check", () => {
     const checks = await runConfigChecks(null);
     const sender = checks.find((c) => c.service.startsWith("Email sender domain"));
     expect(sender).toMatchObject({ service: "Email sender domain (trendstarz.com)", status: "failing" });
+  });
+
+  it("flags Cloudinary as failing when a ping works but uploads are refused", async () => {
+    process.env = { ...saved, CLOUDINARY_CLOUD_NAME: "c", CLOUDINARY_API_KEY: "k", CLOUDINARY_API_SECRET: "s" };
+    (cloudinaryUploadTest as jest.Mock).mockRejectedValueOnce(new Error("upload refused, HTTP 403: Upload not allowed"));
+    const checks = await runConfigChecks(null);
+    const c = checks.find((x) => x.service === "Cloudinary (images)");
+    expect(c).toMatchObject({ status: "failing" });
+    expect(c?.detail).toContain("Upload not allowed");
   });
 });

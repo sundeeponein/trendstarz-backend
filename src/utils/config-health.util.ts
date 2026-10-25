@@ -4,6 +4,7 @@ import { DEFAULT_SENDER } from "./brevo-email.service";
 import Razorpay from "razorpay";
 import { v2 as cloudinary } from "cloudinary";
 import type { Connection } from "mongoose";
+import { cloudinaryUploadTest } from "./cloudinary-upload-test";
 
 export type ConfigStatus = "working" | "missing" | "failing" | "off";
 
@@ -34,7 +35,7 @@ function reason(err: any): string {
   return [status ? `HTTP ${status}` : "", code ? String(code) : "", !status && !code ? String(err?.message || "error") : ""]
     .filter(Boolean)
     .join(" ")
-    .slice(0, 120);
+    .slice(0, 300);
 }
 
 async function check(
@@ -80,13 +81,15 @@ export async function runConfigChecks(connection?: Connection | null): Promise<C
     check("Razorpay payments webhook secret", ["RAZORPAY_PAYMENTS_WEBHOOK_SECRET"]),
     check("RazorpayX payouts", ["RAZORPAYX_KEY_ID", "RAZORPAYX_KEY_SECRET", "RAZORPAYX_ACCOUNT_NUMBER"], undefined, true),
     check("RazorpayX webhook secret", ["RAZORPAYX_WEBHOOK_SECRET"], undefined, true),
-    check("Cloudinary (images)", ["CLOUDINARY_CLOUD_NAME", "CLOUDINARY_API_KEY", "CLOUDINARY_API_SECRET"], () => {
+    check("Cloudinary (images)", ["CLOUDINARY_CLOUD_NAME", "CLOUDINARY_API_KEY", "CLOUDINARY_API_SECRET"], async () => {
       cloudinary.config({
         cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
         api_key: process.env.CLOUDINARY_API_KEY,
         api_secret: process.env.CLOUDINARY_API_SECRET,
       });
-      return cloudinary.api.ping();
+      await cloudinary.api.ping();
+      // A ping passed while every upload was refused (Oct 2026): test a real one.
+      await cloudinaryUploadTest();
     }),
     check("Brevo (emails)", ["BREVO_API_KEY"], async () => {
       try {
