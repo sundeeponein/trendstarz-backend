@@ -1,5 +1,7 @@
 import { Schema } from "mongoose";
 
+const noNegativePrice = (v: any) => (typeof v === "number" && (v < 0 || !Number.isFinite(v)) ? null : v);
+
 export const COLLABORATION_AUDIT_USER_TYPES = [
   "Influencer",
   "Brand",
@@ -135,10 +137,11 @@ export const CollaborationAuditSchema = new Schema(
       professionalBranding: { type: Number },
       campaignReadiness: { type: Number },
     },
+    // A price below zero is never a suggestion (three July audits stored -300).
     pricingSuggestion: {
-      reelPrice: { type: Number, default: null },
-      storyPrice: { type: Number, default: null },
-      videoPrice: { type: Number, default: null },
+      reelPrice: { type: Number, default: null, set: noNegativePrice },
+      storyPrice: { type: Number, default: null, set: noNegativePrice },
+      videoPrice: { type: Number, default: null, set: noNegativePrice },
       currency: { type: String, default: "INR" },
       basis: { type: String, default: "" },
     },
