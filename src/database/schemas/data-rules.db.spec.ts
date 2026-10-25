@@ -381,6 +381,43 @@ describe("data rules (real MongoDB)", () => {
       expect(tx.updateMany).not.toHaveBeenCalled();
       expect(((await Invite.findById(insertedId).lean()) as any).status).toBe("withdrawn");
     });
+
+    const disputedWithHeldMoney = async (closedAt: Date | null) => {
+      const { insertedId } = await Invite.collection.insertOne({
+        campaignId: "camp-held", brandId: "b", influencerId: new Types.ObjectId(), status: "disputed",
+        reportedIssue: { reason: "not started", reportedAt: new Date(Date.now() - 3600e3), resolvedAt: closedAt },
+      });
+      await Tx.collection.insertOne({ ...txBase(), inviteId: insertedId, collectionStatus: "verified", payoutStatus: "pending", refundStatus: "none" });
+      const service = Object.create(CampaignInvitesService.prototype);
+      const txCalls = { find: jest.fn(async () => []), updateMany: jest.fn(async () => ({})) };
+      Object.assign(service, {
+        inviteModel: Invite,
+        submissionModel: { findOne: async () => null },
+        campaignTransactionModel: Object.assign(Object.create(Tx), { exists: Tx.exists.bind(Tx), ...txCalls }),
+        platformEvents: { record: async () => true },
+        recordInviteWithdrawn: async () => undefined,
+        logger: { error: jest.fn(), warn: jest.fn(), log: jest.fn() },
+        startRefund: jest.fn(async () => []),
+        attentionCache: new Map(),
+        pushService: { sendToUser: jest.fn(async () => undefined) },
+        notificationsService: { createForUser: jest.fn(async () => undefined) },
+      });
+      return { id: String(insertedId), service, txCalls };
+    };
+
+    it("won't close a disputed collaboration without an outcome while its payment is held", async () => {
+      const { id, service } = await disputedWithHeldMoney(null);
+      await expect(service.adminResolveDispute(id, { outcome: "disputed", note: "later" })).rejects.toThrow(/Money is held/);
+      expect(((await Invite.findById(id).lean()) as any).reportedIssue.resolvedAt).toBeFalsy();
+    });
+
+    it("a dispute closed earlier without an outcome can still be decided (₹1,000 stuck since July)", async () => {
+      const { id, service } = await disputedWithHeldMoney(new Date("2026-07-05T16:14:34Z"));
+      const result = await service.adminResolveDispute(id, { outcome: "withdrawn", note: "creator never started" });
+      expect(result).not.toMatchObject({ skipped: true });
+      expect(((await Invite.findById(id).lean()) as any).status).toBe("withdrawn");
+      expect(service.startRefund).toHaveBeenCalled(); // the host's refund starts
+    });
   });
 
   describe("one bank transfer pays once (UTR)", () => {

@@ -140,6 +140,23 @@ export class CampaignInvitesService {
     };
   }
 
+  /** Admin queue: open reports, plus disputed invites still waiting for an outcome. */
+  private adminOpenDisputeFilter(): Record<string, any> {
+    return { $or: [this.openReportFilter(), { status: "disputed" }] };
+  }
+
+  /** The host's payment for this invite was collected and is neither paid out nor refunded. */
+  private async hasHeldMoney(inviteId: any): Promise<boolean> {
+    const held = await this.campaignTransactionModel.exists({
+      inviteId: idIn(String(inviteId)),
+      transactionType: { $ne: "platform_fee" },
+      collectionStatus: "verified",
+      payoutStatus: { $nin: ["paid", "skipped"] },
+      refundStatus: { $ne: "sent" },
+    });
+    return !!held;
+  }
+
   constructor(
     @InjectModel("CampaignInvite")
     private readonly inviteModel: Model<any>,
@@ -4748,9 +4765,9 @@ export class CampaignInvitesService {
     } else if (opts.status === "all") {
       filter["reportedIssue.reportedAt"] = { $ne: null };
     } else {
-      // default: open — reportedIssue-driven, not invite.status-driven, so a plain
-      // "report" (which no longer changes invite.status) still shows up here.
-      filter = this.openReportFilter();
+      // default: open — reportedIssue-driven, so a plain "report" (which no longer
+      // changes invite.status) still shows up here; plus any invite still 'disputed'.
+      filter = this.adminOpenDisputeFilter();
     }
 
     const rawInvites = await this.inviteModel
@@ -4855,6 +4872,9 @@ export class CampaignInvitesService {
 
     const now = new Date();
     const previousStatus = invite.status;
+    // A "disputed" invite whose report was closed without an outcome still needs
+    // one (else its money is stuck): guard on the resolvedAt as read, not on null.
+    const previousResolvedAt = invite.reportedIssue?.resolvedAt ?? null;
     invite.status = outcome === "pay_influencer" ? "completed" : "withdrawn";
     if (outcome === "pay_influencer") {
       invite.completedAt = now;
@@ -4878,7 +4898,7 @@ export class CampaignInvitesService {
     // at the same moment, only the first lands — the others change no money.
     invite.$where = {
       status: previousStatus,
-      "reportedIssue.resolvedAt": null,
+      "reportedIssue.resolvedAt": previousResolvedAt,
     };
     try {
       await invite.save();
@@ -5051,6 +5071,14 @@ export class CampaignInvitesService {
     ) {
       throw new BadRequestException(
         "This report is about skipping the post / dealing outside TrendStarZ. Write what you checked and decided before closing it.",
+      );
+    }
+    // A disputed collaboration with collected money must end in "completed" (pay
+    // the creator) or "withdrawn" (refund the host). Closing it without an outcome
+    // left ₹1,000 untouched for months (found 2026-10-25).
+    if (invite.status === "disputed" && (await this.hasHeldMoney(invite._id))) {
+      throw new BadRequestException(
+        "Money is held for this collaboration. Choose 'Resolve as completed' (pay the creator) or 'Resolve as withdrawn' (refund the host).",
       );
     }
     if (!invite.reportedIssue) {
@@ -5658,7 +5686,7 @@ export class CampaignInvitesService {
     const cached = this.getCachedAttention<{ count: number }>(cacheKey);
     if (cached) return cached;
     const count = await this.inviteModel.countDocuments(
-      this.openReportFilter(),
+      this.adminOpenDisputeFilter(),
     );
     const result = { count };
     this.setCachedAttention(cacheKey, result);

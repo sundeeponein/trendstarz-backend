@@ -147,10 +147,16 @@ describe("CampaignInvitesService (admin disputes + remind)", () => {
     it("counts disputed invites with unresolved reportedIssue", async () => {
       inviteModel.countDocuments.mockResolvedValue(7);
       const result = await service.adminCountOpenDisputes();
-      // Open = an issue was reported and not yet resolved (any invite status).
+      // Open = an issue was reported and not yet resolved (any invite status), or
+      // the invite is still 'disputed' (closed earlier without an outcome).
       expect(inviteModel.countDocuments).toHaveBeenCalledWith({
-        "reportedIssue.reportedAt": { $ne: null },
-        "reportedIssue.resolvedAt": { $in: [null, undefined] },
+        $or: [
+          {
+            "reportedIssue.reportedAt": { $ne: null },
+            "reportedIssue.resolvedAt": { $in: [null, undefined] },
+          },
+          { status: "disputed" },
+        ],
       });
       expect(result).toEqual({ count: 7 });
     });

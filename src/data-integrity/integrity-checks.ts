@@ -734,6 +734,87 @@ async function personalDataAfterDelete(db: Db): Promise<IntegrityCheck> {
   );
 }
 
+/**
+ * Every collected payment must be on its way somewhere: paid out, refunded, or
+ * waiting in a queue that leads there. Stuck = verified, not paid out, no refund
+ * started, and the collaboration can no longer pay the creator (closed without
+ * completing, or a dispute closed without an outcome). Missing invites are
+ * reported by dangling_references instead.
+ */
+async function collectedMoneySettles(db: Db, explained: ExplainedSet): Promise<IntegrityCheck> {
+  const txs = await db
+    .collection("campaigntransactions")
+    .find(
+      {
+        transactionType: { $ne: "platform_fee" },
+        collectionStatus: "verified",
+        payoutStatus: { $nin: ["paid", "skipped"] },
+        refundStatus: { $in: [null, "none"] },
+      },
+      { projection: { inviteId: 1, payerTotal: 1, createdAt: 1 } },
+    )
+    .toArray();
+  const found: Array<{ ref: string; text: string }> = [];
+  for (const tx of txs as any[]) {
+    if (!tx.inviteId) continue;
+    const inv: any = await db
+      .collection("campaigninvites")
+      .findOne({ _id: tx.inviteId }, { projection: { status: 1, "reportedIssue.resolvedAt": 1 } });
+    if (!inv) continue;
+    const why = ["withdrawn", "declined", "expired", "cancelled", "rejected"].includes(inv.status)
+      ? `invite is ${inv.status}`
+      : inv.status === "disputed" && inv.reportedIssue?.resolvedAt
+        ? "dispute was closed without deciding pay or refund"
+        : "";
+    if (why) {
+      found.push({
+        ref: `tx:${tx._id}`,
+        text: `payment ${tx._id} (₹${Math.round(Number(tx.payerTotal || 0) / 100)}): ${why}, but it is neither paid out nor refunded`,
+      });
+    }
+  }
+  return explainableCheck(
+    "collected_money_settles",
+    "Every collected payment is paid out or refunded",
+    "The host paid, but the collaboration can no longer pay the creator and no refund was started. Decide it in Disputes (Resolve as completed / withdrawn) or refund it in Payments; ₹1 test payments can be marked as explained.",
+    found,
+    explained,
+  );
+}
+
+/** Invites still waiting for a reply under a campaign that has already ended. */
+async function invitesCloseWithCampaign(db: Db, explained: ExplainedSet): Promise<IntegrityCheck> {
+  const closed = new Map(
+    (
+      await db
+        .collection("campaigns")
+        .find({ status: { $in: ["completed", "cancelled", "rejected"] } }, { projection: { status: 1, campaignNumber: 1 } })
+        .toArray()
+    ).map((c: any) => [String(c._id), c]),
+  );
+  const found: Array<{ ref: string; text: string }> = [];
+  const waiting = await db
+    .collection("campaigninvites")
+    .find({ status: { $in: ["pending", "invited", "counter_sent"] } }, { projection: { campaignId: 1, status: 1 } })
+    .toArray();
+  for (const inv of waiting as any[]) {
+    const c: any = closed.get(String(inv.campaignId));
+    if (c) {
+      found.push({
+        ref: `invite:${inv._id}`,
+        text: `${inv.status} invite ${inv._id} → campaign ${c.campaignNumber ?? inv.campaignId} is ${c.status}`,
+      });
+    }
+  }
+  return explainableCheck(
+    "invites_close_with_campaign",
+    "No invite waits for a reply on an ended campaign",
+    "These still count as 'needs your response' for the creator. Close them with: node cron/backfillNeverAcceptedInvitesForClosedCampaigns.js --apply",
+    found,
+    explained,
+  );
+}
+
 export async function runIntegrityChecks(db: Db): Promise<IntegrityCheck[]> {
   const explained = await loadExplained(db);
   return Promise.all([
@@ -755,5 +836,7 @@ export async function runIntegrityChecks(db: Db): Promise<IntegrityCheck[]> {
     danglingReferences(db, explained),
     recentBackup(db),
     personalDataAfterDelete(db),
+    collectedMoneySettles(db, explained),
+    invitesCloseWithCampaign(db, explained),
   ]);
 }

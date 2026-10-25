@@ -56,7 +56,40 @@ describe("data integrity checks (real MongoDB)", () => {
     await db.collection("database_backups").insertOne({ at: new Date(), status: "ok" });
     const checks = await runIntegrityChecks(db);
     expect(checks.filter((c) => c.status === "warn")).toEqual([]);
-    expect(checks).toHaveLength(18);
+    expect(checks).toHaveLength(20);
+  });
+
+  it("finds collected money with no way out, and invites waiting on an ended campaign", async () => {
+    const verified = { transactionType: "paid_collab", collectionStatus: "verified", payoutStatus: "pending", payerTotal: 100000 };
+    const closedDispute = new Types.ObjectId();
+    const withdrawn = new Types.ObjectId();
+    const reviewing = new Types.ObjectId();
+    const refunding = new Types.ObjectId();
+    const party = () => ({ campaignId: new Types.ObjectId().toHexString(), influencerId: new Types.ObjectId() });
+    await db.collection("campaigninvites").insertMany([
+      { _id: closedDispute, ...party(), status: "disputed", reportedIssue: { reportedAt: new Date(), resolvedAt: new Date() } },
+      { _id: withdrawn, ...party(), status: "withdrawn" },
+      { _id: reviewing, ...party(), status: "disputed", reportedIssue: { reportedAt: new Date() } }, // still in the queue
+      { _id: refunding, ...party(), status: "withdrawn" },
+    ]);
+    await db.collection("campaigntransactions").insertMany([
+      { ...verified, inviteId: closedDispute },
+      { ...verified, inviteId: withdrawn, refundStatus: "none" },
+      { ...verified, inviteId: reviewing },
+      { ...verified, inviteId: refunding, refundStatus: "owed" }, // on its way back
+    ]);
+    const ended = new Types.ObjectId();
+    await db.collection("campaigns").insertMany([{ _id: ended, status: "completed", campaignNumber: 7 }, { status: "active" }]);
+    await db.collection("campaigninvites").insertMany([
+      { campaignId: String(ended), influencerId: new Types.ObjectId(), status: "pending" },
+      { campaignId: String(ended), influencerId: new Types.ObjectId(), status: "approved" },
+    ]);
+
+    const c = await byKey();
+    expect(c.collected_money_settles.count).toBe(2);
+    expect(c.collected_money_settles.samples.join(" ")).toContain("closed without deciding");
+    expect(c.collected_money_settles.samples.join(" ")).toContain("invite is withdrawn");
+    expect(c.invites_close_with_campaign.samples).toEqual([expect.stringContaining("campaign 7 is completed")]);
   });
 
   it("every check with 'Mark as explained' buttons is accepted by the explain endpoint", async () => {

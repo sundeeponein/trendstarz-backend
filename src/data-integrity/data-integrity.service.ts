@@ -15,6 +15,8 @@ import {
 
 /** Checks whose findings point at one record an admin can explain. */
 export const EXPLAINABLE_CHECKS = [
+  "collected_money_settles",
+  "invites_close_with_campaign",
   "unexplained_premium",
   "unpaid_unlocks",
   "premium_sources_agree",
