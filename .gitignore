@@ -42,3 +42,6 @@ auth_test.log
 
 # Local logs from cron/cloudinaryOrphans.js --apply (contain user ids)
 cloudinary-orphans-deleted-*.json
+
+# Database exports (cron/exportDatabase.js) — personal data, never commit
+backups/
