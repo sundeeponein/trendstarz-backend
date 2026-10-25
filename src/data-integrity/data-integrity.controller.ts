@@ -2,12 +2,16 @@ import { Body, Controller, Get, Post, Query, Req, UseGuards } from "@nestjs/comm
 import { JwtAuthGuard } from "../auth/jwt-auth.guard";
 import { RolesGuard } from "../auth/roles.guard";
 import { DataIntegrityService } from "./data-integrity.service";
+import { DatabaseBackupService } from "./database-backup.service";
 
 /** Admin "Data health" page: latest nightly result, or run the checks now. */
 @Controller("admin/data-integrity")
 @UseGuards(JwtAuthGuard, RolesGuard)
 export class DataIntegrityController {
-  constructor(private readonly service: DataIntegrityService) {}
+  constructor(
+    private readonly service: DataIntegrityService,
+    private readonly backups: DatabaseBackupService,
+  ) {}
 
   @Get()
   latest() {
@@ -32,6 +36,17 @@ export class DataIntegrityController {
   @Get("razorpay-reconcile")
   reconcile(@Query("days") days?: string) {
     return this.service.reconcileRazorpay(Number(days) || 7);
+  }
+
+  /** Nightly encrypted backups: recent runs and stored files (10-minute download links). */
+  @Get("backups")
+  backupOverview() {
+    return this.backups.overview();
+  }
+
+  @Post("backups/run")
+  backupNow() {
+    return this.backups.runBackup("admin");
   }
 
   @Get("explanations")

@@ -647,6 +647,33 @@ async function danglingReferences(db: Db, explained: ExplainedSet): Promise<Inte
   );
 }
 
+/** The nightly encrypted backup ran successfully within the last 36 hours. */
+async function recentBackup(db: Db): Promise<IntegrityCheck> {
+  const last: any = await db
+    .collection("database_backups")
+    .find({ status: "ok" })
+    .sort({ at: -1 })
+    .limit(1)
+    .next()
+    .catch(() => null);
+  const ageHours = last?.at ? (Date.now() - new Date(last.at).getTime()) / 3600000 : Infinity;
+  const keySet = /^[0-9a-f]{64}$/i.test(String(process.env.BACKUP_ENCRYPTION_KEY || "").trim());
+  const problem = !keySet
+    ? "Backups are off: BACKUP_ENCRYPTION_KEY is not set in Railway."
+    : ageHours > 36
+      ? last
+        ? `Last successful backup was ${Math.round(ageHours)} hours ago.`
+        : "No successful backup yet — press \"Back up now\" below."
+      : "";
+  return check(
+    "recent_backup",
+    "A database backup was made in the last 36 hours",
+    problem ? 1 : 0,
+    "The free Atlas plan keeps no backups, so the nightly encrypted backup is the only way to undo a mistake. Fix the setting or press \"Back up now\" on this page.",
+    problem ? [problem] : [],
+  );
+}
+
 async function sharedEmails(db: Db): Promise<IntegrityCheck> {
   const rows = await db
     .collection("influencers")
@@ -693,5 +720,6 @@ export async function runIntegrityChecks(db: Db): Promise<IntegrityCheck[]> {
     creditLedgerAddsUp(db, explained),
     paidRescoreDelivered(db, explained),
     danglingReferences(db, explained),
+    recentBackup(db),
   ]);
 }

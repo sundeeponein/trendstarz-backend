@@ -52,9 +52,11 @@ describe("data integrity checks (real MongoDB)", () => {
     await db.collection("influencers").insertOne({ email: "a@x.com", isPremium: true, premiumSource: "admin" });
     await db.collection("brands").insertOne({ email: "b@x.com" });
 
+    process.env.BACKUP_ENCRYPTION_KEY = "a".repeat(64);
+    await db.collection("database_backups").insertOne({ at: new Date(), status: "ok" });
     const checks = await runIntegrityChecks(db);
     expect(checks.filter((c) => c.status === "warn")).toEqual([]);
-    expect(checks).toHaveLength(16);
+    expect(checks).toHaveLength(17);
   });
 
   it("every check with 'Mark as explained' buttons is accepted by the explain endpoint", async () => {
