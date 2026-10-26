@@ -989,6 +989,51 @@ async function sharedPhones(db: Db): Promise<IntegrityCheck> {
   );
 }
 
+/** The newest backup was restore-tested in the last 8 days (weekly job, or "Test restore"). */
+async function backupRestoreTested(db: Db): Promise<IntegrityCheck> {
+  const keySet = /^[0-9a-f]{64}$/i.test(String(process.env.BACKUP_ENCRYPTION_KEY || "").trim());
+  const last: any = keySet
+    ? await db.collection("database_backups").find({ kind: "verify" }).sort({ at: -1 }).limit(1).next().catch(() => null)
+    : null;
+  const ageDays = last?.at ? (Date.now() - new Date(last.at).getTime()) / 86400000 : Infinity;
+  const problem = !keySet
+    ? ""
+    : !last
+      ? "No restore test yet — press \"Test restore\" under Database backups."
+      : last.status !== "verified"
+        ? `Last restore test failed: ${String(last.error || "").slice(0, 160)}`
+        : ageDays > 8
+          ? `Last successful restore test was ${Math.round(ageDays)} days ago.`
+          : "";
+  return check(
+    "backup_restore_tested",
+    "The newest backup was restore-tested in the last 8 days",
+    problem ? 1 : 0,
+    "A backup only helps if it can be read back. Every Sunday the newest backup is downloaded, decrypted and fully read; if it fails, fix the cause and press \"Test restore\".",
+    problem ? [problem] : [],
+  );
+}
+
+/** Emails Brevo refused or that errored in the last 7 days (OTPs, invites, payment emails…). */
+async function emailFailures(db: Db): Promise<IntegrityCheck> {
+  const since = new Date(Date.now() - 7 * 86400000);
+  const rows = await db
+    .collection("email_send_failures")
+    .find({ at: { $gte: since } })
+    .sort({ at: -1 })
+    .limit(50)
+    .toArray()
+    .catch(() => [] as any[]);
+  const mask = (e: string) => e.replace(/^(.{2}).*(@.*)$/, "$1***$2");
+  return check(
+    "email_failures",
+    "No email failed to send in the last 7 days",
+    rows.length,
+    "These emails never left (Brevo refused them or the request failed) — the person didn't get it. Check the error; if it's the address, ask them to fix it; if it's Brevo (key, quota), fix that, then ask them to retry.",
+    rows.map((r: any) => `${new Date(r.at).toISOString().slice(0, 16).replace("T", " ")} UTC · ${mask(String(r.to || ""))} · ${r.subject} — ${r.error}`),
+  );
+}
+
 export async function runIntegrityChecks(db: Db): Promise<IntegrityCheck[]> {
   const explained = await loadExplained(db);
   return Promise.all([
@@ -1017,5 +1062,7 @@ export async function runIntegrityChecks(db: Db): Promise<IntegrityCheck[]> {
     payoutsOverdue(db, explained),
     refundsOverdue(db, explained),
     sharedPhones(db),
+    backupRestoreTested(db),
+    emailFailures(db),
   ]);
 }

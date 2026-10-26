@@ -1,9 +1,10 @@
 import { BadRequestException, Injectable, Logger } from "@nestjs/common";
 import { InjectConnection } from "@nestjs/mongoose";
 import { Cron } from "@nestjs/schedule";
-import type { Connection } from "mongoose";
-import { createCipheriv, randomBytes } from "crypto";
-import { gzipSync } from "zlib";
+import { Types, type Connection } from "mongoose";
+import { createCipheriv, createDecipheriv, randomBytes } from "crypto";
+import { gunzipSync, gzipSync } from "zlib";
+import axios from "axios";
 import { EJSON } from "bson";
 import { v2 as cloudinary } from "cloudinary";
 import { SingleInstance } from "../utils/single-instance";
@@ -30,6 +31,41 @@ export function encryptBackup(plain: Buffer, hexKey: string): Buffer {
   const cipher = createCipheriv("aes-256-gcm", key, iv);
   const body = Buffer.concat([cipher.update(plain), cipher.final()]);
   return Buffer.concat([MAGIC, iv, cipher.getAuthTag(), body]);
+}
+
+/** Same format as cron/lib/backup-crypto.js decryptBackup; GCM refuses any changed byte. */
+export function decryptBackup(buf: Buffer, hexKey: string): Buffer {
+  const key = Buffer.from(String(hexKey || "").trim(), "hex");
+  if (key.length !== 32) throw new Error("BACKUP_ENCRYPTION_KEY must be 64 hex characters.");
+  if (buf.length < MAGIC.length + 28 || !buf.subarray(0, MAGIC.length).equals(MAGIC)) {
+    throw new Error("Not an encrypted TrendStarZ backup.");
+  }
+  const decipher = createDecipheriv("aes-256-gcm", key, buf.subarray(5, 17));
+  decipher.setAuthTag(buf.subarray(17, 33));
+  return Buffer.concat([decipher.update(buf.subarray(33)), decipher.final()]);
+}
+
+/**
+ * What a restore would get from one backup file: decrypt → unzip → read every
+ * record. Compared with what the backup run logged and with the live database.
+ */
+export function inspectBackup(
+  file: Buffer,
+  hexKey: string,
+  expected: { records?: number },
+  liveCollections: string[],
+): { records: number; collections: number; problems: string[] } {
+  const data: any = EJSON.parse(gunzipSync(decryptBackup(file, hexKey)).toString("utf8"), { relaxed: false });
+  const names = Object.keys(data?.collections || {});
+  const records = names.reduce((n, c) => n + (Array.isArray(data.collections[c]) ? data.collections[c].length : 0), 0);
+  const problems: string[] = [];
+  if (expected.records != null && expected.records !== records) {
+    problems.push(`holds ${records} records, the backup run logged ${expected.records}`);
+  }
+  const missing = liveCollections.filter((c) => !names.includes(c));
+  if (missing.length) problems.push(`missing collections: ${missing.slice(0, 5).join(", ")}${missing.length > 5 ? "…" : ""}`);
+  if (!data?.indexes || typeof data.indexes !== "object") problems.push("no index definitions");
+  return { records, collections: names.length, problems };
 }
 
 /** Cloudinary's own reason (the SDK's "unexpected status code" hides it). */
@@ -225,6 +261,80 @@ export class DatabaseBackupService {
       }));
     }
     return { success: true, data: { configured: DatabaseBackupService.configured(), runs, files } };
+  }
+
+  /**
+   * Restore test: downloads the newest backup and proves it can be read back in full
+   * (decrypts, unzips, every record parses, counts match the backup run, every live
+   * collection is present). Logged as status "verified" / "verify_failed".
+   */
+  async verifyLatest(trigger: "weekly" | "admin") {
+    const db: any = this.connection.db;
+    const log: any = db.collection(BACKUP_LOG);
+    const at = new Date();
+    if (!DatabaseBackupService.configured()) {
+      throw new BadRequestException("Backups are off: set BACKUP_ENCRYPTION_KEY (and Cloudinary) in Railway.");
+    }
+    const newest = (await this.listFiles())[0];
+    if (!newest) throw new BadRequestException("No backup file to test yet — press Back up now first.");
+    let problem = "";
+    let result: { records: number; collections: number; problems: string[] } | null = null;
+    try {
+      const url = this.cloud().utils.private_download_url(newest.public_id, "", {
+        resource_type: "raw",
+        type: newest.type || "authenticated",
+        expires_at: Math.floor(Date.now() / 1000) + 600,
+      } as any);
+      const res = await axios.get(url, { responseType: "arraybuffer", timeout: 60000 });
+      const run: any = await log.findOne({ publicId: newest.public_id, status: "ok" });
+      result = inspectBackup(
+        Buffer.from(res.data),
+        String(process.env.BACKUP_ENCRYPTION_KEY),
+        { records: run?.records },
+        await this.collectionsOlderThan(new Date(newest.created_at)),
+      );
+      problem = result.problems.join("; ");
+    } catch (err: any) {
+      problem = String(err?.message || err);
+    }
+    const row = {
+      at, trigger, kind: "verify", status: problem ? "verify_failed" : "verified",
+      publicId: newest.public_id, records: result?.records, collections: result?.collections,
+      ...(problem ? { error: problem.slice(0, 500) } : {}),
+    };
+    await log.insertOne(row);
+    if (!problem) return { success: true, data: row };
+    const to = process.env.ADMIN_EMAIL;
+    if (to && trigger === "weekly") {
+      sendAppEmail({
+        to,
+        subject: "TrendStarZ: backup restore test FAILED",
+        text: `This week's restore test of ${newest.public_id} failed: ${problem}\n\nOpen Admin → Data health.`,
+      }).catch(() => undefined);
+    }
+    throw new BadRequestException(`Restore test failed: ${problem.slice(0, 300)}`);
+  }
+
+  /** Live collections that already had records when `when` was backed up (ObjectId time). */
+  private async collectionsOlderThan(when: Date): Promise<string[]> {
+    const db: any = this.connection.db;
+    const names: string[] = ((await db.listCollections({}, { nameOnly: true }).toArray()) as any[])
+      .map((c) => c.name)
+      .filter((n: string) => !n.startsWith("system.") && n !== BACKUP_LOG);
+    const cutoff = Types.ObjectId.createFromTime(Math.floor(when.getTime() / 1000));
+    const out: string[] = [];
+    for (const name of names) {
+      if (await db.collection(name).findOne({ _id: { $lt: cutoff } }, { projection: { _id: 1 } })) out.push(name);
+    }
+    return out;
+  }
+
+  // Sundays 05:00 IST, after that night's backup (04:15).
+  @Cron("0 5 * * 0", { timeZone: "Asia/Kolkata", name: "databaseBackupRestoreTest" })
+  @SingleInstance()
+  async weeklyRestoreTest() {
+    if (!DatabaseBackupService.configured()) return;
+    await this.verifyLatest("weekly").catch(() => undefined);
   }
 
   // 04:15 IST: after the nightly checks (02:45) and the media cleanup (03:30).

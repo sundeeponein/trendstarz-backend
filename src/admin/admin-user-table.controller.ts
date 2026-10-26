@@ -1,3 +1,4 @@
+import { LogAdminAction } from "../utils/admin-action.interceptor";
 import {
   Controller,
   Get,
@@ -1943,6 +1944,7 @@ export class AdminUserTableController {
    * returned to the admin. Full admins only — not subadmins.
    */
   @Post("users/:type/:id/temporary-password")
+  @LogAdminAction("issue_temporary_password")
   async issueTemporaryPassword(
     @Param("type") type: string,
     @Param("id") id: string,
@@ -1968,6 +1970,7 @@ export class AdminUserTableController {
   }
 
   @Patch("users/:type/:id/contact-verification")
+  @LogAdminAction("contact_verification")
   async updateContactVerification(
     @Param("type") type: string,
     @Param("id") id: string,
@@ -2425,6 +2428,7 @@ export class AdminUserTableController {
   }
 
   @Patch("users/:type/:id/community-status")
+  @LogAdminAction("community_status")
   async updateCommunityStatus(
     @Param("type") type: string,
     @Param("id") id: string,
@@ -2474,6 +2478,7 @@ export class AdminUserTableController {
 
   // PATCH endpoint to directly update brandLogo and products for a brand
   @Patch("brands/:id/images")
+  @LogAdminAction("edit_brand_images")
   async patchBrandImages(
     @Param("id") id: string,
     @Body() body: { brandLogo?: any[]; products?: any[] },
@@ -2494,6 +2499,7 @@ export class AdminUserTableController {
 
   // PATCH endpoint to directly update profileImages for an influencer (e.g. admin recrop)
   @Patch("influencers/:id/images")
+  @LogAdminAction("edit_influencer_images")
   async patchInfluencerImages(
     @Param("id") id: string,
     @Body() body: { profileImages?: any[] },
@@ -2511,6 +2517,7 @@ export class AdminUserTableController {
 
   // PATCH endpoint to directly update profileImages for a photographer (e.g. admin recrop)
   @Patch("photographers/:id/images")
+  @LogAdminAction("edit_photographer_images")
   async patchPhotographerImages(
     @Param("id") id: string,
     @Body() body: { profileImages?: any[] },

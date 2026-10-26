@@ -53,10 +53,13 @@ describe("data integrity checks (real MongoDB)", () => {
     await db.collection("brands").insertOne({ email: "b@x.com", publicId: "BRD100002" });
 
     process.env.BACKUP_ENCRYPTION_KEY = "a".repeat(64);
-    await db.collection("database_backups").insertOne({ at: new Date(), status: "ok" });
+    await db.collection("database_backups").insertMany([
+      { at: new Date(), status: "ok" },
+      { at: new Date(), kind: "verify", status: "verified" },
+    ]);
     const checks = await runIntegrityChecks(db);
     expect(checks.filter((c) => c.status === "warn")).toEqual([]);
-    expect(checks).toHaveLength(25);
+    expect(checks).toHaveLength(27);
   });
 
   it("finds collected money with no way out, and invites waiting on an ended campaign", async () => {

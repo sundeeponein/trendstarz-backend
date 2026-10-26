@@ -31,9 +31,10 @@ export const EXPLAINABLE_CHECKS = [
   "paid_rescore_delivered",
   "dangling_references",
 ];
-import { sendAppEmail } from "../utils/app-email.service";
+import { EMAIL_FAILURES, EMAIL_FAILURES_KEEP_DAYS, sendAppEmail, setEmailFailureCollection } from "../utils/app-email.service";
 import { reconcileRazorpay } from "./razorpay-reconcile";
 import { reconcileFirebase } from "./firebase-reconcile";
+import { ADMIN_ACTIONS, setAdminActionCollection } from "../utils/admin-action-log.util";
 import { fetchBlockedContacts, matchEmailBlocks } from "./email-blocks";
 import { FirebaseAdminService } from "../utils/firebase-admin.service";
 import { SingleInstance } from "../utils/single-instance";
@@ -118,6 +119,12 @@ export class DataIntegrityService implements OnModuleInit {
   }
 
   async onModuleInit() {
+    setEmailFailureCollection(this.connection.db!.collection(EMAIL_FAILURES));
+    setAdminActionCollection(this.connection.db!.collection(ADMIN_ACTIONS));
+    await this.connection.db!
+      .collection(EMAIL_FAILURES)
+      .createIndex({ at: 1 }, { expireAfterSeconds: EMAIL_FAILURES_KEEP_DAYS * 24 * 3600 })
+      .catch((err: any) => this.logger.warn(`email failure index: ${err?.message || err}`));
     try {
       await this.connection.db!
         .collection(EXPLANATIONS)

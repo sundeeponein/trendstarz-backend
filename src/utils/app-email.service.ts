@@ -1,4 +1,23 @@
+import type { Collection } from "mongodb";
 import { sendEmailBrevo } from "./brevo-email.service";
+
+/** Failed sends (address, subject, provider error — never the body); kept 30 days. */
+export const EMAIL_FAILURES = "email_send_failures";
+export const EMAIL_FAILURES_KEEP_DAYS = 30;
+let failureLog: Collection<any> | null = null;
+
+/** Connected at startup (DataIntegrityService); until then failures are only logged. */
+export function setEmailFailureCollection(collection: Collection<any> | null) {
+  failureLog = collection;
+}
+
+/** Brevo's reason reduced to status + code — never the request or key. */
+function describeSendError(err: any): string {
+  const status = err?.response?.status;
+  const code = err?.response?.data?.code || err?.code;
+  const msg = err?.response?.data?.message || err?.message || "error";
+  return [status ? `HTTP ${status}` : "", code ? String(code) : "", String(msg)].filter(Boolean).join(" ").slice(0, 200);
+}
 
 export interface AppEmailOptions {
   to: string;
@@ -33,5 +52,19 @@ export async function sendAppEmail(options: AppEmailOptions) {
     );
   }
 
-  return sendEmailBrevo(options);
+  try {
+    return await sendEmailBrevo(options);
+  } catch (err: any) {
+    // Most callers swallow email errors (an email must not fail the action), so
+    // record it here: an OTP or invite that never left would otherwise be invisible.
+    await failureLog
+      ?.insertOne({
+        at: new Date(),
+        to: String(options.to || "").trim().toLowerCase(),
+        subject: String(options.subject || "").slice(0, 150),
+        error: describeSendError(err),
+      })
+      .catch(() => undefined);
+    throw err;
+  }
 }

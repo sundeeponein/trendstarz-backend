@@ -61,6 +61,12 @@ export class DataIntegrityController {
     return this.backups.runBackup("admin");
   }
 
+  /** Restore test: download the newest backup and prove it reads back in full. */
+  @Post("backups/verify")
+  verifyBackup() {
+    return this.backups.verifyLatest("admin");
+  }
+
   @Get("explanations")
   explanations() {
     return this.service.explanations();

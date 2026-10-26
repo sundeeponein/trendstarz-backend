@@ -1,3 +1,4 @@
+import { LogAdminAction } from "../utils/admin-action.interceptor";
 import {
   Controller,
   Header,
@@ -528,12 +529,14 @@ export class UsersController {
 
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Patch(":id/accept")
+  @LogAdminAction("accept_account")
   async acceptUser(@Param("id") id: string) {
     return this.usersService.acceptUser(id);
   }
 
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Patch(":id/decline")
+  @LogAdminAction("decline_account")
   async declineUser(
     @Param("id") id: string,
     @Body() body: { reason?: string },
@@ -543,12 +546,14 @@ export class UsersController {
 
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Patch(":id/delete")
+  @LogAdminAction("soft_delete_account")
   async deleteUser(@Param("id") id: string) {
     return this.usersService.deleteUser(id);
   }
 
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Patch(":id/restore")
+  @LogAdminAction("restore_account")
   async restoreUser(@Param("id") id: string) {
     return this.usersService.restoreUser(id);
   }
@@ -557,12 +562,14 @@ export class UsersController {
   // from the Deleted Users page (after the user has already been soft-deleted).
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Delete(":id/permanent")
+  @LogAdminAction("permanent_delete_account")
   async deletePermanently(@Param("id") id: string) {
     return this.usersService.deletePermanently(id);
   }
 
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Patch(":id/premium")
+  @LogAdminAction("set_premium")
   async setPremium(
     @Param("id") id: string,
     @Body()
