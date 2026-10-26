@@ -81,6 +81,11 @@ import { maskUpiId, normalizeUpiId, upiChangeFields, upiIdError } from "../utils
 import { payoutUpiChangedTemplate } from "../email/templates/auth.templates";
 
 /** Self-service "Delete Account" grace period — see requestSelfDeletion. */
+/** Retention (2026-10-26): admin soft-deleted accounts are anonymized after this. */
+export const ADMIN_SOFT_DELETE_RETENTION_DAYS = 90;
+/** Retention (2026-10-26): resolved/ignored profile flags are removed after this. */
+export const RESOLVED_FLAG_RETENTION_DAYS = 365;
+
 export const SELF_DELETION_GRACE_PERIOD_DAYS =
   Number.parseInt(process.env.SELF_DELETION_GRACE_PERIOD_DAYS || "", 10) || 30;
 
@@ -3099,9 +3104,9 @@ export class UsersService implements OnModuleInit {
    * deletion grace period has passed — PII and media are stripped, but the
    * row is kept so Payment/Campaign/CampaignInvite records that reference it
    * still resolve for reporting/audit. Admin-initiated deletions (status
-   * "deleted") are intentionally NOT touched here — those remain a manual
-   * admin action via the existing Deleted Users → Delete Permanently flow,
-   * which is a genuine hard delete for explicit GDPR/DPDP erasure requests.
+   * "deleted") are anonymized the same way once they have stayed deleted for
+   * ADMIN_SOFT_DELETE_RETENTION_DAYS (retention decision 2026-10-26); a genuine
+   * hard delete is still the Deleted Users → Delete Permanently flow.
    */
   @Cron("0 1 * * *", { timeZone: "Asia/Kolkata" })
   @SingleInstance()
@@ -3113,9 +3118,59 @@ export class UsersService implements OnModuleInit {
           `[cleanupExpiredSelfDeletionRequestsCron] Anonymized ${result.deleted} account(s) past their self-deletion grace period.`,
         );
       }
+      const stale = await this.anonymizeStaleSoftDeleted();
+      const flags = await this.deleteOldResolvedFlags();
+      if (stale.anonymized || flags.deleted) {
+        console.log(
+          `[retention] Anonymized ${stale.anonymized} long-deleted account(s); removed ${flags.deleted} old resolved flag(s).`,
+        );
+      }
     } catch (e) {
       console.error("cleanupExpiredSelfDeletionRequestsCron failed:", e);
     }
+  }
+
+  /**
+   * Retention (decided 2026-10-26): an account an admin soft-deleted and nobody
+   * restored for ADMIN_SOFT_DELETE_RETENTION_DAYS is anonymized — personal data
+   * gone, payment/collaboration history kept. Waits while work or money is open.
+   */
+  async anonymizeStaleSoftDeleted(now = new Date()): Promise<{ anonymized: number; waiting: number }> {
+    const cutoff = new Date(now.getTime() - ADMIN_SOFT_DELETE_RETENTION_DAYS * 24 * 60 * 60 * 1000);
+    const query = { isDeleted: true, status: "deleted", anonymized: { $ne: true }, deletedAt: { $lte: cutoff } };
+    const rows = (
+      await Promise.all(
+        [this.influencerModel, this.brandModel, this.photographerModel].map((m) => m.find(query).select("_id").lean()),
+      )
+    ).flat();
+    let anonymized = 0;
+    let waiting = 0;
+    for (const row of rows as any[]) {
+      const id = String(row._id);
+      try {
+        const blocker = await this.selfDeletionBlocker(id);
+        if (blocker) {
+          waiting += 1;
+          console.warn(`[retention] ${id} not anonymized yet: ${blocker}`);
+          continue;
+        }
+        await this.anonymizeUser(id);
+        anonymized += 1;
+      } catch (e) {
+        console.error(`[retention] Failed to anonymize ${id}:`, e);
+      }
+    }
+    return { anonymized, waiting };
+  }
+
+  /** Retention (decided 2026-10-26): resolved or ignored profile flags go after a year. */
+  async deleteOldResolvedFlags(now = new Date()): Promise<{ deleted: number }> {
+    const cutoff = new Date(now.getTime() - RESOLVED_FLAG_RETENTION_DAYS * 24 * 60 * 60 * 1000);
+    const res = await this.profileFlagModel.deleteMany({
+      status: { $in: ["Resolved", "Ignored"] },
+      updatedAt: { $lte: cutoff },
+    });
+    return { deleted: res.deletedCount || 0 };
   }
 
   async cleanupExpiredSelfDeletionRequests(): Promise<{ deleted: number }> {
