@@ -60,6 +60,8 @@ const ProfileVerificationFields = {
   // When the password last changed: login tokens issued before this stop working
   // (a stolen session ends when the owner changes or resets the password).
   passwordChangedAt: { type: Date, default: null },
+  // "Log out of all devices": login tokens issued before this stop working.
+  sessionsRevokedAt: { type: Date, default: null },
   mobileVerified: { type: Boolean, default: false },
   mobileVerifiedAt: { type: Date, default: null },
   mobileVerificationMethod: { type: String, default: "" },

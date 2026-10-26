@@ -776,5 +776,34 @@ describe("data rules (real MongoDB)", () => {
       const freshToken = sign(Math.floor(Date.now() / 1000) + 1); // what change-password returns to A
       await expect(guard.canActivate(ctx(freshToken) as any)).resolves.toBe(true);
     });
+
+    it("'log out of all devices' ends every earlier session and detaches push devices", async () => {
+      const jwt = require("jsonwebtoken");
+      const { getJwtSecret } = require("../../auth/jwt-secret");
+      const { AuthService } = require("../../auth/auth.service");
+      const Inf = db.conn.models.Influencer || db.conn.model("Influencer", InfluencerSchema, "influencers");
+      const user: any = await Inf.create({ name: "All", email: "all@x.in", username: "u-all", phoneNumber: "7", password: "h1", status: "accepted" });
+      await db.conn.collection("pushsubscriptions").insertOne({ userId: String(user._id), endpoint: "https://push/all" });
+      const ctx = (token: string) => ({
+        switchToHttp: () => ({ getRequest: () => ({ headers: { authorization: `Bearer ${token}` } }) }),
+        getHandler: () => undefined,
+        getClass: () => undefined,
+      });
+      const guard = new JwtAuthGuard({ getAllAndOverride: () => false } as any, db.conn as any);
+      const sign = (iat: number) =>
+        jwt.sign({ userId: String(user._id), email: user.email, role: "influencer", iat }, getJwtSecret(), { expiresIn: "90d" });
+      const phone = sign(Math.floor(Date.now() / 1000) - 7200);
+      const laptop = sign(Math.floor(Date.now() / 1000) - 60);
+      await expect(guard.canActivate(ctx(phone) as any)).resolves.toBe(true);
+
+      const auth = Object.assign(Object.create(AuthService.prototype), { influencerModel: Inf });
+      await auth.logoutAllDevices(String(user._id), "influencer");
+
+      await expect(guard.canActivate(ctx(phone) as any)).rejects.toThrow("logged out of all devices");
+      await expect(guard.canActivate(ctx(laptop) as any)).rejects.toThrow("logged out of all devices");
+      expect(await db.conn.collection("pushsubscriptions").countDocuments({ userId: String(user._id) })).toBe(0);
+      const nextLogin = sign(Math.floor(Date.now() / 1000) + 1);
+      await expect(guard.canActivate(ctx(nextLogin) as any)).resolves.toBe(true);
+    });
   });
 });

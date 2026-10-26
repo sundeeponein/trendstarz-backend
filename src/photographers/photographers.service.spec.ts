@@ -1,3 +1,5 @@
+// The password check for login-email changes has its own real-DB test (email-change.util.db.spec).
+jest.mock("../utils/email-change.util", () => ({ assertPasswordForEmailChange: jest.fn(async () => undefined) }));
 import { PhotographersService } from "./photographers.service";
 
 // Other-role account models for the cross-role email/phone check: nobody else holds it.

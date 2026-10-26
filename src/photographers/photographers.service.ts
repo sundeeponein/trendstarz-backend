@@ -13,6 +13,7 @@ import {
   Optional,
 } from "@nestjs/common";
 import { FirebaseAdminService } from "../utils/firebase-admin.service";
+import { assertPasswordForEmailChange } from "../utils/email-change.util";
 import { InjectModel } from "@nestjs/mongoose";
 import { Model, Types } from "mongoose";
 import { CloudinaryService } from "../cloudinary.service";
@@ -664,10 +665,13 @@ export class PhotographersService {
     }
 
     let emailChangedFrom = "";
+    const emailChangePassword = update.currentPassword;
+    delete update.currentPassword;
     if (Object.prototype.hasOwnProperty.call(update, "email")) {
       const existingEmail = this.normalizeEmail(current.email);
       const incomingEmail = this.normalizeEmail(update.email);
       if (existingEmail !== incomingEmail) {
+        await assertPasswordForEmailChange(this.photographerModel, String(current._id), emailChangePassword, localAuthBypass);
         emailChangedFrom = existingEmail;
         if (current.isEmailVerified) {
           update.previousVerifiedEmail = existingEmail;

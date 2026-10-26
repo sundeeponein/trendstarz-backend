@@ -451,6 +451,14 @@ export class AuthController {
     }
   }
 
+  /** Ends every session of this account, on all devices (including this one). */
+  @Post("logout-all")
+  @UseGuards(JwtAuthGuard)
+  async logoutAll(@Req() req: any) {
+    const userId = req?.user?.userId || req?.user?.sub || req?.user?.id;
+    return this.authService.logoutAllDevices(String(userId || ""), String(req?.user?.role || ""));
+  }
+
   @Post("change-password")
   @UseGuards(JwtAuthGuard)
   @UsePipes(new ValidationPipe({ whitelist: true, transform: true }))

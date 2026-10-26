@@ -1,3 +1,5 @@
+// The password check for login-email changes has its own real-DB test (email-change.util.db.spec).
+jest.mock("../utils/email-change.util", () => ({ assertPasswordForEmailChange: jest.fn(async () => undefined) }));
 import { UsersService } from "./users.service";
 
 // OTP verification tokens: none valid unless a test says otherwise.

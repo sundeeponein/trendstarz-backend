@@ -59,7 +59,7 @@ describe("data integrity checks (real MongoDB)", () => {
     ]);
     const checks = await runIntegrityChecks(db);
     expect(checks.filter((c) => c.status === "warn")).toEqual([]);
-    expect(checks).toHaveLength(28);
+    expect(checks).toHaveLength(29);
   });
 
   it("finds collected money with no way out, and invites waiting on an ended campaign", async () => {
@@ -133,6 +133,17 @@ describe("data integrity checks (real MongoDB)", () => {
     expect(moneyReminderDue([warn("payouts_overdue")], mondayIst)).toBe(true);
     expect(moneyReminderDue([warn("payouts_overdue")], tuesdayIst)).toBe(false);
     expect(moneyReminderDue([warn("shared_emails")], mondayIst)).toBe(false);
+  });
+
+  it("flags a scheduled job that stopped finishing on time, not one that is on time or unknown", async () => {
+    const hours = (h: number) => new Date(Date.now() - h * 3600000);
+    await db.collection("cron_locks").insertMany([
+      { _id: "DatabaseBackupService.nightly", finishedAt: hours(30) } as any,
+      { _id: "CampaignsService.autoCompleteExpiredCampaignsCron", finishedAt: hours(1) } as any,
+      { _id: "SomeNewService.unlistedJob", finishedAt: hours(500) } as any,
+    ]);
+    const c = await byKey();
+    expect(c.jobs_running.samples).toEqual([expect.stringMatching(/^DatabaseBackupService\.nightly: last finished 30h ago \(expected every 26h\)$/)]);
   });
 
   it("every check with 'Mark as explained' buttons is accepted by the explain endpoint", async () => {
@@ -344,5 +355,17 @@ describe("data integrity checks (real MongoDB)", () => {
     const ok = { key: "x", label: "x", status: "ok" as const, count: 0, help: "", samples: [] };
     expect(warningSignature([warn("a", 1), ok])).toBe(warningSignature([ok, warn("a", 1)]));
     expect(warningSignature([warn("a", 1)])).not.toBe(warningSignature([warn("a", 2)]));
+  });
+});
+
+describe("the check runner stays up when one check breaks", () => {
+  it("a crashing check becomes its own warning instead of failing the run", async () => {
+    const { guardCheck } = require("./integrity-checks");
+    const broken = await guardCheck("moneyAddsUp", async () => {
+      throw new Error("bad query");
+    });
+    expect(broken).toMatchObject({ key: "check_failed:moneyAddsUp", status: "warn", count: 1, samples: ["bad query"] });
+    const fine = await guardCheck("x", async () => ({ key: "x", label: "x", status: "ok", count: 0, help: "", samples: [] }));
+    expect(fine.status).toBe("ok");
   });
 });

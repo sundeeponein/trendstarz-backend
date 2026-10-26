@@ -1057,36 +1057,113 @@ async function serverErrors(db: Db): Promise<IntegrityCheck> {
   );
 }
 
+/**
+ * How often each scheduled job must finish (hours). A job that stopped — crashed
+ * every night, lost its schedule, or was switched off by mistake — used to fail
+ * silently. Jobs not listed here, or that never ran yet, are not judged.
+ */
+export const JOB_MAX_AGE_HOURS: Record<string, number> = {
+  "AuthService.sendEmailVerificationWhatsappRemindersCron": 2,
+  "PaymentsPayoutsService.expireRefundHoldsCron": 3,
+  "PaymentsPayoutsService.runAutoPayoutSweepCron": 3,
+  "CampaignInvitesService.sendPostingRemindersCron": 3,
+  "CampaignInvitesService.autoExpireUnsubmittedInvitesCron": 3,
+  "CampaignInvitesService.autoCancelExpiredDisputesCron": 3,
+  "CampaignInvitesService.autoApproveStaleSubmissionsCron": 3,
+  "CampaignsService.autoCompleteExpiredCampaignsCron": 3,
+  "CollaborationScoreNightlyService.nightlyReauditCron": 3,
+  "UsersService.cleanupExpiredSelfDeletionRequestsCron": 26,
+  "EarlyAccessAssignmentService.runScheduledEarlyAccessAutoAssign": 26,
+  "PaymentsPayoutsService.expireCreditCron": 26,
+  "ImageCleanupService.runCleanup": 26,
+  "DataIntegrityService.nightly": 26,
+  "YoutubeObservationSchedulerService.dailyCron": 26,
+  "PendingUserCleanupService.runScheduledCleanup": 26,
+  "TierAutoApplyService.nightly": 26,
+  "SocialLinkHealthService.nightly": 26,
+  "ProfileMediaCleanupService.runScheduledCleanup": 26,
+  "ProfileVerificationService.refreshAllStoredQuality": 26,
+  "DatabaseBackupService.nightly": 26,
+  "PendingUserCleanupService.runScheduledFirebaseEmailSync": 26,
+  "PendingUploadCleanupService.runScheduledCleanup": 26,
+  "PendingUserCleanupService.runScheduledVerificationReminders": 26,
+  "AvailabilityExpiryService.runDaily": 26,
+  "PendingUserCleanupService.runScheduledPendingUnverifiedReport": 26,
+  "SocialOAuthRefreshService.refreshExpiringConnectionsCron": 26,
+  "DatabaseBackupService.weeklyRestoreTest": 24 * 8,
+};
+
+async function jobsRunning(db: Db, now = new Date()): Promise<IntegrityCheck> {
+  const locks = await db.collection("cron_locks").find({}).toArray().catch(() => [] as any[]);
+  const late: string[] = [];
+  for (const lock of locks as any[]) {
+    const maxHours = JOB_MAX_AGE_HOURS[String(lock._id)];
+    if (!maxHours) continue;
+    const last = lock.finishedAt || lock.startedAt;
+    const ageHours = last ? (now.getTime() - new Date(last).getTime()) / 3600000 : Infinity;
+    if (ageHours > maxHours) {
+      late.push(`${lock._id}: last finished ${Number.isFinite(ageHours) ? `${Math.round(ageHours)}h ago` : "never"} (expected every ${maxHours}h)`);
+    }
+  }
+  return check(
+    "jobs_running",
+    "Every scheduled job ran on time",
+    late.length,
+    "These jobs haven't finished when they should have — expiries, refunds, clean-ups or backups may be waiting. Check the Railway log for the job name; if jobs are off, CRON_ENABLED or the deploy settings are wrong.",
+    late,
+  );
+}
+
+/**
+ * One check that throws (a bad query, a missing collection) must not take the
+ * others down with it: before, the whole nightly run failed — no report, no alert.
+ */
+export function guardCheck(name: string, run: () => Promise<IntegrityCheck>): Promise<IntegrityCheck> {
+  return Promise.resolve()
+    .then(run)
+    .catch((err: any) =>
+      check(
+        `check_failed:${name}`,
+        `The "${name}" check couldn't run`,
+        1,
+        "This check crashed, so what it watches is unknown until it is fixed. The other checks still ran.",
+        [String(err?.message || err).slice(0, 200)],
+      ),
+    );
+}
+
 export async function runIntegrityChecks(db: Db): Promise<IntegrityCheck[]> {
-  const explained = await loadExplained(db);
+  const explained = await loadExplained(db).catch(() => new Set<string>() as ExplainedSet);
+  const guard = guardCheck;
   return Promise.all([
-    idTypes(db),
-    requiredIndexes(db),
-    duplicateActiveInvites(db),
-    negativeMoney(db),
-    paymentsMissingPaise(db),
-    slotRacePairs(db),
-    unexplainedPremium(db, explained),
-    unlockedWithoutPayment(db, explained),
-    premiumSourcesAgree(db, explained),
-    invitePaymentAgree(db, explained),
-    moneyAddsUp(db, explained),
-    sharedEmails(db),
-    utrUsedTwice(db, explained),
-    creditLedgerAddsUp(db, explained),
-    paidRescoreDelivered(db, explained),
-    danglingReferences(db, explained),
-    recentBackup(db),
-    personalDataAfterDelete(db),
-    collectedMoneySettles(db, explained),
-    invitesCloseWithCampaign(db, explained),
-    approvalFieldsAgree(db, explained),
-    publicIdsPresent(db),
-    payoutsOverdue(db, explained),
-    refundsOverdue(db, explained),
-    sharedPhones(db),
-    backupRestoreTested(db),
-    emailFailures(db),
-    serverErrors(db),
+    guard("idTypes", () => idTypes(db)),
+    guard("requiredIndexes", () => requiredIndexes(db)),
+    guard("duplicateActiveInvites", () => duplicateActiveInvites(db)),
+    guard("negativeMoney", () => negativeMoney(db)),
+    guard("paymentsMissingPaise", () => paymentsMissingPaise(db)),
+    guard("slotRacePairs", () => slotRacePairs(db)),
+    guard("unexplainedPremium", () => unexplainedPremium(db, explained)),
+    guard("unlockedWithoutPayment", () => unlockedWithoutPayment(db, explained)),
+    guard("premiumSourcesAgree", () => premiumSourcesAgree(db, explained)),
+    guard("invitePaymentAgree", () => invitePaymentAgree(db, explained)),
+    guard("moneyAddsUp", () => moneyAddsUp(db, explained)),
+    guard("sharedEmails", () => sharedEmails(db)),
+    guard("utrUsedTwice", () => utrUsedTwice(db, explained)),
+    guard("creditLedgerAddsUp", () => creditLedgerAddsUp(db, explained)),
+    guard("paidRescoreDelivered", () => paidRescoreDelivered(db, explained)),
+    guard("danglingReferences", () => danglingReferences(db, explained)),
+    guard("recentBackup", () => recentBackup(db)),
+    guard("personalDataAfterDelete", () => personalDataAfterDelete(db)),
+    guard("collectedMoneySettles", () => collectedMoneySettles(db, explained)),
+    guard("invitesCloseWithCampaign", () => invitesCloseWithCampaign(db, explained)),
+    guard("approvalFieldsAgree", () => approvalFieldsAgree(db, explained)),
+    guard("publicIdsPresent", () => publicIdsPresent(db)),
+    guard("payoutsOverdue", () => payoutsOverdue(db, explained)),
+    guard("refundsOverdue", () => refundsOverdue(db, explained)),
+    guard("sharedPhones", () => sharedPhones(db)),
+    guard("backupRestoreTested", () => backupRestoreTested(db)),
+    guard("emailFailures", () => emailFailures(db)),
+    guard("serverErrors", () => serverErrors(db)),
+    guard("jobsRunning", () => jobsRunning(db)),
   ]);
 }

@@ -7,6 +7,7 @@ import * as path from "path";
 import { randomUUID } from "crypto";
 import { CloudinaryService } from "../cloudinary.service";
 import * as bcrypt from "bcryptjs";
+import { assertPasswordForEmailChange } from "../utils/email-change.util";
 import { InjectModel } from "@nestjs/mongoose";
 import { Model, Types } from "mongoose";
 import { PlansService } from "../plans/plans.service";
@@ -3643,10 +3644,13 @@ export class UsersService implements OnModuleInit {
     }
 
     let emailChangedFrom = "";
+    const emailChangePassword = updateData.currentPassword;
+    delete updateData.currentPassword;
     if (Object.prototype.hasOwnProperty.call(updateData, "email")) {
       const existingEmail = this.normalizeEmail(userDoc.email);
       const incomingEmail = this.normalizeEmail(updateData.email);
       if (existingEmail !== incomingEmail) {
+        await assertPasswordForEmailChange(this.influencerModel, String(userDoc._id), emailChangePassword, localAuthBypass);
         emailChangedFrom = existingEmail;
         if (userDoc.isEmailVerified) {
           userDoc.set("previousVerifiedEmail", existingEmail);
@@ -3908,10 +3912,13 @@ export class UsersService implements OnModuleInit {
     }
 
     let brandEmailChangedFrom = "";
+    const emailChangePassword = updateData.currentPassword;
+    delete updateData.currentPassword;
     if (Object.prototype.hasOwnProperty.call(updateData, "email")) {
       const existingEmail = this.normalizeEmail(existingBrand.email);
       const incomingEmail = this.normalizeEmail(updateData.email);
       if (existingEmail !== incomingEmail) {
+        await assertPasswordForEmailChange(this.brandModel, String(existingBrand._id), emailChangePassword, localAuthBypass);
         brandEmailChangedFrom = existingEmail;
         if (existingBrand.isEmailVerified) {
           updateData.previousVerifiedEmail = existingEmail;

@@ -67,7 +67,7 @@ describe("JwtAuthGuard account-status check", () => {
 
     await expect(guard.canActivate(context(token).ctx)).resolves.toBe(true);
     expect(influencer.findById).toHaveBeenCalledWith(id);
-    expect(influencer.chain.select).toHaveBeenCalledWith("isDeleted status passwordChangedAt");
+    expect(influencer.chain.select).toHaveBeenCalledWith("isDeleted status passwordChangedAt sessionsRevokedAt");
 
     await expect(guard.canActivate(context(token).ctx)).resolves.toBe(true);
     expect(influencer.findById).toHaveBeenCalledTimes(1); // cached for 60s

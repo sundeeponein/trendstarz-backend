@@ -16,6 +16,7 @@ interface AccountStatusEntry {
   status: string;
   /** ms epoch; tokens issued before this second are refused. */
   passwordChangedAt: number | null;
+  sessionsRevokedAt?: number | null;
   expiresAt: number;
 }
 
@@ -101,7 +102,7 @@ async function getAccountStatus(
   const doc: any = await withTimeout(
     model
       .findById(userId)
-      .select("isDeleted status passwordChangedAt")
+      .select("isDeleted status passwordChangedAt sessionsRevokedAt")
       .maxTimeMS(ACCOUNT_STATUS_QUERY_TIMEOUT_MS)
       .lean()
       .exec(),
@@ -123,6 +124,7 @@ async function getAccountStatus(
     isDeleted: !!doc.isDeleted,
     status: String(doc.status || ""),
     passwordChangedAt: doc.passwordChangedAt ? new Date(doc.passwordChangedAt).getTime() : null,
+    sessionsRevokedAt: doc.sessionsRevokedAt ? new Date(doc.sessionsRevokedAt).getTime() : null,
     expiresAt: Date.now() + ACCOUNT_STATUS_CACHE_TTL_MS,
   };
   accountStatusCache.set(userId, entry);
@@ -232,6 +234,9 @@ export class JwtAuthGuard implements CanActivate {
 
     if (tokenIssuedBeforePasswordChange(decoded?.iat, account?.passwordChangedAt)) {
       throw new UnauthorizedException("Your password was changed. Please log in again.");
+    }
+    if (tokenIssuedBeforePasswordChange(decoded?.iat, account?.sessionsRevokedAt)) {
+      throw new UnauthorizedException("You were logged out of all devices. Please log in again.");
     }
 
     if (account?.isDeleted) {

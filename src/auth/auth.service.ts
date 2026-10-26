@@ -844,6 +844,24 @@ export class AuthService {
     );
   }
 
+  /**
+   * "Log out of all devices": every login token issued until now stops working
+   * (the guard compares the token's issue time), push devices are detached, and
+   * the account-status cache is cleared so it applies on the very next request.
+   */
+  async logoutAllDevices(userId: string, role: string): Promise<{ success: true }> {
+    const model = this.modelForRole(role);
+    if (!model) throw new BadRequestException("Unknown account type.");
+    const res = await model.updateOne({ _id: userId }, { $set: { sessionsRevokedAt: new Date() } });
+    if (!res.matchedCount) throw new BadRequestException("Account not found.");
+    invalidateAccountStatusCache(String(userId));
+    await (model as any).db
+      .collection("pushsubscriptions")
+      .deleteMany({ userId: String(userId) })
+      .catch(() => undefined);
+    return { success: true };
+  }
+
   private modelForRole(role: string): Model<any> | null {
     const normalized = String(role || "").toLowerCase();
     if (normalized === "admin" || normalized === "subadmin" || normalized === "user") return this.userModel;
