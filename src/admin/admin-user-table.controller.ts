@@ -1,3 +1,4 @@
+import { ADMIN_ACTIONS } from "../utils/admin-action-log.util";
 import { LogAdminAction } from "../utils/admin-action.interceptor";
 import {
   Controller,
@@ -663,6 +664,31 @@ export class AdminUserTableController {
       name: a.name || a.email || "Admin",
       role: a.role as string,
     }));
+  }
+
+  /** Admin history of one account (admin_actions): who did what, newest first. */
+  @Get("users/:id/actions")
+  async accountActions(@Param("id") id: string) {
+    const rows: any[] = await this.influencerModel.db
+      .collection(ADMIN_ACTIONS)
+      .find({ targetId: String(id) })
+      .sort({ at: -1 })
+      .limit(50)
+      .toArray();
+    const adminIds = [...new Set(rows.map((r) => r.adminId).filter((v) => /^[a-f0-9]{24}$/i.test(v)))];
+    const admins: any[] = adminIds.length
+      ? await this.userModel.find({ _id: { $in: adminIds } }).select("email name").lean()
+      : [];
+    const label = new Map(admins.map((a) => [String(a._id), a.email || a.name || ""]));
+    return {
+      success: true,
+      actions: rows.map((r) => ({
+        at: r.at,
+        action: r.action,
+        by: label.get(String(r.adminId)) || r.adminId || "",
+        details: r.details || {},
+      })),
+    };
   }
 
   @Post("early-access/auto-assign")

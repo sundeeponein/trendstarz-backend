@@ -1,3 +1,4 @@
+import { maskEmail } from "../utils/security-alert.util";
 import { Injectable, Logger } from "@nestjs/common";
 import { InjectModel } from "@nestjs/mongoose";
 import { Cron } from "@nestjs/schedule";
@@ -579,7 +580,7 @@ export class PendingUserCleanupService {
           sent += 1;
         } catch (err: any) {
           this.logger.error(
-            `[PendingUserCleanup] Reminder email failed for ${user.email}`,
+            `[PendingUserCleanup] Reminder email failed for ${maskEmail(user.email)}`,
             err?.stack || err?.message || String(err),
           );
         }

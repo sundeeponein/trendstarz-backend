@@ -25,11 +25,15 @@ describe("failed emails are recorded (real MongoDB)", () => {
 
   it("records a refused send (no body), still throws to the caller, and Data health shows it", async () => {
     (sendEmailBrevo as jest.Mock).mockRejectedValueOnce(
-      Object.assign(new Error("Request failed"), { response: { status: 400, data: { code: "invalid_parameter", message: "email is not valid" } } }),
+      Object.assign(new Error("Request failed"), {
+        response: { status: 400, data: { code: "invalid_parameter", message: "email is not valid" } },
+        config: { headers: { "api-key": "xkeysib-SECRET" }, data: '{"to":"asha@x.in","htmlContent":"secret 123456"}' },
+      }),
     );
-    await expect(
-      sendAppEmail({ to: " Asha@X.in ", subject: "Your TrendStarZ OTP", text: "secret 123456" }),
-    ).rejects.toThrow("Request failed");
+    const err: any = await sendAppEmail({ to: " Asha@X.in ", subject: "Your TrendStarZ OTP", text: "secret 123456" }).catch((e) => e);
+    expect(err.message).toBe("Email not sent: HTTP 400 invalid_parameter email is not valid");
+    // What a caller logs carries no key, address or body.
+    expect(JSON.stringify({ ...err, message: err.message })).not.toMatch(/xkeysib|asha@|123456/);
 
     const rows = await db.conn.db!.collection(EMAIL_FAILURES).find({}).toArray();
     expect(rows).toHaveLength(1);

@@ -8,6 +8,7 @@ import { NestFactory } from "@nestjs/core";
 import { ExpressAdapter } from "@nestjs/platform-express";
 import express from "express";
 import { trustProxyHops } from "./utils/trust-proxy.util";
+import { scheduledJobsEnabled } from "./utils/single-instance";
 import { AppModule } from "./app.module";
 import { ResponseInterceptor } from "./response.interceptor";
 import { ValidationPipe } from "@nestjs/common";
@@ -102,6 +103,13 @@ async function bootstrap() {
   await app.listen(port, "0.0.0.0");
   logMemory("after app.listen");
   console.log(`🚀 Server started on port ${port}`);
+  const dbName = String(process.env.MONGODB_URI || "").split("?")[0].split("/").pop() || "";
+  if (!scheduledJobsEnabled() && /prod/i.test(dbName)) {
+    console.warn(
+      `⚠️  This is not the production deploy, but it is connected to the LIVE database "${dbName}". ` +
+        "Scheduled jobs are off; anything you do here (sign-ups, payments, admin actions) changes live data.",
+    );
+  }
 
   // Periodic memory logging every 10 seconds
   setInterval(() => {

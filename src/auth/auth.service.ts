@@ -1,4 +1,4 @@
-import { sendSecurityAlert } from "../utils/security-alert.util";
+import { maskEmail, sendSecurityAlert } from "../utils/security-alert.util";
 import { LoginAttempts } from "./login-attempts.util";
 import { canonicalPhone } from "../utils/phone.util";
 import { invalidateAccountStatusCache } from "./jwt-auth.guard";
@@ -325,7 +325,7 @@ export class AuthService {
             .catch(() => {});
         } catch (e) {
           console.error(
-            `Failed to send email-verification WhatsApp reminder to ${email}:`,
+            `Failed to send email-verification WhatsApp reminder to ${maskEmail(email)}:`,
             e,
           );
         } finally {

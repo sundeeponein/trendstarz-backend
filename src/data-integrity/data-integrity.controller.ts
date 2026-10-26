@@ -1,8 +1,12 @@
 import { Body, Controller, Get, Post, Query, Req, UseGuards } from "@nestjs/common";
+import { Throttle } from "@nestjs/throttler";
 import { JwtAuthGuard } from "../auth/jwt-auth.guard";
 import { RolesGuard } from "../auth/roles.guard";
 import { DataIntegrityService } from "./data-integrity.service";
 import { DatabaseBackupService } from "./database-backup.service";
+
+/** Calls that hit outside services or download whole backups: a double click can't run them in a pile. */
+const HEAVY = { default: { ttl: 60000, limit: 3 } };
 
 /** Admin "Data health" page: latest nightly result, or run the checks now. */
 @Controller("admin/data-integrity")
@@ -34,18 +38,21 @@ export class DataIntegrityController {
 
   /** Captured Razorpay payments of the last ?days=N (default 7, max 60) that TrendStarZ didn't complete. */
   @Get("razorpay-reconcile")
+  @Throttle(HEAVY)
   reconcile(@Query("days") days?: string) {
     return this.service.reconcileRazorpay(Number(days) || 7);
   }
 
   /** Live accounts whose email Brevo won't deliver to (bounced, complained, unsubscribed). */
   @Get("email-blocks")
+  @Throttle(HEAVY)
   emailBlocks() {
     return this.service.emailBlocks();
   }
 
   /** Firebase logins vs TrendStarZ accounts: mismatched links, logins kept after deletion. */
   @Get("firebase-reconcile")
+  @Throttle(HEAVY)
   firebaseReconcile() {
     return this.service.reconcileFirebase();
   }
@@ -57,12 +64,14 @@ export class DataIntegrityController {
   }
 
   @Post("backups/run")
+  @Throttle(HEAVY)
   backupNow() {
     return this.backups.runBackup("admin");
   }
 
   /** Restore test: download the newest backup and prove it reads back in full. */
   @Post("backups/verify")
+  @Throttle(HEAVY)
   verifyBackup() {
     return this.backups.verifyLatest("admin");
   }

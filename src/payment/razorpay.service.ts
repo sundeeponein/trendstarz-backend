@@ -133,12 +133,27 @@ export class RazorpayService {
       timeout: 20000,
     };
 
-    const { data } = await axios.post(
-      `${creds.baseUrl}${path}`,
-      payload,
-      config,
-    );
-    return data;
+    try {
+      const { data } = await axios.post(
+        `${creds.baseUrl}${path}`,
+        payload,
+        config,
+      );
+      return data;
+    } catch (err: any) {
+      // Never pass the raw axios error up: it carries the request, including the
+      // Basic auth header built from the RazorpayX key and secret.
+      const status = err?.response?.status;
+      const reason =
+        err?.response?.data?.error?.description || err?.response?.data?.error?.code || err?.code || err?.message || "error";
+      const clean: any = new Error(`RazorpayX ${path} failed${status ? ` (HTTP ${status})` : ""}: ${String(reason).slice(0, 200)}`);
+      clean.statusCode = status;
+      clean.error = err?.response?.data?.error;
+      // Kept for the payout sweep: 4xx = refused (new payout next time), else unclear.
+      clean.response = status ? { status, data: { error: err?.response?.data?.error } } : undefined;
+      clean.code = err?.code;
+      throw clean;
+    }
   }
 
   async createPayoutByUpi(input: {

@@ -65,6 +65,8 @@ export async function sendAppEmail(options: AppEmailOptions) {
         error: describeSendError(err),
       })
       .catch(() => undefined);
-    throw err;
+    // Never rethrow the raw axios error: it carries the request — the Brevo api-key
+    // header, the address and the body (OTP codes) — and callers log what they catch.
+    throw new Error(`Email not sent: ${describeSendError(err)}`);
   }
 }

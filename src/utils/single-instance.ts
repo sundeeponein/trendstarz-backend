@@ -83,11 +83,38 @@ export async function releaseCronLock(
   );
 }
 
+/**
+ * Scheduled jobs run only on the real deploy. A laptop whose .env points at the
+ * live database would otherwise run every clean-up, expiry and payout job against
+ * live data with local code. CRON_ENABLED=true/false overrides either way.
+ */
+export function scheduledJobsEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
+  const flag = String(env.CRON_ENABLED || "").trim().toLowerCase();
+  if (flag === "false") return false;
+  if (flag === "true") return true;
+  return (
+    env.NODE_ENV === "production" ||
+    env.NODE_ENV === "test" ||
+    !!env.RAILWAY_ENVIRONMENT ||
+    !!env.RAILWAY_ENVIRONMENT_NAME ||
+    !!env.RAILWAY_ENVIRONMENT_ID
+  );
+}
+
+let warnedJobsOff = false;
+
 export function SingleInstance(options: { name?: string; ttlMs?: number } = {}): MethodDecorator {
   return (target, propertyKey, descriptor: PropertyDescriptor) => {
     const original = descriptor.value;
     const name = options.name || `${target.constructor.name}.${String(propertyKey)}`;
     descriptor.value = async function (this: unknown, ...args: unknown[]) {
+      if (!scheduledJobsEnabled()) {
+        if (!warnedJobsOff) {
+          warnedJobsOff = true;
+          logger.warn("Scheduled jobs are OFF here (not the production deploy). Set CRON_ENABLED=true to run them.");
+        }
+        return undefined;
+      }
       const startedAt = new Date();
       let claimed: boolean;
       try {
