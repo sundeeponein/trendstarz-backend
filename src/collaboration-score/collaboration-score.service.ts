@@ -1,3 +1,4 @@
+import { formatIstDate } from "../utils/ist-date.util";
 import { endOfIstDay } from "../campaigns/campaign-deadlines.util";
 import {
   BadRequestException,
@@ -240,7 +241,7 @@ export class CollaborationScoreService {
     );
     if (Date.now() < availableAt.getTime()) {
       throw new BadRequestException(
-        `You can re-analyze again on ${availableAt.toDateString()} (${cooldownDays}-day limit between analyses).`,
+        `You can re-analyze again on ${formatIstDate(availableAt)} (${cooldownDays}-day limit between analyses).`,
       );
     }
   }

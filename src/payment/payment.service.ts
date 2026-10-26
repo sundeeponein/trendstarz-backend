@@ -1,3 +1,4 @@
+import { formatIstDate } from "../utils/ist-date.util";
 import { Injectable } from "@nestjs/common";
 import { InjectModel } from "@nestjs/mongoose";
 import { Model } from "mongoose";
@@ -439,7 +440,7 @@ export class PaymentService {
     return {
       success: true,
       message: remaining
-        ? `Payment marked refunded. Premium now ends ${new Date(remaining.endDate).toDateString()}.`
+        ? `Payment marked refunded. Premium now ends ${formatIstDate(remaining.endDate)}.`
         : "Payment marked refunded and premium removed.",
     };
   }

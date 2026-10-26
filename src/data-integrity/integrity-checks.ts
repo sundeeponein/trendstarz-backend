@@ -1034,6 +1034,29 @@ async function emailFailures(db: Db): Promise<IntegrityCheck> {
   );
 }
 
+/** Server errors (5xx) in the last 24 hours, grouped by route. */
+async function serverErrors(db: Db): Promise<IntegrityCheck> {
+  const since = new Date(Date.now() - 24 * 3600000);
+  const rows = await db
+    .collection("server_errors")
+    .aggregate([
+      { $match: { at: { $gte: since } } },
+      { $group: { _id: { method: "$method", route: "$route" }, n: { $sum: 1 }, last: { $max: "$at" }, message: { $last: "$message" } } },
+      { $sort: { n: -1 } },
+      { $limit: 20 },
+    ])
+    .toArray()
+    .catch(() => [] as any[]);
+  const total = (rows as any[]).reduce((n: number, r: any) => n + Number(r.n || 0), 0);
+  return check(
+    "server_errors",
+    "No server errors in the last 24 hours",
+    total,
+    "Something crashed while serving these requests — users saw an error. Check the route in the Railway log for the full trace and fix the cause; the count clears after 24 quiet hours.",
+    rows.map((r: any) => `${r._id.method} ${r._id.route} ×${r.n} — ${r.message}`),
+  );
+}
+
 export async function runIntegrityChecks(db: Db): Promise<IntegrityCheck[]> {
   const explained = await loadExplained(db);
   return Promise.all([
@@ -1064,5 +1087,6 @@ export async function runIntegrityChecks(db: Db): Promise<IntegrityCheck[]> {
     sharedPhones(db),
     backupRestoreTested(db),
     emailFailures(db),
+    serverErrors(db),
   ]);
 }

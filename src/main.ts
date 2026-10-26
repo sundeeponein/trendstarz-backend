@@ -11,6 +11,7 @@ import { trustProxyHops } from "./utils/trust-proxy.util";
 import { scheduledJobsEnabled } from "./utils/single-instance";
 import { AppModule } from "./app.module";
 import { ResponseInterceptor } from "./response.interceptor";
+import { ServerErrorFilter } from "./utils/server-error.filter";
 import { ValidationPipe } from "@nestjs/common";
 import * as dotenv from "dotenv";
 import helmet from "helmet";
@@ -85,6 +86,9 @@ async function bootstrap() {
     new RejectOperatorKeysInterceptor(),
     new ResponseInterceptor(),
   );
+
+  // Record server errors (5xx) for Data health; responses stay Nest's defaults.
+  app.useGlobalFilters(new ServerErrorFilter(app.getHttpAdapter()));
 
   // Validate and strip unknown fields from all request bodies globally.
   app.useGlobalPipes(

@@ -1,3 +1,4 @@
+import { formatIstDate } from "../utils/ist-date.util";
 /**
  * Single source of truth for the "campaign is live" messages shown to
  * creators — both the literal text an admin copies from the campaign review
@@ -108,11 +109,7 @@ export interface CampaignAlertFields {
 export function formatCampaignDateLabel(value: unknown): string {
   const date = value ? new Date(value as any) : null;
   if (!date || isNaN(date.getTime())) return "Not specified";
-  return date.toLocaleDateString("en-US", {
-    day: "numeric",
-    month: "short",
-    year: "numeric",
-  });
+  return formatIstDate(date);
 }
 
 function resolveLocationLabel(campaign: any, isPhotographer: boolean): string {

@@ -1,3 +1,4 @@
+import { formatIstDate } from "../../utils/ist-date.util";
 import { escapeHtmlFields, wrapEmail, h2, p, btn, TEXT_MUTED, EmailTemplate } from "../layout";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -56,10 +57,10 @@ export function inviteReminderTemplate(data: ReminderData): EmailTemplate {
   const subject = `Reminder: ${brandName} is waiting on "${campaignTitle}"`;
 
   const dueLine = dueDate
-    ? `\nDeliverable due: ${new Date(dueDate).toDateString()}.`
+    ? `\nDeliverable due: ${formatIstDate(dueDate)}.`
     : "";
   const dueHtml = dueDate
-    ? `<p style="margin:8px 0;color:#475467;"><strong>Deliverable due:</strong> ${new Date(dueDate).toDateString()}</p>`
+    ? `<p style="margin:8px 0;color:#475467;"><strong>Deliverable due:</strong> ${formatIstDate(dueDate)}</p>`
     : "";
 
   const html = wrapEmail(
