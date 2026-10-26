@@ -16,6 +16,7 @@ import {
 import type { Response } from "express";
 import { Throttle } from "@nestjs/throttler";
 import { JwtAuthGuard } from "../auth/jwt-auth.guard";
+import { RolesGuard } from "../auth/roles.guard";
 import { CollaborationScoreService } from "./collaboration-score.service";
 import { CollaborationScoreSettingsService } from "./collaboration-score-settings.service";
 
@@ -161,7 +162,7 @@ export class CollaborationScoreController {
   }
 
   /** GET /api/audit/admin — paginated list + optional ?summary=true. */
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, RolesGuard)
   @Get("admin")
   adminList(@Req() req: any, @Query() query: any) {
     return this.service.adminList(req?.user, query);

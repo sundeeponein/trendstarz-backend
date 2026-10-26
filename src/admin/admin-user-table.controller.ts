@@ -666,6 +666,33 @@ export class AdminUserTableController {
     }));
   }
 
+  /**
+   * Exact account counts for the admin dashboard, counted in the database. The
+   * dashboard used to count the rows it loaded, which stopped at the page size
+   * (261 influencers showed as 100, 2026-10-26).
+   */
+  @Get("user-counts")
+  async userCounts() {
+    const now = new Date();
+    const live = { isDeleted: { $ne: true }, status: { $nin: ["deleted", "deletion_pending"] } };
+    const premium = { isPremium: true, $or: [{ premiumEnd: null }, { premiumEnd: { $gte: now } }] };
+    const count = async (model: any) => {
+      const [total, active, pending, premiumCount] = await Promise.all([
+        model.countDocuments(live),
+        model.countDocuments({ ...live, status: "accepted" }),
+        model.countDocuments({ ...live, status: "pending" }),
+        model.countDocuments({ ...live, ...premium }),
+      ]);
+      return { total, active, pending, premium: premiumCount };
+    };
+    const [influencers, brands, photographers] = await Promise.all([
+      count(this.influencerModel),
+      count(this.brandModel),
+      count(this.photographerModel),
+    ]);
+    return { success: true, influencers, brands, photographers };
+  }
+
   /** Admin history of one account (admin_actions): who did what, newest first. */
   @Get("users/:id/actions")
   async accountActions(@Param("id") id: string) {
