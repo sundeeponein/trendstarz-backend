@@ -83,6 +83,16 @@ import { payoutUpiChangedTemplate } from "../email/templates/auth.templates";
 
 /** Self-service "Delete Account" grace period — see requestSelfDeletion. */
 /** Retention (2026-10-26): admin soft-deleted accounts are anonymized after this. */
+/** Largest page a public directory list returns (the site's own Search asks for 120). */
+export const PUBLIC_LIST_MAX_LIMIT = 150;
+
+/** Page and page size for a public list: page ≥ 1, size 1…PUBLIC_LIST_MAX_LIMIT (default 20). */
+export function publicPageArgs(page: unknown, limit: unknown): { page: number; limit: number } {
+  return {
+    page: Math.max(1, Math.floor(Number(page) || 1)),
+    limit: Math.min(Math.max(Math.floor(Number(limit) || 20), 1), PUBLIC_LIST_MAX_LIMIT),
+  };
+}
 export const ADMIN_SOFT_DELETE_RETENTION_DAYS = 90;
 /** Retention (2026-10-26): resolved/ignored profile flags are removed after this. */
 export const RESOLVED_FLAG_RETENTION_DAYS = 365;
@@ -220,6 +230,87 @@ export class UsersService implements OnModuleInit {
       .replace(/-+/g, "-")
       .replace(/^-+/, "")
       .replace(/-+$/, "");
+  }
+
+  /**
+   * "Download my data" (DPDP): what TrendStarZ holds about this person, as one
+   * JSON document — their profile, collaborations and payments from their own
+   * side, Premium history, reviews by and about them, and their consent. Secrets
+   * (password, tokens) and internal admin notes are left out; so are other people's
+   * private details (their UPI, phone, notes).
+   */
+  async exportMyData(userId: string, role: string) {
+    const r = String(role || "").toLowerCase();
+    const model = r === "brand" ? this.brandModel : r === "photographer" ? this.photographerModel : r === "influencer" ? this.influencerModel : null;
+    if (!model) throw new BadRequestException("Data export is for influencer, brand and photographer accounts.");
+    const profile: any = await model
+      .findById(userId)
+      .select(
+        "-password -resetToken -resetTokenExpires -firebaseUid -verificationAdminNotes -profileModerationNotes " +
+          "-adminTags -tempPasswordIssuedBy -mobileVerifiedBy -reviewedBy -verificationAuditLog -__v",
+      )
+      .lean();
+    if (!profile) throw new NotFoundException("Account not found.");
+    const id = String(userId);
+    const db: any = this.influencerModel.db;
+    const asCreator = r !== "brand";
+
+    const invites: any[] = await this.campaignInviteModel
+      .find({ $or: [{ influencerId: idIn(id) }, { brandId: id }] })
+      .select("campaignId brandId influencerId status agreedAmount createdAt acceptedAt completedAt withdrawnAt dueDate selectedPlatform selectedPostDate selectedContentType")
+      .lean();
+    const campaignIds = [...new Set(invites.map((i) => String(i.campaignId)).filter((v) => /^[a-f0-9]{24}$/i.test(v)))];
+    const campaigns: any[] = campaignIds.length
+      ? await db.collection("campaigns").find({ _id: { $in: campaignIds.map((c) => new Types.ObjectId(c)) } }, { projection: { title: 1, campaignNumber: 1 } }).toArray()
+      : [];
+    const titles = new Map(campaigns.map((c) => [String(c._id), c.campaignNumber ? `#${c.campaignNumber} ${c.title || ""}` : c.title || ""]));
+
+    const txs: any[] = await db
+      .collection("campaigntransactions")
+      .find({ $or: [{ payerId: id }, { recipientId: id }] })
+      .toArray();
+    const payments = txs.map((t) => {
+      const payer = String(t.payerId) === id;
+      return {
+        campaign: titles.get(String(t.campaignId)) || String(t.campaignId || ""),
+        side: payer ? "paid by you" : "paid to you",
+        createdAt: t.createdAt,
+        ...(payer
+          ? { amountPaise: t.payerTotal, platformFeePaise: t.platformFee, gstPaise: t.gstAmount, paymentStatus: t.collectionStatus, refundStatus: t.refundStatus, refundAmountPaise: t.refundAmount }
+          : { payoutPaise: t.recipientPayout, creatorFeePaise: t.recipientFee, payoutStatus: t.payoutStatus, paidOutAt: t.paidOutAt }),
+      };
+    });
+
+    const [subscriptions, premiumPayments, reviewsByYou, reviewsAboutYou] = await Promise.all([
+      db.collection("subscriptions").find({ userId: idIn(id) }, { projection: { status: 1, startDate: 1, endDate: 1, source: 1, billingCycle: 1 } }).toArray(),
+      db.collection("payments").find({ userId: idIn(id) }, { projection: { purpose: 1, status: 1, amountPaise: 1, amount: 1, paymentMethod: 1, createdAt: 1 } }).toArray(),
+      db.collection("reviews").find({ reviewerId: idIn(id) }, { projection: { rating: 1, comment: 1, status: 1, createdAt: 1, targetType: 1 } }).toArray(),
+      db.collection("reviews").find({ targetId: id, status: "approved" }, { projection: { rating: 1, comment: 1, createdAt: 1, reviewerType: 1 } }).toArray(),
+    ]);
+
+    return {
+      exportedAt: new Date(),
+      note: "Amounts ending in Paise are in paise (100 paise = ₹1).",
+      account: { role: r, ...profile },
+      consent: { termsAcceptedAt: profile.termsAcceptedAt ?? null, termsVersion: profile.termsVersion || "", privacyVersion: profile.privacyVersion || "" },
+      collaborations: invites.map((i) => ({
+        campaign: titles.get(String(i.campaignId)) || String(i.campaignId || ""),
+        yourRole: asCreator ? "creator" : "host",
+        status: i.status,
+        agreedAmountRupees: i.agreedAmount,
+        createdAt: i.createdAt,
+        acceptedAt: i.acceptedAt,
+        completedAt: i.completedAt,
+        withdrawnAt: i.withdrawnAt,
+        dueDate: i.dueDate,
+        platform: i.selectedPlatform,
+        contentType: i.selectedContentType,
+        postDate: i.selectedPostDate,
+      })),
+      payments,
+      premium: { subscriptions, payments: premiumPayments },
+      reviews: { writtenByYou: reviewsByYou, aboutYou: reviewsAboutYou },
+    };
   }
 
   /**
@@ -2008,6 +2099,8 @@ export class UsersService implements OnModuleInit {
       q?: string;
     },
   ) {
+    // Public lists: one request can't hand over the whole directory (?limit=100000).
+    ({ page, limit } = publicPageArgs(page, limit));
     const skip = (page - 1) * limit;
     const stateFilter = String(options?.state || "").trim();
     const districtFilter = String(options?.district || "").trim();
@@ -2767,6 +2860,8 @@ export class UsersService implements OnModuleInit {
     viewerId?: string | null,
     lite = false,
   ) {
+    // Public lists: one request can't hand over the whole directory (?limit=100000).
+    ({ page, limit } = publicPageArgs(page, limit));
     const skip = (page - 1) * limit;
     const filter: any = { status: "accepted" };
     this.applyBrandDiscoveryEligibilityFilter(filter, !!viewerId);

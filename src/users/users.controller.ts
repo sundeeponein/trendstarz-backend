@@ -247,6 +247,15 @@ export class UsersController {
   }
 
   @UseGuards(JwtAuthGuard)
+  /** "Download my data": everything held about the logged-in account, as JSON. */
+  @UseGuards(JwtAuthGuard)
+  @Throttle({ default: { ttl: 3600000, limit: 5 } })
+  @Get("me/data-export")
+  async exportMyData(@Req() req: any) {
+    const userId = req.user?.userId || req.user?.sub || req.user?.id;
+    return this.usersService.exportMyData(String(userId || ""), String(req.user?.role || ""));
+  }
+
   @Get(":id/profile-visibility")
   async getProfileVisibility(@Param("id") id: string, @Req() req: Request) {
     const userId = (req as any).user?.userId;

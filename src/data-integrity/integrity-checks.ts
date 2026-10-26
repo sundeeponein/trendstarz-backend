@@ -1114,6 +1114,32 @@ async function jobsRunning(db: Db, now = new Date()): Promise<IntegrityCheck> {
   );
 }
 
+/** Browser errors are noisy (extensions, flaky networks): warn from this many a day. */
+export const CLIENT_ERROR_ALERT_AT = 5;
+
+/** Errors users hit in the page itself in the last 24 hours, grouped by page and message. */
+async function clientErrors(db: Db): Promise<IntegrityCheck> {
+  const since = new Date(Date.now() - 24 * 3600000);
+  const rows: any[] = await db
+    .collection("client_errors")
+    .aggregate([
+      { $match: { at: { $gte: since } } },
+      { $group: { _id: { page: "$page", message: "$message" }, n: { $sum: 1 } } },
+      { $sort: { n: -1 } },
+      { $limit: 15 },
+    ])
+    .toArray()
+    .catch(() => [] as any[]);
+  const total = rows.reduce((n: number, r: any) => n + Number(r.n || 0), 0);
+  return check(
+    "client_errors",
+    `Fewer than ${CLIENT_ERROR_ALERT_AT} browser errors in the last 24 hours`,
+    total >= CLIENT_ERROR_ALERT_AT ? total : 0,
+    "Users hit these errors in the page itself (a button or screen that failed). One-offs are usually extensions or bad networks; the same page and message many times is a bug.",
+    rows.map((r: any) => `${r._id.page} ×${r.n} — ${r._id.message}`),
+  );
+}
+
 /**
  * One check that throws (a bad query, a missing collection) must not take the
  * others down with it: before, the whole nightly run failed — no report, no alert.
@@ -1165,5 +1191,6 @@ export async function runIntegrityChecks(db: Db): Promise<IntegrityCheck[]> {
     guard("emailFailures", () => emailFailures(db)),
     guard("serverErrors", () => serverErrors(db)),
     guard("jobsRunning", () => jobsRunning(db)),
+    guard("clientErrors", () => clientErrors(db)),
   ]);
 }

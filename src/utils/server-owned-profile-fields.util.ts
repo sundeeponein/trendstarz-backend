@@ -20,6 +20,10 @@ export const SERVER_OWNED_PROFILE_FIELDS = [
   "anonymized",
   // Premium / commission
   "isPremium",
+  "termsAcceptedAt",
+  "termsVersion",
+  "privacyVersion",
+  "sessionsRevokedAt",
   "premiumDuration",
   "premiumStart",
   "premiumEnd",

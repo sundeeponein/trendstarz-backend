@@ -55,3 +55,34 @@ export function summarizeBody(body: any): Record<string, unknown> {
   }
   return out;
 }
+
+/** Settings may have a "code" (a plan code) — only real secrets are skipped here. */
+const SETTINGS_SECRET_KEYS = /password|token|secret|api_?key|private_?key/i;
+
+/** One comparable form of a value: primitives as they are, the rest as short JSON. */
+function comparable(v: unknown): unknown {
+  if (v === undefined) return null;
+  if (v === null || typeof v === "boolean" || typeof v === "number" || typeof v === "string") return v;
+  if (v instanceof Date) return v.toISOString();
+  try {
+    return JSON.stringify(v).slice(0, 300);
+  } catch {
+    return String(v).slice(0, 300);
+  }
+}
+
+/**
+ * Settings changes as { field: [old, new] } — only fields that really changed,
+ * top-level keys of both documents (internal and secret-looking keys skipped).
+ */
+export function settingsDiff(before: any, after: any): Record<string, [unknown, unknown]> {
+  const out: Record<string, [unknown, unknown]> = {};
+  const keys = new Set([...Object.keys(before || {}), ...Object.keys(after || {})]);
+  for (const k of keys) {
+    if (["_id", "__v", "createdAt", "updatedAt"].includes(k) || SETTINGS_SECRET_KEYS.test(k) || /LastRun/.test(k)) continue;
+    const a = comparable(before?.[k]);
+    const b = comparable(after?.[k]);
+    if (a !== b) out[k] = [a, b];
+  }
+  return out;
+}

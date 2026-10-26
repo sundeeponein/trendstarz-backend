@@ -1,3 +1,4 @@
+import { recordAdminAction, settingsDiff } from "../utils/admin-action-log.util";
 import {
   Controller,
   Get,
@@ -33,22 +34,33 @@ export class PlansController {
   /** POST /plans/admin — create plan */
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Post("admin")
-  create(@Body() dto: any) {
-    return this.plansService.create(dto);
+  async create(@Body() dto: any, @Req() req?: any) {
+    const plan: any = await this.plansService.create(dto);
+    const created = plan?.toObject?.() ?? plan?.plan ?? plan;
+    await recordAdminAction(req, "create_plan", { type: "plan", id: String(created?._id || "") }, { changes: settingsDiff({}, created) });
+    return plan;
   }
 
   /** PATCH /plans/admin/:id — update plan */
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Patch("admin/:id")
-  update(@Param("id") id: string, @Body() dto: any) {
-    return this.plansService.update(id, dto);
+  async update(@Param("id") id: string, @Body() dto: any, @Req() req?: any) {
+    const before: any = await this.plansService.planModel.findById(id).lean();
+    const result: any = await this.plansService.update(id, dto);
+    const after: any = await this.plansService.planModel.findById(id).lean();
+    const changes = settingsDiff(before, after);
+    if (Object.keys(changes).length) await recordAdminAction(req, "update_plan", { type: "plan", id }, { changes });
+    return result;
   }
 
   /** DELETE /plans/admin/:id — delete plan **/
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Delete("admin/:id")
-  remove(@Param("id") id: string) {
-    return this.plansService.remove(id);
+  async remove(@Param("id") id: string, @Req() req?: any) {
+    const before: any = await this.plansService.planModel.findById(id).lean();
+    const result = await this.plansService.remove(id);
+    await recordAdminAction(req, "delete_plan", { type: "plan", id }, { changes: settingsDiff(before, {}) });
+    return result;
   }
 
   /** GET /plans?userType=INFLUENCER|BRAND — active plans **/

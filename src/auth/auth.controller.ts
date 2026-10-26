@@ -83,6 +83,17 @@ export class AuthController {
     };
   }
 
+  /** Admin login, step 2: the code emailed after the password turns the challenge into a session. */
+  @Post("admin-login/verify")
+  @Throttle({ default: { ttl: 60000, limit: 10 } })
+  @HttpCode(200)
+  async verifyAdminLogin(@Body() body: { challenge?: string; code?: string }, @Req() req: any) {
+    return this.authService.verifyAdminLoginCode(String(body?.challenge || ""), String(body?.code || ""), {
+      clientIp: req?.ip,
+      userAgent: String(req?.headers?.["user-agent"] || ""),
+    });
+  }
+
   @Post("login")
   @Throttle({ default: { ttl: 60000, limit: 5 } })
   @HttpCode(200)

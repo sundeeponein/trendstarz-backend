@@ -34,6 +34,7 @@ export const EXPLAINABLE_CHECKS = [
 import { EMAIL_FAILURES, EMAIL_FAILURES_KEEP_DAYS, sendAppEmail, setEmailFailureCollection } from "../utils/app-email.service";
 import { reconcileRazorpay } from "./razorpay-reconcile";
 import { reconcileFirebase } from "./firebase-reconcile";
+import { CLIENT_ERRORS, CLIENT_ERRORS_KEEP_DAYS } from "./client-errors.controller";
 import { ADMIN_ACTIONS, setAdminActionCollection } from "../utils/admin-action-log.util";
 import { SERVER_ERRORS, SERVER_ERRORS_KEEP_DAYS, setServerErrorCollection } from "../utils/server-error.filter";
 import { fetchBlockedContacts, matchEmailBlocks } from "./email-blocks";
@@ -123,6 +124,10 @@ export class DataIntegrityService implements OnModuleInit {
     setEmailFailureCollection(this.connection.db!.collection(EMAIL_FAILURES));
     setAdminActionCollection(this.connection.db!.collection(ADMIN_ACTIONS));
     setServerErrorCollection(this.connection.db!.collection(SERVER_ERRORS));
+    await this.connection.db!
+      .collection(CLIENT_ERRORS)
+      .createIndex({ at: 1 }, { expireAfterSeconds: CLIENT_ERRORS_KEEP_DAYS * 24 * 3600 })
+      .catch((err: any) => this.logger.warn(`client error index: ${err?.message || err}`));
     await this.connection.db!
       .collection(SERVER_ERRORS)
       .createIndex({ at: 1 }, { expireAfterSeconds: SERVER_ERRORS_KEEP_DAYS * 24 * 3600 })

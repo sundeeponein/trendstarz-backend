@@ -59,7 +59,7 @@ describe("data integrity checks (real MongoDB)", () => {
     ]);
     const checks = await runIntegrityChecks(db);
     expect(checks.filter((c) => c.status === "warn")).toEqual([]);
-    expect(checks).toHaveLength(29);
+    expect(checks).toHaveLength(30);
   });
 
   it("finds collected money with no way out, and invites waiting on an ended campaign", async () => {

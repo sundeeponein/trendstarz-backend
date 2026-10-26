@@ -28,7 +28,10 @@ export class AdminActionInterceptor implements NestInterceptor {
         void recordAdminAction(
           req,
           action,
-          { type: String(params.type || req?.body?.type || "account"), id: String(params.id || "") },
+          {
+            type: String(params.type || params.userType || req?.body?.type || "account"),
+            id: String(params.id || params.userId || ""),
+          },
           summarizeBody(req?.body),
         );
       }),

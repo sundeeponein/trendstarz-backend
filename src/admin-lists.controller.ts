@@ -1,3 +1,5 @@
+import { recordAdminAction, settingsDiff } from "./utils/admin-action-log.util";
+import { LogAdminAction } from "./utils/admin-action.interceptor";
 import {
   Controller,
   Get,
@@ -424,7 +426,8 @@ export class AdminListsController {
   }
 
   @Patch("settings")
-  async updateSettings(@Body() body: Record<string, any>) {
+  async updateSettings(@Body() body: Record<string, any>, @Req() req?: any) {
+    const before: any = await this.appSettingsModel.findOne({}).lean();
     const next: Record<string, any> = { ...body };
     if (next.campaignApprovalMode !== undefined) {
       const mode = String(next.campaignApprovalMode || "").trim();
@@ -609,6 +612,11 @@ export class AdminListsController {
     const settings = await this.appSettingsModel
       .findOneAndUpdate({}, { $set: next }, { upsert: true, new: true })
       .lean();
+    // Who changed which setting, from what to what (commission, GST, approval mode…).
+    const changes = settingsDiff(before, (settings as any)?.toObject?.() ?? settings);
+    if (Object.keys(changes).length) {
+      await recordAdminAction(req, "update_settings", { type: "settings", id: "app" }, { changes });
+    }
     return { success: true, settings };
   }
 
@@ -2190,6 +2198,7 @@ export class AdminListsController {
    * }
    */
   @Put("commission-override/:userType/:userId")
+  @LogAdminAction("set_commission_override")
   async setCommissionOverride(
     @Param("userType") userType: string,
     @Param("userId") userId: string,
@@ -2332,6 +2341,7 @@ export class AdminListsController {
    * Disable commission override for a user
    */
   @Delete("commission-override/:userType/:userId")
+  @LogAdminAction("remove_commission_override")
   async removeCommissionOverride(
     @Param("userType") userType: string,
     @Param("userId") userId: string,

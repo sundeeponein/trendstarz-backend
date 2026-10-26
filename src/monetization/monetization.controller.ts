@@ -1,3 +1,4 @@
+import { recordAdminAction, settingsDiff } from "../utils/admin-action-log.util";
 import {
   Body,
   Controller,
@@ -31,8 +32,14 @@ export class MonetizationController {
 
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Patch("admin/fee-settings")
-  updateFeeSettings(@Body() body: any) {
-    return this.monetizationService.updateFeeSettings(body);
+  async updateFeeSettings(@Body() body: any, @Req() req?: any) {
+    const before: any = await this.monetizationService.getFeeSettings();
+    const after: any = await this.monetizationService.updateFeeSettings(body);
+    const changes = settingsDiff(before?.feeSettings, after?.feeSettings);
+    if (Object.keys(changes).length) {
+      await recordAdminAction(req, "update_fee_settings", { type: "settings", id: "fees" }, { changes });
+    }
+    return after;
   }
 
   @UseGuards(JwtAuthGuard)

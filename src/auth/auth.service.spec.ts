@@ -170,12 +170,19 @@ describe("AuthService", () => {
   });
 
   describe("login", () => {
-    it("should return token for admin user", async () => {
-      userModel.findOne.mockResolvedValue(mockAdmin);
-      const result = await service.login("admin@test.com", "password123");
-      expect(result.token).toBe("mock-jwt-token");
-      expect(result.userType).toBe("admin");
-      expect(result.user.email).toBe("admin@test.com");
+    it("should return token for admin user when the email code step is off (ADMIN_2FA=off)", async () => {
+      // The two-step path (code by email) is covered in admin-two-factor.db.spec.ts.
+      const saved = process.env.ADMIN_2FA;
+      process.env.ADMIN_2FA = "off";
+      try {
+        userModel.findOne.mockResolvedValue(mockAdmin);
+        const result = await service.login("admin@test.com", "password123");
+        expect(result.token).toBe("mock-jwt-token");
+        expect(result.userType).toBe("admin");
+        expect(result.user.email).toBe("admin@test.com");
+      } finally {
+        process.env.ADMIN_2FA = saved;
+      }
     });
 
     it("should return token for influencer", async () => {

@@ -6,7 +6,8 @@ describe("settings: GST requires a GSTIN", () => {
     const c: any = Object.create(AdminListsController.prototype);
     const update: jest.Mock = jest.fn((..._args: any[]) => ({ lean: () => Promise.resolve({}) }));
     c.appSettingsModel = {
-      findOne: () => ({ select: () => ({ lean: () => Promise.resolve(saved) }) }),
+      // .lean() directly = the "before" values read for the settings history.
+      findOne: () => ({ select: () => ({ lean: () => Promise.resolve(saved) }), lean: () => Promise.resolve(saved) }),
       findOneAndUpdate: update,
     };
     return { c, update };

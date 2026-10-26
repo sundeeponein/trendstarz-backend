@@ -60,6 +60,10 @@ const ProfileVerificationFields = {
   // When the password last changed: login tokens issued before this stop working
   // (a stolen session ends when the owner changes or resets the password).
   passwordChangedAt: { type: Date, default: null },
+  // Consent at sign-up (DPDP): when, and which Terms / Privacy versions.
+  termsAcceptedAt: { type: Date, default: null },
+  termsVersion: { type: String, default: "" },
+  privacyVersion: { type: String, default: "" },
   // "Log out of all devices": login tokens issued before this stop working.
   sessionsRevokedAt: { type: Date, default: null },
   mobileVerified: { type: Boolean, default: false },

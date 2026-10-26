@@ -1,4 +1,5 @@
 import { maskEmail, sendSecurityAlert } from "../utils/security-alert.util";
+import { consentOnSignup } from "../utils/legal-consent.util";
 import { LoginAttempts } from "./login-attempts.util";
 import { canonicalPhone } from "../utils/phone.util";
 import { invalidateAccountStatusCache } from "./jwt-auth.guard";
@@ -1585,6 +1586,95 @@ export class AuthService {
     sendSecurityAlert(user?.email, `New admin sign-in from IP ${ip} (${browser}).`, user?.name);
   }
 
+  /** Second admin login step is on unless ADMIN_2FA=off (escape hatch if email is down) or local dev. */
+  static adminTwoFactorOn(options?: { localAuthBypass?: boolean }): boolean {
+    if (options?.localAuthBypass) return false;
+    return String(process.env.ADMIN_2FA || "").trim().toLowerCase() !== "off";
+  }
+
+  /** Emails a 6-digit code and returns a 10-minute challenge (a purpose token: never a session). */
+  private async startAdminTwoFactor(adminUser: any) {
+    const email = String(adminUser.email || "").trim().toLowerCase();
+    const code = await this.otpStore.issueCode(`admin-login:${email}`);
+    try {
+      await sendAppEmail({
+        to: email,
+        subject: "Your TrendStarZ admin sign-in code",
+        text: `Your admin sign-in code is ${code}. It works for 5 minutes. If you didn't just sign in, change your password now.`,
+      });
+    } catch {
+      throw new BadRequestException("Couldn't email the sign-in code. Try again, or set ADMIN_2FA=off in Railway if email is down.");
+    }
+    const challenge = jwt.sign(
+      { purpose: "admin_login_2fa", adminId: String(adminUser._id), email },
+      getJwtSecret(),
+      { expiresIn: "10m" },
+    );
+    return { twoFactorRequired: true, challenge, sentTo: maskEmail(email) };
+  }
+
+  /** Second step: the emailed code turns the challenge into a normal admin session. */
+  async verifyAdminLoginCode(
+    challenge: string,
+    code: string,
+    client?: { clientIp?: string; userAgent?: string },
+  ) {
+    let decoded: any;
+    try {
+      decoded = jwt.verify(String(challenge || ""), getJwtSecret());
+    } catch {
+      throw new UnauthorizedException("This sign-in has expired. Enter your email and password again.");
+    }
+    if (decoded?.purpose !== "admin_login_2fa" || !decoded?.adminId) {
+      throw new UnauthorizedException("This sign-in has expired. Enter your email and password again.");
+    }
+    const adminUser: any = await this.userModel.findOne({ _id: decoded.adminId, role: { $in: ["admin", "subadmin"] } });
+    if (!adminUser || String(adminUser.email || "").toLowerCase() !== decoded.email) {
+      throw new UnauthorizedException("This sign-in has expired. Enter your email and password again.");
+    }
+    const result = await this.otpStore.verifyCode("email", `admin-login:${decoded.email}`, String(code || "").trim());
+    if (!result.ok) throw new UnauthorizedException(result.error || "Invalid or expired code");
+    const response = await this.buildAdminLoginResponse(adminUser);
+    this.recordAdminSignIn(response.user, client).catch(() => undefined);
+    return response;
+  }
+
+  private async buildAdminLoginResponse(adminUser: any) {
+    const now = new Date();
+    await this.userModel.updateOne(
+      { _id: adminUser._id },
+      {
+        $set: {
+          lastLoginAt: now,
+          firstRegisteredAt:
+            adminUser.firstRegisteredAt || adminUser.createdAt || now,
+        },
+      },
+    );
+    const token = jwt.sign(
+      { userId: adminUser._id, email: adminUser.email, role: adminUser.role },
+      getJwtSecret(),
+      { expiresIn: "90d" },
+    );
+    return {
+      token,
+      userType: adminUser.role,
+      user: {
+        id: adminUser._id,
+        name: adminUser.name,
+        email: adminUser.email,
+        role: adminUser.role,
+        lastLoginAt: now,
+        lastOpenedAt: adminUser.lastOpenedAt || null,
+        profileImage:
+          Array.isArray(adminUser.profileImages) &&
+          adminUser.profileImages.length > 0
+            ? adminUser.profileImages[0].url
+            : null,
+      },
+    };
+  }
+
   private async loginChecked(
     email: string,
     password: string,
@@ -1616,39 +1706,11 @@ export class AuthService {
     if (adminUser) {
       const isMatch = await bcrypt.compare(password, adminUser.password);
       if (!isMatch) throw new UnauthorizedException("Invalid credentials");
-      const now = new Date();
-      await this.userModel.updateOne(
-        { _id: adminUser._id },
-        {
-          $set: {
-            lastLoginAt: now,
-            firstRegisteredAt:
-              adminUser.firstRegisteredAt || adminUser.createdAt || now,
-          },
-        },
-      );
-      const token = jwt.sign(
-        { userId: adminUser._id, email: adminUser.email, role: adminUser.role },
-        getJwtSecret(),
-        { expiresIn: "90d" },
-      );
-      return {
-        token,
-        userType: adminUser.role,
-        user: {
-          id: adminUser._id,
-          name: adminUser.name,
-          email: adminUser.email,
-          role: adminUser.role,
-          lastLoginAt: now,
-          lastOpenedAt: adminUser.lastOpenedAt || null,
-          profileImage:
-            Array.isArray(adminUser.profileImages) &&
-            adminUser.profileImages.length > 0
-              ? adminUser.profileImages[0].url
-              : null,
-        },
-      };
+      // Two-step admin login: the password alone only gets a code by email.
+      if (AuthService.adminTwoFactorOn(options)) {
+        return this.startAdminTwoFactor(adminUser);
+      }
+      return this.buildAdminLoginResponse(adminUser);
     }
 
     if (influencer) {
@@ -1882,6 +1944,8 @@ export class AuthService {
   }
 
   async registerInfluencer(data: any) {
+    // Before anything is used up (OTP token, username): no consent, no account.
+    const consent = consentOnSignup(data);
     if (!data.password || data.password.length < 8) {
       throw new BadRequestException("Password must be at least 8 characters.");
     }
@@ -2051,6 +2115,7 @@ export class AuthService {
       data?.mobileOtpVerificationToken,
     );
     const influencer = new this.influencerModel({
+      ...consent,
       // Signup form minus server-owned fields (status, Premium, verification…).
       ...withoutServerOwnedProfileFields(data),
       payout: payoutFromInput(data?.payout, (m) => {
@@ -2154,6 +2219,8 @@ export class AuthService {
   }
 
   async registerBrand(data: any) {
+    // Before anything is used up (OTP token, username): no consent, no account.
+    const consent = consentOnSignup(data);
     if (!data.password || data.password.length < 8) {
       throw new BadRequestException("Password must be at least 8 characters.");
     }
@@ -2288,6 +2355,7 @@ export class AuthService {
           .slice(0, 1)
       : [];
     const brand = new this.brandModel({
+      ...consent,
       // Signup form minus server-owned fields (status, Premium, verification…).
       ...withoutServerOwnedProfileFields(data),
       email: normalizedEmail || data.email,
@@ -2347,6 +2415,8 @@ export class AuthService {
   }
 
   async registerPhotographer(data: any) {
+    // Before anything is used up (OTP token, username): no consent, no account.
+    const consent = consentOnSignup(data);
     if (!data.password || data.password.length < 8) {
       throw new BadRequestException("Password must be at least 8 characters.");
     }
@@ -2503,6 +2573,7 @@ export class AuthService {
     };
 
     const photographer = new this.photographerModel({
+      ...consent,
       // Signup form minus server-owned fields (status, Premium, verification…).
       ...withoutServerOwnedProfileFields(data),
       payout: payoutFromInput(data?.payout, (m) => {
