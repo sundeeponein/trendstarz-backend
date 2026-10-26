@@ -66,10 +66,9 @@ async function bootstrap() {
     ) => {
       // Allow requests with no origin (like mobile apps, curl, etc.)
       if (!origin) return callback(null, true);
-      if (corsOrigins.includes(origin)) {
-        return callback(null, true);
-      }
-      return callback(new Error("Not allowed by CORS"));
+      // Other sites: answer without CORS headers so the browser blocks them. Not an
+      // error: throwing here turned every bot or foreign page into a 500 "server error".
+      return callback(null, corsOrigins.includes(origin));
     },
     credentials: true,
   });

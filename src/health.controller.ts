@@ -1,4 +1,4 @@
-import { Controller, Get, Header, Optional, Req, UseGuards } from "@nestjs/common";
+import { Controller, Get, Header, Optional, Req, ServiceUnavailableException, UseGuards } from "@nestjs/common";
 import { InjectConnection } from "@nestjs/mongoose";
 import type { Connection } from "mongoose";
 import { runConfigChecks } from "./utils/config-health.util";
@@ -9,9 +9,21 @@ import { RolesGuard } from "./auth/roles.guard";
 export class HealthController {
   constructor(@Optional() @InjectConnection() private readonly connection?: Connection) {}
 
+  /**
+   * For uptime monitors: "ok" only when the API AND the database answer. Before, it
+   * said "ok" even with the database down, so a monitor would show "up" while every
+   * real page failed. 503 if MongoDB doesn't answer a ping within 3 seconds.
+   */
   @Get()
-  health() {
-    return { status: "ok" };
+  @Header("Cache-Control", "no-store")
+  async health() {
+    const ping = this.connection?.db?.admin().ping();
+    const ok = await Promise.race([
+      Promise.resolve(ping).then(() => true, () => false),
+      new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 3000)),
+    ]);
+    if (!ping || !ok) throw new ServiceUnavailableException({ status: "down", db: "unreachable" });
+    return { status: "ok", db: "ok" };
   }
 
   /**

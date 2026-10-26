@@ -25,7 +25,8 @@ const CHECKS = [
   ['GET', `${SITE}/search`, 200],
   ['GET', `${SITE}/privacy-policy`, 200],
   ['GET', `${SITE}/terms-and-conditions`, 200],
-  // Public API
+  // Public API (health = API + database answer)
+  ['GET', `${API}/health`, 200],
   ['GET', `${API}/users/platform-stats`, 200],
   ['GET', `${API}/users/featured-profiles`, 200],
   ['GET', `${API}/users/influencers?limit=1`, 200],
@@ -41,6 +42,31 @@ const CHECKS = [
   ['GET', `${API}/admin/influencers`, 401],
   ['GET', `${API}/admin/users/${SOME_ID}/actions`, 401],
 ];
+
+// Security headers the website must send (vercel.json).
+const HEADERS = [
+  [`${SITE}/`, 'x-frame-options', 'DENY'],
+  [`${SITE}/`, 'x-content-type-options', 'nosniff'],
+  [`${SITE}/`, 'referrer-policy', 'strict-origin-when-cross-origin'],
+  [`${SITE}/`, 'strict-transport-security', 'max-age='],
+];
+
+async function checkHeaders() {
+  let failed = 0;
+  for (const [url, name, want] of HEADERS) {
+    let got = '';
+    try {
+      const res = await axios.get(url, { timeout: 20000, validateStatus: () => true });
+      got = String(res.headers[name] || '');
+    } catch {
+      got = '';
+    }
+    const ok = got.includes(want);
+    if (!ok) failed += 1;
+    console.log(`${ok ? 'ok  ' : 'FAIL'} header ${name}: ${got || '(missing)'}${ok ? '' : `  (expected ${want})`}`);
+  }
+  return failed;
+}
 
 async function run(checks = CHECKS) {
   let failed = 0;
@@ -58,6 +84,7 @@ async function run(checks = CHECKS) {
     if (!ok) failed += 1;
     console.log(`${ok ? 'ok  ' : 'FAIL'} ${String(status).padEnd(5)} ${String(ms).padStart(5)}ms  ${method} ${url.replace(API, 'API').replace(SITE, 'SITE')}${ok ? '' : `  (expected ${expected})`}`);
   }
+  failed += await checkHeaders();
   console.log(failed ? `\n${failed} check(s) failed.` : '\nAll checks passed.');
   return failed;
 }
