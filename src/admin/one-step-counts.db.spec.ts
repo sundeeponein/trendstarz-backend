@@ -42,14 +42,23 @@ describe("one step from Search (real MongoDB)", () => {
       row({ verificationStatus: "not_submitted", isMobileVerified: false }), // two steps: no list
       row({ ...approved, isMobileVerified: false }), // only mobile
       row({ ...approved, isMobileVerified: false, isDeleted: true }), // deleted: no list
-      row({ ...approved, adminReviewPending: true }), // back in review
+      row({ ...approved, adminReviewPending: true }), // back in review, nothing flagged: admin to-do
     ]);
-    await db.conn.collection("profile_flags").insertOne({ userId: String(flagged.insertedId), userType: "Influencer", status: "Open", flagCode: "LOCATION_MISSING" });
+    // Re-review where the admin already flagged something (non-hiding flag): creator must fix.
+    const reviewed = await db.conn.collection("influencers").insertOne(row({ ...approved, adminReviewPending: true }));
+    await db.conn.collection("profile_flags").insertMany([
+      { userId: String(flagged.insertedId), userType: "Influencer", status: "Open", flagCode: "LOCATION_MISSING" },
+      { userId: String(reviewed.insertedId), userType: "Influencer", status: "Open", flagCode: "PORTFOLIO_MISSING" },
+      { userId: String(reviewed.insertedId), userType: "Influencer", status: "Resolved", flagCode: "TIER_MISMATCH" },
+    ]);
 
     const r = await ctrl.oneStepCounts();
     expect(r.counts.waiting_approval.influencer).toBe(2);
     expect(r.counts.mobile_only.influencer).toBe(1);
     expect(r.counts.back_in_review.influencer).toBe(1);
+    // The location-flagged account (hidden from Search) and the flagged re-review.
+    expect(r.counts.waiting_on_creator.influencer).toBe(2);
+    expect(r.creatorFlagReasons.influencer).toEqual({ LOCATION_MISSING: 1, PORTFOLIO_MISSING: 1 });
     expect(r.counts.waiting_approval.brand).toBe(0);
   });
 });

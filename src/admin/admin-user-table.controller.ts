@@ -334,10 +334,32 @@ export class AdminUserTableController {
       if (blocked.length) filter._id = { $nin: this.toExcludedIdValues(blocked) };
       return;
     }
-    // Approved accounts sent back for re-review (profile/social change).
+    // Approved accounts sent back for re-review (profile/social change) that
+    // an admin still has to look at: no open flag yet.
     if (normalized === "back_in_review") {
       filter.status = "accepted";
       filter.adminReviewPending = true;
+      const flagged = await this.openFlagUserIds(role.userType);
+      if (flagged.length) filter._id = { $nin: this.toExcludedIdValues(flagged) };
+      return;
+    }
+    // The admin has spoken (an open flag) and the creator must fix it: a flag
+    // that hides them from Search, or any open flag on an account in re-review.
+    if (normalized === "waiting_on_creator") {
+      filter.status = "accepted";
+      const [hiding, flagged] = await Promise.all([
+        this.blockedFromPublicIds(role.userType),
+        this.openFlagUserIds(role.userType),
+      ]);
+      filter.$and = [
+        ...(Array.isArray(filter.$and) ? filter.$and : []),
+        {
+          $or: [
+            { _id: { $in: this.toExcludedIdValues(hiding) } },
+            { adminReviewPending: true, _id: { $in: this.toExcludedIdValues(flagged) } },
+          ],
+        },
+      ];
       return;
     }
     if (normalized === "search_eligible") {
@@ -724,13 +746,13 @@ export class AdminUserTableController {
     return { success: true, influencers, brands, photographers };
   }
 
-  /** The "one step from Search" lists (users table filters) — how many in each, per role. */
-  static readonly ONE_STEP_LISTS = ["waiting_approval", "mobile_only", "back_in_review"] as const;
+  /** The users table's admin action lists (Verification filter) that show a count. */
+  static readonly ONE_STEP_LISTS = ["waiting_approval", "mobile_only", "back_in_review", "waiting_on_creator"] as const;
 
   /**
-   * Data health "One step from Search": accounts brands can't find yet for one
-   * reason an admin can fix. Counted with the users table's own filters, so a
-   * number always matches the list it opens.
+   * Counts for the users table's action lists, per role, counted with the
+   * table's own filters so a number always matches the list it opens. For
+   * "waiting on the creator", also which open flags are holding them up.
    */
   @Get("one-step-counts")
   async oneStepCounts() {
@@ -739,16 +761,30 @@ export class AdminUserTableController {
       { key: "photographer", userType: "Photographer", model: this.photographerModel, photoField: "profileImages", requireSocialTier: true },
       { key: "brand", userType: "Brand", model: this.brandModel, photoField: "brandLogo", requireSocialTier: false },
     ] as const;
+    const live = () => ({ isDeleted: { $nin: [true, "true"] } }) as Record<string, any>;
     const counts: Record<string, Record<string, number>> = {};
     for (const list of AdminUserTableController.ONE_STEP_LISTS) {
       counts[list] = {};
       for (const role of roles) {
-        const filter: Record<string, any> = { isDeleted: { $nin: [true, "true"] } };
+        const filter = live();
         await this.applyContactVerificationFilter(filter, list, role);
         counts[list][role.key] = await role.model.countDocuments(filter);
       }
     }
-    return { success: true, counts };
+    const creatorFlagReasons: Record<string, Record<string, number>> = {};
+    for (const role of roles) {
+      const filter = live();
+      await this.applyContactVerificationFilter(filter, "waiting_on_creator", role);
+      const ids = (await role.model.find(filter).select("_id").lean()).map((d: any) => String(d._id));
+      const rows = ids.length
+        ? await this.flagModel.aggregate([
+            { $match: { userType: role.userType, status: "Open", userId: { $in: ids } } },
+            { $group: { _id: "$flagCode", n: { $sum: 1 } } },
+          ])
+        : [];
+      creatorFlagReasons[role.key] = Object.fromEntries(rows.map((r: any) => [String(r._id), r.n]));
+    }
+    return { success: true, counts, creatorFlagReasons };
   }
 
   /** Admin history of one account (admin_actions): who did what, newest first. */
@@ -1265,6 +1301,11 @@ export class AdminUserTableController {
         ],
       },
     });
+  }
+
+  /** Accounts with any open flag (admin or automatic). */
+  private async openFlagUserIds(userType: string): Promise<string[]> {
+    return this.flagModel.distinct("userId", { userType, status: "Open" });
   }
 
   private async photoSafetyBlockedIds(userType: string): Promise<string[]> {
