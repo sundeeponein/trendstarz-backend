@@ -183,6 +183,7 @@ export class SitemapController {
   @Get("share-preview/:kind/:slug")
   async getSharePreview(@Param("kind") kind: string, @Param("slug") slug: string) {
     const value = String(slug || "").trim().slice(0, 100);
+    const clean = (v: unknown) => String(v || "").replace(/\s+/g, " ").trim(); // saved names can end in a space
     const place = (p: any) =>
       [p?.location?.district, p?.location?.state].map((x) => String(x || "").trim()).filter(Boolean).join(", ");
     const topics = (p: any) =>
@@ -199,7 +200,7 @@ export class SitemapController {
         const role = kind === "influencer" ? "Creator" : "Photographer / videographer";
         const where = place(p);
         return {
-          title: `${p.name} — ${role} on TrendStarz`,
+          title: `${clean(p.name)} — ${role} on TrendStarz`,
           description: [topics(p), where && `${role} in ${where}`, "View the profile and invite on TrendStarz."]
             .filter(Boolean)
             .join(". "),
@@ -224,7 +225,7 @@ export class SitemapController {
       if (b) {
         const about = String(b.description || "").replace(/\s+/g, " ").trim();
         return {
-          title: `${b.brandName} on TrendStarz`,
+          title: `${clean(b.brandName)} on TrendStarz`,
           description:
             (about.length > 160 ? `${about.slice(0, 157)}…` : about) ||
             [topics(b), place(b) && `Brand in ${place(b)}`, "Collaborate with creators on TrendStarz."].filter(Boolean).join(". "),

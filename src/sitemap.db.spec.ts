@@ -69,7 +69,7 @@ describe("sitemap lists only public profiles (real MongoDB)", () => {
     const preview = (kind: string, slug: string) => ctrl.getSharePreview(kind, slug).catch((e) => e.status);
     await db.conn.collection("influencers").updateOne(
       { username: "public-one" },
-      { $set: { name: "Asha Rao", categories: ["Fashion", "Travel"], location: { state: "Telangana", district: "Hyderabad" }, profileImages: [{ url: "https://res.cloudinary.com/demo/image/upload/v17/a.jpg" }] } },
+      { $set: { name: "Asha  Rao ", categories: ["Fashion", "Travel"], location: { state: "Telangana", district: "Hyderabad" }, profileImages: [{ url: "https://res.cloudinary.com/demo/image/upload/v17/a.jpg" }] } },
     );
     expect(await preview("influencer", "public-one")).toEqual({
       title: "Asha Rao — Creator on TrendStarz",
