@@ -79,6 +79,8 @@ async function run(checks = CHECKS) {
     try {
       const res = await axios.request({ method, url, timeout: 20000, validateStatus: () => true, maxRedirects: 3 });
       status = res.status;
+      // A route that isn't deployed also answers 404 ("Cannot GET …") — that's a failure.
+      if (status === 404 && /Cannot (GET|POST)/.test(JSON.stringify(res.data || ''))) status = '404-no-route';
     } catch (err) {
       status = err.code || 'error';
     }
