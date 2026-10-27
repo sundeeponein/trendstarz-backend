@@ -170,6 +170,9 @@ const PUBLIC_PROFILE_VISIBILITY_BLOCK_FLAG_CODES = [
   ...LOCATION_VISIBILITY_BLOCK_FLAG_CODES,
 ];
 
+/** Search ?creatorType= value for "all professional creators", whatever their types. */
+export const ALL_PROFESSIONAL_CREATORS = "all-professional";
+
 /** Open flags with these codes hide a profile from public view (brands: social is optional). */
 export function publicProfileBlockFlagCodes(
   userType: "Influencer" | "Brand" | "Photographer",
@@ -2176,10 +2179,14 @@ export class UsersService implements OnModuleInit {
       );
     }
     if (creatorTypeFilter) {
-      baseFilter.creatorTypes = new RegExp(
-        `^${this.escapeRegex(creatorTypeFilter)}$`,
-        "i",
-      );
+      // Creator types show on cards only for professional creators, so only they match.
+      baseFilter.professionalStatus = true;
+      if (creatorTypeFilter.toLowerCase() !== ALL_PROFESSIONAL_CREATORS) {
+        baseFilter.creatorTypes = new RegExp(
+          `^${this.escapeRegex(creatorTypeFilter)}$`,
+          "i",
+        );
+      }
     }
     if (categoryFilter) {
       const cats = categoryFilter
@@ -2212,7 +2219,7 @@ export class UsersService implements OnModuleInit {
 
     if (lite) {
       const selection =
-        "name username profileImage profileImages categories influencerCategory creatorTypes verificationStatus verifiedByTrendStarz location socialMedia collaborationAvailability isPremium premiumEnd promotionalPrice dateOfBirth firstRegisteredAt createdAt lastLoginAt";
+        "name username profileImage profileImages categories influencerCategory creatorTypes professionalStatus verificationStatus verifiedByTrendStarz location socialMedia collaborationAvailability isPremium premiumEnd promotionalPrice dateOfBirth firstRegisteredAt createdAt lastLoginAt";
       const projection = this.selectStringToProjection(selection);
       const [pagedRows, total] = await Promise.all([
         this.influencerModel
@@ -2718,6 +2725,7 @@ export class UsersService implements OnModuleInit {
       photographerDistricts,
       brandDistricts,
       influencerCategoryAgg,
+      creatorTypeAgg,
     ] = await Promise.all([
       this.influencerModel.countDocuments(influencerFilter),
       this.influencerModel.countDocuments(verifiedInfluencerFilter),
@@ -2744,7 +2752,27 @@ export class UsersService implements OnModuleInit {
         { $unwind: "$categories" },
         { $group: { _id: "$categories", count: { $sum: 1 } } },
       ]),
+      // Creator types count only professional creators — the same rule as the filter.
+      this.influencerModel.aggregate([
+        { $match: { ...influencerFilter, professionalStatus: true } },
+        {
+          $facet: {
+            total: [{ $count: "n" }],
+            types: [
+              { $unwind: "$creatorTypes" },
+              { $group: { _id: "$creatorTypes", count: { $sum: 1 } } },
+            ],
+          },
+        },
+      ]),
     ]);
+
+    const influencerCreatorTypeCounts: Record<string, number> = {};
+    for (const row of creatorTypeAgg[0]?.types || []) {
+      const name = String(row?._id || "").trim();
+      if (name) influencerCreatorTypeCounts[name] = (influencerCreatorTypeCounts[name] || 0) + row.count;
+    }
+    const professionalCreatorCount = creatorTypeAgg[0]?.total?.[0]?.n || 0;
 
     const influencerCategoryCounts: Record<string, number> = {};
     for (const row of influencerCategoryAgg) {
@@ -2776,6 +2804,8 @@ export class UsersService implements OnModuleInit {
       creatorEscrowTotal: publicEscrowRupees(escrowAgg[0]?.total || 0),
       totalCities,
       influencerCategoryCounts,
+      influencerCreatorTypeCounts,
+      professionalCreatorCount,
     };
   }
 

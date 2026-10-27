@@ -325,17 +325,22 @@ describe("UsersService profile update guards", () => {
     const second = await service.getPlatformStats();
 
     expect(second).toBe(first);
-    expect(influencerModel.aggregate).toHaveBeenCalledTimes(1);
+    expect(influencerModel.aggregate).toHaveBeenCalledTimes(2); // niches + creator types, once
   });
 
   it("counts only public-visible profiles in platform stats", async () => {
     const influencerModel = {
       countDocuments: jest.fn().mockResolvedValue(2),
       distinct: jest.fn().mockResolvedValue(["Hyderabad", "Pune"]),
-      aggregate: jest.fn().mockResolvedValue([
-        { _id: "Fashion", count: 2 },
-        { _id: " ", count: 1 },
-      ]),
+      aggregate: jest
+        .fn()
+        .mockResolvedValueOnce([
+          { _id: "Fashion", count: 2 },
+          { _id: " ", count: 1 },
+        ])
+        .mockResolvedValueOnce([
+          { total: [{ n: 7 }], types: [{ _id: "UGC Creator", count: 5 }, { _id: "", count: 1 }] },
+        ]),
     };
     const brandModel = {
       countDocuments: jest.fn().mockResolvedValue(3),
@@ -379,6 +384,15 @@ describe("UsersService profile update guards", () => {
         creatorEscrowTotal: undefined, // ₹2,500 collected (250000 paise): below the public ₹1,00,000 threshold
         totalCities: 2,
         influencerCategoryCounts: { Fashion: 2 },
+        influencerCreatorTypeCounts: { "UGC Creator": 5 },
+        professionalCreatorCount: 7,
+      }),
+    );
+    // Creator types count professional creators only, inside the same public filter.
+    expect(influencerModel.aggregate.mock.calls[1][0][0].$match).toEqual(
+      expect.objectContaining({
+        professionalStatus: true,
+        profileVisibility: { $nin: ["PRIVATE", "MEMBERS_ONLY"] },
       }),
     );
 
