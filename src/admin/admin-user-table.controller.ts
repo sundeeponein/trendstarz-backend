@@ -45,6 +45,7 @@ import * as crypto from "crypto";
 import {
   applySearchEligibilityFilter,
   applyApprovedEligibilityFilter,
+  applyDiscoverableProfileFilter,
 } from "../utils/profile-eligibility.util";
 import { PROFILE_PHOTO_SAFETY_FLAG_CODES } from "../profile-verification/profile-verification.service";
 import { observationFreshness } from "../matching-evidence/evidence-quality.analysis";
@@ -309,6 +310,36 @@ export class AdminUserTableController {
       return;
     }
 
+    // "One step from Search": everything Search needs except one thing an admin
+    // can do — approve the profile, or verify the mobile by call.
+    if (normalized === "waiting_approval" || normalized === "mobile_only") {
+      filter.status = "accepted";
+      applyDiscoverableProfileFilter(filter, {
+        photoField: role.photoField,
+        requireSocialTier: role.requireSocialTier,
+        viewerIsAuthenticated: true, // brands search logged in: only Private stays out
+      });
+      if (normalized === "mobile_only") {
+        filter.isMobileVerified = { $ne: true };
+      } else {
+        const isApprovalRule = (c: any) =>
+          Array.isArray(c?.$or) && c.$or.some((x: any) => "verificationStatus" in x || "verifiedByTrendStarz" in x);
+        filter.$and = [
+          ...(filter.$and || []).filter((c: any) => !isApprovalRule(c)),
+          { verificationStatus: { $ne: "approved" } },
+          { verifiedByTrendStarz: { $ne: true } },
+        ];
+      }
+      const blocked = await this.blockedFromPublicIds(role.userType);
+      if (blocked.length) filter._id = { $nin: this.toExcludedIdValues(blocked) };
+      return;
+    }
+    // Approved accounts sent back for re-review (profile/social change).
+    if (normalized === "back_in_review") {
+      filter.status = "accepted";
+      filter.adminReviewPending = true;
+      return;
+    }
     if (normalized === "search_eligible") {
       filter.status = "accepted";
       applySearchEligibilityFilter(filter, {
@@ -691,6 +722,33 @@ export class AdminUserTableController {
       count(this.photographerModel),
     ]);
     return { success: true, influencers, brands, photographers };
+  }
+
+  /** The "one step from Search" lists (users table filters) — how many in each, per role. */
+  static readonly ONE_STEP_LISTS = ["waiting_approval", "mobile_only", "back_in_review"] as const;
+
+  /**
+   * Data health "One step from Search": accounts brands can't find yet for one
+   * reason an admin can fix. Counted with the users table's own filters, so a
+   * number always matches the list it opens.
+   */
+  @Get("one-step-counts")
+  async oneStepCounts() {
+    const roles = [
+      { key: "influencer", userType: "Influencer", model: this.influencerModel, photoField: "profileImages", requireSocialTier: true },
+      { key: "photographer", userType: "Photographer", model: this.photographerModel, photoField: "profileImages", requireSocialTier: true },
+      { key: "brand", userType: "Brand", model: this.brandModel, photoField: "brandLogo", requireSocialTier: false },
+    ] as const;
+    const counts: Record<string, Record<string, number>> = {};
+    for (const list of AdminUserTableController.ONE_STEP_LISTS) {
+      counts[list] = {};
+      for (const role of roles) {
+        const filter: Record<string, any> = { isDeleted: { $nin: [true, "true"] } };
+        await this.applyContactVerificationFilter(filter, list, role);
+        counts[list][role.key] = await role.model.countDocuments(filter);
+      }
+    }
+    return { success: true, counts };
   }
 
   /** Admin history of one account (admin_actions): who did what, newest first. */
