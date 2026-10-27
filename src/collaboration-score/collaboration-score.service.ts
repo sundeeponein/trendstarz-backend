@@ -32,6 +32,7 @@ import {
 } from "./collaboration-score-sync.util";
 import { COLLABORATION_AUDIT_PLATFORMS } from "../database/schemas/collaboration-audit.schema";
 import { paymentAmountRupees } from "../payment/payment-amount.util";
+import { canOpenProfile } from "../utils/profile-eligibility.util";
 
 type CollaborationScoreUserType = "Influencer" | "Brand" | "Photographer";
 type AuditTrigger = "USER" | "ADMIN" | "SYSTEM_NIGHTLY" | "SYSTEM_CONNECT";
@@ -618,6 +619,17 @@ export class CollaborationScoreService {
     return { platforms, hasChanges: platforms.some((p) => p.hasChanges) };
   }
 
+  /** The fields canOpenProfile needs, from whichever account kind owns this id. */
+  private async profileForVisibility(userId: string): Promise<any> {
+    if (!Types.ObjectId.isValid(String(userId))) return null;
+    const select = "status isDeleted accountStatus profileVisibility";
+    for (const model of [this.influencerModel, this.photographerModel, this.brandModel]) {
+      const found = await model.findById(userId).select(select).lean();
+      if (found) return found;
+    }
+    return null;
+  }
+
   async getAuditForUser(targetUserId: string, requester: any) {
     const audit: any = await this.auditModel
       .findOne({ userId: String(targetUserId), isCurrent: true })
@@ -656,6 +668,12 @@ export class CollaborationScoreService {
         reanalysisFeeRupees: settings.reanalysisFeeRupees,
         hasChanges: syncStatus.hasChanges,
       };
+    }
+    // Others see a score only where they could open the profile itself
+    // (not Private, not pending/deleted/suspended) — same answer as "none".
+    const profile = await this.profileForVisibility(targetUserId);
+    if (!canOpenProfile(profile, { userId: requesterId, role: String(requester?.role || "").toLowerCase() })) {
+      throw new NotFoundException("No TrendScore audit found for this user");
     }
     if (isBrand) {
       const filtered: any = {};

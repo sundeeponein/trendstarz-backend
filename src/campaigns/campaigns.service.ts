@@ -10,7 +10,7 @@ import {
   resolveTier,
 } from "../utils/tier-ranges.util";
 import { canonicalPlatformKey } from "../utils/social-account.util";
-import { applyApprovedActiveAccountFilter } from "../utils/profile-eligibility.util";
+import { applyApprovedActiveAccountFilter, canOpenProfile, ProfileViewer } from "../utils/profile-eligibility.util";
 import { InjectModel } from "@nestjs/mongoose";
 import { Cron, CronExpression } from "@nestjs/schedule";
 import { Model, Types } from "mongoose";
@@ -1549,7 +1549,7 @@ export class CampaignsService {
     });
   }
 
-  async findByBrandName(brandName: string) {
+  async findByBrandName(brandName: string, viewer: ProfileViewer | null = null) {
     const brand: any = await this.brandModel
       .findOne({
         brandName: new RegExp(
@@ -1557,9 +1557,10 @@ export class CampaignsService {
           "i", // Case-insensitive match
         ),
       })
-      .select(["_id", "brandUsername"])
+      .select(["_id", "brandUsername", "status", "isDeleted", "accountStatus", "profileVisibility"])
       .lean();
-    if (!brand) return [];
+    // A brand page this viewer may not open (Private, pending, deleted) lists nothing.
+    if (!canOpenProfile(brand, viewer)) return [];
     // Fetch campaigns by ObjectId, string version of ObjectId, and brandUsername
     // Public (no login): live and finished campaigns only, without admin fields.
     return this.campaignModel

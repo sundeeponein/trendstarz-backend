@@ -13,6 +13,7 @@ import {
 import { JwtAuthGuard } from "../auth/jwt-auth.guard";
 import { CampaignsService } from "./campaigns.service";
 import { CampaignInvitesService } from "./campaign-invites.service";
+import { profileViewerFromRequest } from "../utils/profile-viewer.util";
 
 @Controller("campaigns")
 export class CampaignsController {
@@ -50,8 +51,8 @@ export class CampaignsController {
   }
 
   @Get("brand-name/:brandName")
-  async findByBrandName(@Param("brandName") brandName: string) {
-    return this.campaignsService.findByBrandName(brandName);
+  async findByBrandName(@Param("brandName") brandName: string, @Req() req: any) {
+    return this.campaignsService.findByBrandName(brandName, profileViewerFromRequest(req));
   }
 
   /** The signed-in host's campaign slots for their current plan month. */

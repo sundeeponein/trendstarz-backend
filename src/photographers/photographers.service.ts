@@ -48,6 +48,7 @@ import {
   ProfileViewer,
 } from "../utils/profile-eligibility.util";
 import { idIn } from "../utils/id-match.util";
+import { checkedProfileName } from "../utils/profile-names.util";
 import { takenAccountFields } from "../utils/account-uniqueness.util";
 import { sendAppEmail } from "../utils/app-email.service";
 import { maskEmail, sendSecurityAlert } from "../utils/security-alert.util";
@@ -605,6 +606,10 @@ export class PhotographersService {
       )
       .lean();
     if (!current) throw new NotFoundException("Photographer not found");
+    if (update.username !== undefined) {
+      // The username is the profile link: right form, and not someone else's.
+      update.username = await checkedProfileName(this.photographerModel, userId, "username", update.username);
+    }
     if (data.collaborationAvailability !== undefined) {
       update.collaborationAvailability = availabilityUpdate(
         data.collaborationAvailability,

@@ -90,6 +90,8 @@ export const REQUIRED_INDEXES: Array<[collection: string, name: string]> = [
   ["campaigninvites", "uniq_active_invite_per_recipient"],
   ["reviews", "uniq_review_per_invite_side"],
   ["campaignsubmissions", "uniq_submission_per_invite"],
+  ["photographers", "uniq_photographer_username"],
+  ["brands", "uniq_brand_username"],
 ];
 
 function check(

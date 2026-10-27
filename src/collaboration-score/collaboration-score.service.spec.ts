@@ -596,8 +596,20 @@ describe("CollaborationScoreService", () => {
       aiInputTokens: 1234,
     };
 
+    let target: any;
     beforeEach(() => {
       auditModel.findOne.mockReturnValue({ lean: jest.fn().mockResolvedValue(fullAudit) });
+      target = { status: "accepted" }; // a live, public creator
+      jest.spyOn(service as any, "profileForVisibility").mockImplementation(async () => target);
+    });
+
+    it("a Private, pending or missing creator's score is 'not found' to others — never to the owner or admins", async () => {
+      for (const profile of [{ status: "accepted", profileVisibility: "PRIVATE" }, { status: "pending" }, null]) {
+        target = profile;
+        await expect(service.getAuditForUser("user-1", { userId: "brand-1", role: "brand" })).rejects.toThrow("No TrendScore audit found");
+        await expect(service.getAuditForUser("user-1", { userId: "user-1", role: "influencer" })).resolves.toMatchObject({ collaborationScore: 82 });
+        await expect(service.getAuditForUser("user-1", { userId: "admin-1", role: "admin" })).resolves.toMatchObject({ collaborationScore: 82 });
+      }
     });
 
     it("returns full detail to the profile owner", async () => {

@@ -36,6 +36,16 @@ describe("data integrity checks (real MongoDB)", () => {
       { inviteId: 1 },
       { name: REQUIRED_INDEXES[2][1], unique: true },
     );
+    // Same shape as cron/uniqueConstraints.js builds them.
+    const nonEmpty = (field: string) => ({ partialFilterExpression: { [field]: { $type: "string", $gt: "" } } });
+    await db.collection("photographers").createIndex(
+      { username: 1 },
+      { name: REQUIRED_INDEXES[3][1], unique: true, ...nonEmpty("username") },
+    );
+    await db.collection("brands").createIndex(
+      { brandUsername: 1 },
+      { name: REQUIRED_INDEXES[4][1], unique: true, ...nonEmpty("brandUsername") },
+    );
   });
 
   it("reports every check ok on clean, production-shaped data", async () => {

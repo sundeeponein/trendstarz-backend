@@ -12,6 +12,8 @@
 //   uniq_submission_per_invite        campaignsubmissions  one submitted post per
 //       invite (submitPost and the late-post path find-or-create it; a double
 //       click could otherwise create two and the app reads only one).
+//   uniq_photographer_username        photographers    one photographer per
+//   uniq_brand_username               brands           profile link name.
 //
 // Safety:
 // - Dry-run by default: reads only, reports duplicates.
@@ -76,6 +78,27 @@ const CONSTRAINTS = [
     match: {},
     group: { inviteId: { $toString: '$inviteId' } },
     options: {},
+    minMongoMajor: 0,
+  },
+  // Profile links: /photographer/<username> and /brand/<brandUsername> must name
+  // one account (influencer usernames already have a unique index). Deleted
+  // photographers get an empty username, so only non-empty names count.
+  {
+    name: 'uniq_photographer_username',
+    collection: 'photographers',
+    keys: { username: 1 },
+    match: { username: { $type: 'string', $gt: '' } },
+    group: { username: '$username' },
+    options: { partialFilterExpression: { username: { $type: 'string', $gt: '' } } },
+    minMongoMajor: 0,
+  },
+  {
+    name: 'uniq_brand_username',
+    collection: 'brands',
+    keys: { brandUsername: 1 },
+    match: { brandUsername: { $type: 'string', $gt: '' } },
+    group: { brandUsername: '$brandUsername' },
+    options: { partialFilterExpression: { brandUsername: { $type: 'string', $gt: '' } } },
     minMongoMajor: 0,
   },
 ];

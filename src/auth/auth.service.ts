@@ -48,6 +48,7 @@ import { payoutFromInput } from "../utils/upi.util";
 import { isActivePremium } from "../payments-payouts/fee-rates.util";
 import { SingleInstance } from "../utils/single-instance";
 import { effectiveGstPercent } from "../payments-payouts/fee-rates.util";
+import { normalizedProfileName, profileNameTaken } from "../utils/profile-names.util";
 
 type AnyUserDoc = {
   email: string;
@@ -1952,6 +1953,8 @@ export class AuthService {
     if (data.confirmPassword && data.password !== data.confirmPassword) {
       throw new BadRequestException("Passwords do not match.");
     }
+    // The username is the profile link: same rule as every profile save.
+    if (data.username) data.username = normalizedProfileName("username", data.username);
     // Check duplicates up front so the API can return all conflicting fields together.
     // Email/phone are checked across ALL roles (influencer, brand, admin) so the same
     // contact cannot be reused under a different role.
@@ -1984,7 +1987,7 @@ export class AuthService {
       emailRegex ? this.brandModel.findOne({ email: emailRegex }) : null,
       emailRegex ? this.userModel.findOne({ email: emailRegex }) : null,
       data.username
-        ? this.influencerModel.findOne({ username: data.username })
+        ? profileNameTaken(this.influencerModel, "username", data.username)
         : null,
       normalizedPhone
         ? this.influencerModel.findOne({ phoneNumber: normalizedPhone })
@@ -2227,13 +2230,9 @@ export class AuthService {
     if (data.confirmPassword && data.password !== data.confirmPassword) {
       throw new BadRequestException("Passwords do not match.");
     }
-    // Check duplicates up front so the API can return all conflicting fields together.
-    const existingBrandUsernameRegex = data.brandUsername
-      ? new RegExp(
-          `^${String(data.brandUsername).replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`,
-          "i",
-        )
-      : null;
+    // Brand name and link name find the brand page: same rule as every profile save.
+    data.brandName = normalizedProfileName("brandName", data.brandName);
+    if (data.brandUsername) data.brandUsername = normalizedProfileName("brandUsername", data.brandUsername);
 
     // Email/phone are checked across ALL roles (influencer, brand, admin) so the same
     // contact cannot be reused under a different role.
@@ -2275,11 +2274,9 @@ export class AuthService {
       normalizedPhone
         ? this.userModel.findOne({ phoneNumber: normalizedPhone })
         : null,
-      data.brandName
-        ? this.brandModel.findOne({ brandName: data.brandName })
-        : null,
-      existingBrandUsernameRegex
-        ? this.brandModel.findOne({ brandUsername: existingBrandUsernameRegex })
+      profileNameTaken(this.brandModel, "brandName", data.brandName),
+      data.brandUsername
+        ? profileNameTaken(this.brandModel, "brandUsername", data.brandUsername)
         : null,
       // Photographers too — an email/phone must identify one account across all roles.
       emailRegex ? this.photographerModel.findOne({ email: emailRegex }) : null,
@@ -2425,14 +2422,8 @@ export class AuthService {
     }
     this.validatePasswordStrength(data.password);
 
-    const normalizedUsername = data.username
-      ? String(data.username).trim().toLowerCase()
-      : "";
-    if (!normalizedUsername || !/^[a-z0-9_-]+$/.test(normalizedUsername)) {
-      throw new BadRequestException(
-        "Username is required and can contain only letters, numbers, hyphens and underscores.",
-      );
-    }
+    // The username is the profile link: same rule as every profile save.
+    const normalizedUsername = normalizedProfileName("username", data.username);
 
     const normalizedEmail = data.email
       ? String(data.email).trim().toLowerCase()

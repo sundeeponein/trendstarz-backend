@@ -51,6 +51,7 @@ import {
   canOpenProfile,
   ProfileViewer,
 } from "../utils/profile-eligibility.util";
+import { checkedProfileName } from "../utils/profile-names.util";
 import { takenAccountFields } from "../utils/account-uniqueness.util";
 import { SingleInstance } from "../utils/single-instance";
 import { idIn } from "../utils/id-match.util";
@@ -3685,6 +3686,10 @@ export class UsersService implements OnModuleInit {
     // NOTE: isPremium is intentionally excluded — it is only set by a verified payment (payment.service.ts) or admin setPremium
     const userDoc: any = await this.influencerModel.findById(userId);
     if (!userDoc) return { message: "Influencer not found", userId };
+    if (updateData.username !== undefined) {
+      // The username is the profile link: right form, and not someone else's.
+      updateData.username = await checkedProfileName(this.influencerModel, userId, "username", updateData.username);
+    }
     if (update.collaborationAvailability !== undefined) {
       updateData.collaborationAvailability = availabilityUpdate(
         update.collaborationAvailability,
@@ -3984,6 +3989,12 @@ export class UsersService implements OnModuleInit {
       .select("phoneNumber email isMobileVerified isEmailVerified socialMedia")
       .lean();
     if (!existingBrand) return { message: "Brand not found", userId };
+    // The brand page is found by name or link name: both must stay this brand's own.
+    for (const field of ["brandName", "brandUsername"] as const) {
+      if (updateData[field] !== undefined) {
+        updateData[field] = await checkedProfileName(this.brandModel, userId, field, updateData[field]);
+      }
+    }
     if (updateData.socialMedia) {
       updateData.socialMedia = mergeSocialMediaEntries(
         existingBrand.socialMedia,
