@@ -48,6 +48,8 @@ import {
   fetchFeaturedProfilesByScore,
   normalizeLocationValue,
   ViewerLocationContext,
+  canOpenProfile,
+  ProfileViewer,
 } from "../utils/profile-eligibility.util";
 import { takenAccountFields } from "../utils/account-uniqueness.util";
 import { SingleInstance } from "../utils/single-instance";
@@ -1838,9 +1840,9 @@ export class UsersService implements OnModuleInit {
     return result;
   }
 
-  async getBrandByName(brandName: string, viewerId?: string | null) {
+  async getBrandByName(brandName: string, viewerId?: string | null, viewer?: ProfileViewer | null) {
     const user: any = await this.findBrandByNameOrSlug(brandName);
-    if (!user) return null;
+    if (!canOpenProfile(user, viewer ?? null)) return null;
     if (await this.hasOpenPublicProfileBlock(user._id, "Brand")) return null;
     const allowAccess = await this.canViewBrandSocialMedia(user, viewerId);
     const isPremium = this.isCurrentlyPremium(user);
@@ -2463,9 +2465,9 @@ export class UsersService implements OnModuleInit {
   }
 
   // Place this inside UsersService class
-  async getInfluencerByUsername(username: string, viewerId?: string | null) {
+  async getInfluencerByUsername(username: string, viewerId?: string | null, viewer?: ProfileViewer | null) {
     const user: any = await this.influencerModel.findOne({ username }).lean();
-    if (!user) return null;
+    if (!canOpenProfile(user, viewer ?? null)) return null;
     if (await this.hasOpenPublicProfileBlock(user._id, "Influencer"))
       return null;
     const [allowContact, allowGender, allowSocial] = await Promise.all([
@@ -2540,9 +2542,9 @@ export class UsersService implements OnModuleInit {
       },
     };
   }
-  async getInfluencerById(id: string, viewerId?: string | null) {
+  async getInfluencerById(id: string, viewerId?: string | null, viewer?: ProfileViewer | null) {
     const user: any = await this.influencerModel.findById(id).lean();
-    if (!user) return null;
+    if (!canOpenProfile(user, viewer ?? null)) return null;
     if (await this.hasOpenPublicProfileBlock(user._id, "Influencer"))
       return null;
     const [allowContact, allowGender, allowSocial] = await Promise.all([

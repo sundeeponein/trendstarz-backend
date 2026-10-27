@@ -69,6 +69,28 @@ export function profileVisibilityAllowsDiscovery(
   return true;
 }
 
+/** Who is opening a profile page: from a valid login, or null for a guest. */
+export interface ProfileViewer {
+  userId: string;
+  role: string;
+}
+
+/**
+ * May this viewer open this one profile (direct link / profile page)? The
+ * owner and admins always may. Everyone else only sees an accepted, active
+ * account, and only as its visibility setting promises: Private = owner and
+ * admins only, Members-only = logged-in users only.
+ */
+export function canOpenProfile(profile: any, viewer: ProfileViewer | null): boolean {
+  if (!profile) return false;
+  if (viewer?.role === "admin") return true;
+  if (viewer?.userId && String(viewer.userId) === String(profile._id)) return true;
+  if (String(profile.status || "").toLowerCase() !== "accepted") return false;
+  if (profile.isDeleted === true) return false;
+  if (String(profile.accountStatus || "").toLowerCase() === "suspended") return false;
+  return profileVisibilityAllowsDiscovery(profile.profileVisibility, !!viewer?.userId);
+}
+
 /**
  * The ACCOUNT half of discoverability: an active, admin-approved account with
  * verified email and mobile. No visibility/photo/location/social conditions.

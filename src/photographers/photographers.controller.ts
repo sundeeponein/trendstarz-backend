@@ -21,6 +21,7 @@ import { getJwtSecret } from "../auth/jwt-secret";
 import { PlansService } from "../plans/plans.service";
 import { isLocalAuthBypassRequest } from "../utils/local-auth-bypass.util";
 import { usageDayKey, nextUsageDayKey } from "../utils/usage-day.util";
+import { profileViewerFromRequest } from "../utils/profile-viewer.util";
 
 function extractOptionalViewerId(req: any): string | null {
   try {
@@ -272,6 +273,7 @@ export class PhotographersController {
     return this.photographersService.getPhotographerByUsername(
       username,
       viewerId,
+      profileViewerFromRequest(req),
     );
   }
 
@@ -281,7 +283,7 @@ export class PhotographersController {
     await this.consumeDailyProfileViewQuotaIfAuthenticated(req);
 
     const viewerId = extractOptionalViewerId(req);
-    return this.photographersService.getPhotographerById(id, viewerId);
+    return this.photographersService.getPhotographerById(id, viewerId, profileViewerFromRequest(req));
   }
 
   /** Authenticated: get own profile */

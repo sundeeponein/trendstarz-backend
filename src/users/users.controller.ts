@@ -31,6 +31,7 @@ import { PlansService } from "../plans/plans.service";
 import { PhotographersService } from "../photographers/photographers.service";
 import { isLocalAuthBypassRequest } from "../utils/local-auth-bypass.util";
 import { usageDayKey, nextUsageDayKey } from "../utils/usage-day.util";
+import { profileViewerFromRequest } from "../utils/profile-viewer.util";
 
 /** Decode JWT from request without throwing. Returns userId or null. */
 function extractOptionalViewerId(req: any): string | null {
@@ -79,7 +80,7 @@ export class UsersController {
     @Req() req: Request,
   ) {
     const viewerId = extractOptionalViewerId(req);
-    return this.usersService.getBrandByName(brandName, viewerId);
+    return this.usersService.getBrandByName(brandName, viewerId, profileViewerFromRequest(req));
   }
   constructor(
     private readonly usersService: UsersService,
@@ -174,7 +175,7 @@ export class UsersController {
   @UsageLimit("profile_view", "dailyProfileViewLimit")
   async getInfluencerById(@Param("id") id: string, @Req() req: Request) {
     const viewerId = extractOptionalViewerId(req);
-    return this.usersService.getInfluencerById(id, viewerId);
+    return this.usersService.getInfluencerById(id, viewerId, profileViewerFromRequest(req));
   }
 
   @Get("influencers/username/:username")
@@ -186,6 +187,7 @@ export class UsersController {
     return this.usersService.getInfluencerByUsername(
       username,
       viewerId,
+      profileViewerFromRequest(req),
     );
   }
 

@@ -44,6 +44,8 @@ import {
   fetchFeaturedProfilesByScore,
   normalizeLocationValue,
   ViewerLocationContext,
+  canOpenProfile,
+  ProfileViewer,
 } from "../utils/profile-eligibility.util";
 import { idIn } from "../utils/id-match.util";
 import { takenAccountFields } from "../utils/account-uniqueness.util";
@@ -949,7 +951,7 @@ export class PhotographersService {
     }, 0);
   }
 
-  async getPhotographerById(id: string, viewerId?: string | null) {
+  async getPhotographerById(id: string, viewerId?: string | null, viewer?: ProfileViewer | null) {
     if (!this.isObjectId(id)) {
       return null;
     }
@@ -957,13 +959,14 @@ export class PhotographersService {
       .findOne({ _id: id, isDeleted: { $ne: true } })
       .select(
         // Public profile: no gender, admin tags or commission data; contact is gated below.
-        "name username email phoneNumber profileImage profileImages location skills pricing equipment socialMedia collaborationAvailability contact portfolio status isPremium verifiedByTrendStarz verificationStatus isEmailVerified isMobileVerified",
+        "name username email phoneNumber profileImage profileImages location skills pricing equipment socialMedia collaborationAvailability contact portfolio status isPremium verifiedByTrendStarz verificationStatus isEmailVerified isMobileVerified profileVisibility accountStatus",
       )
       .lean();
     if (!rawDoc || Array.isArray(rawDoc)) {
       return null;
     }
-    const doc: any = rawDoc;
+    const { profileVisibility, accountStatus, ...doc }: any = rawDoc;
+    if (!canOpenProfile(rawDoc, viewer ?? null)) return null;
     if (await this.hasOpenPublicProfileBlock(doc._id)) return null;
     const hideGallery = await this.hasOpenGalleryBlock(doc._id);
     const allowContact = await this.canViewPhotographerContact(doc, viewerId);
@@ -1038,26 +1041,35 @@ export class PhotographersService {
     return { tracked: true };
   }
 
-  async getPhotographerByUsername(username: string, viewerId?: string | null) {
+  async getPhotographerByUsername(username: string, viewerId?: string | null, viewer?: ProfileViewer | null) {
     if (!username) return null;
     const rawDoc: any = await this.photographerModel
       .findOne({ username, isDeleted: { $ne: true } })
       .select(
         // Public profile: no gender, admin tags or commission data; contact is gated below.
-        "name username email phoneNumber profileImage profileImages location skills pricing equipment socialMedia collaborationAvailability contact portfolio status isPremium verifiedByTrendStarz verificationStatus isEmailVerified isMobileVerified",
+        "name username email phoneNumber profileImage profileImages location skills pricing equipment socialMedia collaborationAvailability contact portfolio status isPremium verifiedByTrendStarz verificationStatus isEmailVerified isMobileVerified profileVisibility accountStatus",
       )
       .lean();
     if (!rawDoc || Array.isArray(rawDoc)) {
       return null;
     }
-    const doc: any = rawDoc;
+    // Same rules as the by-id page: visibility, then open flags.
+    const { profileVisibility, accountStatus, ...doc }: any = rawDoc;
+    if (!canOpenProfile(rawDoc, viewer ?? null)) return null;
+    if (await this.hasOpenPublicProfileBlock(doc._id)) return null;
+    const hideGallery = await this.hasOpenGalleryBlock(doc._id);
     const allowContact = await this.canViewPhotographerContact(doc, viewerId);
     const allowSocial = await this.plansService.canViewSocialLinks(viewerId);
+    const visibleProfileImages = this.visibleProfileImages(
+      doc.profileImages,
+      hideGallery,
+    );
     return {
       ...doc,
+      profileImages: visibleProfileImages,
       // Recompute from the live array — the stored singular field is legacy
       // and goes stale the moment profileImages[0] changes (re-upload/recrop).
-      profileImage: doc?.profileImages?.[0]?.url || null,
+      profileImage: visibleProfileImages[0]?.url || null,
       email: allowContact && doc?.isEmailVerified ? doc.email : undefined,
       phoneNumber:
         allowContact && doc?.isMobileVerified ? doc.phoneNumber : undefined,
