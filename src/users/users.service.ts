@@ -167,6 +167,15 @@ const PUBLIC_PROFILE_VISIBILITY_BLOCK_FLAG_CODES = [
   ...LOCATION_VISIBILITY_BLOCK_FLAG_CODES,
 ];
 
+/** Open flags with these codes hide a profile from public view (brands: social is optional). */
+export function publicProfileBlockFlagCodes(
+  userType: "Influencer" | "Brand" | "Photographer",
+): string[] {
+  return userType === "Brand"
+    ? [...PROFILE_PHOTO_VISIBILITY_BLOCK_FLAG_CODES, ...LOCATION_VISIBILITY_BLOCK_FLAG_CODES]
+    : PUBLIC_PROFILE_VISIBILITY_BLOCK_FLAG_CODES;
+}
+
 
 /** The homepage shows "Creator Escrow" from ₹1,00,000 (welcome page threshold). */
 export const PUBLIC_ESCROW_MIN_RUPEES = 100000;
@@ -1262,13 +1271,7 @@ export class UsersService implements OnModuleInit {
   ) {
     // Social media is optional for Brands — social tier flags are informational
     // only and must not block a brand from search or campaign-creation.
-    const blockCodes =
-      userType === "Brand"
-        ? [
-            ...PROFILE_PHOTO_VISIBILITY_BLOCK_FLAG_CODES,
-            ...LOCATION_VISIBILITY_BLOCK_FLAG_CODES,
-          ]
-        : PUBLIC_PROFILE_VISIBILITY_BLOCK_FLAG_CODES;
+    const blockCodes = publicProfileBlockFlagCodes(userType);
     const rows = await this.profileFlagModel
       .find({
         userType,

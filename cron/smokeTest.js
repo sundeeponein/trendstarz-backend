@@ -31,6 +31,9 @@ const CHECKS = [
   ['GET', `${API}/users/featured-profiles`, 200],
   ['GET', `${API}/users/influencers?limit=1`, 200],
   ['GET', `${API}/plans`, 200],
+  ['GET', `${SITE}/sitemap.xml`, 200],
+  // Link previews: unknown (or private) profiles must answer 404, never 500
+  ['GET', `${API}/share-preview/influencer/no-such-profile-000`, 404],
   // Needs a login: must be 401, never 403/500
   ['GET', `${API}/users/${SOME_ID}/profile-visibility`, 401],
   ['GET', `${API}/users/me/data-export`, 401],
