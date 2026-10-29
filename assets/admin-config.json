@@ -112,6 +112,17 @@
           "visible": true
         }
       ]
+    },
+    {
+      "name": "Video (File Share)",
+      "key": "file_share_video",
+      "campaignOnly": true,
+      "visible": true,
+      "icon": "bi-cloud-arrow-up",
+      "color": "#4285F4",
+      "handleLabel": "Handle",
+      "followersLabel": "Followers",
+      "contentTypes": []
     }
   ],
   "userTags": {

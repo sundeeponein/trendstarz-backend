@@ -58,6 +58,12 @@ import {
   ProfileUserType,
 } from "../profile-verification/profile-verification.service";
 import { CampaignInvitesService } from "./campaign-invites.service";
+import {
+  isFileSharePlatform,
+  normalizeShareEmail,
+  sanitizeFileShareRow,
+  socialPlatformsOnly,
+} from "../utils/file-share-video.util";
 import { settingHours } from "../utils/workflow-timing.util";
 import { idIn } from "../utils/id-match.util";
 import { SingleInstance } from "../utils/single-instance";
@@ -159,7 +165,7 @@ export function withoutServerOwnedCampaignFields(data: any): any {
  * never to creators or other users.
  */
 export const CAMPAIGN_ADMIN_FIELDS_EXCLUSION =
-  "-moderationNote -moderatedBy -moderatedAt -adminOverrideAction -adminOverrideReason -adminOverrideBy -adminOverrideAt -slotUsedAt -completedBy";
+  "-moderationNote -moderatedBy -moderatedAt -adminOverrideAction -adminOverrideReason -adminOverrideBy -adminOverrideAt -slotUsedAt -completedBy -fileShareAccessEmail";
 /** Campaigns other users may see (live or finished). Drafts, pending and rejected stay private. */
 export const PUBLIC_CAMPAIGN_STATUSES = ["active", "completed"];
 
@@ -699,6 +705,25 @@ export class CampaignsService {
       if (!data.platformPreference && data.platforms.length) {
         normalized.platformPreference = String(data.platforms[0]).toLowerCase();
       }
+    }
+
+    // Video (File Share): only Raw/Edited formats, each enabled one with an aspect ratio.
+    if (Array.isArray(data.socialMedia)) {
+      try {
+        normalized.socialMedia = data.socialMedia.map((row: any) =>
+          isFileSharePlatform(row?.platform) ? sanitizeFileShareRow(row) : row,
+        );
+      } catch (err: any) {
+        throw new BadRequestException(err?.message || "Invalid video file share details.");
+      }
+    }
+    if (data.fileShareAccessEmail !== undefined) {
+      const raw = String(data.fileShareAccessEmail ?? "").trim();
+      const email = normalizeShareEmail(raw);
+      if (raw && !email) {
+        throw new BadRequestException("Enter a valid email for sharing the video file.");
+      }
+      normalized.fileShareAccessEmail = email;
     }
 
     // Multi-role invite slots (additive). Sanitize each entry; reject bad
@@ -1473,9 +1498,12 @@ export class CampaignsService {
 
       // Tier check — compare against the influencer's tier on the campaign's target platform(s)
       if (c.minInfluencerTier) {
+        // Video (File Share) isn't a social account: it never narrows the tier check.
         const hasTier = hasMinimumTierForCampaign(
           influencer,
-          c.platforms || [],
+          (c.platforms || []).some(isFileSharePlatform)
+            ? []
+            : c.platforms || [],
           c.minInfluencerTier,
         );
         if (!hasTier) return false;
@@ -2254,9 +2282,12 @@ export class CampaignsService {
     const allowedTiers: string[] = Array.isArray(targetTiers)
       ? targetTiers
       : [];
-    const campaignPlatformKeys = [
+    // Any creator can deliver a Video (File Share), so a campaign offering it
+    // doesn't filter alert recipients by platform.
+    const offersFileShare = campaignPlatforms.some(isFileSharePlatform);
+    const campaignPlatformKeys = offersFileShare ? [] : [
       ...new Set(
-        campaignPlatforms
+        socialPlatformsOnly(campaignPlatforms)
           .map((p) => canonicalPlatformKey(p))
           .filter((k): k is string => !!k),
       ),

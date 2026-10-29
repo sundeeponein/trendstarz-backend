@@ -78,6 +78,17 @@ import {
 import { normalizeUpiId, upiIdError } from "../utils/upi.util";
 import { reverseIssuedCredit } from "../payments-payouts/platform-credit.util";
 import { SingleInstance } from "../utils/single-instance";
+import {
+  DEFAULT_FILE_SHARE_REVIEW_EMAIL,
+  FILE_SHARE_EDITED,
+  FILE_SHARE_POST_PLATFORM,
+  FILE_SHARE_RAW,
+  fileShareOfferRupees,
+  isFileShareCombined,
+  isFileShareLink,
+  isFileSharePlatform,
+  normalizeShareEmail,
+} from "../utils/file-share-video.util";
 
 function detectPlatform(url: string): string {
   if (!url) return "other";
@@ -1721,6 +1732,9 @@ export class CampaignInvitesService {
         String(sm?.platform || "").toLowerCase() ===
         String(selectedPlatform || "").toLowerCase(),
     );
+    if (isFileSharePlatform(selectedPlatform)) {
+      return fileShareOfferRupees(smEntry, selectedContentType);
+    }
     const ctEntry = smEntry?.contentTypes?.find(
       (ct: any) =>
         String(ct?.name || "").toLowerCase() ===
@@ -1728,6 +1742,69 @@ export class CampaignInvitesService {
     );
     const rupees = Number(ctEntry?.price || 0);
     return Number.isFinite(rupees) && rupees > 0 ? rupees : 0;
+  }
+
+  /** A Video (File Share) choice must be a format the host enabled, or both for "Raw + Edited". */
+  private assertFileShareChoice(
+    campaign: any,
+    platform: string | undefined,
+    contentType: string | undefined,
+  ): void {
+    const row = (campaign?.socialMedia || []).find((sm: any) =>
+      isFileSharePlatform(sm?.platform),
+    );
+    const enabled = new Set(
+      (row?.contentTypes || [])
+        .filter((ct: any) => ct?.enabled)
+        .map((ct: any) => String(ct?.name || "").toLowerCase().trim()),
+    );
+    const wanted = isFileShareCombined(contentType)
+      ? [FILE_SHARE_RAW, FILE_SHARE_EDITED]
+      : [String(contentType || "")];
+    if (!row || !wanted.every((name) => enabled.has(name.toLowerCase().trim()))) {
+      throw new BadRequestException(
+        `This campaign doesn't offer "${contentType || "that"}" for ${platform}. Choose one of the listed video formats.`,
+      );
+    }
+  }
+
+  /**
+   * Who the creator shares a Video (File Share) with: the host (campaign's
+   * access email, else the host's login email) and TrendStarZ review. Only for
+   * File Share invites once the collaboration is confirmed — paid collab: host's
+   * payment verified; product / location: platform fee paid (or none due) —
+   * the same point the creator may submit. Null otherwise.
+   */
+  private async fileShareAccessFor(invite: any, campaign: any) {
+    if (!isFileSharePlatform(invite?.selectedPlatform)) return null;
+    const status = String(invite?.status || "").toLowerCase();
+    const confirmedStates = new Set([
+      "payment_confirmed",
+      "working",
+      "submitted",
+      "completed",
+      "approved",
+      "disputed",
+    ]);
+    const isPaidCollab =
+      String(campaign?.campaignType || "").toLowerCase() === "paid_collab";
+    const confirmed =
+      confirmedStates.has(status) ||
+      (status === "accepted" && !isPaidCollab && !awaitingPlatformFee(invite));
+    if (!confirmed) return null;
+    let hostEmail = normalizeShareEmail(campaign?.fileShareAccessEmail);
+    if (!hostEmail) {
+      const host = await this.resolveSenderProfile(String(invite.brandId));
+      hostEmail = normalizeShareEmail(host?.email);
+    }
+    const settings: any = await this.appSettingsModel
+      .findOne({})
+      .select("fileShareReviewEmail")
+      .lean();
+    const reviewEmail =
+      normalizeShareEmail(settings?.fileShareReviewEmail) ||
+      DEFAULT_FILE_SHARE_REVIEW_EMAIL;
+    return { hostEmail: hostEmail || null, reviewEmail };
   }
 
   private isCampaignDeletedForRecipient(campaign: any): boolean {
@@ -1785,7 +1862,7 @@ export class CampaignInvitesService {
     const submissions: any[] = await this.submissionModel
       .find(submissionQuery)
       .select(
-        "inviteId postUrl postType postPlatform status submittedAt reviewedAt autoCompletedAt hostAutoCompleteEnabled hostAutoCompleteEnabledAt createdAt updatedAt brandFeedback disputeIssueReason disputeReason disputeEvidenceUrl resubmissionCount",
+        "inviteId postUrl postType postPlatform status submittedAt reviewedAt autoCompletedAt hostAutoCompleteEnabled hostAutoCompleteEnabledAt createdAt updatedAt brandFeedback disputeIssueReason disputeReason disputeEvidenceUrl resubmissionCount deliveryMethod deliveryNotes accessConfirmedAt",
       )
       .sort({ submittedAt: -1, createdAt: -1 })
       .lean();
@@ -2104,10 +2181,12 @@ export class CampaignInvitesService {
       .findById(invite.campaignId)
       .select(
         // description … hashtags: the host's brief, listed by name in the pre-submit reminder.
-        "title platforms socialMedia deliverables specialInstructions image images galleryImages postingDeadlineMode description script promotionUrl suggestedCaption hashtags",
+        "title platforms socialMedia deliverables specialInstructions image images galleryImages postingDeadlineMode description script promotionUrl suggestedCaption hashtags fileShareAccessEmail campaignType",
       )
       .lean();
-    return { invite: inviteForResponse, campaign };
+    const fileShareAccess = await this.fileShareAccessFor(invite, campaign);
+    if (campaign) delete campaign.fileShareAccessEmail;
+    return { invite: inviteForResponse, campaign, fileShareAccess };
   }
 
   /**
@@ -3109,11 +3188,13 @@ export class CampaignInvitesService {
           );
         }
 
+        // Video (File Share) needs no social account; its minimum tier is met by any account.
+        const isFileShare = isFileSharePlatform(effectivePlatform);
         const matchingProfile = influencerSocials.find(
           (entry: any) =>
             normalized(entry?.platform || "") === normalized(effectivePlatform),
         );
-        if (!matchingProfile) {
+        if (!matchingProfile && !isFileShare) {
           throw new BadRequestException(
             `You don't have ${effectivePlatform} in your profile. Please add it first.`,
           );
@@ -3123,7 +3204,11 @@ export class CampaignInvitesService {
         const requiredTier = resolveTier(campaign?.minInfluencerTier);
         if (
           requiredTier &&
-          !meetsMinimumTier(matchingProfile?.tier, requiredTier.label)
+          !(isFileShare
+            ? influencerSocials.some((entry: any) =>
+                meetsMinimumTier(entry?.tier, requiredTier.label),
+              )
+            : meetsMinimumTier(matchingProfile?.tier, requiredTier.label))
         ) {
           throw new BadRequestException(
             `This campaign requires ${requiredTier.label} tier or above on ${effectivePlatform}.`,
@@ -3148,6 +3233,9 @@ export class CampaignInvitesService {
         throw new BadRequestException(
           "Please select the content type you will create before responding.",
         );
+      }
+      if (isFileSharePlatform(effectivePlatform)) {
+        this.assertFileShareChoice(campaign, effectivePlatform, selectedContentType);
       }
 
       const offeredRupees = isDeliverablePricing
@@ -3771,6 +3859,8 @@ export class CampaignInvitesService {
     const sm: any[] = (influencer as any).socialMedia || [];
     const campaignPlatforms: string[] = campaign.platforms || [];
     const normalized = (s: string) => (s || "").toLowerCase().trim();
+    // Video (File Share) needs no social account, so any creator qualifies for it.
+    const offersFileShare = campaignPlatforms.some(isFileSharePlatform);
 
     // Validate selectedPlatform — if provided, it must be campaign-targeted and present on influencer profile.
     // If not provided, do not auto-select; influencer will choose platform/content in pending step.
@@ -3789,14 +3879,14 @@ export class CampaignInvitesService {
           (entry) =>
             normalized(entry.platform) === normalized(selectedPlatform),
         );
-        if (!hasPlatform) {
+        if (!hasPlatform && !isFileSharePlatform(selectedPlatform)) {
           throw new BadRequestException(
             `You don't have ${selectedPlatform} in your profile. Please add it first.`,
           );
         }
         chosenPlatform = selectedPlatform;
       } else {
-        const hasAnyCampaignPlatform = sm.some((entry) =>
+        const hasAnyCampaignPlatform = offersFileShare || sm.some((entry) =>
           campaignPlatforms.some(
             (p) => normalized(p) === normalized(entry.platform),
           ),
@@ -3813,7 +3903,12 @@ export class CampaignInvitesService {
     if (minimumTier) {
       // For explicit platform selection, validate tier on that platform.
       // Otherwise validate tier across campaign-targeted platforms (or all socials if no platform restriction).
-      const scope = chosenPlatform
+      const fileShareScope = chosenPlatform
+        ? isFileSharePlatform(chosenPlatform)
+        : offersFileShare;
+      const scope = fileShareScope
+        ? sm
+        : chosenPlatform
         ? sm.filter(
             (entry: any) =>
               normalized(entry.platform) === normalized(chosenPlatform),
@@ -4013,6 +4108,9 @@ export class CampaignInvitesService {
       commentsCount?: number;
       sharesCount?: number;
       reachCount?: number;
+      /** Video (File Share): creator confirms they shared access with the host + review email. */
+      accessConfirmed?: boolean;
+      deliveryNotes?: string;
     },
   ) {
     const invite = await this.inviteModel.findById(inviteId);
@@ -4078,7 +4176,24 @@ export class CampaignInvitesService {
       }
     }
 
-    const postPlatform = detectPlatform(data.postUrl);
+    // Video (File Share): a private file link (Drive, Dropbox, …), not a social post.
+    const isFileShare = isFileSharePlatform(invite.selectedPlatform);
+    if (isFileShare) {
+      if (!isFileShareLink(data.postUrl)) {
+        throw new BadRequestException(
+          "Share the video as a Google Drive, Dropbox, OneDrive or WeTransfer link.",
+        );
+      }
+      if (data.accessConfirmed !== true) {
+        throw new BadRequestException(
+          "Confirm you've shared access to the video with the host and TrendStarZ review email.",
+        );
+      }
+    }
+
+    const postPlatform = isFileShare
+      ? FILE_SHARE_POST_PLATFORM
+      : detectPlatform(data.postUrl);
     const normalizePlatform = (v: string) => {
       const p = String(v || "")
         .toLowerCase()
@@ -4101,6 +4216,7 @@ export class CampaignInvitesService {
       String(invite.selectedPlatform || ""),
     );
     if (
+      !isFileShare &&
       acceptedPlatform &&
       normalizePlatform(postPlatform) !== acceptedPlatform
     ) {
@@ -4116,6 +4232,7 @@ export class CampaignInvitesService {
       String(data.postType || ""),
     );
     if (
+      !isFileShare &&
       acceptedContentType &&
       submittedContentType &&
       acceptedContentType !== submittedContentType
@@ -4150,7 +4267,8 @@ export class CampaignInvitesService {
     };
     const normalizedSubmissionData = {
       postUrl: String(data.postUrl || "").trim(),
-      postType: data.postType ? String(data.postType) : undefined,
+      postType:
+        data.postType && !isFileShare ? String(data.postType) : undefined,
       captionUsed: data.captionUsed ? String(data.captionUsed) : undefined,
       postScreenshotUrl: String(data.postScreenshotUrl || "").trim(),
       insightsScreenshotUrl: String(data.insightsScreenshotUrl || "").trim(),
@@ -4159,6 +4277,11 @@ export class CampaignInvitesService {
       commentsCount: count(data.commentsCount),
       sharesCount: count(data.sharesCount),
       reachCount: count(data.reachCount),
+      deliveryMethod: isFileShare ? ("external_link" as const) : undefined,
+      deliveryNotes: isFileShare
+        ? String(data.deliveryNotes || "").trim().slice(0, 1000) || undefined
+        : undefined,
+      accessConfirmedAt: isFileShare ? new Date() : undefined,
     };
 
     let submission: any;
@@ -5917,7 +6040,13 @@ export class CampaignInvitesService {
     const accepted = String(invite.selectedPlatform || "")
       .toLowerCase()
       .replace(/^x$/, "twitter");
-    if (accepted && detectPlatform(postUrl) !== accepted) {
+    if (isFileSharePlatform(invite.selectedPlatform)) {
+      if (!isFileShareLink(postUrl)) {
+        throw new BadRequestException(
+          "Share the video as a Google Drive, Dropbox, OneDrive or WeTransfer link.",
+        );
+      }
+    } else if (accepted && detectPlatform(postUrl) !== accepted) {
       throw new BadRequestException(
         `This collaboration was for ${invite.selectedPlatform}. Submit the ${invite.selectedPlatform} post link.`,
       );
@@ -6177,7 +6306,9 @@ export class CampaignInvitesService {
     if (submission) {
       Object.assign(submission, {
         postUrl,
-        postPlatform: detectPlatform(postUrl),
+        postPlatform: isFileSharePlatform(invite.selectedPlatform)
+          ? FILE_SHARE_POST_PLATFORM
+          : detectPlatform(postUrl),
         status: "approved",
         reviewedAt: now,
         isLate: true,
@@ -6190,7 +6321,9 @@ export class CampaignInvitesService {
         influencerId: invite.influencerId,
         inviteId: invite._id,
         postUrl,
-        postPlatform: detectPlatform(postUrl),
+        postPlatform: isFileSharePlatform(invite.selectedPlatform)
+          ? FILE_SHARE_POST_PLATFORM
+          : detectPlatform(postUrl),
         submittedAt,
         reviewedAt: now,
         status: "approved",

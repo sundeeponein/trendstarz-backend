@@ -23,6 +23,11 @@ export const CampaignSubmissionSchema = new Schema(
       enum: ["reel", "video", "photo", "short", "story", "thread"],
     },
     captionUsed: { type: String },
+    // Video (File Share): how the file was delivered, the creator's note, and when they
+    // confirmed sharing access with the host + TrendStarZ review email.
+    deliveryMethod: { type: String, enum: ["external_link"] },
+    deliveryNotes: { type: String },
+    accessConfirmedAt: { type: Date },
 
     postScreenshotUrl: {
       type: String,
@@ -69,6 +74,9 @@ export interface CampaignSubmission extends Document {
   postPlatform?: string;
   postType?: string;
   captionUsed?: string;
+  deliveryMethod?: "external_link";
+  deliveryNotes?: string;
+  accessConfirmedAt?: Date;
   postScreenshotUrl: string;
   insightsScreenshotUrl?: string;
   viewsCount?: number;

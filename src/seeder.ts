@@ -179,6 +179,8 @@ export async function seedDatabase(section?: string) {
           const exists = await SocialMediaModel.findOne({ name: sm.name });
           const fields = {
             showInFrontend: sm.visible,
+            key: sm.key || undefined,
+            campaignOnly: sm.campaignOnly === true,
             icon: sm.icon || null,
             color: sm.color || null,
             handleLabel: sm.handleLabel || "Handle",

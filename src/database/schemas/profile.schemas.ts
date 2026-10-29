@@ -1321,6 +1321,8 @@ export const AppSettingsSchema = new Schema({
   // and (post-Razorpay launch) kept as a "Need help?" channel for queries.
   supportContactEnabled: { type: Boolean, default: true },
   supportContactEmail: { type: String, default: "support@trendstarz.in" },
+  // Video (File Share): creators also share the file with this address so admin can settle disputes.
+  fileShareReviewEmail: { type: String, default: "sundeep.oneinfo+admin@gmail.com" },
   supportContactPhone: { type: String, default: "" },
   supportContactWhatsapp: { type: String, default: "" },
   verificationCallNumber: { type: String, default: "" },
@@ -1401,6 +1403,11 @@ export const WhatsAppCommunityModel = model(
 export const SocialMediaSchema = new Schema({
   name: { type: String, required: true },
   showInFrontend: { type: Boolean, default: true },
+  // Stable id for entries the code relies on (e.g. "file_share_video").
+  key: { type: String },
+  // Campaign deliverable only (not a social account): kept out of signup,
+  // profile and Search lists. See utils/file-share-video.util.ts.
+  campaignOnly: { type: Boolean, default: false },
   icon: { type: String },
   color: { type: String },
   handleLabel: { type: String, default: "Handle" },
@@ -1581,10 +1588,14 @@ export const CampaignSchema = new Schema(
             // 3D-1d: server-set when the creator last set this rate (new row,
             // price or on/off changed). Null = never confirmed since tracking began.
             priceConfirmedAt: { type: Date, default: null },
+            // Video (File Share) formats only.
+            aspectRatio: { type: String, enum: ["9:16", "16:9", "both"] },
           },
         ],
       },
     ],
+    // Video (File Share): email the creator shares the file with (empty = host's login email).
+    fileShareAccessEmail: { type: String, trim: true, lowercase: true },
     minFollowerCount: { type: Number },
     maxFollowerCount: { type: Number },
     minInfluencerTier: { type: String },

@@ -73,6 +73,10 @@ import {
 } from "./utils/workflow-timing.util";
 import { idIn } from "./utils/id-match.util";
 import { isValidGstin, normalizeGstin } from "./payments-payouts/fee-rates.util";
+import {
+  DEFAULT_FILE_SHARE_REVIEW_EMAIL,
+  normalizeShareEmail,
+} from "./utils/file-share-video.util";
 
 interface VisibilityItem {
   _id: string;
@@ -367,6 +371,7 @@ export class AdminListsController {
         commissionDefaults.internalTestCommissionPercent,
       supportContactEnabled: true,
       supportContactEmail: "support@trendstarz.in",
+      fileShareReviewEmail: DEFAULT_FILE_SHARE_REVIEW_EMAIL,
       supportContactPhone: "",
       supportContactWhatsapp: "",
       verificationCallNumber: "",
@@ -486,6 +491,17 @@ export class AdminListsController {
           "GST can't be charged without a GST registration. Add TrendStarZ's GSTIN first (or keep GST at 0%).",
         );
       }
+    }
+    if (next.fileShareReviewEmail !== undefined) {
+      // Empty = back to the default review address.
+      const raw = String(next.fileShareReviewEmail ?? "").trim();
+      const email = raw ? normalizeShareEmail(raw) : DEFAULT_FILE_SHARE_REVIEW_EMAIL;
+      if (!email) {
+        throw new BadRequestException(
+          "Enter a valid email for TrendStarZ video review access.",
+        );
+      }
+      next.fileShareReviewEmail = email;
     }
     if (next.creatorFeeGstEnabled !== undefined) {
       next.creatorFeeGstEnabled = next.creatorFeeGstEnabled === true || next.creatorFeeGstEnabled === "true";
@@ -1913,6 +1929,8 @@ export class AdminListsController {
           tier: 1,
           followersCount: 1,
           showInFrontend: 1,
+          key: 1,
+          campaignOnly: 1,
         },
       )
       .lean()

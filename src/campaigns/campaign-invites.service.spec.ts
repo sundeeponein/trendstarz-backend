@@ -1173,6 +1173,108 @@ describe("CampaignInvitesService – submitPost() insights lock", () => {
       service.submitPost("inv1", "inf1", { postUrl: "" }),
     ).rejects.toThrow(BadRequestException);
   });
+
+  describe("Video (File Share)", () => {
+    const fileShareInvite = () =>
+      acceptedInvite({
+        selectedPlatform: "Video (File Share)",
+        selectedContentType: "Raw + Edited video",
+      });
+
+    it("accepts a Drive link once access is confirmed and stores it as a file delivery", async () => {
+      inviteModel.findById.mockResolvedValue(fileShareInvite());
+      submissionModel.findOne.mockResolvedValue(null);
+      submissionModel.create.mockResolvedValue({ _id: "sub1" });
+
+      const result = await service.submitPost("inv1", "inf1", {
+        postUrl: "https://drive.google.com/drive/folders/abc",
+        postType: "reel",
+        accessConfirmed: true,
+        deliveryNotes: "  Raw in /raw, edit in /final  ",
+      });
+
+      expect(result.success).toBe(true);
+      const created = submissionModel.create.mock.calls[0][0];
+      expect(created.postPlatform).toBe("file_share");
+      expect(created.deliveryMethod).toBe("external_link");
+      expect(created.deliveryNotes).toBe("Raw in /raw, edit in /final");
+      expect(created.accessConfirmedAt).toBeInstanceOf(Date);
+      expect(created.postType).toBeUndefined();
+    });
+
+    it("refuses a social post link (the video must be a private file link)", async () => {
+      inviteModel.findById.mockResolvedValue(fileShareInvite());
+      await expect(
+        service.submitPost("inv1", "inf1", {
+          postUrl: "https://instagram.com/reel/abc",
+          accessConfirmed: true,
+        }),
+      ).rejects.toThrow(/Google Drive/);
+      expect(submissionModel.create).not.toHaveBeenCalled();
+    });
+
+    it("refuses until the creator confirms they shared access", async () => {
+      inviteModel.findById.mockResolvedValue(fileShareInvite());
+      await expect(
+        service.submitPost("inv1", "inf1", {
+          postUrl: "https://drive.google.com/file/d/abc/view",
+        }),
+      ).rejects.toThrow(/shared access/);
+      expect(submissionModel.create).not.toHaveBeenCalled();
+    });
+
+    it("social invites can't use a Drive link", async () => {
+      inviteModel.findById.mockResolvedValue(
+        acceptedInvite({ selectedPlatform: "Instagram" }),
+      );
+      await expect(
+        service.submitPost("inv1", "inf1", {
+          postUrl: "https://drive.google.com/file/d/abc/view",
+          accessConfirmed: true,
+        }),
+      ).rejects.toThrow(/Instagram/);
+    });
+  });
+
+  describe("Video (File Share) choices and price", () => {
+    const campaign = {
+      socialMedia: [
+        {
+          platform: "Video (File Share)",
+          contentTypes: [
+            { name: "Raw video", enabled: true, price: 1500, aspectRatio: "9:16" },
+            { name: "Edited video", enabled: true, price: 4000, aspectRatio: "both" },
+          ],
+        },
+      ],
+    };
+    const onlyRaw = {
+      socialMedia: [
+        {
+          platform: "Video (File Share)",
+          contentTypes: [
+            { name: "Raw video", enabled: true, price: 1500 },
+            { name: "Edited video", enabled: false, price: 0 },
+          ],
+        },
+      ],
+    };
+
+    it("prices Raw + Edited as the sum of both formats", () => {
+      const s: any = service;
+      expect(s.resolveDeliverableOfferRupees(campaign, "Video (File Share)", "Raw video")).toBe(1500);
+      expect(s.resolveDeliverableOfferRupees(campaign, "Video (File Share)", "Raw + Edited video")).toBe(5500);
+      expect(s.resolveDeliverableOfferRupees(onlyRaw, "Video (File Share)", "Raw + Edited video")).toBe(0);
+    });
+
+    it("accepts only formats the host enabled", () => {
+      const s: any = service;
+      expect(() => s.assertFileShareChoice(campaign, "Video (File Share)", "Raw + Edited video")).not.toThrow();
+      expect(() => s.assertFileShareChoice(onlyRaw, "Video (File Share)", "Raw video")).not.toThrow();
+      expect(() => s.assertFileShareChoice(onlyRaw, "Video (File Share)", "Edited video")).toThrow(BadRequestException);
+      expect(() => s.assertFileShareChoice(onlyRaw, "Video (File Share)", "Raw + Edited video")).toThrow(BadRequestException);
+    });
+  });
 });
 
 // ─────────────────────────────────────────────────────────────────────────────

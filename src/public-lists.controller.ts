@@ -212,10 +212,17 @@ export class SocialMediaController {
     @InjectModel("SocialMedia") private readonly socialMediaModel: Model<any>,
   ) {}
 
+  /**
+   * Visible platforms. Campaign-only entries (Video (File Share)) are left out
+   * unless the campaign form asks for them with ?scope=campaign, so they never
+   * show up as a social account in signup, profiles or Search.
+   */
   @Get()
-  async getAll() {
+  async getAll(@Query("scope") scope?: string) {
+    const filter: Record<string, unknown> = { showInFrontend: { $ne: false } };
+    if (scope !== "campaign") filter.campaignOnly = { $ne: true };
     const socials = await this.socialMediaModel
-      .find({ showInFrontend: { $ne: false } })
+      .find(filter)
       .lean()
       .limit(100);
     return socials.length ? socials : [];

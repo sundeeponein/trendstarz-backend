@@ -502,6 +502,9 @@ export class CampaignInvitesController {
       commentsCount?: number;
       sharesCount?: number;
       reachCount?: number;
+      /** Video (File Share): creator confirms they shared access with the host + review email. */
+      accessConfirmed?: boolean;
+      deliveryNotes?: string;
     },
   ) {
     const influencerId = req.user?.userId;
