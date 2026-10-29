@@ -1267,6 +1267,36 @@ describe("CampaignInvitesService – submitPost() insights lock", () => {
       expect(s.resolveDeliverableOfferRupees(onlyRaw, "Video (File Share)", "Raw + Edited video")).toBe(0);
     });
 
+    it("shows the share emails only once the collaboration is confirmed", async () => {
+      const s: any = service;
+      s.resolveSenderProfile = jest.fn().mockResolvedValue({ email: "Host@Brand.in" });
+      s.appSettingsModel = {
+        findOne: () => ({ select: () => ({ lean: async () => ({ fileShareReviewEmail: "review@x.in" }) }) }),
+      };
+      const fs = { selectedPlatform: "Video (File Share)", brandId: "h1" };
+      const paid = { campaignType: "paid_collab" };
+      const product = { campaignType: "product" };
+
+      // Paid collab: accepted isn't enough — the host's payment must be verified.
+      expect(await s.fileShareAccessFor({ ...fs, status: "accepted" }, paid)).toBeNull();
+      expect(await s.fileShareAccessFor({ ...fs, status: "payment_confirmed" }, paid)).toEqual({
+        hostEmail: "host@brand.in",
+        reviewEmail: "review@x.in",
+      });
+      // Product / location: after the platform fee is paid (or when none is due).
+      expect(await s.fileShareAccessFor({ ...fs, status: "accepted", platformFeeDue: 99 }, product)).toBeNull();
+      expect(
+        await s.fileShareAccessFor({ ...fs, status: "accepted", platformFeeDue: 99, platformFeePaidAt: new Date() }, product),
+      ).not.toBeNull();
+      // Campaign's own access email wins; never before accepting; never for social invites.
+      expect(
+        (await s.fileShareAccessFor({ ...fs, status: "working" }, { ...paid, fileShareAccessEmail: "team@brand.in" }))
+          .hostEmail,
+      ).toBe("team@brand.in");
+      expect(await s.fileShareAccessFor({ ...fs, status: "pending" }, product)).toBeNull();
+      expect(await s.fileShareAccessFor({ selectedPlatform: "Instagram", status: "working" }, paid)).toBeNull();
+    });
+
     it("accepts only formats the host enabled", () => {
       const s: any = service;
       expect(() => s.assertFileShareChoice(campaign, "Video (File Share)", "Raw + Edited video")).not.toThrow();
@@ -2971,6 +3001,38 @@ describe("CampaignInvitesService – platform events", () => {
           BadRequestException,
         );
         expect(platformEvents.record).not.toHaveBeenCalled();
+      });
+
+      it("an accepted paid collab can't start before the host's payment is verified", async () => {
+        const invite = openInvite({ status: "accepted" });
+        inviteModel.findById.mockResolvedValue(invite);
+        campaignModel.findById.mockReturnValue(
+          queryOf({ ...activeCampaign, campaignType: "paid_collab" }),
+        );
+        await expect(service.startWork("inv1", "inf1")).rejects.toThrow(
+          /hasn't confirmed/,
+        );
+        expect(invite.status).toBe("accepted");
+      });
+
+      it("an accepted product collab can't start while the platform fee is unpaid", async () => {
+        const invite = openInvite({ status: "accepted", platformFeeDue: 99 });
+        inviteModel.findById.mockResolvedValue(invite);
+        campaignModel.findById.mockReturnValue(
+          queryOf({ ...activeCampaign, campaignType: "product" }),
+        );
+        await expect(service.startWork("inv1", "inf1")).rejects.toThrow(
+          /hasn't confirmed/,
+        );
+      });
+
+      it("an accepted product collab with no fee due starts", async () => {
+        inviteModel.findById.mockResolvedValue(openInvite({ status: "accepted" }));
+        campaignModel.findById.mockReturnValue(
+          queryOf({ ...activeCampaign, campaignType: "product" }),
+        );
+        await service.startWork("inv1", "inf1");
+        expect(eventsOfType("work_started")).toHaveLength(1);
       });
     });
 

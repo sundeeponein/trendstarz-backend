@@ -4063,10 +4063,21 @@ export class CampaignInvitesService {
     }
     const campaign: any = await this.campaignModel
       .findById(invite.campaignId)
-      .select("status")
+      .select("status campaignType")
       .lean();
     this.assertCampaignLiveForRecipient(campaign, "start work");
     this.assertCampaignNotEnded(campaign, "start work");
+    // Not confirmed yet: a paid collab waits for the host's payment to be verified
+    // (→ payment_confirmed); other types wait for the platform fee, when one is due.
+    if (
+      status === "accepted" &&
+      (String(campaign?.campaignType || "") === "paid_collab" ||
+        awaitingPlatformFee(invite))
+    ) {
+      throw new BadRequestException(
+        "The host hasn't confirmed this collaboration yet. You can start once it's confirmed.",
+      );
+    }
 
     const previousStatus = status;
     invite.status = "working";
