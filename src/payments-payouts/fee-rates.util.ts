@@ -68,6 +68,56 @@ export function creatorFeeGstPercentFromSettings(settings: any): number {
 }
 
 /**
+ * The host's commission (%) for their role and plan, from raw app settings —
+ * before any per-account override. Brand falls back to the global rate (10%
+ * when unset); influencer / photographer hosts default to 0 until set.
+ */
+export function hostCommissionPercentFromSettings(
+  settings: any,
+  role: FeeRole,
+  isPremium: boolean,
+): number {
+  const field =
+    role === "photographer"
+      ? "photographerFeePercent"
+      : role === "influencer"
+        ? "influencerFeePercent"
+        : "brandFeePercent";
+  const global = percentOrNull(settings?.platformFeePercent) ?? 10;
+  const free = percentOrNull(settings?.[field]) ?? (role === "brand" ? global : 0);
+  return rateForPlan(free, settings?.[PREMIUM_RATE_FIELDS[field]], isPremium);
+}
+
+/**
+ * A per-account commission override set by admin (waiver / discount % off /
+ * fixed %), applied while it's enabled and inside its validity window.
+ */
+export function applyCommissionOverride(
+  percent: number,
+  override: any,
+  now: Date = new Date(),
+): number {
+  if (!override?.enabled) return percent;
+  if (
+    (override.validFrom && new Date(override.validFrom) > now) ||
+    (override.validUntil && new Date(override.validUntil) < now)
+  ) {
+    return percent;
+  }
+  switch (override.overrideType) {
+    case "waiver":
+      return 0;
+    case "discount":
+      // e.g. 40 = 40% off the rate
+      return Math.max(0, percent - (percent * Number(override.value || 0)) / 100);
+    case "fixed":
+      return Math.max(0, Number(override.value || 0));
+    default:
+      return percent;
+  }
+}
+
+/**
  * The GST % that applies to one invite's creator fee: the rate locked at
  * acceptance; 0 for invites accepted before this existed (they were promised a
  * payout without it); otherwise today's setting (not accepted yet).

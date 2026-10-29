@@ -133,6 +133,10 @@ export const CampaignInviteSchema = new Schema({
   // GST (%) on that fee, locked at the same moment (0 while the admin switch
   // "Charge GST on creator payout fee" is off). null = accepted before 2026-10-18.
   recipientFeeGstPercent: { type: Number, default: null },
+  // Host commission (%) for this creator, locked when they accepted (host plan +
+  // admin override at that moment), so a later rate change only affects new
+  // acceptances. null = accepted before 2026-10-29 → today's rate at payment.
+  hostFeePercent: { type: Number, default: null },
   // Admin correction: this creator may submit until at least this time (see submissionWindow).
   submissionDeadlineExtendedTo: { type: Date },
   // Admin corrections log (append-only, admin-only — hidden from every query unless

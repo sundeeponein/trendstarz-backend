@@ -81,11 +81,13 @@ type FeeSettings = {
 import {
   awaitingPlatformFee,
   isBarterOrLocationCampaign,
+  platformFeeFor,
 } from "../campaigns/barter-limits.util";
 import { normalizeUtr, utrMatchValues } from "../utils/utr.util";
 import { SingleInstance } from "../utils/single-instance";
 import {
   PREMIUM_RATE_FIELDS,
+  applyCommissionOverride,
   creatorFeeGstPercentForInvite,
   creatorFeeGstPercentFromSettings,
   creatorPayoutBreakdown,
@@ -281,6 +283,34 @@ export class PaymentsPayoutsService {
           typeof settings?.[premium] === "number" ? settings[premium] : null,
         ]),
       ),
+    };
+  }
+
+  /**
+   * What a host will be charged on top of creator payments — shown on the
+   * campaign form so the total isn't first seen at payment. Same rules as
+   * calculatePayment (plan rate, Premium rate, commission override) and
+   * platformFeeFor (flat barter / location fee). Amounts are what applies now;
+   * the payment locks them when it's made.
+   */
+  async hostCommissionPreview(userId: string, role: string) {
+    const payerRole: "brand" | "influencer" | "photographer" =
+      role === "influencer" || role === "photographer" ? role : "brand";
+    const feeSettings = await this.getFeeSettings();
+    const isPremium = await this.isPremiumUser(userId, payerRole);
+    const base = this.getRoleBaseFeePercent(feeSettings, payerRole, isPremium);
+    const commissionPercent = feeSettings.platformFeeEnabled
+      ? await this.getEffectiveCommissionPercent(userId, payerRole, base)
+      : 0;
+    const settings: any = await this.appSettingsModel.findOne({}).lean();
+    return {
+      platformFeeEnabled: feeSettings.platformFeeEnabled,
+      commissionPercent,
+      gstPercent: Number(feeSettings.gstPercent || 0),
+      isPremium,
+      // Flat fee per confirmed creator (paise); 0 = none.
+      productPlatformFeePaise: platformFeeFor({ campaignType: "product" }, settings),
+      locationPlatformFeePaise: platformFeeFor({ campaignType: "invite_location" }, settings),
     };
   }
 
@@ -490,42 +520,34 @@ export class PaymentsPayoutsService {
             ? this.photographerModel
             : this.influencerModel;
       const user: any = await model.findById(userId).lean();
-
-      if (!user || !user.commissionOverride?.enabled) {
-        return globalPercent;
-      }
-
-      const override = user.commissionOverride;
-      const now = new Date();
-
-      // Check if override is within validity period
-      if (
-        (override.validFrom && new Date(override.validFrom) > now) ||
-        (override.validUntil && new Date(override.validUntil) < now)
-      ) {
-        return globalPercent;
-      }
-
-      // Apply override based on type
-      switch (override.overrideType) {
-        case "waiver":
-          return 0; // No commission
-        case "discount":
-          // discount is a percentage (e.g., 40% off means 40% reduction)
-          return Math.max(
-            0,
-            globalPercent - (globalPercent * override.value) / 100,
-          );
-        case "fixed":
-          // fixed is the actual commission percentage to apply
-          return Math.max(0, override.value);
-        default:
-          return globalPercent;
-      }
+      return applyCommissionOverride(globalPercent, user?.commissionOverride);
     } catch (error) {
       console.error("Error calculating effective commission:", error);
       return globalPercent;
     }
+  }
+
+  /**
+   * The host's commission (%) on one accepted creator: the rate locked when that
+   * creator accepted (campaign-invites lockHostCommission), so a later change in
+   * Settings never re-prices them. Invites accepted before the lock existed use
+   * today's rate (plan + override), as before.
+   */
+  private async hostFeePercentForInvite(
+    invite: any,
+    payerUserId: string,
+    payerRole: "brand" | "influencer" | "photographer",
+    feeSettings: FeeSettings,
+  ): Promise<number> {
+    if (typeof invite?.hostFeePercent === "number") return invite.hostFeePercent;
+    const base = this.getRoleBaseFeePercent(
+      feeSettings,
+      payerRole,
+      await this.isPremiumUser(payerUserId, payerRole),
+    );
+    return payerUserId
+      ? this.getEffectiveCommissionPercent(payerUserId, payerRole, base)
+      : base;
   }
 
   private async assertCampaignOwner(campaign: any, brandId: string) {
@@ -826,21 +848,15 @@ export class PaymentsPayoutsService {
       const campaignOwnerRole = inviteFeeRole;
       const invitePayerRole: "brand" | "influencer" | "photographer" = inviteFeeRole;
       const invitePayerUserId = String(campaign.brandId || "");
-      const inviteBaseFeePercent = calc.feeSettings
-        ? this.getRoleBaseFeePercent(
-            calc.feeSettings,
+      // Locked when this creator accepted; today's rate for invites accepted before the lock.
+      const inviteEffectiveFeePercent = calc.feeSettings
+        ? await this.hostFeePercentForInvite(
+            invite,
+            invitePayerUserId,
             inviteFeeRole,
-            await this.isPremiumUser(invitePayerUserId, inviteFeeRole),
+            calc.feeSettings,
           )
         : Number(calc.platformFeePercent || 0);
-      let inviteEffectiveFeePercent = inviteBaseFeePercent;
-      if (calc.platformFeeEnabled && invitePayerUserId && calc.feeSettings) {
-        inviteEffectiveFeePercent = await this.getEffectiveCommissionPercent(
-          invitePayerUserId,
-          inviteFeeRole,
-          inviteBaseFeePercent,
-        );
-      }
       const inviteFee = calc.platformFeeEnabled
         ? this.roundPercent(inviteAgreedAmount, inviteEffectiveFeePercent)
         : 0;
@@ -1359,21 +1375,24 @@ export class PaymentsPayoutsService {
     const payerUserId = String(campaign.brandId);
     const payerUserType = await this.resolveHostFeeRole(campaign);
 
-    const baseFeePercent = this.getRoleBaseFeePercent(
-      feeSettings,
-      payerUserType,
-      await this.isPremiumUser(payerUserId, payerUserType),
-    );
-    const effectiveCommissionPercent = payerUserId
-      ? await this.getEffectiveCommissionPercent(payerUserId, payerUserType, baseFeePercent)
-      : baseFeePercent;
-
+    // Each creator's commission rate: locked when they accepted (or today's rate for older invites).
+    const rowPercents: number[] = [];
+    for (const invite of acceptedInvites) {
+      rowPercents.push(
+        await this.hostFeePercentForInvite(invite, payerUserId, payerUserType, feeSettings),
+      );
+    }
     // Commission per creator, rounded per row exactly like the stored transactions,
     // so the total charged always equals the sum of the rows.
-    const rowFees = inviteAgreedAmounts.map((amount) =>
-      platformFeeEnabled ? this.roundPercent(amount, effectiveCommissionPercent) : 0,
+    const rowFees = inviteAgreedAmounts.map((amount, i) =>
+      platformFeeEnabled ? this.roundPercent(amount, rowPercents[i]) : 0,
     );
     const fee = rowFees.reduce((sum, f) => sum + f, 0);
+    // The % shown on the payment page: the shared rate, or the blended one when
+    // creators accepted at different rates.
+    const effectiveCommissionPercent = rowPercents.every((p) => p === rowPercents[0])
+      ? rowPercents[0]
+      : Math.round((fee / agreedAmount) * 10000) / 100;
     // GST is charged on TrendStarZ's commission only, never on the creator's amount.
     const gstPercent = Number(feeSettings.gstPercent || 0);
     const gstAmount = rowFees.reduce((sum, f) => sum + platformFeeGst(f, gstPercent), 0);

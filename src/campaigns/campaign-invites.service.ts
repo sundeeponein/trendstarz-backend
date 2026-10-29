@@ -25,6 +25,8 @@ import {
   isActivePremium,
   recipientFeePercentFromSettings,
   creatorFeeGstPercentFromSettings,
+  hostCommissionPercentFromSettings,
+  applyCommissionOverride,
 } from "../payments-payouts/fee-rates.util";
 import {
   countUsedMonthlySlots,
@@ -660,6 +662,39 @@ export class CampaignInvitesService {
     );
     invite.recipientFeeGstPercent =
       invite.recipientFeePercent > 0 ? creatorFeeGstPercentFromSettings(settings) : 0;
+  }
+
+  /**
+   * Locks the host's commission (%) for this creator now — the host's role and
+   * Free/Premium plan plus any admin override, 0 while commission is off — so
+   * changing the rates in Settings later only affects new acceptances.
+   * Barter/location pay a flat platform fee instead (platformFeeDue).
+   */
+  private async lockHostCommission(invite: any) {
+    const hostId = String(invite?.brandId || "");
+    const fields = "isPremium premiumEnd commissionOverride";
+    const [settings, brand, influencer, photographer] = await Promise.all([
+      this.appSettingsModel.findOne({}).lean(),
+      this.safeFindById(this.brandModel, hostId, fields),
+      this.safeFindById(this.influencerModel, hostId, fields),
+      this.safeFindById(this.photographerModel, hostId, fields),
+    ]);
+    const s: any = settings;
+    if (!s?.platformFeeEnabled) {
+      invite.hostFeePercent = 0;
+      return;
+    }
+    // Same payer role as the payment (resolveHostFeeRole): the owner's account type.
+    const role: "brand" | "influencer" | "photographer" = photographer
+      ? "photographer"
+      : influencer && !brand
+        ? "influencer"
+        : "brand";
+    const host: any = role === "photographer" ? photographer : role === "influencer" ? influencer : brand;
+    invite.hostFeePercent = applyCommissionOverride(
+      hostCommissionPercentFromSettings(s, role, isActivePremium(host)),
+      host?.commissionOverride,
+    );
   }
 
   private async loadRecipientProfile(
@@ -3119,6 +3154,10 @@ export class CampaignInvitesService {
           .lean();
         const fee = platformFeeFor(campaign, feeSettings);
         invite.platformFeeDue = fee > 0 ? fee : null;
+        // Paid amounts (paid collab, product + payment): the host's commission, locked now.
+        if (!isBarterOrLocationCampaign(campaign)) {
+          await this.lockHostCommission(invite);
+        }
         // Paid collab: the payout fee for this creator's plan (Free/Premium), locked now.
         if (String(campaign.campaignType || "") === "paid_collab") {
           invite.recipientFeePercent = recipientFeePercentFromSettings(
@@ -3684,6 +3723,8 @@ export class CampaignInvitesService {
       if (String(campaign?.campaignType || "") === "paid_collab") {
         await this.lockCreatorPayoutFee(invite, recipientRole, recipientIdForEligibility);
       }
+      // A counter offer is always a paid amount: lock the host's commission too.
+      await this.lockHostCommission(invite);
       invite.counterOffer = {
         ...counter,
         status: "accepted",

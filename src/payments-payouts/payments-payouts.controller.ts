@@ -307,6 +307,16 @@ export class PaymentsPayoutsController {
 
   // ── Campaign-level status (brand polls after submitting payment) ──────────
 
+  /** Host: the commission / platform fee their campaigns will be charged, shown on the campaign form. */
+  @UseGuards(JwtAuthGuard)
+  @Get("my/host-commission")
+  async myHostCommission(@Req() req: any) {
+    return this.paymentsPayoutsService.hostCommissionPreview(
+      String(req.user?.userId || ""),
+      String(req.user?.role || ""),
+    );
+  }
+
   /** Creator: the payout fee (%) on this invite, for showing the net amount before accepting. */
   @UseGuards(JwtAuthGuard)
   @Get("payout-fee/:inviteId")

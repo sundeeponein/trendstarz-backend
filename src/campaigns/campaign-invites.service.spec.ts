@@ -1267,6 +1267,32 @@ describe("CampaignInvitesService – submitPost() insights lock", () => {
       expect(s.resolveDeliverableOfferRupees(onlyRaw, "Video (File Share)", "Raw + Edited video")).toBe(0);
     });
 
+    it("locks the host's commission at acceptance from their role, plan and override", async () => {
+      const s: any = service;
+      const doc = (d: any) => ({ findById: () => ({ select: () => ({ lean: async () => d }) }) });
+      const settingsDoc = (d: any) => ({ findOne: () => ({ lean: async () => d }) });
+      const rates = { platformFeeEnabled: true, brandFeePercent: 5, brandFeePercentPremium: 3, influencerFeePercent: 5, influencerFeePercentPremium: 3 };
+      const lock = async (models: { brand?: any; influencer?: any; photographer?: any }, settings = rates) => {
+        s.appSettingsModel = settingsDoc(settings);
+        s.brandModel = doc(models.brand ?? null);
+        s.influencerModel = doc(models.influencer ?? null);
+        s.photographerModel = doc(models.photographer ?? null);
+        const invite: any = { brandId: "h1" };
+        await s.lockHostCommission(invite);
+        return invite.hostFeePercent;
+      };
+      const future = new Date(Date.now() + 86400000);
+
+      expect(await lock({ brand: { isPremium: false } })).toBe(5);
+      expect(await lock({ brand: { isPremium: true, premiumEnd: future } })).toBe(3);
+      expect(await lock({ brand: { isPremium: true, premiumEnd: new Date("2026-01-01") } })).toBe(5); // lapsed
+      expect(await lock({ influencer: { isPremium: true, premiumEnd: future } })).toBe(3); // influencer host
+      expect(
+        await lock({ brand: { commissionOverride: { enabled: true, overrideType: "waiver" } } }),
+      ).toBe(0); // Early Access / partner override
+      expect(await lock({ brand: {} }, { ...rates, platformFeeEnabled: false })).toBe(0);
+    });
+
     it("shows the share emails only once the collaboration is confirmed", async () => {
       const s: any = service;
       s.resolveSenderProfile = jest.fn().mockResolvedValue({ email: "Host@Brand.in" });

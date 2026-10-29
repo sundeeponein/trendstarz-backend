@@ -88,3 +88,41 @@ describe("GSTIN check character", () => {
     expect(isValidGstin("27AAPFU0938F1ZV")).toBe(false); // typo in the PAN part
   });
 });
+
+import { applyCommissionOverride, hostCommissionPercentFromSettings } from "./fee-rates.util";
+
+describe("host commission by role and plan", () => {
+  const settings = {
+    platformFeePercent: 9,
+    brandFeePercent: 5,
+    brandFeePercentPremium: 3,
+    influencerFeePercent: 5,
+    influencerFeePercentPremium: 3,
+    photographerFeePercent: 5,
+  };
+
+  it("uses the role's Free rate, or its Premium rate when Premium", () => {
+    expect(hostCommissionPercentFromSettings(settings, "brand", false)).toBe(5);
+    expect(hostCommissionPercentFromSettings(settings, "brand", true)).toBe(3);
+    expect(hostCommissionPercentFromSettings(settings, "influencer", true)).toBe(3);
+    // No Premium rate set → the Free rate.
+    expect(hostCommissionPercentFromSettings(settings, "photographer", true)).toBe(5);
+  });
+
+  it("falls back like the payment does: brand → global rate, creator hosts → 0", () => {
+    expect(hostCommissionPercentFromSettings({ platformFeePercent: 9 }, "brand", false)).toBe(9);
+    expect(hostCommissionPercentFromSettings({}, "brand", false)).toBe(10);
+    expect(hostCommissionPercentFromSettings({ platformFeePercent: 9 }, "influencer", false)).toBe(0);
+  });
+
+  it("applies an admin override only while enabled and in its window", () => {
+    const now = new Date("2026-10-29");
+    expect(applyCommissionOverride(5, { enabled: true, overrideType: "waiver" }, now)).toBe(0);
+    expect(applyCommissionOverride(10, { enabled: true, overrideType: "discount", value: 40 }, now)).toBe(6);
+    expect(applyCommissionOverride(5, { enabled: true, overrideType: "fixed", value: 2 }, now)).toBe(2);
+    expect(applyCommissionOverride(5, { enabled: false, overrideType: "waiver" }, now)).toBe(5);
+    expect(
+      applyCommissionOverride(5, { enabled: true, overrideType: "waiver", validUntil: "2026-10-01" }, now),
+    ).toBe(5);
+  });
+});

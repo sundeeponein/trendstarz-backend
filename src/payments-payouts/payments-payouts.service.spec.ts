@@ -424,6 +424,25 @@ describe("PaymentsPayoutsService", () => {
       expect(row.gatewayOrderAmount).toBe(105900);
     });
 
+    it("a creator who accepted at 3% is still charged 3% after the rate rises to 10%", async () => {
+      paidCampaign();
+      inviteModel.find.mockReturnValue({
+        lean: jest.fn().mockResolvedValue([
+          { _id: "i1", influencerId: "inf1", hostFeePercent: 3 }, // locked at acceptance
+          { _id: "i2", influencerId: "inf2" }, // accepted before the lock → today's rate
+        ]),
+      });
+      settings({ platformFeeEnabled: true, brandFeePercent: 10, gstPercent: 0 });
+      const calc: any = await service.calculatePayment("camp1", "brand1");
+      expect(calc.platformFee).toBe(3000 + 10000); // ₹30 + ₹100
+      expect(calc.platformFeePercent).toBe(6.5); // blended rate shown when they differ
+
+      transactionModel.create.mockImplementation(async (d: any) => ({ ...d, _id: "t" }));
+      razorpayService.createOrder.mockResolvedValue({ orderId: "o", amount: 1 });
+      const res: any = await service.createRazorpayOrderForCampaign("camp1", "brand1", true);
+      expect(res.transactions.map((t: any) => t.platformFee)).toEqual([3000, 10000]);
+    });
+
     it("Premium brand pays its Premium commission (5% → 3%)", async () => {
       paidCampaign();
       oneCreator();
@@ -435,6 +454,33 @@ describe("PaymentsPayoutsService", () => {
       const calc: any = await service.calculatePayment("camp1", "brand1");
       expect(calc.platformFee).toBe(3000); // ₹30
       expect(calc.amountDueRazorpay).toBe(100000 + 3000 + 540);
+    });
+
+    it("campaign-form preview shows the same commission the payment charges", async () => {
+      paidCampaign();
+      oneCreator();
+      settings({ platformFeeEnabled: true, brandFeePercent: 5, brandFeePercentPremium: 3, gstPercent: 0, locationPlatformFee: 99 });
+      brandModel.findById.mockReturnValue({
+        lean: jest.fn().mockResolvedValue({ isPremium: true }),
+        select: jest.fn().mockReturnValue({ lean: jest.fn().mockResolvedValue({ isPremium: true }) }),
+      });
+      const preview: any = await service.hostCommissionPreview("brand1", "brand");
+      const calc: any = await service.calculatePayment("camp1", "brand1");
+      expect(preview).toMatchObject({
+        platformFeeEnabled: true,
+        commissionPercent: 3,
+        gstPercent: 0,
+        isPremium: true,
+        productPlatformFeePaise: 0,
+        locationPlatformFeePaise: 9900,
+      });
+      expect(calc.platformFee).toBe(100000 * preview.commissionPercent / 100);
+    });
+
+    it("campaign-form preview is 0% while commission is switched off", async () => {
+      settings({ platformFeeEnabled: false, brandFeePercent: 5 });
+      const preview: any = await service.hostCommissionPreview("brand1", "brand");
+      expect(preview.commissionPercent).toBe(0);
     });
 
     it("the creator's payout fee locked at acceptance is used, not today's plan rate", async () => {
