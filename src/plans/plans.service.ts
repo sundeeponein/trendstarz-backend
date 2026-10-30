@@ -71,8 +71,11 @@ export class PlansService {
         dto?.founderOfferForExistingUsers ?? existing?.founderOfferForExistingUsers ?? true,
       founderOfferAudienceCap:
         dto?.founderOfferAudienceCap ?? existing?.founderOfferAudienceCap ?? 0,
+      // An emptied date means "no end date" — it must not fall back to the old one.
       founderOfferEndsAt:
-        dto?.founderOfferEndsAt ?? existing?.founderOfferEndsAt ?? null,
+        dto && "founderOfferEndsAt" in dto
+          ? dto.founderOfferEndsAt || null
+          : existing?.founderOfferEndsAt ?? null,
       price: {
         monthly: dto?.price?.monthly ?? existing?.price?.monthly ?? 0,
         quarterly: dto?.price?.quarterly ?? existing?.price?.quarterly ?? 0,
@@ -252,7 +255,10 @@ export class PlansService {
             founderOfferForNewUsers: normalized.founderOfferForNewUsers ?? existing.founderOfferForNewUsers ?? true,
             founderOfferForExistingUsers: normalized.founderOfferForExistingUsers ?? existing.founderOfferForExistingUsers ?? true,
             founderOfferAudienceCap: normalized.founderOfferAudienceCap ?? existing.founderOfferAudienceCap ?? 0,
-            founderOfferEndsAt: normalized.founderOfferEndsAt ?? existing.founderOfferEndsAt ?? null,
+            founderOfferEndsAt: normalized.founderOfferEndsAt,
+            founderOfferStartedAt: this.isNewOffer(existing, normalized)
+              ? new Date()
+              : existing.founderOfferStartedAt ?? null,
             policies: normalized.policies ?? existing.policies,
             highlight: normalized.highlight ?? existing.highlight,
             isActive: normalized.isActive ?? existing.isActive,
@@ -264,6 +270,34 @@ export class PlansService {
       .lean();
     if (!plan) throw new NotFoundException("Plan not found");
     return { success: true, plan: await this.withFounderOfferAudienceStats(plan) };
+  }
+
+  /** A new offer = the popup title or the end date (by day) changed. Re-saving the same values is not. */
+  private isNewOffer(existing: any, next: any): boolean {
+    const day = (v: any) => {
+      const t = v ? new Date(v).getTime() : NaN;
+      return Number.isFinite(t) ? new Date(t).toISOString().slice(0, 10) : "";
+    };
+    return (
+      String(next?.founderOfferName ?? "") !== String(existing?.founderOfferName ?? "") ||
+      day(next?.founderOfferEndsAt) !== day(existing?.founderOfferEndsAt)
+    );
+  }
+
+  /**
+   * The one-time popup's "seen" time as the dashboard should read it: a view
+   * from before the current offer started doesn't count, so each new offer is
+   * shown once more.
+   */
+  async founderOfferSeenAtFor(
+    userType: "Influencer" | "Brand" | "Photographer",
+    seenAt: Date | string | null | undefined,
+  ): Promise<Date | string | null> {
+    if (!seenAt) return null;
+    const plan: any = await this.findProPlanForUserType(userType).catch(() => null);
+    const startedAt = plan?.founderOfferStartedAt ? new Date(plan.founderOfferStartedAt) : null;
+    if (startedAt && new Date(seenAt).getTime() < startedAt.getTime()) return null;
+    return seenAt;
   }
 
   async remove(id: string) {

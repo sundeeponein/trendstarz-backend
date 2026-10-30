@@ -3510,8 +3510,12 @@ export class UsersService implements OnModuleInit {
       firstRegisteredAt: user.firstRegisteredAt || user.createdAt || null,
       lastLoginAt: user.lastLoginAt || null,
       lastOpenedAt: user.lastOpenedAt || null,
-      // The dashboard shows the one-time welcome popup only while this is empty.
-      founderOfferSeenAt: user.founderOfferSeenAt || null,
+      // The dashboard shows the one-time welcome popup only while this is empty
+      // (a view from before the current offer started reads as empty).
+      founderOfferSeenAt: await this.plansService.founderOfferSeenAtFor(
+        "Influencer",
+        user.founderOfferSeenAt,
+      ),
       promotionalPrice: user.promotionalPrice,
       payout: user.payout || {
         upiId: "",
@@ -3591,8 +3595,12 @@ export class UsersService implements OnModuleInit {
       firstRegisteredAt: user.firstRegisteredAt || user.createdAt || null,
       lastLoginAt: user.lastLoginAt || null,
       lastOpenedAt: user.lastOpenedAt || null,
-      // The dashboard shows the one-time welcome popup only while this is empty.
-      founderOfferSeenAt: user.founderOfferSeenAt || null,
+      // The dashboard shows the one-time welcome popup only while this is empty
+      // (a view from before the current offer started reads as empty).
+      founderOfferSeenAt: await this.plansService.founderOfferSeenAtFor(
+        "Brand",
+        user.founderOfferSeenAt,
+      ),
       isEmailVerified: user.isEmailVerified || false,
       isMobileVerified: user.isMobileVerified || false,
       planCapabilities,

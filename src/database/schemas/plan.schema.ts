@@ -62,6 +62,8 @@ export const PlanSchema = new Schema(
     /** Optional launch controls: cap 0 = unlimited, end date empty = no fixed expiry. */
     founderOfferAudienceCap: { type: Number, default: 0 },
     founderOfferEndsAt: { type: Date, default: null },
+    /** Set when the admin starts a new offer (name or end date changed). Users who saw the popup before this see it once more. */
+    founderOfferStartedAt: { type: Date, default: null },
     policies: {
       imageRetentionDaysAfterExpiry: { type: Number, default: 45 },
     },

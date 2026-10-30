@@ -234,6 +234,26 @@ describe("PlansService", () => {
       expect(plan.founderOfferEndsAt).toEqual(new Date("2020-11-10T18:29:59.999Z"));
     });
 
+    it("re-shows the popup once for a new offer, not for a re-save", async () => {
+      const started = new Date("2026-12-20T10:00:00.000Z");
+      planModel.findOne.mockReturnValue({
+        sort: jest.fn().mockReturnValue({
+          lean: jest.fn().mockResolvedValue({ ...mockPlan, founderOfferStartedAt: started }),
+        }),
+      });
+      const before = new Date("2026-11-01T10:00:00.000Z");
+      const after = new Date("2026-12-21T10:00:00.000Z");
+      expect(await service.founderOfferSeenAtFor("Influencer", before)).toBeNull();
+      expect(await service.founderOfferSeenAtFor("Influencer", after)).toBe(after);
+      expect(await service.founderOfferSeenAtFor("Influencer", null)).toBeNull();
+
+      const existing = { founderOfferName: "Diwali Offer", founderOfferEndsAt: new Date("2026-11-10T00:00:00.000Z") };
+      const isNew = (next: any) => (service as any).isNewOffer(existing, next);
+      expect(isNew({ ...existing, founderOfferEndsAt: "2026-11-10" })).toBe(false);
+      expect(isNew({ ...existing, founderOfferEndsAt: "2027-01-05" })).toBe(true);
+      expect(isNew({ ...existing, founderOfferName: "New Year Offer" })).toBe(true);
+    });
+
     it("keeps a running offer as set", async () => {
       listing({
         ...mockPlan,

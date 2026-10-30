@@ -290,7 +290,16 @@ export class PhotographersController {
   @Get("me/profile")
   @UseGuards(JwtAuthGuard)
   async getMyProfile(@Req() req: any) {
-    return this.photographersService.getProfile(req.user.userId);
+    const profile: any = await this.photographersService.getProfile(req.user.userId);
+    if (!profile || typeof profile !== "object") return profile;
+    // A popup view from before the current offer started reads as not seen.
+    return {
+      ...profile,
+      founderOfferSeenAt: await this.plansService.founderOfferSeenAtFor(
+        "Photographer",
+        profile.founderOfferSeenAt,
+      ),
+    };
   }
 
   /** Authenticated: answer / dismiss the "your social account was updated" notices. */
