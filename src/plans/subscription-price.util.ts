@@ -5,9 +5,12 @@
  * the browser shows is only checked against it, never trusted.
  *
  * Same rule the premium-upgrade page shows: the plan's duration offer
- * (discountMonthly / discountQuarterly / discountYearly, %) applies, unless a
- * valid coupon is entered, which replaces it.
+ * (discountMonthly / discountQuarterly / discountYearly, %) applies until the
+ * admin's "Offer Ends At" date is over (plan-offer.util.ts). A coupon is only
+ * accepted when no offer discount is running — it never replaces or stacks on one.
  */
+import { withEndedOffersRemoved } from "./plan-offer.util";
+
 export type BillingCycle = "monthly" | "quarterly" | "yearly";
 
 /** Coupon code → % off. Mirrors the codes the premium-upgrade page accepts. */
@@ -43,7 +46,9 @@ export function computeSubscriptionPrice(
   plan: any,
   billingCycle: BillingCycle,
   couponCode?: string | null,
+  now: Date = new Date(),
 ): SubscriptionPrice {
+  plan = withEndedOffersRemoved(plan, now);
   const baseRupees = Number(plan?.price?.[billingCycle] ?? 0);
   const code = String(couponCode || "")
     .trim()
@@ -56,6 +61,9 @@ export function computeSubscriptionPrice(
     (o: any) => o?.key === OFFER_KEY[billingCycle],
   );
   const offerPercent = Number(offer?.value) > 0 ? Number(offer.value) : 0;
+  if (couponPercent !== undefined && offerPercent > 0) {
+    throw new Error("Coupons can't be used while an offer is running.");
+  }
 
   const discountPercent = couponPercent ?? offerPercent;
   const discountRupees = Math.round(baseRupees * (discountPercent / 100));

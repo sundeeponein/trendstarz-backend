@@ -214,6 +214,36 @@ describe("PlansService", () => {
       const result = await service.listActive("INFLUENCER");
       expect(result.success).toBe(true);
     });
+
+    const listing = (plan: any) =>
+      planModel.find.mockReturnValueOnce({
+        sort: jest.fn().mockReturnValue({ lean: jest.fn().mockResolvedValue([plan]) }),
+      });
+
+    it("shows a past offer as 0 and sends the end as 23:59 IST", async () => {
+      listing({
+        ...mockPlan,
+        userType: "INFLUENCER",
+        offers: [{ key: "discountYearly", label: "Yearly", value: 75 }],
+        discountLabel: "Diwali Offer",
+        founderOfferEndsAt: new Date("2020-11-10T00:00:00.000Z"),
+      });
+      const [plan] = (await service.listActive("INFLUENCER")).plans;
+      expect(plan.offers[0].value).toBe(0);
+      expect(plan.discountLabel).toBe("");
+      expect(plan.founderOfferEndsAt).toEqual(new Date("2020-11-10T18:29:59.999Z"));
+    });
+
+    it("keeps a running offer as set", async () => {
+      listing({
+        ...mockPlan,
+        userType: "INFLUENCER",
+        offers: [{ key: "discountYearly", label: "Yearly", value: 75 }],
+        founderOfferEndsAt: new Date(Date.now() + 3 * 24 * 60 * 60 * 1000),
+      });
+      const [plan] = (await service.listActive("INFLUENCER")).plans;
+      expect(plan.offers[0].value).toBe(75);
+    });
   });
 
   describe("activateSubscription", () => {

@@ -26,11 +26,60 @@ describe("computeSubscriptionPrice", () => {
     expect(p.discountSource).toBe("plan_offer");
   });
 
-  it("lets a coupon replace the plan offer (not stack)", () => {
-    const p = computeSubscriptionPrice(plan, "quarterly", " trendstarz20 ");
+  it("accepts a coupon when no offer discount is running", () => {
+    const p = computeSubscriptionPrice(plan, "monthly", " trendstarz20 ");
     expect(p.discountPercent).toBe(20);
-    expect(p.finalRupees).toBe(1299 - Math.round(1299 * 0.2));
+    expect(p.finalRupees).toBe(499 - Math.round(499 * 0.2));
     expect(p.couponCode).toBe("TRENDSTARZ20");
+  });
+
+  it("refuses a coupon while an offer discount is running", () => {
+    expect(() =>
+      computeSubscriptionPrice(plan, "quarterly", "TRENDSTARZ20"),
+    ).toThrow(/offer is running/);
+  });
+
+  describe("offer end date (Admin → Plans → Offer Ends At)", () => {
+    // Saved from a date input: midnight UTC of 10 Nov = 05:30 IST on 10 Nov.
+    const diwali = {
+      price: { monthly: 399, quarterly: 1079, yearly: 3789 },
+      offers: [
+        { key: "discountYearly", value: 75 },
+        { key: "discountMonthly", value: 25 },
+      ],
+      founderOfferEndsAt: new Date("2026-11-10T00:00:00.000Z"),
+    };
+
+    it("keeps the offer price through the whole end day in India", () => {
+      const lastMinute = new Date("2026-11-10T18:29:00.000Z"); // 23:59 IST
+      expect(
+        computeSubscriptionPrice(diwali, "yearly", null, lastMinute).finalRupees,
+      ).toBe(947);
+    });
+
+    it("charges the standard price once the end day is over", () => {
+      const nextDay = new Date("2026-11-10T18:30:00.000Z"); // 00:00 IST 11 Nov
+      const p = computeSubscriptionPrice(diwali, "yearly", null, nextDay);
+      expect(p.finalRupees).toBe(3789);
+      expect(p.discountSource).toBe("none");
+      expect(computeSubscriptionPrice(diwali, "monthly", null, nextDay).finalRupees).toBe(399);
+    });
+
+    it("accepts coupons again after the offer ends", () => {
+      const nextDay = new Date("2026-11-11T06:00:00.000Z");
+      const p = computeSubscriptionPrice(diwali, "yearly", "TRENDSTARZ10", nextDay);
+      expect(p.finalRupees).toBe(3789 - Math.round(3789 * 0.1));
+    });
+
+    it("never expires when no end date is set", () => {
+      const p = computeSubscriptionPrice(
+        { ...diwali, founderOfferEndsAt: null },
+        "yearly",
+        null,
+        new Date("2030-01-01T00:00:00.000Z"),
+      );
+      expect(p.finalRupees).toBe(947);
+    });
   });
 
   it("rejects an unknown coupon", () => {

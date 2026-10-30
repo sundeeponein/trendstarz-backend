@@ -6,6 +6,7 @@ import {
 import { InjectModel } from "@nestjs/mongoose";
 import { Model, Types } from "mongoose";
 import { FREE_PLAN_DEFAULTS } from "../database/schemas/plan.schema";
+import { planOfferEndsAt, withEndedOffersRemoved } from "./plan-offer.util";
 
 @Injectable()
 export class PlansService {
@@ -149,8 +150,8 @@ export class PlansService {
       .lean();
     const registeredAt = (user as any)?.firstRegisteredAt || (user as any)?.createdAt;
     const windowDays = Number(plan?.founderOfferWindowDays ?? 7);
-    const endsAt = plan?.founderOfferEndsAt ? new Date(plan.founderOfferEndsAt) : null;
-    if (endsAt && Number.isFinite(endsAt.getTime()) && endsAt < new Date()) {
+    const endsAt = planOfferEndsAt(plan);
+    if (endsAt && endsAt < new Date()) {
       return false;
     }
     const audienceCap = Number(plan?.founderOfferAudienceCap || 0);
@@ -281,9 +282,20 @@ export class PlansService {
       .find(query)
       .sort({ sortOrder: 1 })
       .lean();
+    // Buyers see the plan as checkout will charge it: an offer past its end date
+    // reads as 0, and the end date is sent as 23:59 IST of that day so the
+    // popup and offer badges hide at the same moment the price goes back.
+    const now = new Date();
     return {
       success: true,
-      plans: await Promise.all(plans.map((plan: any) => this.withFounderOfferAudienceStats(plan))),
+      plans: await Promise.all(
+        plans.map(async (plan: any) => {
+          const shown = await this.withFounderOfferAudienceStats(
+            withEndedOffersRemoved(plan, now),
+          );
+          return { ...shown, founderOfferEndsAt: planOfferEndsAt(plan) };
+        }),
+      ),
     };
   }
 
