@@ -13,6 +13,8 @@ import {
   BadRequestException,
 } from "@nestjs/common";
 import { PlansService } from "./plans.service";
+import { OfferEmailService } from "./offer-email.service";
+import { Throttle } from "@nestjs/throttler";
 import { JwtAuthGuard } from "../auth/jwt-auth.guard";
 import { RolesGuard } from "../auth/roles.guard";
 
@@ -20,6 +22,7 @@ import { RolesGuard } from "../auth/roles.guard";
 export class PlansController {
   constructor(
     private readonly plansService: PlansService,
+    private readonly offerEmailService: OfferEmailService,
   ) {}
 
   // ── Admin endpoints ───────────────────────────────────────────────────────
@@ -61,6 +64,40 @@ export class PlansController {
     const result = await this.plansService.remove(id);
     await recordAdminAction(req, "delete_plan", { type: "plan", id }, { changes: settingsDiff(before, {}) });
     return result;
+  }
+
+  // ── Admin: email the running offer to free creators (sent only on Send) ──
+
+  /** POST /plans/admin/:id/offer-email/preview — recipients, counts and the rendered email */
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Post("admin/:id/offer-email/preview")
+  offerEmailPreview(@Param("id") id: string, @Body() body: any) {
+    return this.offerEmailService.preview(id, body?.kind, body?.benefits);
+  }
+
+  /** POST /plans/admin/:id/offer-email/test — one copy to the given address */
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Post("admin/:id/offer-email/test")
+  async offerEmailTest(@Param("id") id: string, @Body() body: any, @Req() req?: any) {
+    const result = await this.offerEmailService.sendTest(id, body?.kind, body?.to, body?.benefits);
+    await recordAdminAction(req, "offer_email_test", { type: "plan", id }, { kind: body?.kind, to: result.to });
+    return result;
+  }
+
+  /** POST /plans/admin/:id/offer-email/send — starts sending to free creators not yet sent this email */
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Post("admin/:id/offer-email/send")
+  async offerEmailSend(@Param("id") id: string, @Body() body: any, @Req() req?: any) {
+    const result = await this.offerEmailService.sendAll(id, body?.kind, body?.benefits, body?.limit);
+    await recordAdminAction(req, "offer_email_send", { type: "plan", id }, { kind: body?.kind, limit: result.limit });
+    return result;
+  }
+
+  /** POST /plans/offer-emails/unsubscribe — public "Stop offer emails" link (signed token) */
+  @Throttle({ default: { ttl: 60000, limit: 20 } })
+  @Post("offer-emails/unsubscribe")
+  offerEmailUnsubscribe(@Body() body: any) {
+    return this.offerEmailService.unsubscribe(body?.t);
   }
 
   /** GET /plans?userType=INFLUENCER|BRAND — active plans **/

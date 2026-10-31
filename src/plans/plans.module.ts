@@ -13,7 +13,9 @@ import {
   BrandSchema,
   PhotographerSchema,
 } from "../database/schemas/profile.schemas";
+import { AppSettingsSchema } from "../database/schemas/profile.schemas";
 import { CloudinaryService } from "../cloudinary.service";
+import { OfferEmailService } from "./offer-email.service";
 
 @Module({
   imports: [
@@ -37,10 +39,15 @@ import { CloudinaryService } from "../cloudinary.service";
         schema: PhotographerSchema,
         collection: "photographers",
       },
+      {
+        name: "AppSettings",
+        schema: AppSettingsSchema,
+        collection: "appsettings",
+      },
     ]),
   ],
   controllers: [PlansController, PlansConfigController],
-  providers: [PlansService, ImageCleanupService, CloudinaryService],
+  providers: [PlansService, ImageCleanupService, CloudinaryService, OfferEmailService],
   exports: [PlansService],
 })
 export class PlansModule {}

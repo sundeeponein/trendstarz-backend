@@ -251,6 +251,8 @@ export const InfluencerSchema = new Schema(
     lastOpenedAt: { type: Date, default: null },
     /** First-login Founder Launch Offer modal — set once shown so it never re-shows full-screen after dismissal. */
     founderOfferSeenAt: { type: Date, default: null },
+    // "Stop offer emails" link in Premium offer emails; account emails still go out.
+    offerEmailsOptOut: { type: Boolean, default: false },
     communityJoined: { type: Boolean, default: false },
     communityState: { type: String, default: "" },
     communityName: { type: String, default: "" },
@@ -674,6 +676,8 @@ export const BrandSchema = new Schema(
     lastOpenedAt: { type: Date, default: null },
     /** First-login Founder Launch Offer modal — set once shown so it never re-shows full-screen after dismissal. */
     founderOfferSeenAt: { type: Date, default: null },
+    // "Stop offer emails" link in Premium offer emails; account emails still go out.
+    offerEmailsOptOut: { type: Boolean, default: false },
     communityJoined: { type: Boolean, default: false },
     communityState: { type: String, default: "" },
     communityName: { type: String, default: "" },
@@ -893,6 +897,8 @@ export const PhotographerSchema = new Schema(
     lastOpenedAt: { type: Date, default: null },
     /** First-login Founder Launch Offer modal — set once shown so it never re-shows full-screen after dismissal. */
     founderOfferSeenAt: { type: Date, default: null },
+    // "Stop offer emails" link in Premium offer emails; account emails still go out.
+    offerEmailsOptOut: { type: Boolean, default: false },
     communityJoined: { type: Boolean, default: false },
     communityState: { type: String, default: "" },
     communityName: { type: String, default: "" },

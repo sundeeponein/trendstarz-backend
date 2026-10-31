@@ -97,6 +97,7 @@ export const SERVER_OWNED_PROFILE_FIELDS = [
   "lastLoginAt",
   "lastOpenedAt",
   "founderOfferSeenAt",
+  "offerEmailsOptOut",
   "profileTraffic",
   "reminderDay7SentAt",
   "reminderDay15SentAt",
