@@ -59,26 +59,40 @@ describe("offer email to free creators (real MongoDB)", () => {
       declined: free({ status: "declined" }),
       optedOut: free({ offerEmailsOptOut: true }),
       noEmail: free({ email: "" }),
+      paidByUpi: free(),
+      razorpayNotPaid: free(),
     };
     await db.conn.collection("influencers").insertMany(Object.values(people));
+    await db.conn.collection("payments").insertMany([
+      // Paid by UPI, waiting for admin approval: not asked to pay again.
+      { userId: people.paidByUpi._id, status: "pending", paymentMethod: "upi", purpose: "subscription" },
+      // Opened Razorpay but never paid: still gets the email.
+      { userId: people.razorpayNotPaid._id, status: "pending", paymentMethod: "razorpay", purpose: "subscription" },
+    ]);
 
     const before: any = await service.preview(String(planId), "launch");
     expect(before.canSend).toBe(true);
-    expect(before.recipients).toBe(3);
+    expect(before.recipients).toBe(5);
+    expect(before.awaitingApproval).toBe(1);
+    expect(before.notYetSent).toBe(4);
     expect(before.subject).toContain("₹947");
     expect(before.html).toContain("₹3,789");
 
     await service.sendAll(String(planId), "launch", ["More invites"], 250);
     const done = await waitForFinish("launch");
-    expect(done.progress.sent).toBe(3);
+    expect(done.progress.sent).toBe(4);
+    expect(done.notYetSent).toBe(0);
+    expect(done.alreadySent).toBe(4);
     const sentTo = (sendAppEmail as jest.Mock).mock.calls.map((c) => c[0].to).sort();
-    expect(sentTo).toEqual([people.freeAccepted, people.freePending, people.lapsedPremium].map((p) => p.email.toLowerCase()).sort());
+    expect(sentTo).toEqual([people.freeAccepted, people.freePending, people.lapsedPremium, people.razorpayNotPaid].map((p) => p.email.toLowerCase()).sort());
 
     // Pressing Send again sends nobody twice; the reminder is a separate email.
     (sendAppEmail as jest.Mock).mockClear();
     await service.sendAll(String(planId), "launch", [], 250);
     expect((await waitForFinish("launch")).progress.sent).toBe(0);
     expect(sendAppEmail).not.toHaveBeenCalled();
+    // One of them paid by Razorpay since: the reminder skips them, and still skips the UPI payer.
+    await db.conn.collection("influencers").updateOne({ _id: people.freeAccepted._id }, { $set: { isPremium: true, premiumEnd: new Date(now + 365 * day) } });
     expect((await service.preview(String(planId), "reminder")).notYetSent).toBe(3);
   });
 

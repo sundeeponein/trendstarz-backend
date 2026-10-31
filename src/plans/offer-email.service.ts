@@ -1,6 +1,6 @@
 import { BadRequestException, Injectable, NotFoundException } from "@nestjs/common";
 import { InjectModel } from "@nestjs/mongoose";
-import { Model } from "mongoose";
+import { Model, Types } from "mongoose";
 import { computeSubscriptionPrice } from "./subscription-price.util";
 import { isPlanOfferOver, planOfferEndsAt } from "./plan-offer.util";
 import {
@@ -25,6 +25,14 @@ export const OFFER_EMAIL_SENDS = "offer_email_sends";
 export const DEFAULT_SEND_LIMIT = 250;
 const PAUSE_MS = 150;
 
+// userId is an ObjectId on profiles and payments but a string in offer_email_sends.
+function asObjectIds(ids: unknown[]): Types.ObjectId[] {
+  return ids
+    .map((id) => String(id))
+    .filter((id) => Types.ObjectId.isValid(id))
+    .map((id) => new Types.ObjectId(id));
+}
+
 const ROLE_BY_TYPE: Record<string, OfferRole> = {
   INFLUENCER: "influencer",
   BRAND: "brand",
@@ -37,6 +45,8 @@ export interface SendProgress {
   sent: number;
   failed: number;
   skippedBlocked: number;
+  // Became Premium or paid by UPI (awaiting approval) during the send.
+  skippedPaid: number;
   stoppedReason: string;
 }
 
@@ -125,15 +135,39 @@ export class OfferEmailService {
     });
   }
 
+  /**
+   * Free creators who already paid by manual UPI/QR and are waiting for admin
+   * approval — they stay non-Premium until approved, but must not be asked to pay
+   * again. Unpaid Razorpay checkouts don't count (nothing was paid).
+   */
+  private async awaitingApprovalIds(): Promise<Types.ObjectId[]> {
+    const ids = await this.planModel.db.collection("payments").distinct("userId", {
+      status: "pending",
+      paymentMethod: { $ne: "razorpay" },
+      $or: [{ purpose: "subscription" }, { purpose: { $exists: false } }],
+    });
+    return asObjectIds(ids);
+  }
+
+  /** Already sent this exact email (or being sent right now). */
+  private async alreadySentIds(offerKey: string, onlySent = false): Promise<Types.ObjectId[]> {
+    const ids = await this.sends().distinct("userId", onlySent ? { offerKey, status: "sent" } : { offerKey });
+    return asObjectIds(ids);
+  }
+
   async preview(planId: string, kindInput: unknown, benefitsInput?: unknown) {
     const kind = this.parseKind(kindInput);
     const ctx = await this.context(planId, kind);
     const model = this.modelFor(ctx.role);
-    const sentIds = await this.sends().distinct("userId", { offerKey: ctx.offerKey, status: "sent" });
+    const [sentIds, awaitingIds] = await Promise.all([
+      this.alreadySentIds(ctx.offerKey, true),
+      this.awaitingApprovalIds(),
+    ]);
     const recipients = await model.countDocuments(offerAudienceFilter());
+    const awaitingApproval = await model.countDocuments({ ...offerAudienceFilter(), _id: { $in: awaitingIds } });
     const notYetSent = await model.countDocuments({
       ...offerAudienceFilter(),
-      _id: { $nin: sentIds },
+      _id: { $nin: [...sentIds, ...awaitingIds] },
     });
     const benefits = benefitsInput === undefined ? ctx.defaultBenefits : cleanBenefits(benefitsInput);
     const sample = this.render(ctx, { _id: "000000000000000000000000", name: "Creator" }, benefits);
@@ -145,6 +179,7 @@ export class OfferEmailService {
       blockedReason: ctx.blockedReason,
       recipients,
       alreadySent: sentIds.length,
+      awaitingApproval,
       notYetSent,
       defaultBenefits: ctx.defaultBenefits,
       benefits,
@@ -176,7 +211,7 @@ export class OfferEmailService {
     const limit = Math.min(Math.max(Math.floor(Number(limitInput) || DEFAULT_SEND_LIMIT), 1), 2000);
     const benefits = cleanBenefits(benefitsInput);
 
-    const progress: SendProgress = { startedAt: new Date(), finishedAt: null, sent: 0, failed: 0, skippedBlocked: 0, stoppedReason: "" };
+    const progress: SendProgress = { startedAt: new Date(), finishedAt: null, sent: 0, failed: 0, skippedBlocked: 0, skippedPaid: 0, stoppedReason: "" };
     this.running.set(ctx.offerKey, progress);
     void this.runSend(ctx, benefits, limit, progress).catch((err) => {
       progress.stoppedReason = String(err?.message || err).slice(0, 200);
@@ -194,9 +229,12 @@ export class OfferEmailService {
     const sends = this.sends();
     await this.indexReady;
     const model = this.modelFor(ctx.role);
-    const sentIds = await sends.distinct("userId", { offerKey: ctx.offerKey });
+    const [sentIds, awaitingIds] = await Promise.all([
+      this.alreadySentIds(ctx.offerKey),
+      this.awaitingApprovalIds(),
+    ]);
     const people = await model
-      .find({ ...offerAudienceFilter(), _id: { $nin: sentIds } })
+      .find({ ...offerAudienceFilter(), _id: { $nin: [...sentIds, ...awaitingIds] } })
       .select("_id name email")
       .sort({ lastLoginAt: -1, _id: 1 })
       .lean();
@@ -226,6 +264,16 @@ export class OfferEmailService {
       const email = String(person.email || "").trim().toLowerCase();
       if (blocked.has(email)) {
         progress.skippedBlocked++;
+        continue;
+      }
+      // They may have paid (Razorpay) or sent a UPI payment since the list was built.
+      const stillFree = await model.exists({ ...offerAudienceFilter(), _id: person._id });
+      const paidPending = await this.planModel.db.collection("payments").findOne(
+        { userId: { $in: [person._id, String(person._id)] }, status: "pending", paymentMethod: { $ne: "razorpay" } },
+        { projection: { _id: 1 } },
+      );
+      if (!stillFree || paidPending) {
+        progress.skippedPaid++;
         continue;
       }
       const userId = String(person._id);
