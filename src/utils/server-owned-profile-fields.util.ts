@@ -37,6 +37,8 @@ export const SERVER_OWNED_PROFILE_FIELDS = [
   "emailVerifiedAt",
   "emailVerificationSentAt",
   "emailVerificationWhatsappReminderSentAt",
+  "welcomeWhatsappSentAt",
+  "mobileReminderWhatsappSentAt",
   "previousVerifiedEmail",
   "mobileVerified",
   "mobileVerifiedAt",

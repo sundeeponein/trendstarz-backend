@@ -2,10 +2,13 @@ import {
   Injectable,
   NotFoundException,
   BadRequestException,
+  Optional,
 } from "@nestjs/common";
 import { InjectModel } from "@nestjs/mongoose";
 import { Model, Types } from "mongoose";
 import { FREE_PLAN_DEFAULTS } from "../database/schemas/plan.schema";
+import { WhatsAppService } from "../whatsapp/whatsapp.service";
+import { whatsAppDate } from "../whatsapp/whatsapp-templates";
 import { planOfferEndsAt, withEndedOffersRemoved } from "./plan-offer.util";
 
 @Injectable()
@@ -16,6 +19,7 @@ export class PlansService {
     @InjectModel("Influencer") private readonly influencerModel: Model<any>,
     @InjectModel("Brand") private readonly brandModel: Model<any>,
     @InjectModel("Photographer") private readonly photographerModel: Model<any>,
+    @Optional() private readonly whatsAppService?: WhatsAppService,
   ) {}
 
   private normalizeUserType(
@@ -124,6 +128,35 @@ export class PlansService {
     const photographer = await this.photographerModel.exists({ _id: objectId });
     if (photographer) return "PHOTOGRAPHER";
     return "INFLUENCER";
+  }
+
+  /**
+   * WhatsApp "Premium activated" — call after Premium is fully on (payment
+   * approved, Razorpay confirmed or admin grant). Best-effort, never throws.
+   */
+  async notifyPremiumActivated(userId: string, userType: string): Promise<void> {
+    try {
+      if (!this.whatsAppService) return;
+      const type = this.normalizeUserType(userType);
+      const user: any = await this.modelForUserType(type)
+        .findById(userId)
+        .select("name brandName contactPersonName phoneNumber isMobileVerified premiumEnd")
+        .lean();
+      if (!user) return;
+      const base = (process.env.FRONTEND_URL || "https://trendstarz.in").replace(/\/+$/, "");
+      const dashboard = type === "BRAND" ? "/brand-dashboard" : type === "PHOTOGRAPHER" ? "/photographer-dashboard" : "/influencer-dashboard";
+      await this.whatsAppService.sendToUser(String(userId), user.phoneNumber, user.isMobileVerified, {
+        name: "premium_activated",
+        bodyParams: [
+          user.name || user.contactPersonName || user.brandName || "there",
+          type === "INFLUENCER" ? "Premium Creator Membership" : "Premium membership",
+          whatsAppDate(user.premiumEnd),
+          `${base}${dashboard}`,
+        ],
+      });
+    } catch {
+      // non-critical
+    }
   }
 
   private modelForUserType(

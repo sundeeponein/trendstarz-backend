@@ -2,6 +2,7 @@ import { Injectable, Logger } from "@nestjs/common";
 import { InjectModel } from "@nestjs/mongoose";
 import { Model } from "mongoose";
 import { sendWhatsAppTemplateMessage } from "../utils/whatsapp-cloud-api.util";
+import { isWhatsAppTemplateEnabled, whatsAppParam } from "./whatsapp-templates";
 
 export type WhatsAppTemplateName =
   | "campaign_approved_owner"
@@ -13,7 +14,15 @@ export type WhatsAppTemplateName =
   | "email_verification_reminder"
   | "profile_photo_not_verified"
   | "mobile_otp_verification_reminder"
-  | "mobile_verification_call_reminder";
+  | "mobile_verification_call_reminder"
+  // Added for account, Premium and campaign-money events (whatsapp-templates.ts).
+  | "welcome_user"
+  | "premium_activated"
+  | "campaign_payment_received_host"
+  | "campaign_start_posting"
+  | "campaign_post_approved"
+  | "campaign_changes_requested"
+  | "campaign_submission_under_review";
 
 @Injectable()
 export class WhatsAppService {
@@ -35,8 +44,11 @@ export class WhatsAppService {
   private async deliver(
     userId: string,
     phoneNumber: string,
-    template: { name: WhatsAppTemplateName; bodyParams: string[] },
+    template: { name: WhatsAppTemplateName; bodyParams: string[]; newUse?: boolean },
   ): Promise<{ sent: boolean; reason?: string }> {
+    if (!isWhatsAppTemplateEnabled(template.name, { newUse: template.newUse })) {
+      return { sent: false, reason: `Template "${template.name}" is not switched on (WHATSAPP_TEMPLATES)` };
+    }
     const allowed = await this.isAllowed(userId);
     if (!allowed) {
       return { sent: false, reason: "User opted out of WhatsApp notifications" };
@@ -45,7 +57,7 @@ export class WhatsAppService {
       const result = await sendWhatsAppTemplateMessage({
         to: phoneNumber,
         templateName: template.name,
-        bodyParams: template.bodyParams,
+        bodyParams: template.bodyParams.map((p) => whatsAppParam(p)),
       });
       if ((result as any)?.skipped) {
         return { sent: false, reason: (result as any).reason };
@@ -85,7 +97,7 @@ export class WhatsAppService {
   async sendVerificationNudge(
     userId: string,
     phoneNumber: string | undefined | null,
-    template: { name: WhatsAppTemplateName; bodyParams: string[] },
+    template: { name: WhatsAppTemplateName; bodyParams: string[]; newUse?: boolean },
   ): Promise<{ sent: boolean; reason?: string }> {
     if (!phoneNumber) {
       return { sent: false, reason: "No phone number on file" };

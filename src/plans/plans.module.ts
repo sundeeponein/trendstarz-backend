@@ -16,11 +16,13 @@ import {
 import { AppSettingsSchema } from "../database/schemas/profile.schemas";
 import { CloudinaryService } from "../cloudinary.service";
 import { OfferEmailService } from "./offer-email.service";
+import { WhatsAppModule } from "../whatsapp/whatsapp.module";
 
 @Module({
   imports: [
     // The scheduler is registered once, in AppModule. Registering it here as
     // well made EVERY @Cron job in the app run twice.
+    WhatsAppModule,
     MongooseModule.forFeature([
       { name: "Plan", schema: PlanSchema, collection: "plans" },
       {

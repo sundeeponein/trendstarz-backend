@@ -83,6 +83,7 @@ describe("PaymentService", () => {
         .fn()
         .mockResolvedValue({ _id: "plan1", name: "Pro" }),
       activateSubscription: jest.fn().mockResolvedValue({ _id: "sub1" }),
+      notifyPremiumActivated: jest.fn().mockResolvedValue(undefined),
     };
 
     const module: TestingModule = await Test.createTestingModule({

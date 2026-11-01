@@ -85,6 +85,7 @@ import {
 } from "../campaigns/barter-limits.util";
 import { normalizeUtr, utrMatchValues } from "../utils/utr.util";
 import { SingleInstance } from "../utils/single-instance";
+import { WhatsAppService } from "../whatsapp/whatsapp.service";
 import {
   PREMIUM_RATE_FIELDS,
   applyCommissionOverride,
@@ -178,6 +179,7 @@ export class PaymentsPayoutsService {
     // Optional so unit tests can build the service without a database; without
     // it, inTransaction() runs the same writes non-atomically.
     @Optional() @InjectConnection() private readonly connection?: Connection,
+    @Optional() private readonly whatsAppService?: WhatsAppService,
   ) {}
 
   /**
@@ -2120,6 +2122,57 @@ export class PaymentsPayoutsService {
 
   // Best-effort: if this brand originally joined through a referral tracking link,
   // record that they've now converted to a paying campaign customer. Never blocks payment.
+  /**
+   * WhatsApp when TrendStarz confirms a host's campaign payment: "payment
+   * received" to the host and "start posting" to the creator. Best-effort.
+   */
+  private async notifyCampaignPaymentWhatsApp(
+    tx: any,
+    recipientId: string | null,
+    recipientRole: "influencer" | "photographer",
+    campaignId: string | null,
+  ): Promise<void> {
+    if (!this.whatsAppService) return;
+    try {
+      const base = (process.env.FRONTEND_URL || "https://trendstarz.in").replace(/\/+$/, "");
+      const payerRole = String(tx?.payerRole || "brand").toLowerCase();
+      const payerModel =
+        payerRole === "influencer" ? this.influencerModel : payerRole === "photographer" ? this.photographerModel : this.brandModel;
+      const [campaign, creator, host]: any[] = await Promise.all([
+        campaignId ? this.campaignModel.findById(campaignId).select("title").lean() : null,
+        recipientId
+          ? (recipientRole === "photographer" ? this.photographerModel : this.influencerModel)
+              .findById(recipientId)
+              .select("name username phoneNumber isMobileVerified")
+              .lean()
+          : null,
+        tx?.payerId
+          ? payerModel.findById(tx.payerId).select("name brandName contactPersonName phoneNumber isMobileVerified").lean()
+          : null,
+      ]);
+      const title = campaign?.title || "your campaign";
+      const creatorName = creator?.name || creator?.username || "The creator";
+      if (host) {
+        await this.whatsAppService.sendToUser(String(tx.payerId), host.phoneNumber, host.isMobileVerified, {
+          name: "campaign_payment_received_host",
+          bodyParams: [host.brandName || host.name || host.contactPersonName || "there", title, creatorName, `${base}/campaigns`],
+        });
+      }
+      if (creator) {
+        await this.whatsAppService.sendToUser(String(recipientId), creator.phoneNumber, creator.isMobileVerified, {
+          name: "campaign_start_posting",
+          bodyParams: [
+            creatorName,
+            title,
+            `${base}${recipientRole === "photographer" ? "/photographer-dashboard" : "/influencer-dashboard"}`,
+          ],
+        });
+      }
+    } catch {
+      // non-critical
+    }
+  }
+
   private async recordCampaignPaymentConversion(payerId: string, amount: number, campaignTransactionId: any): Promise<void> {
     try {
       const signup: any = await this.linkConversionModel
@@ -2302,6 +2355,13 @@ export class PaymentsPayoutsService {
     const paymentConfirmedCampaignId: string | null = confirmed
       ? String(confirmed.campaignId || "")
       : null;
+
+    void this.notifyCampaignPaymentWhatsApp(
+      tx,
+      paymentConfirmedRecipientId,
+      paymentConfirmedRecipientRole,
+      paymentConfirmedCampaignId,
+    );
 
     // Notify recipient as soon as payment is confirmed so they can start posting.
     if (paymentConfirmedRecipientId) {

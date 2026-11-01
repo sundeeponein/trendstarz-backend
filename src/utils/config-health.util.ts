@@ -5,6 +5,7 @@ import Razorpay from "razorpay";
 import { v2 as cloudinary } from "cloudinary";
 import type { Connection } from "mongoose";
 import { cloudinaryUploadTest } from "./cloudinary-upload-test";
+import { NEW_WHATSAPP_TEMPLATES, enabledWhatsAppTemplates } from "../whatsapp/whatsapp-templates";
 
 export type ConfigStatus = "working" | "missing" | "failing" | "off";
 
@@ -56,6 +57,42 @@ async function check(
     return { service, status: "working", detail: "Live test passed" };
   } catch (err) {
     return { service, status: "failing", detail: `Set, but the live test failed: ${reason(err)}` };
+  }
+}
+
+/**
+ * Which WhatsApp templates are switched on (WHATSAPP_TEMPLATES) and, when
+ * WHATSAPP_BUSINESS_ACCOUNT_ID is set, whether Meta has approved each of them.
+ */
+async function whatsAppTemplatesCheck(): Promise<ConfigCheck> {
+  const service = "WhatsApp templates";
+  const enabled = enabledWhatsAppTemplates();
+  if (!enabled) {
+    return { service, status: "off", detail: "WHATSAPP_TEMPLATES not set — new WhatsApp messages are off (optional)" };
+  }
+  const names = enabled === "all" ? NEW_WHATSAPP_TEMPLATES.map((t) => t.name) : [...enabled];
+  const listed = enabled === "all" ? "all" : names.join(", ");
+  const waba = String(process.env.WHATSAPP_BUSINESS_ACCOUNT_ID || "").trim();
+  if (!waba || !process.env.WHATSAPP_CLOUD_API_TOKEN) {
+    return { service, status: "working", detail: `On: ${listed} (set WHATSAPP_BUSINESS_ACCOUNT_ID to check Meta approval)` };
+  }
+  try {
+    const res: any = await withTimeout(
+      axios.get(`https://graph.facebook.com/${process.env.WHATSAPP_API_VERSION || "v21.0"}/${waba}/message_templates`, {
+        params: { fields: "name,status", limit: 200 },
+        headers: { Authorization: `Bearer ${process.env.WHATSAPP_CLOUD_API_TOKEN}` },
+        timeout: TIMEOUT_MS,
+      }),
+    );
+    const approved = new Set(
+      (res?.data?.data || []).filter((t: any) => t?.status === "APPROVED").map((t: any) => String(t.name)),
+    );
+    const notApproved = names.filter((n) => !approved.has(n));
+    return notApproved.length
+      ? { service, status: "failing", detail: `Switched on but not approved by Meta: ${notApproved.join(", ")}` }
+      : { service, status: "working", detail: `On and approved: ${listed}` };
+  } catch (err) {
+    return { service, status: "failing", detail: `Could not read templates from Meta: ${reason(err)}` };
   }
 }
 
@@ -134,6 +171,17 @@ export async function runConfigChecks(connection?: Connection | null): Promise<C
       if (!key.includes("BEGIN PRIVATE KEY")) throw new Error("FIREBASE_PRIVATE_KEY is not a private key");
     }),
     check("Push notifications (VAPID)", ["VAPID_PUBLIC_KEY", "VAPID_PRIVATE_KEY"], undefined, true),
+    check("WhatsApp Cloud API", ["WHATSAPP_CLOUD_API_TOKEN", "WHATSAPP_PHONE_NUMBER_ID"], () =>
+      axios.get(
+        `https://graph.facebook.com/${process.env.WHATSAPP_API_VERSION || "v21.0"}/${process.env.WHATSAPP_PHONE_NUMBER_ID}`,
+        {
+          params: { fields: "display_phone_number" },
+          headers: { Authorization: `Bearer ${process.env.WHATSAPP_CLOUD_API_TOKEN}` },
+          timeout: TIMEOUT_MS,
+        },
+      ),
+    true),
+    whatsAppTemplatesCheck(),
     check("Frontend link (FRONTEND_URL)", ["FRONTEND_URL"]),
   ]);
 }

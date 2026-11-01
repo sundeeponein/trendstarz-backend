@@ -439,6 +439,7 @@ export class MonetizationService {
       // gating — with the subscription's exact end date (bonus months included).
       await this.paymentService.confirmUpgrade(userId, premiumDuration, subscriptionEnd);
       await this.recordPremiumConversion(userId, paymentAmountPaise(payment), payment._id);
+      void this.plansService.notifyPremiumActivated(userId, normalizedUserType);
     }
 
     return { success: true, paymentId: input.paymentId };

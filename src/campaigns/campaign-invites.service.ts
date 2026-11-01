@@ -697,6 +697,37 @@ export class CampaignInvitesService {
     );
   }
 
+  /**
+   * WhatsApp to the creator after the host reviews their post: approved,
+   * changes requested (12h to resubmit), or sent to TrendStarz review.
+   * Best-effort; each template is off until listed in WHATSAPP_TEMPLATES.
+   */
+  private async notifySubmissionReviewWhatsApp(
+    invite: any,
+    campaignTitle: string,
+    outcome: "approved" | "changes_requested" | "under_review",
+    reason = "",
+  ): Promise<void> {
+    try {
+      const role = this.normalizeRecipientRole(invite.recipientRole);
+      const creator: any = await this.loadRecipientProfile(role, String(invite.influencerId));
+      if (!creator) return;
+      const base = (process.env.FRONTEND_URL || "https://trendstarz.in").replace(/\/+$/, "");
+      const link = `${base}${role === "photographer" ? "/photographer-dashboard" : "/influencer-dashboard"}?invite=${String(invite._id)}`;
+      const name = creator.name || creator.username || "there";
+      const title = campaignTitle || "the campaign";
+      const template =
+        outcome === "approved"
+          ? { name: "campaign_post_approved" as const, bodyParams: [name, title, link] }
+          : outcome === "changes_requested"
+            ? { name: "campaign_changes_requested" as const, bodyParams: [name, title, reason || "See details in your dashboard", link] }
+            : { name: "campaign_submission_under_review" as const, bodyParams: [name, title, link] };
+      await this.whatsAppService.sendToUser(String(invite.influencerId), creator.phoneNumber, creator.isMobileVerified, template);
+    } catch {
+      // non-critical
+    }
+  }
+
   private async loadRecipientProfile(
     role: "influencer" | "photographer",
     recipientId: string,
@@ -4768,6 +4799,7 @@ export class CampaignInvitesService {
       } catch (e) {
         console.error("Failed to send approval notification:", e);
       }
+      void this.notifySubmissionReviewWhatsApp(invite, campaign.title, "approved");
     } else {
       // Only one resubmission is allowed (see submitPost). A second dispute after that
       // resubmission is a "final rejection" — auto-escalate straight to admin instead of
@@ -4893,6 +4925,12 @@ export class CampaignInvitesService {
         .catch(() => {
           /* non-critical */
         });
+      void this.notifySubmissionReviewWhatsApp(
+        invite,
+        campaign.title,
+        isFinalRejection ? "under_review" : "changes_requested",
+        issueReason,
+      );
     }
 
     return { success: true, submission };

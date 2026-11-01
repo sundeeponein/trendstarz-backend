@@ -285,7 +285,10 @@ export interface HostEventFields {
 /**
  * campaign_invite_accepted_owner template body (4 params — owner name,
  * recipient name, campaign title, campaign URL):
- *   Hi {{1}}, {{2}} accepted your invite for "{{3}}". View it here: {{4}}
+ *   Hi {{1}}, {{2}} accepted your invite for "{{3}}".
+ *
+ *   Next step: confirm the collaboration (complete the payment if it is a paid
+ *   campaign) so they can start: {{4}}
  */
 export function inviteAcceptedOwnerTemplateParams(
   fields: HostEventFields,

@@ -3448,6 +3448,7 @@ export class UsersService implements OnModuleInit {
           "Could not grant premium. Please ensure an active Pro plan exists.",
         );
       }
+      void this.plansService.notifyPremiumActivated(String(user._id), userType);
       // Optionally: log somewhere that this was admin-given
     }
     if (user) return { message: "Premium status updated", user };

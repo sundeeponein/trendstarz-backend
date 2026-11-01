@@ -256,6 +256,7 @@ export class PaymentService {
     }
     await this.confirmUpgrade(payment.userId, payment.premiumDuration, subscriptionEnd);
     await this.recordPremiumConversion(String(payment.userId), paymentAmountPaise(payment), payment._id);
+    void this.plansService.notifyPremiumActivated(String(payment.userId), payment.userType);
 
     const normalizedUserType = String(payment.userType).toLowerCase();
     const userRole = normalizedUserType === "brand"

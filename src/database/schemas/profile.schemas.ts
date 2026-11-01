@@ -54,6 +54,11 @@ const ProfileVerificationFields = {
   // WhatsApp nudge for the *current* emailVerificationSentAt, so it only
   // ever fires once per verification email.
   emailVerificationWhatsappReminderSentAt: { type: Date, default: null },
+  // One-time automatic WhatsApp messages (whatsapp-lifecycle.service.ts): set
+  // only once actually delivered, so turning WhatsApp on later still reaches
+  // accounts created in the last couple of days.
+  welcomeWhatsappSentAt: { type: Date, default: null },
+  mobileReminderWhatsappSentAt: { type: Date, default: null },
   // Snapshot of the last email that was actually verified, kept when the user
   // changes their email so admins can see what changed (fraud/support signal).
   previousVerifiedEmail: { type: String, default: "" },

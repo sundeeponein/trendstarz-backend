@@ -17,10 +17,12 @@ import { PushModule } from "../push/push.module";
 import { NotificationsModule } from "../notifications/notifications.module";
 import { RazorpayService } from "../payment/razorpay.service";
 import { PlatformEventsModule } from "../platform-events/platform-events.module";
+import { WhatsAppModule } from "../whatsapp/whatsapp.module";
 
 @Module({
   imports: [
     PlatformEventsModule,
+    WhatsAppModule,
     MongooseModule.forFeature([
       { name: "Campaign", schema: CampaignSchema, collection: "campaigns" },
       {
