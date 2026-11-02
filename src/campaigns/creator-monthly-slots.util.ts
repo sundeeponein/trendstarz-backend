@@ -38,15 +38,23 @@ const LEGACY_NO_SHOW_REASONS = [
 ];
 
 /**
+ * True for any closed no-show (accepted, never posted / missed the visit),
+ * excused or not — the creator still didn't post. Used by collaboration records.
+ */
+export function isNoShowClosure(invite: any): boolean {
+  if (String(invite?.status || "") !== "withdrawn") return false;
+  const code = invite?.withdrawnReasonCode;
+  if (code) return NO_SHOW_REASON_CODES.includes(String(code));
+  return LEGACY_NO_SHOW_REASONS.includes(String(invite?.withdrawnReason || ""));
+}
+
+/**
  * True for a closed no-show that still holds the creator's slot — the same rule
  * as the withdrawn branch of slotHoldingInviteMatch below. An admin can excuse it.
  */
 export function isUnexcusedNoShow(invite: any): boolean {
-  if (String(invite?.status || "") !== "withdrawn") return false;
   if (invite?.missExcused?.at) return false;
-  const code = invite?.withdrawnReasonCode;
-  if (code) return NO_SHOW_REASON_CODES.includes(String(code));
-  return LEGACY_NO_SHOW_REASONS.includes(String(invite?.withdrawnReason || ""));
+  return isNoShowClosure(invite);
 }
 
 /** Mongo match for invites that hold a creator's monthly slot right now. */

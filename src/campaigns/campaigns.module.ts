@@ -1,3 +1,5 @@
+import { CollaborationRecordService } from "./collaboration-record.service";
+import { CollaborationRecordController } from "./collaboration-record.controller";
 import { Module } from "@nestjs/common";
 import { MongooseModule } from "@nestjs/mongoose";
 import {
@@ -121,6 +123,7 @@ import { PlatformEventsModule } from "../platform-events/platform-events.module"
     CampaignCorrectionsController,
     AnalyticsEventsController,
     TrackingLinksController,
+    CollaborationRecordController,
   ],
   providers: [
     CampaignsService,
@@ -129,6 +132,7 @@ import { PlatformEventsModule } from "../platform-events/platform-events.module"
     AnalyticsEventsService,
     TrackingLinksService,
     CloudinaryService,
+    CollaborationRecordService,
   ],
   exports: [CampaignsService, CampaignInvitesService],
 })
