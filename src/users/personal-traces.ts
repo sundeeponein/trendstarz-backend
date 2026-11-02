@@ -23,6 +23,8 @@ export const PERSONAL_TRACES: Array<[collection: string, field: string, idType: 
   // people's statistics).
   ["profile_traffic_daily", "profileId", "string"],
   ["social_profile_clicks", "targetUserId", "objectId"],
+  // When they opened invites / their campaigns (admin follow-up).
+  ["invite_views", "userId", "string"],
   // Which Premium offer emails they were sent.
   ["offer_email_sends", "userId", "string"],
 ];

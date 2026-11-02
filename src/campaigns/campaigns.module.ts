@@ -1,3 +1,5 @@
+import { InviteViewsService } from "./invite-views.service";
+import { InviteViewsController } from "./invite-views.controller";
 import { CollaborationRecordService } from "./collaboration-record.service";
 import { CollaborationRecordController } from "./collaboration-record.controller";
 import { Module } from "@nestjs/common";
@@ -124,6 +126,7 @@ import { PlatformEventsModule } from "../platform-events/platform-events.module"
     AnalyticsEventsController,
     TrackingLinksController,
     CollaborationRecordController,
+    InviteViewsController,
   ],
   providers: [
     CampaignsService,
@@ -133,6 +136,7 @@ import { PlatformEventsModule } from "../platform-events/platform-events.module"
     TrackingLinksService,
     CloudinaryService,
     CollaborationRecordService,
+    InviteViewsService,
   ],
   exports: [CampaignsService, CampaignInvitesService],
 })

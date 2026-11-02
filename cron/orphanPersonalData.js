@@ -32,6 +32,8 @@ const PERSONAL_TRACES = [
   ['social_account_reviews', 'profileId', 'string'],
   ['profile_traffic_daily', 'profileId', 'string'],
   ['social_profile_clicks', 'targetUserId', 'objectId'],
+  // When they opened invites / their campaigns (admin follow-up).
+  ['invite_views', 'userId', 'string'],
   // Which Premium offer emails they were sent.
   ['offer_email_sends', 'userId', 'string'],
 ];
