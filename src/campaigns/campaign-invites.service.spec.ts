@@ -538,12 +538,12 @@ describe("CampaignInvitesService – create() gating", () => {
     ).resolves.toBeDefined();
   });
 
-  it("collaborations keep their own wording", async () => {
+  it("creator campaigns use the same wording", async () => {
     mockCampaignLean({ status: "completed", ownerType: "photographer" });
     await expect(
       service.create("brand1", { campaignId: "camp1", influencerId: "inf1" }),
     ).rejects.toThrow(
-      "Invites can only be sent for active or pending-review collaborations.",
+      "Invites can only be sent for active or pending-review campaigns.",
     );
   });
 

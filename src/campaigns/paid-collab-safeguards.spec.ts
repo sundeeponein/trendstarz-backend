@@ -403,7 +403,7 @@ describe("Paid-collaboration safeguards (CampaignInvitesService)", () => {
           "creator1",
           "Host asked me to skip the post and take cash",
         ),
-      ).rejects.toThrow("paid collaboration");
+      ).rejects.toThrow("paid campaign");
     });
 
     it("admin must write what was decided before resolving it", async () => {
@@ -843,7 +843,7 @@ describe("Paid-collaboration safeguards (CampaignInvitesService)", () => {
       await build([working({ status: "pending" })], [], [], [], product);
       await expect(
         service.updateProductFulfillment(INVITE, "host1", { trackingId: "AWB1" }),
-      ).rejects.toThrow("accepted collaboration");
+      ).rejects.toThrow("accepted campaign");
     });
 
     it("refuses invalid and future dates, and delivery before shipping", async () => {

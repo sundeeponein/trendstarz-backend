@@ -400,7 +400,7 @@ async function invitePaymentAgree(
   return explainableCheck(
     "invite_payment_agree",
     "Invites and their payments agree",
-    "An invite and its payment row disagree about where the collaboration is. Check the collaboration in Payments; if the record is right as it stands, mark it as explained.",
+    "An invite and its payment row disagree about where the campaign is. Check the campaign in Payments; if the record is right as it stands, mark it as explained.",
     found,
     explained,
   );
@@ -778,7 +778,7 @@ async function collectedMoneySettles(db: Db, explained: ExplainedSet): Promise<I
   return explainableCheck(
     "collected_money_settles",
     "Every collected payment is paid out or refunded",
-    "The host paid, but the collaboration can no longer pay the creator and no refund was started. Decide it in Disputes (Resolve as completed / withdrawn) or refund it in Payments; ₹1 test payments can be marked as explained.",
+    "The host paid, but the campaign can no longer pay the creator and no refund was started. Decide it in Disputes (Resolve as completed / withdrawn) or refund it in Payments; ₹1 test payments can be marked as explained.",
     found,
     explained,
   );
@@ -925,7 +925,7 @@ async function payoutsOverdue(db: Db, explained: ExplainedSet, now = new Date())
   return explainableCheck(
     "payouts_overdue",
     `Creator payouts are paid within ${MONEY_OVERDUE_DAYS} days`,
-    "These collaborations are complete but the creator hasn't been paid. Pay them in Payments → Payout pending and press Mark paid with the UTR.",
+    "These campaigns are complete but the creator hasn't been paid. Pay them in Payments → Payout pending and press Mark paid with the UTR.",
     found,
     explained,
   );

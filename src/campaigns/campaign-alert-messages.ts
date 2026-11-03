@@ -156,7 +156,7 @@ export function computeCampaignAlertFields(
 
 export function renderOpenCampaignMessage(fields: CampaignAlertFields): string {
   return [
-    "🎉 New Collaboration Opportunity on TrendStarz",
+    "🎉 New Campaign Opportunity on TrendStarz",
     "",
     `📢 Campaign: ${fields.campaignTitle}`,
     "",
@@ -183,7 +183,7 @@ export function renderOpenCampaignMessage(fields: CampaignAlertFields): string {
 
 export function renderInviteOnlyMessage(fields: CampaignAlertFields): string {
   return [
-    "🎉 You've received a new collaboration invitation on TrendStarz",
+    "🎉 You've received a new campaign invitation on TrendStarz",
     "",
     `📢 Campaign: ${fields.campaignTitle}`,
     "",
@@ -212,7 +212,7 @@ export function renderPostingReminderMessage(fields: CampaignAlertFields): strin
     "",
     "Hi,",
     "",
-    "Your collaboration is scheduled to begin.",
+    "Your campaign is scheduled to begin.",
     "",
     `Campaign: ${fields.campaignTitle}`,
     `📆 Posting Window: ${fields.postingWindowStartLabel} – ${fields.postingWindowEndLabel}`,
@@ -287,7 +287,7 @@ export interface HostEventFields {
  * recipient name, campaign title, campaign URL):
  *   Hi {{1}}, {{2}} accepted your invite for "{{3}}".
  *
- *   Next step: confirm the collaboration (complete the payment if it is a paid
+ *   Next step: confirm the creator (complete the payment if it is a paid
  *   campaign) so they can start: {{4}}
  */
 export function inviteAcceptedOwnerTemplateParams(
@@ -347,7 +347,7 @@ export function renderPostSubmittedOwnerMessage(
 /** Full copy-paste text for the same event — shown to admin once payment is confirmed, addressed to the creator. */
 export function renderStartWorkMessage(fields: HostEventFields): string {
   return [
-    `🎉 Hi ${fields.recipientName}, your collaboration has been confirmed by the host.`,
+    `🎉 Hi ${fields.recipientName}, your campaign has been confirmed by the host.`,
     "",
     `You can now start working on "${fields.campaignTitle}". Please check the campaign details and requirements in TrendStarz.`,
     "",

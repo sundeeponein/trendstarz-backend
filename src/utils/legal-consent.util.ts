@@ -5,7 +5,7 @@ import { BadRequestException } from "@nestjs/common";
  * date shown on /terms-and-conditions and /privacy-policy. Change these when
  * those pages change, so each account shows exactly what it accepted.
  */
-export const LEGAL_VERSIONS = { terms: "2026-02-24", privacy: "2026-02-24" } as const;
+export const LEGAL_VERSIONS = { terms: "2026-11-03", privacy: "2026-11-03" } as const;
 
 /**
  * Sign-up must carry an explicit "I agree" (DPDP: consent is a clear action),

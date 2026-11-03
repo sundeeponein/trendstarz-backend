@@ -2294,7 +2294,7 @@ export class PaymentsPayoutsService {
               tx.inviteId,
               now,
               { byRole: "system" },
-              "The collaboration was closed before this payment arrived — refund the host.",
+              "The campaign was closed before this payment arrived — refund the host.",
               session,
             );
           }
@@ -2626,7 +2626,7 @@ export class PaymentsPayoutsService {
     if (!eligibility.eligible) {
       throw new BadRequestException(
         eligibility.reason ||
-          "Payout can be released only after campaign/collaboration is marked completed.",
+          "Payout can be released only after campaign is marked completed.",
       );
     }
 
@@ -3438,7 +3438,7 @@ export class PaymentsPayoutsService {
     }
     if (await this.hasOpenReport(tx.inviteId)) {
       throw new BadRequestException(
-        "This collaboration has an open report. Resolve it on the Disputes page first.",
+        "This campaign has an open report. Resolve it on the Disputes page first.",
       );
     }
     const due = refundDueAmount(tx);
@@ -3983,7 +3983,7 @@ export class PaymentsPayoutsService {
       throw new BadRequestException("A late post is waiting for review. Approve or reject it first.");
     }
     if (await this.hasOpenReport(tx.inviteId)) {
-      throw new BadRequestException("This collaboration has an open report. Resolve it on the Disputes page first.");
+      throw new BadRequestException("This campaign has an open report. Resolve it on the Disputes page first.");
     }
     const now = new Date();
     const updated: any = await this.transactionModel
@@ -4347,7 +4347,7 @@ export class PaymentsPayoutsService {
       !compensated &&
       ["on_hold", "owed", "sent"].includes(String(tx?.refundStatus))
     ) {
-      return "A refund to the host is in progress or was sent for this collaboration. Resolve it in Payments → Refunds first.";
+      return "A refund to the host is in progress or was sent for this campaign. Resolve it in Payments → Refunds first.";
     }
     if (tx?.settlement?.status === SETTLEMENT_OPEN) {
       return "Waiting for the host's repayment (settlement). Record the repayment or an exception first.";
@@ -4380,7 +4380,7 @@ export class PaymentsPayoutsService {
     if (calc?.isPlatformFee) return;
     if (acceptTerms !== true) {
       throw new BadRequestException(
-        "Please accept the paid-collaboration terms before paying.",
+        "Please accept the paid-campaign terms before paying.",
       );
     }
     const ids = (calc?.acceptedInviteIds || []).filter(Boolean);

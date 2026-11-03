@@ -970,16 +970,16 @@ export class CampaignsService {
     );
 
     if (!config) {
-      throw new BadRequestException("Invalid collaboration type selected.");
+      throw new BadRequestException("Invalid campaign type selected.");
     }
     if (!config.enabled) {
       throw new BadRequestException(
-        "This collaboration type is currently unavailable.",
+        "This campaign type is currently unavailable.",
       );
     }
     if (config.premiumOnly && !hasPremium) {
       throw new BadRequestException(
-        "This collaboration type requires a Premium plan. Upgrade to unlock it.",
+        "This campaign type requires a Premium plan. Upgrade to unlock it.",
       );
     }
   }
@@ -1707,7 +1707,7 @@ export class CampaignsService {
     }
     if (isBarter && barterLimit !== -1 && barterUsed >= barterLimit) {
       throw new BadRequestException(
-        `Plan limit: only ${barterLimit} of your monthly campaign slots can be barter or location campaigns, and they're used. Slots reset on ${resets}. You can still create a paid collaboration, or save this as a draft.`,
+        `Plan limit: only ${barterLimit} of your monthly campaign slots can be barter or location campaigns, and they're used. Slots reset on ${resets}. You can still create a paid campaign, or save this as a draft.`,
       );
     }
   }

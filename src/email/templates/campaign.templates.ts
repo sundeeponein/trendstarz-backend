@@ -22,7 +22,7 @@ export function newCampaignInviteTemplate(data: NewInviteData): EmailTemplate {
     h2("You have a new invite! 🎉") +
       p(`Hi <strong>${e.recipientName}</strong>,`) +
       p(
-        `<strong>${e.senderName}</strong> has invited you to collaborate on the campaign:`,
+        `<strong>${e.senderName}</strong> has invited you to their campaign:`,
       ) +
       `<p style="margin:12px 0;padding:12px 16px;background:#f0f4ff;border-left:4px solid #0d6efd;border-radius:4px;font-weight:600;">"${e.campaignTitle}"</p>` +
       p("Log in to TrendStarz to review the invite and respond.") +

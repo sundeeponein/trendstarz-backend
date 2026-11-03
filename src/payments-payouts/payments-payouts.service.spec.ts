@@ -810,7 +810,7 @@ describe("PaymentsPayoutsService", () => {
           utrNumber: "UTR123",
           paymentProofUrl: "https://proof",
         }),
-      ).rejects.toThrow("accept the paid-collaboration terms");
+      ).rejects.toThrow("accept the paid-campaign terms");
       expect(transactionModel.create).not.toHaveBeenCalled();
 
       const result = await service.submitPaymentProof("camp1", "brand1", {

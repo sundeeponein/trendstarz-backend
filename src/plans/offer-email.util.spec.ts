@@ -24,7 +24,7 @@ describe("offer email helpers", () => {
     };
     const settings = { platformFeeEnabled: true, influencerRecipientFeePercent: 5, influencerRecipientFeePercentPremium: 3 };
     expect(defaultOfferBenefits(pro, free, settings, "influencer")).toEqual([
-      "Lower platform fee on paid collaborations (3% instead of 5%)",
+      "Lower platform fee on paid campaigns (3% instead of 5%)",
       "Invites / month: 5 (Free: 2)",
       "Campaign posts: Unlimited (Free: 1)",
       "Priority search ranking",

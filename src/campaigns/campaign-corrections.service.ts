@@ -218,7 +218,7 @@ export class CampaignCorrectionsService {
       );
     }
     if (txs.some((t) => t.payoutStatus === "paid")) {
-      return no("A payout for this collaboration was already paid.");
+      return no("A payout for this campaign was already paid.");
     }
     if (txs.some((t) => t.refundStatus === "sent")) {
       return no(
@@ -255,7 +255,7 @@ export class CampaignCorrectionsService {
       return no("Only accepted work that has not been submitted yet.");
     }
     if (!invite.paymentConfirmedAt && invite.status === "accepted") {
-      return no("Payment for this collaboration is not confirmed yet.");
+      return no("Payment for this campaign is not confirmed yet.");
     }
     if (String(campaign?.status || "") !== "active") {
       return no(
@@ -296,7 +296,7 @@ export class CampaignCorrectionsService {
       );
     }
     if (txs.some((t) => t.payoutStatus === "paid")) {
-      return no("A payout for this collaboration was already paid.");
+      return no("A payout for this campaign was already paid.");
     }
     return ok();
   }
@@ -504,7 +504,7 @@ export class CampaignCorrectionsService {
 
     if (txs.some((t) => t.refundStatus === "sent")) {
       throw new BadRequestException(
-        "The host was already refunded for this collaboration. If the creator did post, approve it from Payments → Refunds (it opens a settlement case) instead of restoring.",
+        "The host was already refunded for this campaign. If the creator did post, approve it from Payments → Refunds (it opens a settlement case) instead of restoring.",
       );
     }
     // A refund on hold / owed is known not to have been sent; only legacy rows (no refund
@@ -738,7 +738,7 @@ export class CampaignCorrectionsService {
 
     const result: any = await this.invitesService.expireUnsubmittedInvite(
       String(invite._id),
-      "This collaboration was cancelled by TrendStarZ support.",
+      "This campaign was cancelled by TrendStarZ support.",
       {
         withdrawnReason: "admin_cancel",
         actor: { userId: adminId, userRole: "admin" },

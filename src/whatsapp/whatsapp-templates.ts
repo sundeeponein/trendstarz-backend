@@ -34,7 +34,7 @@ export const NEW_WHATSAPP_TEMPLATES: WhatsAppTemplateSpec[] = [
     params: ["display name", "dashboard link"],
     trigger: "Once, within ~15 minutes of a new account being created (any role).",
     body:
-      "Hi {{1}}, welcome to TrendStarz! 👋\n\nYour account is ready. Complete your profile so brands and creators can find you: {{2}}\n\nYou'll get important updates about your account and collaborations on this number.",
+      "Hi {{1}}, welcome to TrendStarz! 👋\n\nYour account is ready. Complete your profile so brands and creators can find you: {{2}}\n\nYou'll get important updates about your account and campaigns on this number.",
   },
   {
     name: "premium_activated",

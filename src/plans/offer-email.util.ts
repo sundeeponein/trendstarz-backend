@@ -61,7 +61,7 @@ export function defaultOfferBenefits(
     const premiumRaw = settings?.[`${field}Premium`];
     const premium = premiumRaw === null || premiumRaw === undefined || premiumRaw === "" ? null : Number(premiumRaw);
     if (premium !== null && Number.isFinite(premium) && premium < free) {
-      lines.push(`Lower platform fee on paid collaborations (${premium}% instead of ${free}%)`);
+      lines.push(`Lower platform fee on paid campaigns (${premium}% instead of ${free}%)`);
     }
   }
 

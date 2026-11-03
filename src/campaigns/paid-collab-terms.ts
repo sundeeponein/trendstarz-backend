@@ -8,13 +8,14 @@
  * rules only apply once an admin sets `paidCollabTermsV2EffectiveAt` in app settings (after
  * the legal review) and only to payments made from that moment — never retroactively.
  */
-export const PAID_COLLAB_TERMS_VERSION_V1 = "2026-10-draft-1";
-export const PAID_COLLAB_TERMS_VERSION_V2 = "2026-10-draft-2";
+// 2026-11: "collaboration" reworded to "campaign" (same meaning), so both versions bumped.
+export const PAID_COLLAB_TERMS_VERSION_V1 = "2026-11-draft-1";
+export const PAID_COLLAB_TERMS_VERSION_V2 = "2026-11-draft-2";
 /** @deprecated kept for callers written before v2 — the v1 version string. */
 export const PAID_COLLAB_TERMS_VERSION = PAID_COLLAB_TERMS_VERSION_V1;
 
 export const PAID_COLLAB_TERMS_SUMMARY = [
-  "Once the host's payment is confirmed, only TrendStarZ can cancel this collaboration.",
+  "Once the host's payment is confirmed, only TrendStarZ can cancel this campaign.",
   "If the creator does not submit a post by the deadline, the host's payment is held for 7 days and reviewed before any refund.",
   "For 12 months from the date contact details were first shared through TrendStarZ, paid work between the same host and creator must be arranged through TrendStarZ.",
   "Asking the other side to skip posting, cancel, or deal outside TrendStarZ can be reported. If TrendStarZ confirms it, TrendStarZ may charge its fee and review or suspend the accounts involved.",
@@ -22,7 +23,7 @@ export const PAID_COLLAB_TERMS_SUMMARY = [
 
 /** Added in version 2 (shown only once the v2 effective date is set and reached). */
 export const PAID_COLLAB_TERMS_V2_ADDITIONS = [
-  "A paid invite stays counted in the campaign's invite limit even if the collaboration closes or is refunded.",
+  "A paid invite stays counted in the campaign's invite limit even if the campaign closes or is refunded.",
   "If the creator does not post, the creator's agreed amount is refunded by UPI and the platform fee is returned as TrendStarZ credit, valid for 12 months and usable only for future TrendStarZ platform fees.",
 ];
 

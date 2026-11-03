@@ -3183,7 +3183,7 @@ export class UsersService implements OnModuleInit {
       .select("_id")
       .lean();
     if (work) {
-      return "You have a collaboration in progress. Finish it, or ask the other side to end it, before deleting your account.";
+      return "You have a campaign in progress. Finish it, or ask the other side to end it, before deleting your account.";
     }
     const money = await this.campaignTransactionModel
       .findOne(openMoneyFilter(id))

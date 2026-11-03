@@ -18,7 +18,7 @@ const CREATOR_COLLECTIONS = [
 ] as const;
 
 export const AVAILABILITY_REMINDER = {
-  title: "Are you open for collaborations again?",
+  title: "Are you open for campaigns again?",
   body: "Your 'not available' period has ended. Update your availability so brands know whether to invite you.",
 };
 

@@ -1316,11 +1316,7 @@ export class CampaignInvitesService {
         "needs_changes",
       ]);
       if (!allowedForOwner.has(campStatus)) {
-        throw new BadRequestException(
-          this.isCollaborationCampaign(campaign)
-            ? "Invites can only be sent for active or pending-review collaborations."
-            : "Invites can only be sent for active or pending-review campaigns.",
-        );
+        throw new BadRequestException("Invites can only be sent for active or pending-review campaigns.");
       }
     }
     const recipientRole = this.normalizeRecipientRole(data?.recipientRole);
@@ -1377,7 +1373,7 @@ export class CampaignInvitesService {
       Number(maxInvitesPerCampaign) === -1 || Number(maxInvitesPerCampaign) > 0;
     if (!canInviteUsers && !canInviteByLimit) {
       throw new BadRequestException(
-        "Upgrade to Premium to send collaboration invites.",
+        "Upgrade to Premium to send campaign invites.",
       );
     }
     const maxInvitesPerMonthEntry = capLimits.find(
@@ -1648,7 +1644,7 @@ export class CampaignInvitesService {
   private assertCampaignLiveForRecipient(campaign: any, action: string) {
     if (this.isCampaignLiveForRecipient(campaign)) return;
     throw new BadRequestException(
-      `This campaign/collaboration is still under admin review. You can ${action} after it is approved.`,
+      `This campaign is still under admin review. You can ${action} after it is approved.`,
     );
   }
 
@@ -2321,7 +2317,7 @@ export class CampaignInvitesService {
 
     if (isLocationCampaign && awaitingPlatformFee(invite)) {
       throw new BadRequestException(
-        "Confirm this collaboration first — pay the TrendStarZ platform fee to unlock contact and shipping details.",
+        "Confirm this campaign first — pay the TrendStarZ platform fee to unlock contact and shipping details.",
       );
     }
     if (!unlockableStatuses.has(invite.status)) {
@@ -2392,7 +2388,7 @@ export class CampaignInvitesService {
     // a posting window that doesn't exist.
     if (!["accepted", "payment_confirmed", "working"].includes(String(invite.status))) {
       throw new BadRequestException(
-        "Shipping can be updated only for an accepted collaboration that hasn't been submitted yet.",
+        "Shipping can be updated only for an accepted campaign that hasn't been submitted yet.",
       );
     }
     const pf = invite.productFulfillment || {};
@@ -2505,7 +2501,7 @@ export class CampaignInvitesService {
 
     if (!["accepted", "payment_confirmed", "working"].includes(String(invite.status))) {
       throw new BadRequestException(
-        "The visit can be updated only for an accepted collaboration that hasn't been submitted yet.",
+        "The visit can be updated only for an accepted campaign that hasn't been submitted yet.",
       );
     }
     const lv = invite.locationVisit || {};
@@ -2849,7 +2845,7 @@ export class CampaignInvitesService {
         String(invite.influencerId),
         {
           title: "Host Reported an Issue",
-          body: "A brand flagged an issue on your campaign collaboration.",
+          body: "A brand flagged an issue on your campaign.",
           url: "/influencer-dashboard",
         },
         "campaign",
@@ -2862,7 +2858,7 @@ export class CampaignInvitesService {
         userId: String(invite.influencerId),
         userRole: "influencer",
         title: "Host Reported an Issue",
-        body: "A brand flagged an issue on your campaign collaboration.",
+        body: "A brand flagged an issue on your campaign.",
         url: "/influencer-dashboard",
       })
       .catch(() => {
@@ -3086,7 +3082,7 @@ export class CampaignInvitesService {
         }
         if (missing.length) {
           throw new BadRequestException(
-            `Shipping address required to accept this product collab. Missing/invalid: ${missing.join(", ")}.`,
+            `Shipping address required to accept this product campaign. Missing/invalid: ${missing.join(", ")}.`,
           );
         }
         invite.shippingAddress = {
@@ -3570,7 +3566,7 @@ export class CampaignInvitesService {
         const requested = Number(invite?.counterOffer?.requestedAmount || 0);
         const selectedLabel = invite?.counterOffer?.selectedContentType
           ? `${invite.counterOffer.selectedPlatform || ""} ${invite.counterOffer.selectedContentType}`.trim()
-          : "this collaboration";
+          : "this campaign";
         this.pushService
           .sendToUser(
             String(invite.brandId),
@@ -3843,7 +3839,7 @@ export class CampaignInvitesService {
     );
     const body =
       action === "accept"
-        ? "Your counter offer was accepted. Collaboration is now confirmed for payment flow."
+        ? "Your counter offer was accepted. Campaign is now confirmed for payment flow."
         : "Your counter offer was declined. You can accept the original offer from your invite.";
     this.pushService
       .sendToUser(
@@ -4130,7 +4126,7 @@ export class CampaignInvitesService {
 
     if (!["accepted", "payment_confirmed"].includes(status)) {
       throw new BadRequestException(
-        `Work can only start after collaboration confirmation. Status was: ${invite.status}`,
+        `Work can only start after campaign confirmation. Status was: ${invite.status}`,
       );
     }
     const campaign: any = await this.campaignModel
@@ -4147,7 +4143,7 @@ export class CampaignInvitesService {
         awaitingPlatformFee(invite))
     ) {
       throw new BadRequestException(
-        "The host hasn't confirmed this collaboration yet. You can start once it's confirmed.",
+        "The host hasn't confirmed this campaign yet. You can start once it's confirmed.",
       );
     }
 
@@ -4212,7 +4208,7 @@ export class CampaignInvitesService {
     }
     if (awaitingPlatformFee(invite)) {
       throw new BadRequestException(
-        "The host hasn't confirmed this collaboration yet. You can submit once it's confirmed.",
+        "The host hasn't confirmed this campaign yet. You can submit once it's confirmed.",
       );
     }
     const campaign: any = await this.campaignModel
@@ -5220,7 +5216,7 @@ export class CampaignInvitesService {
     const body =
       outcome === "pay_influencer"
         ? "Your dispute was resolved in your favor. Payout is being processed."
-        : "This collaboration has been cancelled. No payout will be made for this submission.";
+        : "This campaign has been cancelled. No payout will be made for this submission.";
     this.pushService
       .sendToUser(
         String(invite.influencerId),
@@ -5291,7 +5287,7 @@ export class CampaignInvitesService {
     // left ₹1,000 untouched for months (found 2026-10-25).
     if (invite.status === "disputed" && (await this.hasHeldMoney(invite._id))) {
       throw new BadRequestException(
-        "Money is held for this collaboration. Choose 'Resolve as completed' (pay the creator) or 'Resolve as withdrawn' (refund the host).",
+        "Money is held for this campaign. Choose 'Resolve as completed' (pay the creator) or 'Resolve as withdrawn' (refund the host).",
       );
     }
     if (!invite.reportedIssue) {
@@ -5678,7 +5674,7 @@ export class CampaignInvitesService {
             "en-IN",
             { day: "numeric", month: "short", timeZone: "Asia/Kolkata" },
           )} for review — TrendStarZ will verify it before any payout.`
-        : `${reason} No payout will be made for this collaboration.`;
+        : `${reason} No payout will be made for this campaign.`;
     this.pushService
       .sendToUser(
         String(invite.influencerId),
@@ -5782,7 +5778,7 @@ export class CampaignInvitesService {
       if (awaitingPlatformFee(candidate)) {
         await this.expireUnsubmittedInvite(
           String(candidate._id),
-          "Campaign ended before the host confirmed this collaboration.",
+          "The campaign ended before the host confirmed you.",
           { withdrawnReason: "platform_fee_unpaid" },
         );
         continue;
@@ -5795,7 +5791,7 @@ export class CampaignInvitesService {
       ) {
         await this.expireUnsubmittedInvite(
           String(candidate._id),
-          "Campaign ended before the host paid for this collaboration.",
+          "The campaign ended before the host paid.",
           { withdrawnReason: "host_ended_unpaid" },
         );
         continue;
@@ -6124,7 +6120,7 @@ export class CampaignInvitesService {
     }
     if (invite.status !== "withdrawn") {
       throw new BadRequestException(
-        "A late post can only be submitted after the collaboration was closed.",
+        "A late post can only be submitted after the campaign was closed.",
       );
     }
     const accepted = String(invite.selectedPlatform || "")
@@ -6138,7 +6134,7 @@ export class CampaignInvitesService {
       }
     } else if (accepted && detectPlatform(postUrl) !== accepted) {
       throw new BadRequestException(
-        `This collaboration was for ${invite.selectedPlatform}. Submit the ${invite.selectedPlatform} post link.`,
+        `This campaign was for ${invite.selectedPlatform}. Submit the ${invite.selectedPlatform} post link.`,
       );
     }
 
@@ -6209,7 +6205,7 @@ export class CampaignInvitesService {
     }
     if (!saved) {
       throw new BadRequestException(
-        "A late post is already waiting for review on this collaboration.",
+        "A late post is already waiting for review on this campaign.",
       );
     }
     await this.setFinancialCaseOpen(invite._id, true);
@@ -6253,12 +6249,12 @@ export class CampaignInvitesService {
     if (!invite) throw new NotFoundException("Invite not found");
     if (invite.status !== "withdrawn") {
       throw new BadRequestException(
-        `This collaboration is '${invite.status}', not closed — nothing to review.`,
+        `This campaign is '${invite.status}', not closed — nothing to review.`,
       );
     }
     if (invite.reportedIssue?.reportedAt && !invite.reportedIssue?.resolvedAt) {
       throw new BadRequestException(
-        "This collaboration has an open report. Resolve it on the Disputes page first.",
+        "This campaign has an open report. Resolve it on the Disputes page first.",
       );
     }
     const rows: any[] = await this.campaignTransactionModel
@@ -6324,7 +6320,7 @@ export class CampaignInvitesService {
     );
     if (!refundable.length) {
       throw new BadRequestException(
-        "No refund is under review for this collaboration, so there is nothing to approve here.",
+        "No refund is under review for this campaign, so there is nothing to approve here.",
       );
     }
 
@@ -6487,7 +6483,7 @@ export class CampaignInvitesService {
     }
     if (!activePaid && !inRefund) {
       throw new BadRequestException(
-        "This can be reported on a paid collaboration that is active or whose refund is still under review.",
+        "This can be reported on a paid campaign that is active or whose refund is still under review.",
       );
     }
 
@@ -6638,7 +6634,7 @@ export class CampaignInvitesService {
     }
     if (invite.closureAnswers?.[side]?.at) {
       throw new BadRequestException(
-        "You already answered for this collaboration.",
+        "You already answered for this campaign.",
       );
     }
     const open = await this.campaignTransactionModel
@@ -6651,7 +6647,7 @@ export class CampaignInvitesService {
       .lean();
     if (invite.status !== "withdrawn" || !open) {
       throw new BadRequestException(
-        "This question is only open while the refund for a closed collaboration is under review.",
+        "This question is only open while the refund for a closed campaign is under review.",
       );
     }
     const details = String(body?.details || "")
@@ -6752,7 +6748,7 @@ export class CampaignInvitesService {
     }
     if (!CampaignInvitesService.CANCELLABLE_STATUSES.includes(invite.status)) {
       throw new BadRequestException(
-        "A cancel or pause can be requested only on an active paid collaboration that has no post yet.",
+        "A cancel or pause can be requested only on an active paid campaign that has no post yet.",
       );
     }
     const paid = await this.campaignTransactionModel
@@ -6761,7 +6757,7 @@ export class CampaignInvitesService {
       .lean();
     if (!paid) {
       throw new BadRequestException(
-        "Payment is not confirmed yet — before payment the collaboration can be withdrawn normally.",
+        "Payment is not confirmed yet — before payment the campaign can be withdrawn normally.",
       );
     }
     if (invite.cancelRequest?.status === "pending") {
@@ -6885,7 +6881,7 @@ export class CampaignInvitesService {
     const req = invite.cancelRequest;
     if (req?.status !== "pending") {
       throw new BadRequestException(
-        "There is no pending request on this collaboration.",
+        "There is no pending request on this campaign.",
       );
     }
     const now = new Date();
@@ -6933,7 +6929,7 @@ export class CampaignInvitesService {
       await claim();
       tell(
         `${req.type === "pause" ? "Pause" : "Cancel"} request not approved`,
-        `TrendStarZ did not approve the request: ${note}. The collaboration continues as agreed.`,
+        `TrendStarZ did not approve the request: ${note}. The campaign continues as agreed.`,
       );
       return { success: true, decision };
     }
@@ -6961,8 +6957,8 @@ export class CampaignInvitesService {
         submissionDeadlineExtendedTo: until,
       });
       tell(
-        "Collaboration paused",
-        `TrendStarZ paused this collaboration. The posting deadline is now ${until.toLocaleDateString("en-IN", { day: "numeric", month: "short", timeZone: "Asia/Kolkata" })}.`,
+        "Campaign paused",
+        `TrendStarZ paused this campaign. The posting deadline is now ${until.toLocaleDateString("en-IN", { day: "numeric", month: "short", timeZone: "Asia/Kolkata" })}.`,
       );
       return { success: true, decision, submissionDeadlineExtendedTo: until };
     }
@@ -6999,7 +6995,7 @@ export class CampaignInvitesService {
     );
     if (result?.skipped) {
       throw new BadRequestException(
-        `The collaboration is now '${result?.status ?? "unknown"}' — nothing was cancelled. Reload and try again.`,
+        `The campaign is now '${result?.status ?? "unknown"}' — nothing was cancelled. Reload and try again.`,
       );
     }
     if (compensation > 0 && rows[0]) {
@@ -7045,10 +7041,10 @@ export class CampaignInvitesService {
       );
     }
     tell(
-      "Collaboration cancelled by TrendStarZ",
+      "Campaign cancelled by TrendStarZ",
       compensation > 0
-        ? `TrendStarZ cancelled this collaboration. The creator receives ${formatRupees(compensation)} for work done; the rest is refunded to the host.`
-        : "TrendStarZ cancelled this collaboration. The host's refund is approved.",
+        ? `TrendStarZ cancelled this campaign. The creator receives ${formatRupees(compensation)} for work done; the rest is refunded to the host.`
+        : "TrendStarZ cancelled this campaign. The host's refund is approved.",
     );
     return { success: true, decision, compensation };
   }
