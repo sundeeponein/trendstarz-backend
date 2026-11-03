@@ -1438,6 +1438,11 @@ export class PaymentsPayoutsService {
       acceptedInviteAgreedAmounts: inviteAgreedAmounts,
       pendingVerificationInviteIds: [...pendingVerificationInviteIds],
       pricePerInfluencer,
+      // Shown as "Price per creator": the agreed amount when every creator has the same
+      // one, null when they differ (the campaign's own price can be 0 when set per invite).
+      pricePerCreator: inviteAgreedAmounts.every((a) => a === inviteAgreedAmounts[0])
+        ? inviteAgreedAmounts[0]
+        : null,
       agreedAmount,
       platformFee: fee,
       payerTotal,
