@@ -68,3 +68,14 @@ describe("open campaign community message", () => {
     expect(params[3]).toBe("🏆 Minimum Tier: Mid-Tier");
   });
 });
+
+describe("campaign alert location", () => {
+  it("shows the venue's area (never its name or address) for a location visit", () => {
+    const fields = computeCampaignAlertFields(
+      { title: "Cafe launch", campaignType: "invite_location", venueName: "Cafe Bloom", venueAddress: "Road No. 36", venueCity: "Hyderabad", venueState: "Telangana" },
+      0,
+    );
+    expect(fields.location).toBe("Hyderabad, Telangana");
+    expect(renderOpenCampaignMessage(fields)).not.toMatch(/Cafe Bloom|Road No/);
+  });
+});

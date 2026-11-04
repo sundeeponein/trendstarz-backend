@@ -57,7 +57,7 @@ import { whatsAppTemplateText } from "../whatsapp/whatsapp-templates";
  *   campaign_new_match_invite template body (6 params — campaign title,
  *   location, respond-before date, required creators, accepted count, slots
  *   remaining):
- *   🎉 You've received a new collaboration invitation on TrendStarz
+ *   🎉 You've received a new campaign invitation on TrendStarz
  *
  *   📢 Campaign: {{1}}
  *
@@ -122,7 +122,29 @@ export function formatCampaignDateLabel(value: unknown): string {
   return formatIstDate(date);
 }
 
+/** Accept-by date shown as "Respond Before" / "Apply Before". */
+export function campaignRespondBeforeLabel(campaign: any): string {
+  return formatCampaignDateLabel(
+    campaign?.acceptanceDeadline || campaign?.endDate || campaign?.timelineEnd,
+  );
+}
+
+function isLocationVisit(campaign: any): boolean {
+  return String(campaign?.campaignType || "") === "invite_location";
+}
+
 function resolveLocationLabel(campaign: any, isPhotographer: boolean): string {
+  // Location visits name the venue's area; others the target area. Never the
+  // venue name, address or map — those stay hidden until the creator accepts
+  // and the host unlocks (redactExactLocationDetails), and these messages go
+  // out before that.
+  if (isLocationVisit(campaign)) {
+    const venue = [campaign?.venueCity, campaign?.venueDistrict, campaign?.venueState]
+      .map((v) => String(v || "").trim())
+      .filter(Boolean)
+      .filter((v, i, all) => all.findIndex((x) => x.toLowerCase() === v.toLowerCase()) === i);
+    if (venue.length) return venue.join(", ");
+  }
   const district = isPhotographer
     ? campaign?.venueDistrict || campaign?.targetDistrict
     : campaign?.targetDistrict;
@@ -130,6 +152,14 @@ function resolveLocationLabel(campaign: any, isPhotographer: boolean): string {
     ? campaign?.venueState || campaign?.targetState
     : campaign?.targetState;
   return [district, state].filter(Boolean).join(", ") || "Not specified";
+}
+
+/** Location line of the per-creator invite message: the venue's area for location visits, otherwise no travel. */
+export function inviteLocationLabel(campaign: any): string {
+  if (!isLocationVisit(campaign)) return "No visit needed";
+  const isPhotographer =
+    String(campaign?.inviteRecipientRole || "influencer") === "photographer";
+  return resolveLocationLabel(campaign, isPhotographer);
 }
 
 /** Campaigns page opens this campaign from ?open=<id> (creators); photographers use their dashboard. */
@@ -165,9 +195,7 @@ export function computeCampaignAlertFields(
     String(campaign?.inviteRecipientRole || "influencer") === "photographer";
   const requiredCreators =
     Number(campaign?.maxInfluencers || campaign?.inviteSlots || 0) || 0;
-  const dateLabel = formatCampaignDateLabel(
-    campaign?.acceptanceDeadline || campaign?.endDate || campaign?.timelineEnd,
-  );
+  const dateLabel = campaignRespondBeforeLabel(campaign);
   const niches: string[] = (Array.isArray(campaign?.categories) ? campaign.categories : [])
     .map((c: unknown) => String(c || "").trim())
     .filter(Boolean);

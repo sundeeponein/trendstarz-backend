@@ -42,8 +42,10 @@ import { creatorInviteLink, inviteReceivedParams } from "../whatsapp/whatsapp-te
 import {
   ENABLE_CAMPAIGN_WHATSAPP,
   AWAITING_POST_STATUSES,
+  campaignRespondBeforeLabel,
   formatCampaignDateLabel,
   inviteAcceptedOwnerTemplateParams,
+  inviteLocationLabel,
   postSubmittedOwnerTemplateParams,
   postingReminderTemplateParams,
 } from "./campaign-alert-messages";
@@ -1568,6 +1570,8 @@ export class CampaignInvitesService {
                   senderName: sender.name || "A creator",
                   senderRole: sender.role,
                   campaignTitle: campaign.title || "a campaign",
+                  location: inviteLocationLabel(campaign),
+                  respondBefore: campaignRespondBeforeLabel(campaign),
                   inviteUrl: creatorInviteLink(recipientRole, saved._id),
                 }),
               },

@@ -31,10 +31,18 @@ export const NEW_WHATSAPP_TEMPLATES: WhatsAppTemplateSpec[] = [
   {
     name: "campaign_invite_received",
     category: "UTILITY",
-    params: ["creator name", "sender name", "sender role (Brand / Photographer / Influencer)", "campaign title", "invite link"],
+    params: [
+      "creator name",
+      "sender name",
+      "sender role (Brand / Photographer / Influencer)",
+      "campaign title",
+      "location (venue for location visits, else \"No visit needed\")",
+      "respond-before date",
+      "invite link",
+    ],
     trigger: "When a host sends a campaign invite on a live campaign (once per invite).",
     body:
-      "Hi {{1}}, you have a new campaign invite from {{2}} ({{3}}) for \"{{4}}\".\n\nThis is a TrendStarZ campaign invitation, not an Instagram native Collab post invitation.\n\nView the brief and respond here: {{5}}\n\nPlease respond before the deadline shown in the invite.",
+      "Hi {{1}}, you have a new campaign invite from {{2}} ({{3}}) for \"{{4}}\".\n\n📍 Location: {{5}}\n📅 Respond Before: {{6}}\n\nThis is a TrendStarZ campaign invitation, not an Instagram native Collab post invitation.\n\nView the brief and respond here: {{7}}",
   },
   {
     name: "welcome_user",
@@ -133,9 +141,21 @@ export function inviteReceivedParams(f: {
   senderName: string;
   senderRole: unknown;
   campaignTitle: string;
+  /** inviteLocationLabel(campaign) */
+  location: string;
+  /** campaignRespondBeforeLabel(campaign) */
+  respondBefore: string;
   inviteUrl: string;
 }): string[] {
-  return [f.creatorName, f.senderName, campaignSenderRoleLabel(f.senderRole), f.campaignTitle, f.inviteUrl];
+  return [
+    f.creatorName,
+    f.senderName,
+    campaignSenderRoleLabel(f.senderRole),
+    f.campaignTitle,
+    f.location,
+    f.respondBefore,
+    f.inviteUrl,
+  ];
 }
 
 /** campaign_payment_received_host params, in order. */

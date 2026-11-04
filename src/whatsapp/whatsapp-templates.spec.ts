@@ -7,7 +7,11 @@ import {
   whatsAppParam,
   whatsAppTemplateText,
 } from "./whatsapp-templates";
-import { renderInviteAcceptedOwnerMessage } from "../campaigns/campaign-alert-messages";
+import {
+  campaignRespondBeforeLabel,
+  inviteLocationLabel,
+  renderInviteAcceptedOwnerMessage,
+} from "../campaigns/campaign-alert-messages";
 
 describe("WhatsApp template switches", () => {
   it("with WHATSAPP_TEMPLATES unset: older templates keep working, new ones and new uses stay off", () => {
@@ -51,11 +55,14 @@ describe("manual WhatsApp text matches the automatic template", () => {
       senderName: "Glow Co",
       senderRole: "brand",
       campaignTitle: "Diwali\nlaunch",
+      location: "No visit needed",
+      respondBefore: "Oct 12, 2026",
       inviteUrl: creatorInviteLink("influencer", "abc123", { FRONTEND_URL: "https://trendstarz.in/" } as any),
     });
-    expect(params).toEqual(["Asha", "Glow Co", "Brand", "Diwali\nlaunch", "https://trendstarz.in/influencer-dashboard?invite=abc123"]);
+    expect(params).toEqual(["Asha", "Glow Co", "Brand", "Diwali\nlaunch", "No visit needed", "Oct 12, 2026", "https://trendstarz.in/influencer-dashboard?invite=abc123"]);
     const text = whatsAppTemplateText("campaign_invite_received", params);
     expect(text).toContain('Hi Asha, you have a new campaign invite from Glow Co (Brand) for "Diwali launch".');
+    expect(text).toContain("📍 Location: No visit needed\n📅 Respond Before: Oct 12, 2026");
     expect(text).toContain("not an Instagram native Collab post invitation");
     expect(text).toContain("respond here: https://trendstarz.in/influencer-dashboard?invite=abc123");
     expect(text).not.toMatch(/\{\{\d+\}\}/);
@@ -68,7 +75,7 @@ describe("manual WhatsApp text matches the automatic template", () => {
       "campaign_payment_received_host",
       "campaign_start_posting",
     ]) {
-      expect(whatsAppTemplateText(name, ["a", "b", "c", "d", "e"])).not.toBe("");
+      expect(whatsAppTemplateText(name, ["a", "b", "c", "d", "e", "f", "g"])).not.toBe("");
     }
     expect(
       renderInviteAcceptedOwnerMessage({ ownerName: "Glow Co", recipientName: "Asha", campaignTitle: "Diwali", campaignUrl: "https://x/campaigns" }),
@@ -81,5 +88,35 @@ describe("manual WhatsApp text matches the automatic template", () => {
     const env = { FRONTEND_URL: "https://trendstarz.in" } as any;
     expect(creatorInviteLink("photographer", "x1", env)).toBe("https://trendstarz.in/photographer-dashboard?invite=x1");
     expect(creatorInviteLink("influencer", null, env)).toBe("https://trendstarz.in/influencer-dashboard");
+  });
+});
+
+describe("campaign invite location and respond-before lines", () => {
+  it("names the venue's area for a location visit and 'No visit needed' otherwise", () => {
+    const visit = {
+      campaignType: "invite_location",
+      venueName: "Cafe Bloom",
+      venueAddress: "Road No. 36, Jubilee Hills",
+      venueGoogleMapUrl: "https://maps.google.com/?q=cafe",
+      venueCity: "Hyderabad",
+      venueDistrict: "hyderabad",
+      venueState: "Telangana",
+      targetState: "Telangana",
+    };
+    // Venue name, address and map stay hidden until the creator accepts.
+    expect(inviteLocationLabel(visit)).toBe("Hyderabad, Telangana");
+    expect(inviteLocationLabel({ campaignType: "invite_location", targetDistrict: "Warangal", targetState: "Telangana" })).toBe(
+      "Warangal, Telangana",
+    );
+    for (const campaignType of ["paid_collab", "product"]) {
+      expect(inviteLocationLabel({ campaignType, targetState: "Telangana" })).toBe("No visit needed");
+    }
+  });
+
+  it("uses the accept-by date, falling back to the end date", () => {
+    expect(campaignRespondBeforeLabel({ acceptanceDeadline: "2026-10-12T18:29:00Z" })).toBe(
+      whatsAppDate(new Date("2026-10-12T18:29:00Z")),
+    );
+    expect(campaignRespondBeforeLabel({})).toBe("Not specified");
   });
 });

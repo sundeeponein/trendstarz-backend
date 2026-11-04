@@ -64,6 +64,8 @@ import {
   renderInviteAcceptedOwnerMessage,
   renderPostSubmittedOwnerMessage,
   renderOwnerApprovedMessage,
+  campaignRespondBeforeLabel,
+  inviteLocationLabel,
 } from "./campaigns/campaign-alert-messages";
 import {
   creatorInviteLink,
@@ -1363,7 +1365,9 @@ export class AdminListsController {
       await Promise.all([
         this.campaignModel
           .findById((invite as any).campaignId)
-          .select("title")
+          .select(
+            "title campaignType inviteRecipientRole venueCity venueDistrict venueState targetDistrict targetState acceptanceDeadline endDate timelineEnd",
+          )
           .lean(),
         recipientModel
           .findById((invite as any).influencerId)
@@ -1426,6 +1430,8 @@ export class AdminListsController {
           senderName: ownerName,
           senderRole: ownerRole,
           campaignTitle: (campaign as any)?.title || "a campaign",
+          location: inviteLocationLabel(campaign),
+          respondBefore: campaignRespondBeforeLabel(campaign),
           inviteUrl,
         }),
       ),
