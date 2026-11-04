@@ -1248,12 +1248,51 @@ export class AdminListsController {
    * panel — computed the same way as the automated WhatsApp send (see
    * campaign-alert-messages.ts) so the two can never drift.
    */
+  /** State whose WhatsApp community gets this open campaign's post ("" = all of India). */
+  private campaignCommunityState(campaign: any): string {
+    const isPhotographer =
+      String(campaign?.inviteRecipientRole || "influencer") === "photographer";
+    return String(
+      (isPhotographer ? campaign?.venueState || campaign?.targetState : campaign?.targetState) || "",
+    ).trim();
+  }
+
+  /**
+   * Communities to post an open campaign in: the campaign state's community
+   * (returned even when inactive, so admin sees why it can't be posted), or
+   * every active community when the campaign has no state.
+   */
+  private async campaignCommunities(campaign: any) {
+    if (String(campaign?.campaignMode || "") !== "tier_filtered_open") return [];
+    await seedMissingWhatsAppCommunitiesFromConfig(this.whatsappCommunityModel);
+    const state = this.campaignCommunityState(campaign);
+    const rows: any[] = state
+      ? await this.whatsappCommunityModel
+          .find({ stateKey: normalizeCommunityStateKey(state) })
+          .lean()
+      : await this.whatsappCommunityModel
+          .find({ isActive: { $ne: false } })
+          .sort({ state: 1 })
+          .lean();
+    return rows.map((row) => {
+      const link = String(row?.communityLink || "").trim();
+      // The seed file ships placeholder links until a real community exists.
+      const hasLink = /^https:\/\/chat\.whatsapp\.com\/[A-Za-z0-9]+$/.test(link);
+      return {
+        state: row?.state || "",
+        communityName: row?.communityName || "",
+        communityLink: hasLink ? link : "",
+        isActive: row?.isActive !== false && hasLink,
+      };
+    });
+  }
+
   @Get("campaigns/:id/share-messages")
   async getCampaignShareMessages(@Param("id") id: string) {
     const campaign = await this.campaignModel
       .findById(id)
       .select(
-        "title targetState targetDistrict venueState venueDistrict inviteRecipientRole maxInfluencers inviteSlots acceptanceDeadline endDate timelineEnd minInfluencerTier timelineStart startDate brandId ownerType status",
+        "title targetState targetDistrict venueState venueDistrict inviteRecipientRole maxInfluencers inviteSlots acceptanceDeadline endDate timelineEnd minInfluencerTier timelineStart startDate brandId ownerType status campaignMode categories",
       )
       .lean();
     if (!campaign) {
@@ -1286,6 +1325,8 @@ export class AdminListsController {
     );
 
     return {
+      communityState: this.campaignCommunityState(campaign),
+      communities: await this.campaignCommunities(campaign),
       openCampaignMessage: renderOpenCampaignMessage(fields),
       inviteOnlyMessage: renderInviteOnlyMessage(fields),
       postingReminderMessage: renderPostingReminderMessage(fields),

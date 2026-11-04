@@ -1,4 +1,5 @@
 import { formatIstDate } from "../utils/ist-date.util";
+import { resolveTier, tierRangeText } from "../utils/tier-ranges.util";
 import { whatsAppTemplateText } from "../whatsapp/whatsapp-templates";
 /**
  * Single source of truth for the "campaign is live" messages shown to
@@ -105,6 +106,12 @@ export interface CampaignAlertFields {
   slotsRemaining: number;
   postingWindowStartLabel: string;
   postingWindowEndLabel: string;
+  /** Direct link that opens this campaign for the creator (login keeps it). */
+  campaignUrl: string;
+  /** Lines used only by the open-campaign copy text (community posts), "" when not set. No price: the post should bring creators in to view the campaign. */
+  nicheLine: string;
+  openTierLine: string;
+  districtOnlyLine: string;
 }
 
 export function formatCampaignDateLabel(value: unknown): string {
@@ -123,6 +130,19 @@ function resolveLocationLabel(campaign: any, isPhotographer: boolean): string {
   return [district, state].filter(Boolean).join(", ") || "Not specified";
 }
 
+/** Campaigns page opens this campaign from ?open=<id> (creators); photographers use their dashboard. */
+export function openCampaignLink(
+  campaign: any,
+  env: NodeJS.ProcessEnv = process.env,
+): string {
+  const base = (env.FRONTEND_URL || "https://trendstarz.in").replace(/\/+$/, "");
+  const isPhotographer =
+    String(campaign?.inviteRecipientRole || "influencer") === "photographer";
+  const id = String(campaign?._id || "");
+  if (isPhotographer || !id) return `${base}${isPhotographer ? "/photographer-dashboard" : "/campaigns"}`;
+  return `${base}/campaigns?open=${id}`;
+}
+
 /** `acceptedCount` must be queried by the caller (campaignInviteModel, status in ACCEPTED_OR_LATER_STATUSES) — kept out of this pure module. */
 export function computeCampaignAlertFields(
   campaign: any,
@@ -135,6 +155,11 @@ export function computeCampaignAlertFields(
   const dateLabel = formatCampaignDateLabel(
     campaign?.acceptanceDeadline || campaign?.endDate || campaign?.timelineEnd,
   );
+  const niches: string[] = (Array.isArray(campaign?.categories) ? campaign.categories : [])
+    .map((c: unknown) => String(c || "").trim())
+    .filter(Boolean);
+  const minTier = resolveTier(campaign?.minInfluencerTier);
+  const minTierRange = minTier ? tierRangeText(minTier.key) : "";
   return {
     campaignTitle: String(campaign?.title || "Campaign"),
     location: resolveLocationLabel(campaign, isPhotographer),
@@ -152,6 +177,17 @@ export function computeCampaignAlertFields(
     postingWindowEndLabel: formatCampaignDateLabel(
       campaign?.timelineEnd || campaign?.endDate,
     ),
+    campaignUrl: openCampaignLink(campaign),
+    nicheLine: niches.length ? `🎯 Niche: ${niches.join(", ")}` : "",
+    // The tier is a minimum: higher tiers can apply too.
+    openTierLine: minTier
+      ? `🏆 Tier: ${minTier.label}${minTierRange ? ` (${minTierRange})` : ""} and above — bigger creators welcome too`
+      : "",
+    // Apply refuses creators from other districts, so say it up front.
+    districtOnlyLine:
+      !isPhotographer && campaign?.targetDistrict
+        ? `⚠️ Only for creators in ${campaign.targetDistrict} district`
+        : "",
   };
 }
 
@@ -162,19 +198,18 @@ export function renderOpenCampaignMessage(fields: CampaignAlertFields): string {
     `📢 Campaign: ${fields.campaignTitle}`,
     "",
     `📍 Location: ${fields.location}`,
+    ...(fields.districtOnlyLine ? [fields.districtOnlyLine] : []),
     `📅 Apply Before: ${fields.applyBeforeLabel}`,
     "",
-    ...(fields.tierLine ? [fields.tierLine] : []),
+    ...[fields.nicheLine, fields.openTierLine].filter(Boolean),
     //`👥 Required Creators: ${fields.requiredCreators}`,
     //`✅ Accepted: ${fields.acceptedCount}`,
     //`🔥 Slots Remaining: ${fields.slotsRemaining}`,
-    //"",
+    "",
     "We are looking for creators to participate in this campaign.",
     "",
-    "✅ Apply directly through TrendStarz:",
-    "https://www.trendstarz.in",
-    "",
-    "Login → Campaigns → Apply",
+    "✅ View details and apply here:",
+    fields.campaignUrl,
     "",
     "Only verified creators are eligible.",
     "",
