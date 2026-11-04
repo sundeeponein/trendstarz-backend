@@ -178,7 +178,7 @@ export function computeCampaignAlertFields(
       campaign?.timelineEnd || campaign?.endDate,
     ),
     campaignUrl: openCampaignLink(campaign),
-    nicheLine: niches.length ? `🎯 Niche: ${niches.join(", ")}` : "",
+    nicheLine: niches.length ? `🎯 Niche: ${niches.join(", ")} (only these niches can apply)` : "",
     // The tier is a minimum: higher tiers can apply too.
     openTierLine: minTier
       ? `🏆 Tier: ${minTier.label}${minTierRange ? ` (${minTierRange})` : ""} and above — bigger creators welcome too`

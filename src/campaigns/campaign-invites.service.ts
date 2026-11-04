@@ -47,6 +47,7 @@ import {
   postSubmittedOwnerTemplateParams,
   postingReminderTemplateParams,
 } from "./campaign-alert-messages";
+import { campaignNicheRefusal, matchesCampaignNiche } from "./campaign-niche.util";
 import { ProfileVerificationService } from "../profile-verification/profile-verification.service";
 import { TrackingLinksService } from "./tracking-links.service";
 import {
@@ -4050,6 +4051,12 @@ export class CampaignInvitesService {
           `This campaign is limited to influencers from ${campaign.targetDistrict}, ${campaign.targetState}.`,
         );
       }
+    }
+
+    if (!matchesCampaignNiche(campaign, (influencer as any).categories)) {
+      throw new BadRequestException(
+        campaignNicheRefusal(campaign, (influencer as any).categories),
+      );
     }
 
     // Check max slots not exceeded

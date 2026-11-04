@@ -31,7 +31,7 @@ describe("open campaign community message", () => {
     const text = renderOpenCampaignMessage(computeCampaignAlertFields(base, 0));
     expect(text).not.toContain("₹");
     expect(text).not.toContain("Paid");
-    expect(text).toContain("🎯 Niche: Travel, Food");
+    expect(text).toContain("🎯 Niche: Travel, Food (only these niches can apply)");
     expect(text).toContain("🏆 Tier: Mid-Tier (10,001–1,00,000 followers) and above");
     expect(text).toContain("/campaigns?open=665f1c2b9d3e4a0012345678");
     expect(text).not.toContain("Login → Campaigns");

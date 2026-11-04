@@ -568,11 +568,11 @@ export const CAMPAIGN_REQUIREMENTS: CampaignRequirementDefinition[] = [
     stored: true,
     normalized: "yes",
     usedInSearch: false,
-    usedInEligibility: false,
+    usedInEligibility: true,
     usedInInvitations: false,
     usedInCampaignAlerts: true,
     notes:
-      "From the categories master list. Only the campaign-alert matcher uses it (categories $in).",
+      "From the categories master list. Campaign alerts match it (categories $in); since 2026-11-04 open campaigns with niches are seen/applied to only by creators with one of them (case-insensitive, campaign-niche.util).",
     coverageField: "categories",
     priority: "critical",
   },

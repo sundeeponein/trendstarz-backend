@@ -30,6 +30,7 @@ import {
   inviteOnlyWhatsAppParams,
   ownerApprovedTemplateParams,
 } from "./campaign-alert-messages";
+import { matchesCampaignNiche } from "./campaign-niche.util";
 import {
   CampaignTypeConfigItem,
   resolveCampaignAccessModeConfigs,
@@ -1426,7 +1427,7 @@ export class CampaignsService {
     if (influencerId) {
       influencer = await this.influencerModel
         .findById(influencerId)
-        .select("socialMedia location isEmailVerified isMobileVerified")
+        .select("socialMedia location categories isEmailVerified isMobileVerified")
         .lean();
     }
 
@@ -1530,6 +1531,9 @@ export class CampaignsService {
           .toLowerCase();
         if (infDistrict && infDistrict !== targetDistrict) return false;
       }
+
+      // Niche check — host-picked niches limit who sees it (campaign-niche.util).
+      if (!matchesCampaignNiche(c, influencer.categories)) return false;
 
       return true;
     });
