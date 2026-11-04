@@ -108,6 +108,8 @@ export interface CampaignAlertFields {
   postingWindowEndLabel: string;
   /** Direct link that opens this campaign for the creator (login keeps it). */
   campaignUrl: string;
+  /** "CMP-30" — names the campaign in Google Analytics (utm_campaign); "" if unnumbered. */
+  campaignCode: string;
   /** Lines used only by the open-campaign copy text (community posts), "" when not set. No price: the post should bring creators in to view the campaign. */
   nicheLine: string;
   openTierLine: string;
@@ -141,6 +143,17 @@ export function openCampaignLink(
   const id = String(campaign?._id || "");
   if (isPhotographer || !id) return `${base}${isPhotographer ? "/photographer-dashboard" : "/campaigns"}`;
   return `${base}/campaigns?open=${id}`;
+}
+
+/**
+ * The campaign link as posted in WhatsApp communities, tagged so Google
+ * Analytics reports these visits as "whatsapp / community" per campaign
+ * (the website keeps utm_* on the first page view, even through login).
+ */
+export function communityPostLink(fields: Pick<CampaignAlertFields, "campaignUrl" | "campaignCode">): string {
+  const utm = new URLSearchParams({ utm_source: "whatsapp", utm_medium: "community" });
+  if (fields.campaignCode) utm.set("utm_campaign", fields.campaignCode);
+  return `${fields.campaignUrl}${fields.campaignUrl.includes("?") ? "&" : "?"}${utm.toString()}`;
 }
 
 /** `acceptedCount` must be queried by the caller (campaignInviteModel, status in ACCEPTED_OR_LATER_STATUSES) — kept out of this pure module. */
@@ -178,6 +191,7 @@ export function computeCampaignAlertFields(
       campaign?.timelineEnd || campaign?.endDate,
     ),
     campaignUrl: openCampaignLink(campaign),
+    campaignCode: Number(campaign?.campaignNumber) > 0 ? `CMP-${Number(campaign.campaignNumber)}` : "",
     nicheLine: niches.length ? `🎯 Niche: ${niches.join(", ")} (only these niches can apply)` : "",
     // The tier is a minimum: higher tiers can apply too.
     openTierLine: minTier
@@ -209,7 +223,7 @@ export function renderOpenCampaignMessage(fields: CampaignAlertFields): string {
     "We are looking for creators to participate in this campaign.",
     "",
     "✅ View details and apply here:",
-    fields.campaignUrl,
+    communityPostLink(fields),
     "",
     "Only verified creators are eligible.",
     "",

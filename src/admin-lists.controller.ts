@@ -1292,7 +1292,7 @@ export class AdminListsController {
     const campaign = await this.campaignModel
       .findById(id)
       .select(
-        "title targetState targetDistrict venueState venueDistrict inviteRecipientRole maxInfluencers inviteSlots acceptanceDeadline endDate timelineEnd minInfluencerTier timelineStart startDate brandId ownerType status campaignMode categories",
+        "title targetState targetDistrict venueState venueDistrict inviteRecipientRole maxInfluencers inviteSlots acceptanceDeadline endDate timelineEnd minInfluencerTier timelineStart startDate brandId ownerType status campaignMode categories campaignNumber",
       )
       .lean();
     if (!campaign) {

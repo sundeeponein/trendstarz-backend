@@ -38,6 +38,11 @@ describe("open campaign community message", () => {
     expect(text).not.toContain("Only for creators in");
   });
 
+  it("tags the community link for Google Analytics with the campaign code", () => {
+    const text = renderOpenCampaignMessage(computeCampaignAlertFields({ ...base, campaignNumber: 30 }, 0));
+    expect(text).toContain("/campaigns?open=665f1c2b9d3e4a0012345678&utm_source=whatsapp&utm_medium=community&utm_campaign=CMP-30");
+  });
+
   it("warns when the campaign is limited to one district", () => {
     const text = renderOpenCampaignMessage(
       computeCampaignAlertFields({ ...base, targetDistrict: "Hyderabad" }, 0),
