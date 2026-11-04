@@ -29,6 +29,14 @@ export interface WhatsAppTemplateSpec {
 
 export const NEW_WHATSAPP_TEMPLATES: WhatsAppTemplateSpec[] = [
   {
+    name: "campaign_invite_received",
+    category: "UTILITY",
+    params: ["creator name", "sender name", "sender role (Brand / Photographer / Influencer)", "campaign title", "invite link"],
+    trigger: "When a host sends a campaign invite on a live campaign (once per invite).",
+    body:
+      "Hi {{1}}, you have a new campaign invite from {{2}} ({{3}}) for \"{{4}}\".\n\nThis is a TrendStarZ campaign invitation, not an Instagram native Collab post invitation.\n\nView the brief and respond here: {{5}}\n\nPlease respond before the deadline shown in the invite.",
+  },
+  {
     name: "welcome_user",
     category: "UTILITY",
     params: ["display name", "dashboard link"],
@@ -85,6 +93,71 @@ export const NEW_WHATSAPP_TEMPLATES: WhatsAppTemplateSpec[] = [
       "Hi {{1}}, the host did not accept your resubmitted post for \"{{2}}\".\n\nThe TrendStarz team will review it and update you. Details: {{3}}",
   },
 ];
+
+/**
+ * Bodies of older templates whose admin copy button sends the same text
+ * (the rest still live as comments in campaign-alert-messages.ts).
+ */
+const LEGACY_TEMPLATE_BODIES: Record<string, string> = {
+  campaign_invite_accepted_owner:
+    "Hi {{1}}, {{2}} accepted your invite for \"{{3}}\".\n\nNext step: confirm the creator (complete the payment if it is a paid campaign) so they can start: {{4}}",
+};
+
+/**
+ * The exact text a template sends, with its params filled in — used for the
+ * admin's manual WhatsApp button so manual and automatic messages never differ.
+ */
+export function whatsAppTemplateText(name: string, bodyParams: string[]): string {
+  const body =
+    NEW_WHATSAPP_TEMPLATES.find((t) => t.name === name)?.body ?? LEGACY_TEMPLATE_BODIES[name] ?? "";
+  // Cleaned exactly as WhatsAppService does before sending.
+  return body.replace(/\{\{(\d+)\}\}/g, (_, n) => whatsAppParam(bodyParams[Number(n) - 1]));
+}
+
+/** Creator dashboard link that opens this invite. */
+export function creatorInviteLink(role: unknown, inviteId: unknown, env: NodeJS.ProcessEnv = process.env): string {
+  const base = (env.FRONTEND_URL || "https://trendstarz.in").replace(/\/+$/, "");
+  const page = String(role || "").toLowerCase() === "photographer" ? "/photographer-dashboard" : "/influencer-dashboard";
+  const id = String(inviteId || "");
+  return id ? `${base}${page}?invite=${id}` : `${base}${page}`;
+}
+
+/** Host's campaigns page. */
+export function hostCampaignsLink(env: NodeJS.ProcessEnv = process.env): string {
+  return `${(env.FRONTEND_URL || "https://trendstarz.in").replace(/\/+$/, "")}/campaigns`;
+}
+
+/** campaign_invite_received params, in order. */
+export function inviteReceivedParams(f: {
+  creatorName: string;
+  senderName: string;
+  senderRole: unknown;
+  campaignTitle: string;
+  inviteUrl: string;
+}): string[] {
+  return [f.creatorName, f.senderName, campaignSenderRoleLabel(f.senderRole), f.campaignTitle, f.inviteUrl];
+}
+
+/** campaign_payment_received_host params, in order. */
+export function paymentReceivedHostParams(f: {
+  hostName: string;
+  campaignTitle: string;
+  creatorName: string;
+  campaignsUrl: string;
+}): string[] {
+  return [f.hostName, f.campaignTitle, f.creatorName, f.campaignsUrl];
+}
+
+/** campaign_start_posting params, in order. */
+export function startPostingParams(f: { creatorName: string; campaignTitle: string; inviteUrl: string }): string[] {
+  return [f.creatorName, f.campaignTitle, f.inviteUrl];
+}
+
+/** "Brand" / "Photographer" / "Influencer" — who sent a campaign invite. */
+export function campaignSenderRoleLabel(role: unknown): string {
+  const r = String(role || "").toLowerCase();
+  return r === "photographer" ? "Photographer" : r === "influencer" ? "Influencer" : "Brand";
+}
 
 /** Templates that existed before WHATSAPP_TEMPLATES and keep their old switches while it is unset. */
 const LEGACY_TEMPLATES = new Set([

@@ -87,6 +87,12 @@ import { normalizeUtr, utrMatchValues } from "../utils/utr.util";
 import { SingleInstance } from "../utils/single-instance";
 import { WhatsAppService } from "../whatsapp/whatsapp.service";
 import {
+  creatorInviteLink,
+  hostCampaignsLink,
+  paymentReceivedHostParams,
+  startPostingParams,
+} from "../whatsapp/whatsapp-templates";
+import {
   PREMIUM_RATE_FIELDS,
   applyCommissionOverride,
   creatorFeeGstPercentForInvite,
@@ -2136,10 +2142,10 @@ export class PaymentsPayoutsService {
     recipientId: string | null,
     recipientRole: "influencer" | "photographer",
     campaignId: string | null,
+    inviteId: string | null = null,
   ): Promise<void> {
     if (!this.whatsAppService) return;
     try {
-      const base = (process.env.FRONTEND_URL || "https://trendstarz.in").replace(/\/+$/, "");
       const payerRole = String(tx?.payerRole || "brand").toLowerCase();
       const payerModel =
         payerRole === "influencer" ? this.influencerModel : payerRole === "photographer" ? this.photographerModel : this.brandModel;
@@ -2160,17 +2166,22 @@ export class PaymentsPayoutsService {
       if (host) {
         await this.whatsAppService.sendToUser(String(tx.payerId), host.phoneNumber, host.isMobileVerified, {
           name: "campaign_payment_received_host",
-          bodyParams: [host.brandName || host.name || host.contactPersonName || "there", title, creatorName, `${base}/campaigns`],
+          bodyParams: paymentReceivedHostParams({
+            hostName: host.brandName || host.name || host.contactPersonName || "there",
+            campaignTitle: title,
+            creatorName,
+            campaignsUrl: hostCampaignsLink(),
+          }),
         });
       }
       if (creator) {
         await this.whatsAppService.sendToUser(String(recipientId), creator.phoneNumber, creator.isMobileVerified, {
           name: "campaign_start_posting",
-          bodyParams: [
+          bodyParams: startPostingParams({
             creatorName,
-            title,
-            `${base}${recipientRole === "photographer" ? "/photographer-dashboard" : "/influencer-dashboard"}`,
-          ],
+            campaignTitle: title,
+            inviteUrl: creatorInviteLink(recipientRole, inviteId),
+          }),
         });
       }
     } catch {
@@ -2366,6 +2377,7 @@ export class PaymentsPayoutsService {
       paymentConfirmedRecipientId,
       paymentConfirmedRecipientRole,
       paymentConfirmedCampaignId,
+      confirmed ? String(confirmed._id) : null,
     );
 
     // Notify recipient as soon as payment is confirmed so they can start posting.

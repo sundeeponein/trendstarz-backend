@@ -38,6 +38,7 @@ import { PlansService } from "../plans/plans.service";
 import { PushService } from "../push/push.service";
 import { NotificationsService } from "../notifications/notifications.service";
 import { WhatsAppService } from "../whatsapp/whatsapp.service";
+import { creatorInviteLink, inviteReceivedParams } from "../whatsapp/whatsapp-templates";
 import {
   ENABLE_CAMPAIGN_WHATSAPP,
   AWAITING_POST_STATUSES,
@@ -1547,6 +1548,29 @@ export class CampaignInvitesService {
             body: `${sender.name || "A creator"} invited you to "${campaign.title}"`,
             // Opens this invite directly on the dashboard.
             url: `${recipientRole === "photographer" ? "/photographer-dashboard" : "/influencer-dashboard"}?invite=${saved._id}`,
+          })
+          .catch(() => {
+            /* non-critical */
+          });
+        // WhatsApp (off until campaign_invite_received is approved and listed in WHATSAPP_TEMPLATES).
+        this.loadRecipientProfile(recipientRole, String(recipientId))
+          .then((recipient: any) => {
+            if (!recipient) return;
+            return this.whatsAppService.sendToUser(
+              String(recipientId),
+              recipient.phoneNumber,
+              recipient.isMobileVerified,
+              {
+                name: "campaign_invite_received",
+                bodyParams: inviteReceivedParams({
+                  creatorName: recipient.name || recipient.username || "there",
+                  senderName: sender.name || "A creator",
+                  senderRole: sender.role,
+                  campaignTitle: campaign.title || "a campaign",
+                  inviteUrl: creatorInviteLink(recipientRole, saved._id),
+                }),
+              },
+            );
           })
           .catch(() => {
             /* non-critical */

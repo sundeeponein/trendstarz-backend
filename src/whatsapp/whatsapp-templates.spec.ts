@@ -1,4 +1,13 @@
-import { NEW_WHATSAPP_TEMPLATES, isWhatsAppTemplateEnabled, whatsAppDate, whatsAppParam } from "./whatsapp-templates";
+import {
+  NEW_WHATSAPP_TEMPLATES,
+  creatorInviteLink,
+  inviteReceivedParams,
+  isWhatsAppTemplateEnabled,
+  whatsAppDate,
+  whatsAppParam,
+  whatsAppTemplateText,
+} from "./whatsapp-templates";
+import { renderInviteAcceptedOwnerMessage } from "../campaigns/campaign-alert-messages";
 
 describe("WhatsApp template switches", () => {
   it("with WHATSAPP_TEMPLATES unset: older templates keep working, new ones and new uses stay off", () => {
@@ -32,5 +41,45 @@ describe("WhatsApp template switches", () => {
       expect(new Set(used).size).toBe(t.params.length);
       expect(t.body).not.toMatch(/₹|offer|discount|% off/i);
     }
+  });
+});
+
+describe("manual WhatsApp text matches the automatic template", () => {
+  it("fills each {{n}} with the cleaned param, in order", () => {
+    const params = inviteReceivedParams({
+      creatorName: "Asha",
+      senderName: "Glow Co",
+      senderRole: "brand",
+      campaignTitle: "Diwali\nlaunch",
+      inviteUrl: creatorInviteLink("influencer", "abc123", { FRONTEND_URL: "https://trendstarz.in/" } as any),
+    });
+    expect(params).toEqual(["Asha", "Glow Co", "Brand", "Diwali\nlaunch", "https://trendstarz.in/influencer-dashboard?invite=abc123"]);
+    const text = whatsAppTemplateText("campaign_invite_received", params);
+    expect(text).toContain('Hi Asha, you have a new campaign invite from Glow Co (Brand) for "Diwali launch".');
+    expect(text).toContain("not an Instagram native Collab post invitation");
+    expect(text).toContain("respond here: https://trendstarz.in/influencer-dashboard?invite=abc123");
+    expect(text).not.toMatch(/\{\{\d+\}\}/);
+  });
+
+  it("covers every step of the invite flow, including the older accepted template", () => {
+    for (const name of [
+      "campaign_invite_received",
+      "campaign_invite_accepted_owner",
+      "campaign_payment_received_host",
+      "campaign_start_posting",
+    ]) {
+      expect(whatsAppTemplateText(name, ["a", "b", "c", "d", "e"])).not.toBe("");
+    }
+    expect(
+      renderInviteAcceptedOwnerMessage({ ownerName: "Glow Co", recipientName: "Asha", campaignTitle: "Diwali", campaignUrl: "https://x/campaigns" }),
+    ).toBe(
+      whatsAppTemplateText("campaign_invite_accepted_owner", ["Glow Co", "Asha", "Diwali", "https://x/campaigns"]),
+    );
+  });
+
+  it("links a photographer to their own dashboard, and falls back without an invite id", () => {
+    const env = { FRONTEND_URL: "https://trendstarz.in" } as any;
+    expect(creatorInviteLink("photographer", "x1", env)).toBe("https://trendstarz.in/photographer-dashboard?invite=x1");
+    expect(creatorInviteLink("influencer", null, env)).toBe("https://trendstarz.in/influencer-dashboard");
   });
 });

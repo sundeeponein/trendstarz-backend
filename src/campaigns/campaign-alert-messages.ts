@@ -1,4 +1,5 @@
 import { formatIstDate } from "../utils/ist-date.util";
+import { whatsAppTemplateText } from "../whatsapp/whatsapp-templates";
 /**
  * Single source of truth for the "campaign is live" messages shown to
  * creators — both the literal text an admin copies from the campaign review
@@ -301,18 +302,11 @@ export function inviteAcceptedOwnerTemplateParams(
   ];
 }
 
-/** Full copy-paste text for the same event — shown to admin in the campaign preview modal per-invite. */
+/** Copy-paste text for the same event — exactly what the automatic template sends. */
 export function renderInviteAcceptedOwnerMessage(
   fields: HostEventFields,
 ): string {
-  return [
-    `Hi ${fields.ownerName}, great news!`,
-    "",
-    `${fields.recipientName} accepted your invite for "${fields.campaignTitle}".`,
-    "",
-    `Next step: Confirm the invite and complete payment to proceed.`,
-    `View & Confirm: ${fields.campaignUrl}`,
-  ].join("\n");
+  return whatsAppTemplateText("campaign_invite_accepted_owner", inviteAcceptedOwnerTemplateParams(fields));
 }
 
 /**
@@ -341,17 +335,6 @@ export function renderPostSubmittedOwnerMessage(
     `${fields.recipientName} submitted their post for "${fields.campaignTitle}" — it's ready for your review.`,
     "",
     `Review it here: ${fields.campaignUrl}`,
-  ].join("\n");
-}
-
-/** Full copy-paste text for the same event — shown to admin once payment is confirmed, addressed to the creator. */
-export function renderStartWorkMessage(fields: HostEventFields): string {
-  return [
-    `🎉 Hi ${fields.recipientName}, your campaign has been confirmed by the host.`,
-    "",
-    `You can now start working on "${fields.campaignTitle}". Please check the campaign details and requirements in TrendStarz.`,
-    "",
-    `View it here: ${fields.campaignUrl}`,
   ].join("\n");
 }
 

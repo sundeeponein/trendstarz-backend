@@ -64,8 +64,15 @@ import {
   renderInviteAcceptedOwnerMessage,
   renderPostSubmittedOwnerMessage,
   renderOwnerApprovedMessage,
-  renderStartWorkMessage,
 } from "./campaigns/campaign-alert-messages";
+import {
+  creatorInviteLink,
+  hostCampaignsLink,
+  inviteReceivedParams,
+  paymentReceivedHostParams,
+  startPostingParams,
+  whatsAppTemplateText,
+} from "./whatsapp/whatsapp-templates";
 import {
   WORKFLOW_TIMING_DEFAULTS,
   WORKFLOW_TIMING_KEYS,
@@ -1311,7 +1318,7 @@ export class AdminListsController {
       ? this.photographerModel
       : this.influencerModel;
 
-    const [campaign, recipient, brandOwner, photographerOwner] =
+    const [campaign, recipient, brandOwner, photographerOwner, influencerOwner] =
       await Promise.all([
         this.campaignModel
           .findById((invite as any).campaignId)
@@ -1319,7 +1326,7 @@ export class AdminListsController {
           .lean(),
         recipientModel
           .findById((invite as any).influencerId)
-          .select("name phoneNumber")
+          .select("name username phoneNumber")
           .lean(),
         this.brandModel
           .findById((invite as any).brandId)
@@ -1329,15 +1336,25 @@ export class AdminListsController {
           .findById((invite as any).brandId)
           .select("name phoneNumber")
           .lean(),
+        // An influencer can host a campaign for photographers.
+        this.influencerModel
+          .findById((invite as any).brandId)
+          .select("name phoneNumber")
+          .lean(),
       ]);
 
     const ownerName =
       (brandOwner as any)?.brandName ||
       (brandOwner as any)?.name ||
       (photographerOwner as any)?.name ||
+      (influencerOwner as any)?.name ||
       "there";
+    const ownerRole = brandOwner ? "brand" : photographerOwner ? "photographer" : "influencer";
     const ownerPhone =
-      (brandOwner as any)?.phoneNumber || (photographerOwner as any)?.phoneNumber || "";
+      (brandOwner as any)?.phoneNumber ||
+      (photographerOwner as any)?.phoneNumber ||
+      (influencerOwner as any)?.phoneNumber ||
+      "";
     const recipientPhone = (recipient as any)?.phoneNumber || "";
     const frontendBase = (
       process.env.FRONTEND_URL || "https://trendstarz.in"
@@ -1351,6 +1368,7 @@ export class AdminListsController {
       campaignUrl: `${frontendBase}/campaigns`,
     };
 
+    const inviteUrl = creatorInviteLink((invite as any).recipientRole, (invite as any)._id);
     const status = String((invite as any).status || "");
     return {
       inviteAcceptedMessage: ACCEPTED_OR_LATER_STATUSES.includes(status)
@@ -1359,8 +1377,37 @@ export class AdminListsController {
       postSubmittedMessage: SUBMITTED_OR_LATER_STATUSES.includes(status)
         ? renderPostSubmittedOwnerMessage(fields)
         : null,
+      // Same text as the automatic WhatsApp for each step (whatsapp-templates.ts).
+      inviteReceivedMessage: whatsAppTemplateText(
+        "campaign_invite_received",
+        inviteReceivedParams({
+          creatorName: (recipient as any)?.name || (recipient as any)?.username || "there",
+          senderName: ownerName,
+          senderRole: ownerRole,
+          campaignTitle: (campaign as any)?.title || "a campaign",
+          inviteUrl,
+        }),
+      ),
+      paymentReceivedMessage: WORK_STARTED_OR_LATER_STATUSES.includes(status)
+        ? whatsAppTemplateText(
+            "campaign_payment_received_host",
+            paymentReceivedHostParams({
+              hostName: ownerName,
+              campaignTitle: fields.campaignTitle,
+              creatorName: (recipient as any)?.name || "The creator",
+              campaignsUrl: hostCampaignsLink(),
+            }),
+          )
+        : null,
       startWorkMessage: WORK_STARTED_OR_LATER_STATUSES.includes(status)
-        ? renderStartWorkMessage(fields)
+        ? whatsAppTemplateText(
+            "campaign_start_posting",
+            startPostingParams({
+              creatorName: (recipient as any)?.name || (recipient as any)?.username || "The creator",
+              campaignTitle: fields.campaignTitle,
+              inviteUrl,
+            }),
+          )
         : null,
       ownerPhone,
       recipientPhone,

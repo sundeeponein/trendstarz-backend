@@ -22,7 +22,8 @@ export type WhatsAppTemplateName =
   | "campaign_start_posting"
   | "campaign_post_approved"
   | "campaign_changes_requested"
-  | "campaign_submission_under_review";
+  | "campaign_submission_under_review"
+  | "campaign_invite_received";
 
 @Injectable()
 export class WhatsAppService {
