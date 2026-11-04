@@ -83,6 +83,11 @@ function maskEmail(email: string): string {
 }
 import { maskUpiId, normalizeUpiId, upiChangeFields, upiIdError } from "../utils/upi.util";
 import { payoutUpiChangedTemplate } from "../email/templates/auth.templates";
+import {
+  currentEligibilityProfile,
+  eligibilityChanges,
+  ELIGIBILITY_HISTORY_LIMIT,
+} from "../campaigns/campaign-eligibility-history.util";
 
 /** Self-service "Delete Account" grace period — see requestSelfDeletion. */
 /** Retention (2026-10-26): admin soft-deleted accounts are anonymized after this. */
@@ -3818,12 +3823,21 @@ export class UsersService implements OnModuleInit {
     Object.assign(updateData, upiChange);
 
     // Read before the loop below copies the incoming fields onto the document.
+    const eligibilityBefore = currentEligibilityProfile(userDoc);
     const previousDocs = userDoc.verificationDocuments;
     const previousVerificationStatus = String(userDoc.verificationStatus || "not_submitted");
     const previousDisclaimer = userDoc.verificationDisclaimerAccepted === true;
 
     for (const [key, value] of Object.entries(updateData)) {
       userDoc.set(key, value);
+    }
+
+    // Open campaigns judge state/district/niches as of their go-live time.
+    const eligibilityChanged = eligibilityChanges(eligibilityBefore, currentEligibilityProfile(userDoc));
+    if (eligibilityChanged.length) {
+      const history = (Array.isArray(userDoc.eligibilityHistory) ? userDoc.eligibilityHistory : [])
+        .map((h: any) => (h?.toObject ? h.toObject() : h));
+      userDoc.set("eligibilityHistory", [...history, ...eligibilityChanged].slice(-ELIGIBILITY_HISTORY_LIMIT));
     }
 
     // The profile form sends verificationDocuments on EVERY save. Re-deciding the

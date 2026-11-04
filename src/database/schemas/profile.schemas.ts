@@ -258,6 +258,17 @@ export const InfluencerSchema = new Schema(
     founderOfferSeenAt: { type: Date, default: null },
     // "Stop offer emails" link in Premium offer emails; account emails still go out.
     offerEmailsOptOut: { type: Boolean, default: false },
+    // Own-profile changes to state/district/niches — open campaigns judge the
+    // profile as it was at go-live (campaigns/campaign-eligibility-history.util).
+    eligibilityHistory: [
+      {
+        _id: false,
+        field: { type: String, enum: ["state", "district", "categories"] },
+        from: { type: Schema.Types.Mixed },
+        to: { type: Schema.Types.Mixed },
+        changedAt: { type: Date },
+      },
+    ],
     communityJoined: { type: Boolean, default: false },
     communityState: { type: String, default: "" },
     communityName: { type: String, default: "" },
@@ -1554,6 +1565,9 @@ export const CampaignSchema = new Schema(
     moderationNote: { type: String, default: "" },
     moderatedBy: { type: String, default: "" },
     moderatedAt: { type: Date, default: null },
+    // First time the campaign went active — open campaigns judge creators'
+    // state/district/niches as of this moment (campaign-eligibility-history.util).
+    liveAt: { type: Date, default: null },
     // Who/what actually completed the campaign — distinguishes a host's manual
     // "End campaign" from the hourly auto-complete safety-net cron from an
     // admin emergency override (see force-complete below).
@@ -1670,6 +1684,9 @@ CampaignSchema.add({
   campaignNumber: { type: Number, index: true, unique: true, sparse: true },
 });
 CampaignSchema.index({ status: 1 });
+CampaignSchema.pre("validate", function (this: any) {
+  if (this.status === "active" && !this.liveAt) this.liveAt = new Date();
+});
 export const CampaignModel = model("Campaign", CampaignSchema);
 
 // Atomic sequence counter — one document per named counter (e.g. { _id: 'campaign' })

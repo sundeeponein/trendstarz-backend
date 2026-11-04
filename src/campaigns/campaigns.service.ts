@@ -30,7 +30,7 @@ import {
   inviteOnlyWhatsAppParams,
   ownerApprovedTemplateParams,
 } from "./campaign-alert-messages";
-import { matchesCampaignNiche } from "./campaign-niche.util";
+import { openCampaignProfileRefusal } from "./campaign-eligibility-history.util";
 import {
   CampaignTypeConfigItem,
   resolveCampaignAccessModeConfigs,
@@ -151,6 +151,7 @@ export const SERVER_OWNED_CAMPAIGN_FIELDS = [
   "adminOverrideAt",
   "slotUsedAt",
   "datesChangedAt",
+  "liveAt",
 ] as const;
 
 export function withoutServerOwnedCampaignFields(data: any): any {
@@ -1427,7 +1428,7 @@ export class CampaignsService {
     if (influencerId) {
       influencer = await this.influencerModel
         .findById(influencerId)
-        .select("socialMedia location categories isEmailVerified isMobileVerified")
+        .select("socialMedia location categories eligibilityHistory isEmailVerified isMobileVerified")
         .lean();
     }
 
@@ -1510,30 +1511,9 @@ export class CampaignsService {
         if (!hasTier) return false;
       }
 
-      // State check (case-insensitive)
-      if (c.targetState) {
-        const infState = (influencer.location?.state ?? "")
-          .trim()
-          .toLowerCase();
-        const targetState = String(c.targetState || "")
-          .trim()
-          .toLowerCase();
-        if (infState && infState !== targetState) return false;
-      }
-
-      // District check (case-insensitive)
-      if (c.targetDistrict) {
-        const infDistrict = (influencer.location?.district ?? "")
-          .trim()
-          .toLowerCase();
-        const targetDistrict = String(c.targetDistrict || "")
-          .trim()
-          .toLowerCase();
-        if (infDistrict && infDistrict !== targetDistrict) return false;
-      }
-
-      // Niche check — host-picked niches limit who sees it (campaign-niche.util).
-      if (!matchesCampaignNiche(c, influencer.categories)) return false;
+      // State, district and niches as they were when this campaign went live
+      // (campaign-eligibility-history.util) — same rule as applying.
+      if (openCampaignProfileRefusal(influencer, c)) return false;
 
       return true;
     });
@@ -1878,6 +1858,47 @@ export class CampaignsService {
   }
 
   /**
+   * Who a live campaign is for can't change under creators who saw it (community
+   * posts quote state, district, niche and tier): state, district, tier and
+   * open/invite-only lock at approval; niches stay editable until the first
+   * creator is accepted. Compared after normalization, ignoring case and order.
+   */
+  private async assertTargetingLocked(campaign: any, normalized: any): Promise<void> {
+    if (!["active", "pending", "completed"].includes(String(campaign.status || ""))) return;
+    const key = (v: unknown) =>
+      (Array.isArray(v) ? v : v === undefined || v === null || v === "" ? [] : [v])
+        .map((x) => String(x ?? "").trim().toLowerCase())
+        .filter(Boolean)
+        .sort()
+        .join("|");
+    const changed = (field: string) =>
+      field in normalized && key(normalized[field]) !== key(campaign[field]);
+    const labels: Record<string, string> = {
+      targetState: "State",
+      targetDistrict: "District",
+      minInfluencerTier: "Minimum tier",
+      campaignMode: "Open to all / Invite only",
+    };
+    for (const [field, label] of Object.entries(labels)) {
+      if (changed(field)) {
+        throw new BadRequestException(
+          `${label} can't be changed after the campaign is approved. Create a new campaign for a different audience.`,
+        );
+      }
+    }
+    if (!changed("categories")) return;
+    const accepted = await this.campaignInviteModel.countDocuments({
+      campaignId: campaign._id,
+      status: { $in: ["accepted", "payment_confirmed", "working", "submitted", "completed", "approved"] },
+    });
+    if (accepted > 0) {
+      throw new BadRequestException(
+        "Niche can't be changed after a creator has been accepted.",
+      );
+    }
+  }
+
+  /**
    * After approval the host may change the start/end dates only ONCE, and only
    * while no creator has accepted. Before approval dates stay freely editable.
    * Works on the normalized payload so `startDate` and `timelineStart` (and the
@@ -2053,6 +2074,7 @@ export class CampaignsService {
         : "brand";
     const normalized = this.normalizeCampaignPayload(data, settings, campaign);
     if (takesSlot) normalized.slotUsedAt = new Date();
+    await this.assertTargetingLocked(campaign, normalized);
     if (await this.assertDateChangeAllowed(campaign, normalized)) {
       normalized.datesChangedAt = new Date();
     }

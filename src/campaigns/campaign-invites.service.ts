@@ -47,7 +47,7 @@ import {
   postSubmittedOwnerTemplateParams,
   postingReminderTemplateParams,
 } from "./campaign-alert-messages";
-import { campaignNicheRefusal, matchesCampaignNiche } from "./campaign-niche.util";
+import { openCampaignProfileRefusal } from "./campaign-eligibility-history.util";
 import { ProfileVerificationService } from "../profile-verification/profile-verification.service";
 import { TrackingLinksService } from "./tracking-links.service";
 import {
@@ -4025,39 +4025,10 @@ export class CampaignInvitesService {
       }
     }
 
-    // Check state/district targeting eligibility (case-insensitive)
-    if (campaign.targetState) {
-      const infState = ((influencer as any).location?.state ?? "")
-        .trim()
-        .toLowerCase();
-      const targetState = String(campaign.targetState || "")
-        .trim()
-        .toLowerCase();
-      if (infState && infState !== targetState) {
-        throw new BadRequestException(
-          `This campaign is limited to influencers from ${campaign.targetState}.`,
-        );
-      }
-    }
-    if (campaign.targetDistrict) {
-      const infDistrict = ((influencer as any).location?.district ?? "")
-        .trim()
-        .toLowerCase();
-      const targetDistrict = String(campaign.targetDistrict || "")
-        .trim()
-        .toLowerCase();
-      if (infDistrict && infDistrict !== targetDistrict) {
-        throw new BadRequestException(
-          `This campaign is limited to influencers from ${campaign.targetDistrict}, ${campaign.targetState}.`,
-        );
-      }
-    }
-
-    if (!matchesCampaignNiche(campaign, (influencer as any).categories)) {
-      throw new BadRequestException(
-        campaignNicheRefusal(campaign, (influencer as any).categories),
-      );
-    }
+    // State, district and niches as they were when the campaign went live —
+    // edits after that don't count (campaign-eligibility-history.util). Tier is exempt.
+    const profileRefusal = openCampaignProfileRefusal(influencer, campaign);
+    if (profileRefusal) throw new BadRequestException(profileRefusal);
 
     // Check max slots not exceeded
     const influencerCloseAt = this.getRoleAcceptanceCloseAt(
