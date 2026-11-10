@@ -79,6 +79,11 @@ const ProfileVerificationFields = {
   // Snapshot of the last mobile number that was actually verified, kept when
   // the user changes their number so admins can see what changed (fraud/support signal).
   previousVerifiedMobile: { type: String, default: "" },
+  // A new number the owner asked for while their current one is verified: it
+  // waits here until an admin verifies it; the current number stays in use.
+  // Server-owned (utils/pending-mobile.util).
+  pendingPhoneNumber: { type: String, default: "" },
+  pendingPhoneRequestedAt: { type: Date, default: null },
   identityVerified: { type: Boolean, default: false },
   identityVerifiedAt: { type: Date, default: null },
   identityConfirmed: { type: Boolean, default: false },

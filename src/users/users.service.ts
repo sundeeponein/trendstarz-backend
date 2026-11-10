@@ -1,3 +1,4 @@
+import { planMobileChange } from "../utils/pending-mobile.util";
 import { PriceChangesService } from "../price-changes/price-changes.service";
 import { PriceChange, holdSocialRates } from "../price-changes/price-changes.util";
 import { canonicalPhone } from "../utils/phone.util";
@@ -1197,6 +1198,8 @@ export class UsersService implements OnModuleInit {
     user.expertiseArea = "";
     user.previousVerifiedEmail = "";
     user.previousVerifiedMobile = "";
+    user.pendingPhoneNumber = "";
+    user.pendingPhoneRequestedAt = null;
     user.signupAttribution = undefined;
     user.firebaseUid = null;
     user.socialMediaEditLog = [];
@@ -3471,6 +3474,18 @@ export class UsersService implements OnModuleInit {
     return { message: "User not found", id };
   }
 
+  async cancelPendingMobile(userId: string, role: string) {
+    const r = role.toLowerCase();
+    const model =
+      r === "brand" ? this.brandModel : r === "photographer" ? this.photographerModel : r === "influencer" ? this.influencerModel : null;
+    if (!model) throw new BadRequestException("Not available for this account");
+    await model.updateOne(
+      { _id: userId },
+      { $set: { pendingPhoneNumber: "", pendingPhoneRequestedAt: null } },
+    );
+    return { pendingPhoneNumber: "" };
+  }
+
   async getInfluencerProfileById(userId: string) {
     let user = await this.influencerModel.findById(userId).lean();
     if (!user || Array.isArray(user)) return null;
@@ -3794,21 +3809,11 @@ export class UsersService implements OnModuleInit {
     // One email/phone per account across all roles (registration checks the same).
     await this.assertEmailPhoneFree(updateData, userDoc);
     if (Object.prototype.hasOwnProperty.call(updateData, "phoneNumber")) {
-      const existingPhone = this.normalizePhone(userDoc.phoneNumber);
-      const incomingPhone = this.normalizePhone(updateData.phoneNumber);
-      // Verified numbers can be changed, but verification doesn't carry over —
-      // the new number must be re-verified (manual call, or OTP if enabled).
-      if (userDoc.isMobileVerified && existingPhone !== incomingPhone) {
-        userDoc.set("previousVerifiedMobile", existingPhone);
-        userDoc.set("isMobileVerified", false);
-        userDoc.set("mobileVerified", false);
-        userDoc.set("mobileVerifiedAt", null);
-        userDoc.set("mobileVerificationDate", null);
-        userDoc.set("mobileVerificationMethod", "");
-        userDoc.set("mobileVerifiedBy", "");
-      } else if (existingPhone !== incomingPhone) {
-        userDoc.set("isMobileVerified", false);
-      }
+      // A verified number stays in use; a new one waits for admin verification
+      // (utils/pending-mobile.util).
+      const plan = planMobileChange(userDoc, updateData.phoneNumber);
+      for (const [k, v] of Object.entries(plan.set)) userDoc.set(k, v);
+      if (!plan.applyPhone) delete updateData.phoneNumber;
     }
 
     let emailChangedFrom = "";
@@ -4061,7 +4066,7 @@ export class UsersService implements OnModuleInit {
 
     const existingBrand: any = await this.brandModel
       .findById(userId)
-      .select("phoneNumber email isMobileVerified isEmailVerified socialMedia")
+      .select("phoneNumber pendingPhoneNumber email isMobileVerified isEmailVerified socialMedia")
       .lean();
     if (!existingBrand) return { message: "Brand not found", userId };
     // The brand page is found by name or link name: both must stay this brand's own.
@@ -4080,21 +4085,11 @@ export class UsersService implements OnModuleInit {
     // One email/phone per account across all roles (registration checks the same).
     await this.assertEmailPhoneFree(updateData, existingBrand);
     if (Object.prototype.hasOwnProperty.call(updateData, "phoneNumber")) {
-      const existingPhone = this.normalizePhone(existingBrand.phoneNumber);
-      const incomingPhone = this.normalizePhone(updateData.phoneNumber);
-      // Verified numbers can be changed, but verification doesn't carry over —
-      // the new number must be re-verified (manual call, or OTP if enabled).
-      if (existingBrand.isMobileVerified && existingPhone !== incomingPhone) {
-        updateData.previousVerifiedMobile = existingPhone;
-        updateData.isMobileVerified = false;
-        updateData.mobileVerified = false;
-        updateData.mobileVerifiedAt = null;
-        updateData.mobileVerificationDate = null;
-        updateData.mobileVerificationMethod = "";
-        updateData.mobileVerifiedBy = "";
-      } else if (existingPhone !== incomingPhone) {
-        updateData.isMobileVerified = false;
-      }
+      // A verified number stays in use; a new one waits for admin verification
+      // (utils/pending-mobile.util).
+      const plan = planMobileChange(existingBrand, updateData.phoneNumber);
+      Object.assign(updateData, plan.set);
+      if (!plan.applyPhone) delete updateData.phoneNumber;
     }
 
     let brandEmailChangedFrom = "";

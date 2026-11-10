@@ -124,7 +124,7 @@ describe("UsersService profile update guards", () => {
     );
   });
 
-  it("resets influencer mobile verification when verified phone is changed", async () => {
+  it("keeps a verified influencer number and parks the new one for verification", async () => {
     const doc: any = {
       phoneNumber: "9908763880",
       email: "old@example.com",
@@ -140,8 +140,9 @@ describe("UsersService profile update guards", () => {
     const service = makeService({ influencerModel });
 
     await service.updateInfluencerProfile("inf-1", { phoneNumber: "9999999999" });
-    expect(doc.set).toHaveBeenCalledWith("previousVerifiedMobile", "9908763880");
-    expect(doc.set).toHaveBeenCalledWith("isMobileVerified", false);
+    expect(doc.set).toHaveBeenCalledWith("pendingPhoneNumber", "9999999999");
+    expect(doc.set).not.toHaveBeenCalledWith("phoneNumber", expect.anything());
+    expect(doc.set).not.toHaveBeenCalledWith("isMobileVerified", false);
     expect(doc.save).toHaveBeenCalled();
   });
 
@@ -215,7 +216,7 @@ describe("UsersService profile update guards", () => {
     expect(doc.save).toHaveBeenCalled();
   });
 
-  it("resets brand mobile verification when verified phone is changed", async () => {
+  it("keeps a verified brand number and parks the new one for verification", async () => {
     const existingBrand = {
       phoneNumber: "9908763880",
       email: "brand@example.com",
@@ -234,15 +235,10 @@ describe("UsersService profile update guards", () => {
     const service = makeService({ brandModel });
 
     await service.updateBrandProfile("brand-1", { phoneNumber: "9999999999" });
-    expect(brandModel.findByIdAndUpdate).toHaveBeenCalledWith(
-      "brand-1",
-      expect.objectContaining({
-        phoneNumber: "9999999999",
-        isMobileVerified: false,
-        previousVerifiedMobile: "9908763880",
-      }),
-      { new: true },
-    );
+    const update = brandModel.findByIdAndUpdate.mock.calls[0][1];
+    expect(update).toMatchObject({ pendingPhoneNumber: "9999999999" });
+    expect(update).not.toHaveProperty("phoneNumber");
+    expect(update).not.toHaveProperty("isMobileVerified");
   });
 
   it("resets brand email verification when email is changed", async () => {

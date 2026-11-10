@@ -46,6 +46,8 @@ export const SERVER_OWNED_PROFILE_FIELDS = [
   "mobileVerificationDate",
   "mobileVerifiedBy",
   "previousVerifiedMobile",
+  "pendingPhoneNumber",
+  "pendingPhoneRequestedAt",
   "identityVerified",
   "identityVerifiedAt",
   "identityConfirmed",

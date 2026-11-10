@@ -1,3 +1,6 @@
+import { NotificationsService } from "../notifications/notifications.service";
+import { canonicalPhone } from "../utils/phone.util";
+import { FINISHED_INVITE_STATUSES } from "../utils/pending-mobile.util";
 import { PriceChangesService } from "../price-changes/price-changes.service";
 import { ADMIN_ACTIONS } from "../utils/admin-action-log.util";
 import { LogAdminAction } from "../utils/admin-action.interceptor";
@@ -78,7 +81,100 @@ export class AdminUserTableController {
     private readonly socialAccountObservation: SocialAccountObservationService,
     private readonly socialAccountComparison: SocialAccountComparisonService,
     @Optional() private readonly priceChanges?: PriceChangesService,
+    @Optional() private readonly notifications?: NotificationsService,
   ) {}
+
+  /**
+   * A mobile change waiting for verification (utils/pending-mobile.util):
+   * approve → the new number becomes the verified one (and the live contact on
+   * the creator's unfinished invites); reject → the current number stays.
+   */
+  @Post("users/:type/:id/pending-mobile/:decision")
+  @LogAdminAction("pending_mobile_decision")
+  async decidePendingMobile(
+    @Param("type") type: string,
+    @Param("id") id: string,
+    @Param("decision") decision: string,
+  ) {
+    if (decision !== "approve" && decision !== "reject") {
+      throw new BadRequestException("decision must be approve or reject");
+    }
+    if (!Types.ObjectId.isValid(id)) throw new BadRequestException("Invalid id");
+    const role = String(type || "").toLowerCase();
+    const model = this.socialMediaModelFor(role);
+    const user: any = await model.findById(id).select("phoneNumber pendingPhoneNumber").lean();
+    if (!user) throw new NotFoundException("User not found");
+    const pending = canonicalPhone(user.pendingPhoneNumber);
+    if (!pending) throw new ConflictException("No mobile change is waiting for this account.");
+    const now = new Date();
+    const notify = (title: string, body: string) =>
+      this.notifications
+        ?.createForUser({
+          userId: id,
+          userRole: role as "influencer" | "brand" | "photographer",
+          title,
+          body,
+          url: `/${role}-profile`,
+        })
+        .catch(() => undefined);
+
+    if (decision === "reject") {
+      const res = await model.updateOne(
+        { _id: id, pendingPhoneNumber: user.pendingPhoneNumber },
+        { $set: { pendingPhoneNumber: "", pendingPhoneRequestedAt: null } },
+      );
+      if (!res.modifiedCount) throw new ConflictException("This mobile change was already handled.");
+      notify(
+        "New mobile number not verified",
+        `We couldn't verify ${pending}. We'll keep using ${canonicalPhone(user.phoneNumber)}. Contact support if this is wrong.`,
+      );
+      return { status: "rejected", phoneNumber: canonicalPhone(user.phoneNumber) };
+    }
+
+    // One number per account across all roles.
+    const [inf, brand, photo] = await Promise.all(
+      [this.influencerModel, this.brandModel, this.photographerModel].map((m) =>
+        m.findOne({ phoneNumber: pending, _id: { $ne: new Types.ObjectId(id) } }).select("_id").lean(),
+      ),
+    );
+    if (inf || brand || photo) {
+      throw new ConflictException("This number is already used by another account.");
+    }
+    const res = await model.updateOne(
+      { _id: id, pendingPhoneNumber: user.pendingPhoneNumber },
+      {
+        $set: {
+          phoneNumber: pending,
+          previousVerifiedMobile: canonicalPhone(user.phoneNumber),
+          isMobileVerified: true,
+          mobileVerified: true,
+          mobileVerifiedAt: now,
+          mobileVerificationDate: now,
+          mobileVerificationMethod: "Manual",
+          mobileVerifiedBy: "Admin",
+          pendingPhoneNumber: "",
+          pendingPhoneRequestedAt: null,
+        },
+      },
+    );
+    if (!res.modifiedCount) throw new ConflictException("This mobile change was already handled.");
+    // Hosts of unfinished campaigns reach the creator on the new number.
+    let invitesUpdated = 0;
+    if (role !== "brand") {
+      const r = await model.db.collection("campaigninvites").updateMany(
+        {
+          influencerId: { $in: [id, new Types.ObjectId(id)] },
+          "shippingAddress.contactMobile": { $exists: true },
+          status: { $nin: FINISHED_INVITE_STATUSES },
+          "productFulfillment.deliveredAt": null,
+        },
+        { $set: { "shippingAddress.contactMobile": pending, updatedAt: now } },
+      );
+      invitesUpdated = r.modifiedCount;
+    }
+    notify("New mobile number verified", `Your mobile number is now ${pending}.`);
+    return { status: "approved", phoneNumber: pending, invitesUpdated };
+  }
 
   private getPaging(pageRaw?: string, limitRaw?: string) {
     const page = Math.max(1, Number(pageRaw) || 1);

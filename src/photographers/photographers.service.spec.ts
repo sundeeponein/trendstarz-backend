@@ -25,7 +25,7 @@ describe("PhotographersService profile update guards", () => {
       noAccount,
     );
 
-  it("resets mobile verification when verified phone is changed", async () => {
+  it("keeps a verified number and parks the new one for verification", async () => {
     const photographerModel = {
       findById: jest.fn().mockReturnValue({
         select: jest.fn().mockReturnValue({
@@ -45,17 +45,10 @@ describe("PhotographersService profile update guards", () => {
 
     await service.updateProfile("photo-1", { phoneNumber: "9999999999" });
 
-    expect(photographerModel.findByIdAndUpdate).toHaveBeenCalledWith(
-      "photo-1",
-      {
-        $set: expect.objectContaining({
-          phoneNumber: "9999999999",
-          isMobileVerified: false,
-          previousVerifiedMobile: "9908763880",
-        }),
-      },
-      { new: true },
-    );
+    const update = photographerModel.findByIdAndUpdate.mock.calls[0][1].$set;
+    expect(update).toMatchObject({ pendingPhoneNumber: "9999999999" });
+    expect(update).not.toHaveProperty("phoneNumber");
+    expect(update).not.toHaveProperty("isMobileVerified");
   });
 
   it("resets email verification when email changes", async () => {

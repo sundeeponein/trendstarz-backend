@@ -598,6 +598,14 @@ export class UsersController {
     );
   }
 
+  /** The owner withdraws their mobile change that is waiting for verification. */
+  @UseGuards(JwtAuthGuard)
+  @Post("me/mobile-change/cancel")
+  async cancelMobileChange(@Req() req: any) {
+    const userId = req.user?.userId || req.user?.sub || req.user?.id;
+    return this.usersService.cancelPendingMobile(String(userId || ""), String(req.user?.role || ""));
+  }
+
   @UseGuards(JwtAuthGuard)
   @Get("influencer-profile")
   async getInfluencerProfile(@Req() req: any) {

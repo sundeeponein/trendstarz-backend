@@ -9,6 +9,8 @@ export const PRIVATE_PROFILE_FIELDS = [
   "firebaseUid",
   "previousVerifiedEmail",
   "previousVerifiedMobile",
+  "pendingPhoneNumber",
+  "pendingPhoneRequestedAt",
   "verificationDocuments",
   "verificationAdminNotes",
   "verificationAuditLog",
