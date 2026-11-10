@@ -27,4 +27,6 @@ export const PERSONAL_TRACES: Array<[collection: string, field: string, idType: 
   ["invite_views", "userId", "string"],
   // Which Premium offer emails they were sent.
   ["offer_email_sends", "userId", "string"],
+  // Their rate history (old → new prices, approvals).
+  ["price_changes", "userId", "string"],
 ];

@@ -1,3 +1,5 @@
+import { PriceChangesService } from "../price-changes/price-changes.service";
+import { PriceChange, holdRateRows, holdSocialRates } from "../price-changes/price-changes.util";
 import { canonicalPhone } from "../utils/phone.util";
 import {
   PROFILE_TRAFFIC_DAILY_COLLECTION,
@@ -123,6 +125,7 @@ export class PhotographersService {
     @InjectModel("User") private readonly userModel: Model<any>,
     // Optional so existing unit tests can build the service without it.
     @Optional() private readonly firebaseAdminService?: FirebaseAdminService,
+    @Optional() private readonly priceChanges?: PriceChangesService,
   ) {}
 
   /** Brand-safe Collaboration Score fields only — see UsersService's sibling helper. */
@@ -602,7 +605,7 @@ export class PhotographersService {
     const current: any = await this.photographerModel
       .findById(userId)
       .select(
-        "phoneNumber email isMobileVerified isEmailVerified profileImages socialMedia collaborationAvailability payout",
+        "phoneNumber email isMobileVerified isEmailVerified profileImages socialMedia pricing collaborationAvailability payout",
       )
       .lean();
     if (!current) throw new NotFoundException("Photographer not found");
@@ -625,6 +628,22 @@ export class PhotographersService {
         socialBefore,
         update.socialMedia,
       );
+    }
+    // Price changes are recorded; a price that doubles or more waits for admin approval
+    // (the current price stays live). No re-verification — see price-changes.util.
+    const priceApplied: PriceChange[] = [];
+    const priceHeld: PriceChange[] = [];
+    if (update.socialMedia) {
+      const held = holdSocialRates(socialBefore, update.socialMedia);
+      update.socialMedia = held.socialMedia;
+      priceApplied.push(...held.applied);
+      priceHeld.push(...held.held);
+    }
+    if (Array.isArray(update.pricing)) {
+      const held = holdRateRows(current.pricing, update.pricing, { source: "pricing" });
+      update.pricing = held.rows;
+      priceApplied.push(...held.applied);
+      priceHeld.push(...held.held);
     }
 
     // Cleanup old images if profileImages is being replaced — mirrors
@@ -707,6 +726,7 @@ export class PhotographersService {
       .findByIdAndUpdate(userId, { $set: update }, { new: true })
       .lean();
     if (!updated) throw new NotFoundException("Photographer not found");
+    await this.priceChanges?.record(String(userId), "photographer", priceApplied, priceHeld);
     if (emailChangedFrom) {
       // To the OLD address: a takeover changes the email first.
       sendSecurityAlert(emailChangedFrom, `Your login email was changed to ${maskEmail((updated as any).email)}.`, (updated as any).name);

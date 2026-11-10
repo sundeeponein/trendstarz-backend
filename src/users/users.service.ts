@@ -1,6 +1,8 @@
+import { PriceChangesService } from "../price-changes/price-changes.service";
+import { PriceChange, holdSocialRates } from "../price-changes/price-changes.util";
 import { canonicalPhone } from "../utils/phone.util";
 import { publicScoreFields } from "../utils/public-score-fields.util";
-import { Injectable, BadRequestException, NotFoundException, OnModuleInit } from "@nestjs/common";
+import { Injectable, BadRequestException, NotFoundException, OnModuleInit, Optional } from "@nestjs/common";
 import { Cron } from "@nestjs/schedule";
 import * as fs from "fs";
 import * as path from "path";
@@ -1250,6 +1252,7 @@ export class UsersService implements OnModuleInit {
     private readonly campaignTransactionModel: Model<any>,
     private readonly socialAccountVerification: SocialAccountVerificationService,
     private readonly otpStore: OtpStoreService,
+    @Optional() private readonly priceChanges?: PriceChangesService,
   ) {}
 
   /**
@@ -3758,6 +3761,14 @@ export class UsersService implements OnModuleInit {
         updateData.socialMedia,
       );
     }
+    // Price changes are recorded; a price that doubles or more waits for admin approval
+    // (the current price stays live). No re-verification — see price-changes.util.
+    let priceHold: { applied: PriceChange[]; held: PriceChange[] } | null = null;
+    if (updateData.socialMedia) {
+      const held = holdSocialRates(socialBefore, updateData.socialMedia);
+      updateData.socialMedia = held.socialMedia;
+      priceHold = held;
+    }
     // Admin "updated since review" signal — which sections this save really changes.
     const changedSections = changedProfileSections(
       userDoc.toObject ? userDoc.toObject() : userDoc,
@@ -3913,6 +3924,9 @@ export class UsersService implements OnModuleInit {
     }
 
     const updated = await userDoc.save();
+    if (priceHold) {
+      await this.priceChanges?.record(String(userId), "influencer", priceHold.applied, priceHold.held);
+    }
     if (emailChangedFrom) {
       // To the OLD address: a takeover changes the email first.
       sendSecurityAlert(emailChangedFrom, `Your login email was changed to ${maskEmail(updated.email)}.`, updated.name);

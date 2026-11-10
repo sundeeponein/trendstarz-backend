@@ -1,9 +1,11 @@
+import { PriceChangesService } from "../price-changes/price-changes.service";
 import { ADMIN_ACTIONS } from "../utils/admin-action-log.util";
 import { LogAdminAction } from "../utils/admin-action.interceptor";
 import {
   Controller,
   Get,
   Post,
+  Optional,
   Patch,
   Body,
   Param,
@@ -75,6 +77,7 @@ export class AdminUserTableController {
     private readonly socialAccountVerification: SocialAccountVerificationService,
     private readonly socialAccountObservation: SocialAccountObservationService,
     private readonly socialAccountComparison: SocialAccountComparisonService,
+    @Optional() private readonly priceChanges?: PriceChangesService,
   ) {}
 
   private getPaging(pageRaw?: string, limitRaw?: string) {
@@ -1209,7 +1212,7 @@ export class AdminUserTableController {
     userType: "Influencer" | "Brand" | "Photographer",
   ): Promise<void> {
     const ids = rows.map((r) => String(r?._id || "")).filter(Boolean);
-    const [changed, linkReported] = await Promise.all([
+    const [changed, linkReported, prices] = await Promise.all([
       this.socialAccountVerification.profileIdsWithChangedReviews(
         userType,
         ids,
@@ -1218,6 +1221,10 @@ export class AdminUserTableController {
         userType,
         ids,
       ),
+      // Price history: brands never see these; prices that doubled wait for approval.
+      userType === "Brand" || !this.priceChanges
+        ? Promise.resolve(new Map())
+        : this.priceChanges.signalsFor(ids).catch(() => new Map()),
     ]);
     for (const r of rows) {
       const approved =
@@ -1231,6 +1238,9 @@ export class AdminUserTableController {
       r.socialReviewChanged =
         changed.has(String(r?._id || "")) || handleConfirmOverdue(r);
       r.linkReportOpen = linkReported.has(String(r?._id || ""));
+      const price = prices.get(String(r?._id || ""));
+      r.lastPriceChangeAt = price?.lastPriceChangeAt ?? null;
+      r.pricePendingCount = price?.pricePendingCount ?? 0;
     }
   }
 

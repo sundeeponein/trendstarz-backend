@@ -1,3 +1,4 @@
+import { PriceChangesModule } from "../price-changes/price-changes.module";
 import { Module } from "@nestjs/common";
 import { UsersController } from "./users.controller";
 import { BrandsController } from "./brands.controller";
@@ -33,6 +34,7 @@ import { OtpModule } from "../otp/otp.module";
   imports: [
     SocialAccountVerificationModule,
     OtpModule,
+    PriceChangesModule,
     MongooseModule.forFeature([
       { name: "User", schema: UserSchema, collection: "users" },
       {

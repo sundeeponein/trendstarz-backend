@@ -36,6 +36,7 @@ const PERSONAL_TRACES = [
   ['invite_views', 'userId', 'string'],
   // Which Premium offer emails they were sent.
   ['offer_email_sends', 'userId', 'string'],
+  ['price_changes', 'userId', 'string'],
 ];
 
 async function findOrphans(db) {

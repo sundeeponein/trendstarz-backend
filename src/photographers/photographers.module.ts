@@ -1,3 +1,4 @@
+import { PriceChangesModule } from "../price-changes/price-changes.module";
 import { Module } from "@nestjs/common";
 import { MongooseModule } from "@nestjs/mongoose";
 import { PhotographersController } from "./photographers.controller";
@@ -22,6 +23,7 @@ import { SocialAccountVerificationModule } from "../social-account-verification/
 @Module({
   imports: [
     PlansModule,
+    PriceChangesModule,
     SocialAccountVerificationModule,
     MongooseModule.forFeature([
       {
