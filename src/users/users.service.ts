@@ -3356,6 +3356,14 @@ export class UsersService implements OnModuleInit {
         "premiumDuration is required when setting Premium",
       );
     }
+    // Admin grants are 1 or 3 months only (1 year removed 2026-11-10 — keep
+    // grants short so they work as a trial). Paid purchases don't come
+    // through here, so paid yearly plans are unaffected.
+    if (isPremium && premiumDuration !== "1m" && premiumDuration !== "3m") {
+      throw new BadRequestException(
+        "Admin Premium grants can be 1 month or 3 months only",
+      );
+    }
 
     const update: any = { isPremium };
     if (isPremium && premiumDuration) {
