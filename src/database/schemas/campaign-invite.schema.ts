@@ -250,6 +250,11 @@ export const CampaignInviteSchema = new Schema({
     state: { type: String },
     pincode: { type: String },
     landmark: { type: String },
+    // The campaign's product question as it was asked, and the creator's answer
+    // (e.g. "Shirt size (Men)" → "XL"). Kept here so it follows the address's
+    // visibility and deletion rules.
+    optionQuestion: { type: String },
+    optionAnswer: { type: String },
     capturedAt: { type: Date },
   },
   createdAt: { type: Date, default: Date.now },

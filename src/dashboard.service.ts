@@ -14,7 +14,8 @@ const CREATOR_CAMPAIGN_FIELDS =
   "title description script status campaignMode budgetMin budgetMax campaignType pricePerInfluencer " +
   "maxInfluencers startDate endDate timelineStart timelineEnd acceptanceDeadline deliverables platforms " +
   "socialMedia specialInstructions venueName venueAddress venueCity venueDistrict venueState venueGoogleMapUrl " +
-  "productValue productDescription productPaymentMode productPaymentAmount inviteBenefits ownerType createdByRole " +
+  "productValue productDescription productPaymentMode productPaymentAmount productShippingRequired productOptionQuestion productOptionChoices " +
+  "inviteBenefits ownerType createdByRole " +
   "requestKind brandId image images galleryImages promotionUrlType promotionUrl suggestedCaption hashtags " +
   "resourceImages campaignNumber categories";
 

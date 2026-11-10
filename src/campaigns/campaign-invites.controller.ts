@@ -202,6 +202,17 @@ export class CampaignInvitesController {
     return this.invitesService.getInfluencerAttentionCounts(influencerId);
   }
 
+  /** Creator: change their answer to the product question (size etc.) until the product ships. */
+  @UseGuards(JwtAuthGuard)
+  @Patch(":id/product-option")
+  async updateProductOption(
+    @Param("id") id: string,
+    @Req() req: any,
+    @Body() body: { answer?: string },
+  ) {
+    return this.invitesService.updateProductOption(id, this.requesterId(req), body?.answer);
+  }
+
   @UseGuards(JwtAuthGuard)
   @Patch(":id/respond")
   async respond(
@@ -229,6 +240,7 @@ export class CampaignInvitesController {
         state?: string;
         pincode?: string;
         landmark?: string;
+        optionAnswer?: string;
       };
       /** Creator ticked the paid-collaboration terms (recorded with its version). */
       acceptTerms?: boolean;

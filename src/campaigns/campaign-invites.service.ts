@@ -1,3 +1,4 @@
+import { productOptionAnswer } from "./product-option.util";
 import {
   Injectable,
   BadRequestException,
@@ -2031,7 +2032,7 @@ export class CampaignInvitesService {
       })
       .populate(
         "campaignId",
-        "title description script status campaignMode budgetMin budgetMax campaignType pricePerInfluencer maxInfluencers startDate endDate timelineStart timelineEnd acceptanceDeadline deliverables platforms socialMedia specialInstructions venueName venueAddress venueCity venueDistrict venueState venueGoogleMapUrl productValue productDescription productPaymentMode productPaymentAmount inviteBenefits ownerType createdByRole requestKind brandId image images galleryImages promotionUrlType promotionUrl suggestedCaption hashtags resourceImages campaignNumber",
+        "title description script status campaignMode budgetMin budgetMax campaignType pricePerInfluencer maxInfluencers startDate endDate timelineStart timelineEnd acceptanceDeadline deliverables platforms socialMedia specialInstructions venueName venueAddress venueCity venueDistrict venueState venueGoogleMapUrl productValue productDescription productPaymentMode productPaymentAmount productShippingRequired productOptionQuestion productOptionChoices inviteBenefits ownerType createdByRole requestKind brandId image images galleryImages promotionUrlType promotionUrl suggestedCaption hashtags resourceImages campaignNumber",
       )
       .populate(
         "brandId",
@@ -2126,7 +2127,7 @@ export class CampaignInvitesService {
       })
       .populate(
         "campaignId",
-        "title description script status campaignMode budgetMin budgetMax campaignType pricePerInfluencer maxInfluencers startDate endDate timelineStart timelineEnd acceptanceDeadline deliverables platforms socialMedia specialInstructions venueName venueAddress venueCity venueDistrict venueState venueGoogleMapUrl productValue productDescription productPaymentMode productPaymentAmount inviteBenefits image images galleryImages promotionUrlType promotionUrl suggestedCaption hashtags resourceImages campaignNumber brandId",
+        "title description script status campaignMode budgetMin budgetMax campaignType pricePerInfluencer maxInfluencers startDate endDate timelineStart timelineEnd acceptanceDeadline deliverables platforms socialMedia specialInstructions venueName venueAddress venueCity venueDistrict venueState venueGoogleMapUrl productValue productDescription productPaymentMode productPaymentAmount productShippingRequired productOptionQuestion productOptionChoices inviteBenefits image images galleryImages promotionUrlType promotionUrl suggestedCaption hashtags resourceImages campaignNumber brandId",
       )
       .populate(
         "brandId",
@@ -2778,6 +2779,48 @@ export class CampaignInvitesService {
    * Once the influencer is working (payment_confirmed / working / submitted / completed)
    * the invite is locked and cannot be withdrawn.
    */
+  /**
+   * The creator changes their answer to the campaign's product question (size
+   * etc.). Allowed until the host marks the product shipped — checked in the
+   * same write, so it can't slip in after shipping.
+   */
+  async updateProductOption(inviteId: string, creatorId: string, answer: unknown) {
+    if (!Types.ObjectId.isValid(String(inviteId))) throw new BadRequestException("Invalid invite id");
+    const invite: any = await this.inviteModel
+      .findById(inviteId)
+      .select("influencerId campaignId shippingAddress productFulfillment")
+      .lean();
+    if (!invite) throw new NotFoundException("Invite not found");
+    if (String(invite.influencerId) !== String(creatorId)) {
+      throw new BadRequestException("Not your invite");
+    }
+    const question = invite.shippingAddress?.optionQuestion;
+    if (!question) throw new BadRequestException("This campaign doesn't ask for a size or option.");
+    const campaign: any = await this.campaignModel
+      .findById(invite.campaignId)
+      .select("productOptionChoices")
+      .lean();
+    const option = productOptionAnswer(question, campaign?.productOptionChoices, answer);
+    if (option.error) throw new BadRequestException(`Enter: ${option.error}`);
+    const res = await this.inviteModel.updateOne(
+      {
+        _id: invite._id,
+        influencerId: invite.influencerId,
+        "shippingAddress.optionQuestion": question,
+        "productFulfillment.shippedAt": null,
+        "productFulfillment.deliveredAt": null,
+        "productFulfillment.status": { $nin: ["shipped", "delivered", "returned"] },
+      },
+      { $set: { "shippingAddress.optionAnswer": option.answer, updatedAt: new Date() } },
+    );
+    if (!res.matchedCount) {
+      throw new BadRequestException(
+        "The product has already been shipped — message the host if something is wrong.",
+      );
+    }
+    return { optionQuestion: question, optionAnswer: option.answer };
+  }
+
   /** Barter that ships a product, not yet marked delivered — the creator can't post yet. */
   private awaitingProductDelivery(campaign: any, invite: any): boolean {
     return (
@@ -2948,6 +2991,7 @@ export class CampaignInvitesService {
       state?: string;
       pincode?: string;
       landmark?: string;
+      optionAnswer?: string;
     },
   ) {
     const normalized = (v: string) => (v || "").toLowerCase().trim();
@@ -3066,7 +3110,7 @@ export class CampaignInvitesService {
       const campaign: any = await this.campaignModel
         .findById(invite.campaignId)
         .select(
-          "status ownerType requestKind startDate endDate timelineStart timelineEnd socialMedia platforms campaignMode minInfluencerTier minInfluencers maxInfluencers inviteSlots acceptanceDeadline campaignType productShippingRequired productPaymentMode",
+          "status ownerType requestKind startDate endDate timelineStart timelineEnd socialMedia platforms campaignMode minInfluencerTier minInfluencers maxInfluencers inviteSlots acceptanceDeadline campaignType productShippingRequired productOptionQuestion productOptionChoices productPaymentMode",
         )
         .lean();
       if (!campaign) throw new NotFoundException("Campaign not found");
@@ -3088,11 +3132,23 @@ export class CampaignInvitesService {
         campaign.campaignType === "product" &&
         campaign.productShippingRequired === true;
       if (requiresShippingAddress) {
-        const sa = shippingAddress || {};
+        // Name and mobile are the creator's registered ones (2026-11-10): the
+        // creator enters only the address; anything sent for them is ignored.
+        const registered: any = await (recipientRole === "photographer"
+          ? this.photographerModel.findById(influencerId).select("name phoneNumber").lean()
+          : this.influencerModel.findById(influencerId).select("name phoneNumber").lean());
+        const sa = {
+          ...(shippingAddress || {}),
+          contactName: String(registered?.name || "").trim(),
+          contactMobile: String(registered?.phoneNumber || "").trim(),
+        };
+        if (!sa.contactName || !sa.contactMobile) {
+          throw new BadRequestException(
+            "Add your name and mobile number in your profile before accepting this product campaign.",
+          );
+        }
         const missing: string[] = [];
         const required: Array<[keyof typeof sa, string]> = [
-          ["contactName", "contact name"],
-          ["contactMobile", "contact mobile"],
           ["line1", "address line 1"],
           ["city", "city"],
           ["state", "state"],
@@ -3109,6 +3165,13 @@ export class CampaignInvitesService {
         if (pincode && (pincode.length < 4 || pincode.length > 10)) {
           missing.push("valid pincode");
         }
+        // The host's question (size etc.), if the campaign asks one.
+        const option = productOptionAnswer(
+          campaign.productOptionQuestion,
+          campaign.productOptionChoices,
+          (sa as any).optionAnswer,
+        );
+        if (option.error) missing.push(option.error);
         if (missing.length) {
           throw new BadRequestException(
             `Shipping address required to accept this product campaign. Missing/invalid: ${missing.join(", ")}.`,
@@ -3123,6 +3186,9 @@ export class CampaignInvitesService {
           state: String(sa.state || "").trim(),
           pincode: String(sa.pincode || "").trim(),
           landmark: String(sa.landmark || "").trim(),
+          ...(option.question
+            ? { optionQuestion: option.question, optionAnswer: option.answer }
+            : {}),
           capturedAt: new Date(),
         };
       }

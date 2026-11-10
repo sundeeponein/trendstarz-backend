@@ -1651,6 +1651,11 @@ export const CampaignSchema = new Schema(
     productPaymentMode: { type: String },
     productPaymentAmount: { type: Number, min: 0 },
     productShippingRequired: { type: Boolean, default: false },
+    // Product shipping: what the creator must tell the host when accepting
+    // (e.g. "Shirt size (Men)"), and optional fixed choices ("S, M, L, XL").
+    // Empty question = nothing asked. See campaigns/product-option.util.
+    productOptionQuestion: { type: String, default: "" },
+    productOptionChoices: { type: [String], default: undefined },
     inviteBenefits: { type: String },
     // Campaign Resources — assets/links shared with the influencer once they accept.
     promotionUrlType: {

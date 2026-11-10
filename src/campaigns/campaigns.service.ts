@@ -1,3 +1,4 @@
+import { normalizeProductOption } from "./product-option.util";
 import {
   Injectable,
   BadRequestException,
@@ -585,6 +586,11 @@ export class CampaignsService {
         throw new BadRequestException(`${field} must be an amount in paise (0 or more)`);
       }
       normalized[field] = Math.round(v);
+    }
+    if (data.productOptionQuestion !== undefined || data.productOptionChoices !== undefined) {
+      const option = normalizeProductOption(data.productOptionQuestion, data.productOptionChoices);
+      normalized.productOptionQuestion = option.question;
+      normalized.productOptionChoices = option.choices;
     }
     if (
       (normalized.productPaymentMode ?? data.productPaymentMode) === "product_plus_payment" &&
@@ -1750,6 +1756,9 @@ export class CampaignsService {
     "productPaymentMode",
     "productPaymentAmount",
     "productShippingRequired",
+    // What the creator answers when accepting (size etc.) — creators accept against it.
+    "productOptionQuestion",
+    "productOptionChoices",
     "inviteRecipientRole",
   ] as const;
 
