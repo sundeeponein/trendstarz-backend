@@ -48,6 +48,9 @@ export const INVITE_WITHDRAWN_REASONS = [
   "product_not_delivered", // campaign ended before the host delivered the product (no penalty)
   "platform_fee_unpaid", // campaign ended before the host confirmed (paid the platform fee) — no penalty
   "host_ended_unpaid", // paid collab ended before the host paid — the creator couldn't start, no penalty
+  "late_delivery", // product arrived too late (host shipped late / too little time left) — no penalty
+  "host_not_shipped", // the host never shipped the product (creator left, or campaign ended) — no penalty
+  "product_not_received", // admin upheld the creator's "not received" report — no penalty
 ] as const;
 
 export type InviteWithdrawnReason = (typeof INVITE_WITHDRAWN_REASONS)[number];

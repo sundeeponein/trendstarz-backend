@@ -73,6 +73,7 @@ import {
   inviteReceivedParams,
   paymentReceivedHostParams,
   startPostingParams,
+  productShippedParams,
   whatsAppTemplateText,
 } from "./whatsapp/whatsapp-templates";
 import {
@@ -347,6 +348,9 @@ export class AdminListsController {
       minCampaignStartDays: 3,
       maxCampaignDurationDays: 15,
       postAfterDeliveryDays: 7,
+      productAcceptanceDays: 2,
+      productShipByDays: 2,
+      productShippingDays: 5,
       paymentGatewayMode: "razorpay_fallback",
       platformFeeEnabled: false,
       platformFeePercent: commissionDefaults.platformFeePercent,
@@ -582,6 +586,14 @@ export class AdminListsController {
         throw new BadRequestException("postAfterDeliveryDays must be a number between 1 and 30");
       }
       next.postAfterDeliveryDays = Math.floor(days);
+    }
+    for (const key of ["productAcceptanceDays", "productShipByDays", "productShippingDays"]) {
+      if (next[key] === undefined) continue;
+      const days = Number(next[key]);
+      if (!Number.isFinite(days) || days < 1 || days > 14) {
+        throw new BadRequestException(`${key} must be a number between 1 and 14`);
+      }
+      next[key] = Math.floor(days);
     }
     for (const key of ["barterPlatformFee", "locationPlatformFee"]) {
       if (next[key] === undefined) continue;
@@ -1374,7 +1386,7 @@ export class AdminListsController {
         this.campaignModel
           .findById((invite as any).campaignId)
           .select(
-            "title campaignType inviteRecipientRole venueCity venueDistrict venueState targetDistrict targetState acceptanceDeadline endDate timelineEnd",
+            "title campaignType inviteRecipientRole venueCity venueDistrict venueState targetDistrict targetState acceptanceDeadline startDate timelineStart endDate timelineEnd",
           )
           .lean(),
         recipientModel
@@ -1423,6 +1435,7 @@ export class AdminListsController {
 
     const inviteUrl = creatorInviteLink((invite as any).recipientRole, (invite as any)._id);
     const status = String((invite as any).status || "");
+
     return {
       inviteAcceptedMessage: ACCEPTED_OR_LATER_STATUSES.includes(status)
         ? renderInviteAcceptedOwnerMessage(fields)
@@ -1460,6 +1473,20 @@ export class AdminListsController {
             startPostingParams({
               creatorName: (recipient as any)?.name || (recipient as any)?.username || "The creator",
               campaignTitle: fields.campaignTitle,
+              inviteUrl,
+            }),
+          )
+        : null,
+      // Product shipped (courier + tracking saved): same text as the automatic WhatsApp.
+      productShippedMessage: (invite as any)?.productFulfillment?.shippedAt
+        ? whatsAppTemplateText(
+            "campaign_product_shipped",
+            productShippedParams({
+              creatorName: (recipient as any)?.name || (recipient as any)?.username || "there",
+              campaignTitle: fields.campaignTitle,
+              courier: (invite as any).productFulfillment.courier || "-",
+              trackingId: (invite as any).productFulfillment.trackingId || "-",
+              trackingUrl: (invite as any).productFulfillment.trackingUrl,
               inviteUrl,
             }),
           )

@@ -20,6 +20,7 @@ export type WhatsAppTemplateName =
   | "premium_activated"
   | "campaign_payment_received_host"
   | "campaign_start_posting"
+  | "campaign_product_shipped"
   | "campaign_post_approved"
   | "campaign_changes_requested"
   | "campaign_submission_under_review"

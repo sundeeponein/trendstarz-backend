@@ -101,9 +101,26 @@ export const CampaignInviteSchema = new Schema({
     // Who marked it delivered: the creator ("I received it"), or the host after
     // 5 days without the creator confirming (2026-11-10).
     deliveredConfirmedBy: { type: String, enum: ["creator", "host"] },
+    // Shipped after the campaign's ship-by date (product timeline campaigns).
+    shippedLate: { type: Boolean },
     // The creator's note on receipt (e.g. "Got size M, box damaged").
     receivedNote: { type: String },
     note: { type: String },
+  },
+  // Product campaigns: how delivery went, for admin tracking and disputes.
+  deliveryOutcome: {
+    type: String,
+    enum: ["on_time", "late", "not_received", "host_not_shipped"],
+  },
+  // Ship-by passed with nothing shipped (flag + daily host reminder).
+  shippingDelayedAt: { type: Date },
+  lastShipReminderAt: { type: Date },
+  // The post date was moved because the product arrived after the creator's date.
+  postDateAdjusted: {
+    from: { type: Date },
+    to: { type: Date },
+    reason: { type: String },
+    at: { type: Date },
   },
   // The host asked the creator to fix their shipping address before shipping.
   addressUpdateRequest: {

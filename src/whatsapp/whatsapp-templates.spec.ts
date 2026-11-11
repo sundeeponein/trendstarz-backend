@@ -120,3 +120,26 @@ describe("campaign invite location and respond-before lines", () => {
     expect(campaignRespondBeforeLabel({})).toBe("Not specified");
   });
 });
+
+import { productShippedParams } from "./whatsapp-templates";
+
+describe("campaign_product_shipped (manual button = automatic message)", () => {
+  it("renders courier, tracking and the receipt link; a missing tracking link gets a hint; no post-date line", () => {
+    const text = whatsAppTemplateText(
+      "campaign_product_shipped",
+      productShippedParams({
+        creatorName: "Alice",
+        campaignTitle: "Kurti Launch",
+        courier: "BlueDart",
+        trackingId: "AWB123",
+        inviteUrl: "https://trendstarz.in/influencer-dashboard?invite=1",
+      }),
+    );
+    expect(text).toContain('Hi Alice, your product for "Kurti Launch" has been shipped');
+    expect(text).toContain("Courier: BlueDart");
+    expect(text).toContain("Tracking ID: AWB123");
+    expect(text).toContain("Track: Use the tracking ID on the courier's website");
+    expect(text).toMatch(/tap "I received the product" here: https:\/\/trendstarz\.in\/influencer-dashboard\?invite=1$/);
+    expect(text).not.toMatch(/days to post|\{\{\d+\}\}/);
+  });
+});

@@ -7,10 +7,17 @@ import {
   Logger,
 } from "@nestjs/common";
 import {
+  PRODUCT_TIMELINE_DEFAULTS,
+  istDay,
+  postDateOnDelivery,
+  postingDaysAfterDelivery,
+  productTimelineSettings,
+  releaseAvailableAt,
+} from "./product-timeline.util";
+import {
   graceHoursFromSettings,
   submissionWindow,
   postDateAfterDelivery,
-  DEFAULT_POST_AFTER_DELIVERY_DAYS,
 } from "./campaign-deadlines.util";
 import { meetsMinimumTier, resolveTier } from "../utils/tier-ranges.util";
 import { Cron, CronExpression } from "@nestjs/schedule";
@@ -41,7 +48,7 @@ import { PlansService } from "../plans/plans.service";
 import { PushService } from "../push/push.service";
 import { NotificationsService } from "../notifications/notifications.service";
 import { WhatsAppService } from "../whatsapp/whatsapp.service";
-import { creatorInviteLink, inviteReceivedParams } from "../whatsapp/whatsapp-templates";
+import { creatorInviteLink, inviteReceivedParams, productShippedParams } from "../whatsapp/whatsapp-templates";
 import {
   ENABLE_CAMPAIGN_WHATSAPP,
   AWAITING_POST_STATUSES,
@@ -1126,6 +1133,68 @@ export class CampaignInvitesService {
     return cycle;
   }
 
+  /**
+   * Product timeline campaigns past their ship-by date with nothing shipped:
+   * flag the invite once (creator told they won't be penalised) and remind the
+   * host once a day (2026-11-11).
+   */
+  @Cron(CronExpression.EVERY_HOUR)
+  @SingleInstance()
+  async flagDelayedShipping(): Promise<{ flagged: number; reminded: number }> {
+    const now = new Date();
+    const campaigns: any[] = await this.campaignModel
+      .find({ productTimeline: true, shipByDate: { $lt: now } })
+      .select("_id title brandId")
+      .lean();
+    let flagged = 0;
+    let reminded = 0;
+    for (const campaign of campaigns) {
+      const invites: any[] = await this.inviteModel
+        .find({
+          campaignId: idIn(String(campaign._id)),
+          status: { $in: ["accepted", "payment_confirmed", "working"] },
+          "productFulfillment.shippedAt": null,
+          "productFulfillment.deliveredAt": null,
+        })
+        .select("_id influencerId brandId recipientRole shippingDelayedAt lastShipReminderAt")
+        .lean();
+      if (!invites.length) continue;
+      const title = campaign.title || "your campaign";
+      for (const inv of invites) {
+        const role = this.normalizeRecipientRole(inv.recipientRole);
+        if (!inv.shippingDelayedAt) {
+          const res = await this.inviteModel.updateOne(
+            { _id: inv._id, shippingDelayedAt: null },
+            { $set: { shippingDelayedAt: now } },
+          );
+          if (res.modifiedCount) {
+            flagged += 1;
+            this.notifyInviteParty(
+              String(inv.influencerId),
+              role,
+              "The host hasn't shipped yet",
+              `The product for "${title}" is late. You won't be penalised for the delay.`,
+              `/${role}-dashboard?invite=${inv._id}`,
+            );
+          }
+        }
+        const last = inv.lastShipReminderAt ? new Date(inv.lastShipReminderAt).getTime() : 0;
+        if (now.getTime() - last >= 20 * 60 * 60 * 1000) {
+          await this.inviteModel.updateOne({ _id: inv._id }, { $set: { lastShipReminderAt: now } });
+          reminded += 1;
+          this.notifyInviteParty(
+            String(inv.brandId),
+            "brand",
+            "Shipping is overdue",
+            `The ship-by date for "${title}" has passed. If you already shipped, add the courier and tracking ID; if not, please ship now.`,
+            "/campaigns",
+          );
+        }
+      }
+    }
+    return { flagged, reminded };
+  }
+
   @Cron(CronExpression.EVERY_HOUR)
   @SingleInstance()
   async autoApproveStaleSubmissionsCron() {
@@ -2048,7 +2117,7 @@ export class CampaignInvitesService {
       })
       .populate(
         "campaignId",
-        "title description script status campaignMode budgetMin budgetMax campaignType pricePerInfluencer maxInfluencers startDate endDate timelineStart timelineEnd acceptanceDeadline deliverables platforms socialMedia specialInstructions venueName venueAddress venueCity venueDistrict venueState venueGoogleMapUrl productValue productDescription productPaymentMode productPaymentAmount productShippingRequired productOptionQuestion productOptionChoices inviteBenefits ownerType createdByRole requestKind brandId image images galleryImages promotionUrlType promotionUrl suggestedCaption hashtags resourceImages campaignNumber",
+        "title description script status campaignMode budgetMin budgetMax campaignType pricePerInfluencer maxInfluencers startDate endDate timelineStart timelineEnd acceptanceDeadline deliverables platforms socialMedia specialInstructions venueName venueAddress venueCity venueDistrict venueState venueGoogleMapUrl productValue productDescription productPaymentMode productPaymentAmount productShippingRequired productOptionQuestion productOptionChoices productTimeline shipByDate earliestPostDate inviteBenefits ownerType createdByRole requestKind brandId image images galleryImages promotionUrlType promotionUrl suggestedCaption hashtags resourceImages campaignNumber",
       )
       .populate(
         "brandId",
@@ -2143,7 +2212,7 @@ export class CampaignInvitesService {
       })
       .populate(
         "campaignId",
-        "title description script status campaignMode budgetMin budgetMax campaignType pricePerInfluencer maxInfluencers startDate endDate timelineStart timelineEnd acceptanceDeadline deliverables platforms socialMedia specialInstructions venueName venueAddress venueCity venueDistrict venueState venueGoogleMapUrl productValue productDescription productPaymentMode productPaymentAmount productShippingRequired productOptionQuestion productOptionChoices inviteBenefits image images galleryImages promotionUrlType promotionUrl suggestedCaption hashtags resourceImages campaignNumber brandId",
+        "title description script status campaignMode budgetMin budgetMax campaignType pricePerInfluencer maxInfluencers startDate endDate timelineStart timelineEnd acceptanceDeadline deliverables platforms socialMedia specialInstructions venueName venueAddress venueCity venueDistrict venueState venueGoogleMapUrl productValue productDescription productPaymentMode productPaymentAmount productShippingRequired productOptionQuestion productOptionChoices productTimeline shipByDate earliestPostDate inviteBenefits image images galleryImages promotionUrlType promotionUrl suggestedCaption hashtags resourceImages campaignNumber brandId",
       )
       .populate(
         "brandId",
@@ -2481,24 +2550,201 @@ export class CampaignInvitesService {
    * day (settings.postAfterDeliveryDays, capped at maxCampaignDurationDays from
    * the campaign start), so the usual posting window and no-show rules apply.
    */
-  private async applyPostDateAfter(invite: any, campaign: any, eventAt: Date) {
+  private async timelineSettings() {
     const settings: any = await this.appSettingsModel
       .findOne({})
-      .select("postAfterDeliveryDays maxCampaignDurationDays")
+      .select("postAfterDeliveryDays maxCampaignDurationDays productAcceptanceDays productShipByDays productShippingDays")
       .lean();
-    const afterDays = Number(settings?.postAfterDeliveryDays) > 0
-      ? Number(settings.postAfterDeliveryDays)
-      : DEFAULT_POST_AFTER_DELIVERY_DAYS;
-    const capDays = Number(settings?.maxCampaignDurationDays) > 0 ? Number(settings.maxCampaignDurationDays) : 15;
-    const postDate = postDateAfterDelivery(
-      eventAt,
-      campaign?.startDate || campaign?.timelineStart,
-      afterDays,
-      capDays,
-    );
+    return productTimelineSettings(settings);
+  }
+
+  /**
+   * Product delivered / location checked in (2026-11-11): the creator's chosen
+   * post date stays when it is still ahead; otherwise they get up to
+   * postAfterDeliveryDays from that day (never past start + 15, never earlier
+   * than their own date) and the move is recorded as postDateAdjusted. Product
+   * invites also get their delivery outcome (on time / late).
+   */
+  private async applyPostDateAfter(invite: any, campaign: any, eventAt: Date) {
+    const s = await this.timelineSettings();
+    const start = campaign?.startDate || campaign?.timelineStart;
+    const isLocation = String(campaign?.campaignType || "") === "invite_location";
+    const chosen = invite.selectedPostDate ? new Date(invite.selectedPostDate) : null;
+    let postDate: Date;
+    let adjusted = false;
+    if (isLocation) {
+      // The chosen date was the visit: posting runs from the check-in.
+      const due = postDateAfterDelivery(eventAt, start, s.postAfterDays, s.capDays);
+      postDate = chosen && chosen.getTime() > due.getTime() ? chosen : due;
+    } else {
+      const r = postDateOnDelivery(eventAt, chosen, start, s);
+      postDate = r.postDate;
+      adjusted = r.adjusted;
+      invite.deliveryOutcome = adjusted && chosen ? "late" : "on_time";
+      if (adjusted && chosen && postDate.getTime() !== chosen.getTime()) {
+        invite.postDateAdjusted = { from: chosen, to: postDate, reason: "late_delivery", at: new Date() };
+      }
+    }
     invite.selectedPostDate = postDate;
     invite.insightsUnlocksAt = new Date(postDate.getTime() + 24 * 60 * 60 * 1000);
     return postDate;
+  }
+
+  /**
+   * A missed post is NOT the creator's fault when the host shipped after the
+   * ship-by date, or the product arrived so late that fewer than 2 days were
+   * left to post (2026-11-11).
+   */
+  static lateDeliveryExcusesCreator(invite: any): boolean {
+    const pf = invite?.productFulfillment || {};
+    if (!pf.deliveredAt) return false;
+    if (pf.shippedLate) return true;
+    if (invite?.postDateAdjusted?.reason !== "late_delivery") return false;
+    return (
+      postingDaysAfterDelivery(pf.deliveredAt, invite.selectedPostDate || pf.deliveredAt) <
+      PRODUCT_TIMELINE_DEFAULTS.minFairPostingDays
+    );
+  }
+
+  /**
+   * Creator: the host still hasn't shipped 3 days after the ship-by date — leave
+   * the campaign without penalty (monthly slot freed, recorded as "host didn't ship").
+   */
+  async leaveNotShipped(inviteId: string, creatorId: string) {
+    const invite: any = await this.inviteModel.findById(inviteId);
+    if (!invite) throw new NotFoundException("Invite not found");
+    if (String(invite.influencerId) !== String(creatorId)) throw new BadRequestException("Not your invite");
+    if (!["accepted", "payment_confirmed", "working"].includes(String(invite.status))) {
+      throw new BadRequestException("This campaign isn't active.");
+    }
+    const campaign: any = await this.campaignModel
+      .findById(invite.campaignId)
+      .select("campaignType productShippingRequired productTimeline shipByDate title")
+      .lean();
+    if (!campaign?.productTimeline || !campaign?.shipByDate) {
+      throw new BadRequestException("This campaign doesn't have a shipping deadline.");
+    }
+    const pf = invite.productFulfillment || {};
+    if (pf.shippedAt || pf.deliveredAt) {
+      throw new BadRequestException("The host has marked it shipped — if it hasn't arrived, use Report.");
+    }
+    const s = await this.timelineSettings();
+    const releaseAt = releaseAvailableAt(campaign.shipByDate, s.releaseAfterShipByDays);
+    if (Date.now() < releaseAt.getTime()) {
+      throw new BadRequestException(
+        `You can leave without penalty from ${releaseAt.toISOString().slice(0, 10)} if it still hasn't shipped.`,
+      );
+    }
+    const role = this.normalizeRecipientRole(invite.recipientRole);
+    const result: any = await this.expireUnsubmittedInvite(
+      String(invite._id),
+      "The creator left — the host didn't ship the product.",
+      { withdrawnReason: "host_not_shipped", actor: { userId: creatorId, userRole: role } },
+    );
+    if (result?.skipped) throw new BadRequestException("This campaign changed — refresh and try again.");
+    await this.inviteModel.updateOne({ _id: invite._id }, { $set: { deliveryOutcome: "host_not_shipped" } });
+    this.notifyInviteParty(
+      String(invite.brandId),
+      "brand",
+      "A creator left your product campaign",
+      `The product for "${campaign.title || "your campaign"}" wasn't shipped in time, so the creator left without penalty.`,
+      "/campaigns",
+    );
+    return { status: "withdrawn", deliveryOutcome: "host_not_shipped" };
+  }
+
+  /** Creator: the host marked it delivered but nothing arrived — opens a report (pauses the no-show). */
+  async reportProductNotReceived(inviteId: string, creatorId: string, note: unknown) {
+    const invite: any = await this.inviteModel.findById(inviteId);
+    if (!invite) throw new NotFoundException("Invite not found");
+    if (String(invite.influencerId) !== String(creatorId)) throw new BadRequestException("Not your invite");
+    if (!["accepted", "payment_confirmed", "working"].includes(String(invite.status))) {
+      throw new BadRequestException("This campaign isn't active.");
+    }
+    if (invite.productFulfillment?.deliveredConfirmedBy !== "host") {
+      throw new BadRequestException("You can report this when the host has marked the product delivered.");
+    }
+    if (invite.reportedIssue?.reportedAt && !invite.reportedIssue?.resolvedAt) {
+      throw new BadRequestException("There's already an open report on this campaign.");
+    }
+    const text = String(note ?? "").replace(/[<>]/g, " ").trim().slice(0, 300);
+    const role = this.normalizeRecipientRole(invite.recipientRole);
+    invite.reportedIssue = {
+      reason: `[Product not received] ${text || "The creator says the product hasn't arrived."}`,
+      reportedAt: new Date(),
+      category: "product_not_received",
+      reportedByRole: role,
+    };
+    invite.updatedAt = new Date();
+    await invite.save();
+    this.invalidateAttentionCache();
+    this.notifyInviteParty(
+      String(invite.brandId),
+      "brand",
+      "Creator says the product hasn't arrived",
+      "TrendStarZ will check with you. Please keep your courier receipt / tracking ready.",
+      "/campaigns",
+    );
+    return { reportedIssue: invite.reportedIssue };
+  }
+
+  /**
+   * Admin: settle a "product not received" report. received → the report closes
+   * and the creator gets a fresh posting window from today; not_received → the
+   * invite closes with no penalty (recorded "not received").
+   */
+  async adminResolveProductReceipt(inviteId: string, adminId: string, decision: unknown, note?: unknown) {
+    if (decision !== "received" && decision !== "not_received") {
+      throw new BadRequestException("decision must be received or not_received");
+    }
+    const invite: any = await this.inviteModel.findById(inviteId);
+    if (!invite) throw new NotFoundException("Invite not found");
+    if (invite.reportedIssue?.category !== "product_not_received" || invite.reportedIssue?.resolvedAt) {
+      throw new BadRequestException("There's no open \"product not received\" report on this invite.");
+    }
+    const text = String(note ?? "").trim().slice(0, 300);
+    const role = this.normalizeRecipientRole(invite.recipientRole);
+    invite.reportedIssue.resolvedAt = new Date();
+    invite.reportedIssue.reason = `${invite.reportedIssue.reason}\n[admin ${new Date().toISOString()}]: ${decision === "received" ? "Marked received" : "Upheld — not received"}${text ? ` — ${text}` : ""}`;
+    if (decision === "received") {
+      const campaign: any = await this.campaignModel.findById(invite.campaignId).select("campaignType startDate timelineStart").lean();
+      const s = await this.timelineSettings();
+      const fresh = postDateAfterDelivery(new Date(), campaign?.startDate || campaign?.timelineStart, s.postAfterDays, s.capDays);
+      const current = invite.selectedPostDate ? new Date(invite.selectedPostDate) : null;
+      const postDate = current && current.getTime() > fresh.getTime() ? current : fresh;
+      if (!current || postDate.getTime() !== current.getTime()) {
+        invite.postDateAdjusted = { from: current, to: postDate, reason: "receipt_confirmed_by_admin", at: new Date() };
+      }
+      invite.selectedPostDate = postDate;
+      invite.insightsUnlocksAt = new Date(postDate.getTime() + 24 * 60 * 60 * 1000);
+      invite.updatedAt = new Date();
+      await invite.save();
+      this.invalidateAttentionCache();
+      this.notifyInviteParty(
+        String(invite.influencerId),
+        role,
+        "Product delivery confirmed",
+        `TrendStarZ checked the delivery. Your post is due by ${postDate.toISOString().slice(0, 10)}.`,
+        `/${role}-dashboard?invite=${invite._id}`,
+      );
+      return { decision, selectedPostDate: postDate };
+    }
+    invite.deliveryOutcome = "not_received";
+    invite.updatedAt = new Date();
+    await invite.save();
+    await this.expireUnsubmittedInvite(String(invite._id), "Closed — the product wasn't received.", {
+      withdrawnReason: "product_not_received",
+      actor: { userId: adminId, userRole: "admin" },
+    });
+    this.invalidateAttentionCache();
+    this.notifyInviteParty(
+      String(invite.influencerId),
+      role,
+      "Campaign closed — product not received",
+      "No penalty for you, and your monthly slot is free again.",
+      `/${role}-dashboard?invite=${invite._id}`,
+    );
+    return { decision, status: "withdrawn" };
   }
 
   private notifyInviteParty(
@@ -2584,11 +2830,12 @@ export class CampaignInvitesService {
     }
     const campaign: any = await this.campaignModel.findById(invite.campaignId).select("campaignType startDate timelineStart").lean();
     if (campaign?.campaignType !== "product") throw new BadRequestException("This isn't a product campaign.");
+    const hadShippingEntry = !!invite.productFulfillment?.shippedAt;
     const pf: any = invite.productFulfillment?.toObject?.() ?? { ...(invite.productFulfillment || {}) };
     if (pf.deliveredAt) throw new BadRequestException("Already marked as received.");
-    if (!pf.shippedAt) throw new BadRequestException("The host hasn't marked it shipped yet.");
+    // The host may have shipped without recording it — the creator can still confirm.
     const receivedAt = this.pastOrTodayDate(body?.receivedAt ?? new Date(), "Received date");
-    if (receivedAt.getTime() < new Date(pf.shippedAt).setUTCHours(0, 0, 0, 0)) {
+    if (pf.shippedAt && receivedAt.getTime() < new Date(pf.shippedAt).setUTCHours(0, 0, 0, 0)) {
       throw new BadRequestException("The received date can't be before the shipped date.");
     }
     pf.deliveredAt = receivedAt;
@@ -2603,10 +2850,36 @@ export class CampaignInvitesService {
       String(invite.brandId),
       "brand",
       "Product received by the creator",
-      `They confirmed receipt${pf.receivedNote ? `: "${pf.receivedNote}"` : ""}. Their post is due by ${postDate.toISOString().slice(0, 10)}.`,
+      `They confirmed receipt${pf.receivedNote ? `: "${pf.receivedNote}"` : ""}. Their post is due by ${postDate.toISOString().slice(0, 10)}.${hadShippingEntry ? "" : " Please add the courier and tracking ID for your records."}`,
       "/campaigns",
     );
     return { productFulfillment: pf, selectedPostDate: postDate };
+  }
+
+  /**
+   * campaign_product_shipped to the creator (automatic; off until the template is
+   * listed in WHATSAPP_TEMPLATES). Same text as the admin's manual "Shipped" button.
+   */
+  private async sendProductShippedWhatsApp(invite: any, campaign: any, pf: any): Promise<void> {
+    try {
+      const role = this.normalizeRecipientRole(invite.recipientRole);
+      const model = role === "photographer" ? this.photographerModel : this.influencerModel;
+      const creator: any = await model.findById(invite.influencerId).select("name username phoneNumber isMobileVerified").lean();
+      if (!creator?.phoneNumber) return;
+      await this.whatsAppService.sendToUser(String(invite.influencerId), creator.phoneNumber, creator.isMobileVerified, {
+        name: "campaign_product_shipped",
+        bodyParams: productShippedParams({
+          creatorName: creator.name || creator.username || "there",
+          campaignTitle: campaign?.title || "your campaign",
+          courier: pf.courier,
+          trackingId: pf.trackingId,
+          trackingUrl: pf.trackingUrl,
+          inviteUrl: creatorInviteLink(role, invite._id),
+        }),
+      });
+    } catch {
+      // non-critical
+    }
   }
 
   /** A date that is today or earlier (a plain date reads as 00:00 UTC = 05:30 IST). */
@@ -2714,12 +2987,17 @@ export class CampaignInvitesService {
       }
       if (!pf.shippedAt) pf.shippedAt = new Date();
       pf.status = "shipped";
+      // Shipped after the campaign's ship-by date: a missed post isn't the creator's fault.
+      pf.shippedLate =
+        campaign.productTimeline === true && !!campaign.shipByDate &&
+        istDay(pf.shippedAt) > istDay(campaign.shipByDate);
     }
     invite.productFulfillment = pf;
     invite.updatedAt = new Date();
     if (pf.status === "shipped") invite.addressUpdateRequest = undefined;
     await invite.save();
     if (!wasShipped && pf.shippedAt) {
+      void this.sendProductShippedWhatsApp(invite, campaign, pf);
       const role = this.normalizeRecipientRole(invite.recipientRole);
       this.notifyInviteParty(
         String(invite.influencerId),
@@ -3392,7 +3670,7 @@ export class CampaignInvitesService {
       const campaign: any = await this.campaignModel
         .findById(invite.campaignId)
         .select(
-          "status ownerType requestKind startDate endDate timelineStart timelineEnd socialMedia platforms campaignMode minInfluencerTier minInfluencers maxInfluencers inviteSlots acceptanceDeadline campaignType productShippingRequired productOptionQuestion productOptionChoices productPaymentMode productPaymentAmount pricePerInfluencer",
+          "status ownerType requestKind startDate endDate timelineStart timelineEnd socialMedia platforms campaignMode minInfluencerTier minInfluencers maxInfluencers inviteSlots acceptanceDeadline campaignType productShippingRequired productOptionQuestion productOptionChoices productPaymentMode productPaymentAmount pricePerInfluencer productTimeline earliestPostDate shipByDate",
         )
         .lean();
       if (!campaign) throw new NotFoundException("Campaign not found");
@@ -3486,6 +3764,16 @@ export class CampaignInvitesService {
       ) {
         throw new BadRequestException(
           "selectedPostDate must be between campaign start and end dates",
+        );
+      }
+      // Product timeline: the product needs time to arrive before the post date.
+      if (
+        campaign.productTimeline === true &&
+        campaign.earliestPostDate &&
+        istDay(selected) < istDay(campaign.earliestPostDate)
+      ) {
+        throw new BadRequestException(
+          `Pick a post date from ${new Date(campaign.earliestPostDate).toISOString().slice(0, 10)} — the product needs time to reach you.`,
         );
       }
 
@@ -6088,7 +6376,7 @@ export class CampaignInvitesService {
         campaignId: idIn(campaignId),
         status: { $in: ["accepted", "payment_confirmed", "working"] },
       })
-      .select("_id status paymentConfirmedAt productFulfillment.deliveredAt platformFeeDue platformFeePaidAt")
+      .select("_id status paymentConfirmedAt productFulfillment platformFeeDue platformFeePaidAt postDateAdjusted selectedPostDate")
       .lean();
     const campaign: any = candidates.length
       ? await this.campaignModel
@@ -6121,10 +6409,26 @@ export class CampaignInvitesService {
       }
       // The host never delivered the product: close it without counting against the creator.
       if (this.awaitingProductDelivery(campaign, candidate)) {
+        const shipped = !!(candidate as any).productFulfillment?.shippedAt;
         await this.expireUnsubmittedInvite(
           String(candidate._id),
-          "Campaign ended before the product was delivered.",
-          { withdrawnReason: "product_not_delivered" },
+          shipped
+            ? "Campaign ended before the product was delivered."
+            : "Campaign ended — the host never shipped the product.",
+          { withdrawnReason: shipped ? "product_not_delivered" : "host_not_shipped" },
+        );
+        await this.inviteModel.updateOne(
+          { _id: candidate._id },
+          { $set: { deliveryOutcome: shipped ? "not_received" : "host_not_shipped" } },
+        );
+        continue;
+      }
+      // Delivered late (host shipped late / too little time left): no penalty.
+      if (CampaignInvitesService.lateDeliveryExcusesCreator(candidate)) {
+        await this.expireUnsubmittedInvite(
+          String(candidate._id),
+          "Campaign ended — the product arrived late, so this doesn't count against the creator.",
+          { withdrawnReason: "late_delivery" },
         );
         continue;
       }
@@ -6192,6 +6496,16 @@ export class CampaignInvitesService {
       const deadline = this.computeGraceDeadline(invite, campaign, graceHours);
       if (Date.now() <= deadline.closesAt.getTime()) continue;
 
+      // The host shipped late / it arrived with too little time: no penalty.
+      if (CampaignInvitesService.lateDeliveryExcusesCreator(invite)) {
+        await this.expireUnsubmittedInvite(
+          String(invite._id),
+          "Posting deadline passed — the product arrived late, so this doesn't count against the creator.",
+          { withdrawnReason: "late_delivery" },
+        );
+        autoExpiredCount += 1;
+        continue;
+      }
       await this.expireUnsubmittedInvite(
         String(invite._id),
         "Posting deadline and grace period expired with no submission.",

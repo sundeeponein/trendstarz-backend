@@ -938,6 +938,153 @@ describe("Paid-collaboration safeguards (CampaignInvitesService)", () => {
     });
   });
 
+  describe("product timeline (2026-11-11)", () => {
+    const product = { campaignType: "product", productShippingRequired: true };
+    const shipped = (daysAgo: number, extra: Record<string, any> = {}) => ({
+      status: "shipped",
+      courier: "DTDC",
+      trackingId: "X1",
+      shippedAt: new Date(Date.now() - daysAgo * DAY),
+      ...extra,
+    });
+
+    it("delivered before the creator's date: their date stays (on time)", async () => {
+      const chosen = new Date(Date.now() + 4 * DAY);
+      await build(
+        [working({ status: "accepted", selectedPostDate: chosen, productFulfillment: shipped(1) })],
+        [], [], [],
+        { ...product, startDate: new Date(Date.now() - 3 * DAY) },
+      );
+      await service.confirmProductReceived(INVITE, "creator1", {});
+      const after = invites.get(INVITE);
+      expect(new Date(after.selectedPostDate).getTime()).toBe(chosen.getTime());
+      expect(after.deliveryOutcome).toBe("on_time");
+      expect(after.postDateAdjusted).toBeUndefined();
+    });
+
+    it("delivered after the creator's date: moved to up to 7 days later and labelled (late)", async () => {
+      const chosen = new Date(Date.now() - 1 * DAY);
+      await build(
+        [working({ status: "accepted", selectedPostDate: chosen, productFulfillment: shipped(3) })],
+        [], [], [],
+        { ...product, startDate: new Date(Date.now() - 4 * DAY) },
+      );
+      await service.confirmProductReceived(INVITE, "creator1", {});
+      const after = invites.get(INVITE);
+      expect(after.deliveryOutcome).toBe("late");
+      expect(after.postDateAdjusted.reason).toBe("late_delivery");
+      const days = (new Date(after.selectedPostDate).getTime() - Date.now()) / DAY;
+      expect(days).toBeGreaterThan(6);
+      expect(days).toBeLessThan(8);
+    });
+
+    it("the creator can confirm receipt even if the host never recorded shipping", async () => {
+      await build(
+        [working({ status: "accepted", selectedPostDate: new Date(Date.now() + 3 * DAY) })],
+        [], [], [],
+        { ...product, startDate: new Date(Date.now() - 3 * DAY) },
+      );
+      await service.confirmProductReceived(INVITE, "creator1", {});
+      expect(invites.get(INVITE).productFulfillment.status).toBe("delivered");
+      expect(notifications.createForUser).toHaveBeenCalledWith(
+        expect.objectContaining({ userId: "host1", body: expect.stringContaining("add the courier and tracking ID") }),
+      );
+    });
+
+    it("shipping after ship-by is flagged late, and a missed post then doesn't count against the creator", async () => {
+      await build(
+        [working({ status: "accepted", selectedPostDate: new Date(Date.now() - 10 * DAY) })],
+        [], [], [],
+        { ...product, productTimeline: true, startDate: new Date(Date.now() - 12 * DAY), shipByDate: new Date(Date.now() - 8 * DAY) },
+      );
+      await service.updateProductFulfillment(INVITE, "host1", {
+        courier: "DTDC",
+        trackingId: "X1",
+        shippedAt: new Date(Date.now() - 6 * DAY).toISOString(),
+      });
+      expect(invites.get(INVITE).productFulfillment.shippedLate).toBe(true);
+      // Delivered long ago, deadline long past, nothing posted.
+      Object.assign(invites.get(INVITE), {
+        productFulfillment: { ...invites.get(INVITE).productFulfillment, status: "delivered", deliveredAt: new Date(Date.now() - 5 * DAY) },
+        selectedPostDate: new Date(Date.now() - 4 * DAY),
+      });
+      await service.autoExpireUnsubmittedInvites();
+      const after = invites.get(INVITE);
+      expect(after.status).toBe("withdrawn");
+      expect(after.withdrawnReasonCode).toBe("late_delivery");
+    });
+
+    it("an on-time delivery with a full window is still a normal no-show", async () => {
+      await build(
+        [working({
+          status: "accepted",
+          selectedPostDate: new Date(Date.now() - 4 * DAY),
+          productFulfillment: shipped(9, { status: "delivered", deliveredAt: new Date(Date.now() - 8 * DAY), shippedLate: false }),
+        })],
+        [], [], [], product,
+      );
+      await service.autoExpireUnsubmittedInvites();
+      expect(invites.get(INVITE).withdrawnReasonCode).toBe("expired_unsubmitted");
+    });
+
+    it("the creator can leave without penalty only from ship-by + 3 days, and only if nothing shipped", async () => {
+      await build(
+        [working({ status: "accepted" })],
+        [], [], [],
+        { ...product, productTimeline: true, shipByDate: new Date(Date.now() - 1 * DAY) },
+      );
+      await expect(service.leaveNotShipped(INVITE, "creator1")).rejects.toThrow("You can leave without penalty from");
+      await build(
+        [working({ status: "accepted" })],
+        [], [], [],
+        { ...product, productTimeline: true, shipByDate: new Date(Date.now() - 4 * DAY), title: "Kurti" },
+      );
+      await expect(service.leaveNotShipped(INVITE, "someone")).rejects.toThrow("Not your invite");
+      await service.leaveNotShipped(INVITE, "creator1");
+      const after = invites.get(INVITE);
+      expect(after.status).toBe("withdrawn");
+      expect(after.withdrawnReasonCode).toBe("host_not_shipped");
+      expect(after.deliveryOutcome).toBe("host_not_shipped");
+    });
+
+    it("not received: only after the host marked it delivered; admin can uphold (no penalty) or confirm (fresh window)", async () => {
+      const hostDelivered = shipped(7, { status: "delivered", deliveredAt: new Date(Date.now() - 1 * DAY), deliveredConfirmedBy: "host" });
+      await build([working({ status: "accepted", productFulfillment: shipped(1) })], [], [], [], product);
+      await expect(service.reportProductNotReceived(INVITE, "creator1", "")).rejects.toThrow("host has marked");
+
+      await build([working({ status: "accepted", productFulfillment: hostDelivered })], [], [], [], product);
+      await service.reportProductNotReceived(INVITE, "creator1", "Nothing came");
+      expect(invites.get(INVITE).reportedIssue.category).toBe("product_not_received");
+      // An open report pauses the no-show.
+      invites.get(INVITE).selectedPostDate = new Date(Date.now() - 5 * DAY);
+      await service.autoExpireUnsubmittedInvites();
+      expect(invites.get(INVITE).status).toBe("accepted");
+      await service.adminResolveProductReceipt(INVITE, "admin1", "not_received");
+      expect(invites.get(INVITE).withdrawnReasonCode).toBe("product_not_received");
+      expect(invites.get(INVITE).deliveryOutcome).toBe("not_received");
+
+      await build([working({ status: "accepted", productFulfillment: hostDelivered, selectedPostDate: new Date(Date.now() - 5 * DAY) })], [], [], [], product);
+      await service.reportProductNotReceived(INVITE, "creator1", "");
+      await service.adminResolveProductReceipt(INVITE, "admin1", "received");
+      const after = invites.get(INVITE);
+      expect(after.reportedIssue.resolvedAt).toBeTruthy();
+      expect(new Date(after.selectedPostDate).getTime()).toBeGreaterThan(Date.now());
+    });
+
+    it("past ship-by with nothing shipped: flagged once, host reminded at most daily", async () => {
+      await build(
+        [working({ status: "accepted" })],
+        [], [], [],
+        { ...product, productTimeline: true, shipByDate: new Date(Date.now() - 1 * DAY), title: "Kurti" },
+      );
+      const first = await service.flagDelayedShipping();
+      expect(first).toEqual({ flagged: 1, reminded: 1 });
+      expect(invites.get(INVITE).shippingDelayedAt).toBeTruthy();
+      const again = await service.flagDelayedShipping();
+      expect(again).toEqual({ flagged: 0, reminded: 0 });
+    });
+  });
+
   describe("settlement takes back fee credit", () => {
     it("unused credit is reversed and spent credit is added to what the host repays", async () => {
       await build(

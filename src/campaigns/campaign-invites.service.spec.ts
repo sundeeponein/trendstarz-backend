@@ -960,6 +960,26 @@ describe("CampaignInvitesService – respond()", () => {
       expect(invite.agreedAmountPaise).toBe(0);
     });
 
+    it("product timeline: the post date can't be before the earliest post date (shipping time)", async () => {
+      inviteModel.findById.mockResolvedValue(pendingInvite());
+      campaignModel.findById.mockReturnValue(
+        campaignHonoringSelect({
+          campaignType: "product",
+          productPaymentMode: "product_only",
+          productTimeline: true,
+          earliestPostDate: new Date("2026-07-12T00:00:00Z"),
+        }),
+      );
+      inviteModel.countDocuments.mockResolvedValue(0);
+      await expect(service.respond("inv1", "inf1", "accepted", "2026-07-10")).rejects.toThrow(
+        /Pick a post date from 2026-07-12/,
+      );
+      const invite: any = pendingInvite();
+      inviteModel.findById.mockResolvedValue(invite);
+      await service.respond("inv1", "inf1", "accepted", "2026-07-15");
+      expect(invite.status).toBe("accepted");
+    });
+
     it("barter can't be countered, and a paid campaign with no amount is still refused", async () => {
       inviteModel.findById.mockResolvedValue(pendingInvite());
       campaignModel.findById.mockReturnValue(

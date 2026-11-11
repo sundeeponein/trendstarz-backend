@@ -1,7 +1,7 @@
 /**
  * Tiny in-memory stand-in for a Mongoose model, for tests that need guarded updates to
  * really apply (refund / payout races). Supports the operators the refund code uses:
- * equality, $in, $nin, $ne, $lte, $gte, $or, dot paths; updates $set, $push, $unset.
+ * equality, $in, $nin, $ne, $lte, $gte, $or, $nor, dot paths; updates $set, $push, $unset.
  * Excluded from the build (name ends in "spec.ts") and not a test suite itself.
  */
 function getPath(doc: any, path: string): any {
@@ -91,6 +91,7 @@ export function matches(doc: any, filter: any): boolean {
   return Object.entries(filter || {}).every(([key, cond]) => {
     if (key === "$or") return (cond as any[]).some((f) => matches(doc, f));
     if (key === "$and") return (cond as any[]).every((f) => matches(doc, f));
+    if (key === "$nor") return !(cond as any[]).some((f) => matches(doc, f));
     return matchValue(getPath(doc, key), cond);
   });
 }

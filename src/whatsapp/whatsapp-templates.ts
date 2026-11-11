@@ -77,6 +77,21 @@ export const NEW_WHATSAPP_TEMPLATES: WhatsAppTemplateSpec[] = [
       "Hi {{1}}, payment for \"{{2}}\" is confirmed ✅\n\nYou can start creating and posting your content now. Details: {{3}}",
   },
   {
+    name: "campaign_product_shipped",
+    category: "UTILITY",
+    params: [
+      "creator name",
+      "campaign title",
+      "courier",
+      "tracking ID",
+      "tracking link (or \"Use the tracking ID on the courier's website\")",
+      "invite link",
+    ],
+    trigger: "When the host first marks a product campaign shipped (courier + tracking ID + shipped date saved).",
+    body:
+      "Hi {{1}}, your product for \"{{2}}\" has been shipped 📦\n\nCourier: {{3}}\nTracking ID: {{4}}\nTrack: {{5}}\n\nWhen it arrives, tap \"I received the product\" here: {{6}}",
+  },
+  {
     name: "campaign_post_approved",
     category: "UTILITY",
     params: ["creator name", "campaign title", "dashboard link"],
@@ -171,6 +186,25 @@ export function paymentReceivedHostParams(f: {
 /** campaign_start_posting params, in order. */
 export function startPostingParams(f: { creatorName: string; campaignTitle: string; inviteUrl: string }): string[] {
   return [f.creatorName, f.campaignTitle, f.inviteUrl];
+}
+
+/** campaign_product_shipped params, in order. */
+export function productShippedParams(f: {
+  creatorName: string;
+  campaignTitle: string;
+  courier: string;
+  trackingId: string;
+  trackingUrl?: string;
+  inviteUrl: string;
+}): string[] {
+  return [
+    f.creatorName,
+    f.campaignTitle,
+    f.courier,
+    f.trackingId,
+    String(f.trackingUrl || "").trim() || "Use the tracking ID on the courier's website",
+    f.inviteUrl,
+  ];
 }
 
 /** "Brand" / "Photographer" / "Influencer" — who sent a campaign invite. */

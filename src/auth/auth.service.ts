@@ -2684,6 +2684,9 @@ export class AuthService {
       minCampaignStartDays: settings?.minCampaignStartDays ?? 3,
       maxCampaignDurationDays: settings?.maxCampaignDurationDays ?? 15,
       postAfterDeliveryDays: settings?.postAfterDeliveryDays ?? 7,
+      productAcceptanceDays: settings?.productAcceptanceDays ?? 2,
+      productShipByDays: settings?.productShipByDays ?? 2,
+      productShippingDays: settings?.productShippingDays ?? 5,
       otpVerificationEnabled: !!settings?.otpVerificationEnabled,
       // Campaign payment UPI shown to brands on the payment screen
       paymentUpiId: settings?.paymentUpiId || "trendstarzin@kotak",

@@ -1,3 +1,4 @@
+import { computeProductTimeline, isShippedProductCampaign, istDay, productTimelineSettings } from "./product-timeline.util";
 import { normalizeProductOption } from "./product-option.util";
 import {
   Injectable,
@@ -153,6 +154,10 @@ export const SERVER_OWNED_CAMPAIGN_FIELDS = [
   "slotUsedAt",
   "datesChangedAt",
   "liveAt",
+  // Product timeline (campaigns/product-timeline.util) — computed here only.
+  "productTimeline",
+  "shipByDate",
+  "earliestPostDate",
 ] as const;
 
 export function withoutServerOwnedCampaignFields(data: any): any {
@@ -438,6 +443,51 @@ export class CampaignsService {
       flagCode: { $in: PROFILE_PHOTO_VISIBILITY_BLOCK_FLAG_CODES },
     });
     return count > 0;
+  }
+
+  /**
+   * Product campaigns that ship get the product timeline (accept within 2 days of
+   * the start, ship-by, earliest post date — campaigns/product-timeline.util).
+   * Applied to new campaigns and to ones not yet approved (drafts, in review);
+   * a campaign that already has it keeps it in step with its dates. Approved
+   * campaigns from before keep their own dates (accept by the day before start).
+   */
+  private applyProductTimeline(normalized: any, existing: any, settings: any) {
+    const pick = (k: string) => (normalized[k] !== undefined ? normalized[k] : existing?.[k]);
+    const eligible =
+      !existing ||
+      existing.productTimeline === true ||
+      ["draft", "pending_review", "needs_changes"].includes(String(existing.status || "draft"));
+    if (!eligible) return;
+    const shipped = isShippedProductCampaign({
+      campaignType: pick("campaignType"),
+      productShippingRequired: pick("productShippingRequired"),
+    });
+    const start = pick("startDate") || pick("timelineStart");
+    if (!shipped || !start) {
+      if (existing?.productTimeline) {
+        normalized.productTimeline = false;
+        normalized.shipByDate = null;
+        normalized.earliestPostDate = null;
+        if (start) {
+          normalized.acceptanceDeadline = endOfIstDay(new Date(new Date(start).getTime() - 24 * 60 * 60 * 1000));
+        }
+      }
+      return;
+    }
+    const s = productTimelineSettings(settings);
+    const t = computeProductTimeline(start, s);
+    const end = pick("endDate") || pick("timelineEnd");
+    if (end && istDay(end) < istDay(t.earliestPostDate)) {
+      const minDays = s.acceptDays + s.shippingDays + 1;
+      throw new BadRequestException(
+        `A product campaign that ships needs at least ${minDays} days: ${s.acceptDays} to accept, ${s.shippingDays} for shipping, then posting. Move the end date to ${t.earliestPostDate.toISOString().slice(0, 10)} or later.`,
+      );
+    }
+    normalized.productTimeline = true;
+    normalized.acceptanceDeadline = t.acceptanceDeadline;
+    normalized.shipByDate = t.shipByDate;
+    normalized.earliestPostDate = t.earliestPostDate;
   }
 
   private normalizeCampaignPayload(data: any, settings?: any, existing?: any) {
@@ -1233,6 +1283,7 @@ export class CampaignsService {
       settings,
     );
     const normalized = this.normalizeCampaignPayload(data, settings);
+    this.applyProductTimeline(normalized, null, settings);
     await this.assertCampaignLanguages(normalized);
     await this.assertCampaignTargetLocation(normalized);
     if (
@@ -2082,6 +2133,7 @@ export class CampaignsService {
         ? "photographer"
         : "brand";
     const normalized = this.normalizeCampaignPayload(data, settings, campaign);
+    this.applyProductTimeline(normalized, campaign, settings);
     if (takesSlot) normalized.slotUsedAt = new Date();
     await this.assertTargetingLocked(campaign, normalized);
     if (await this.assertDateChangeAllowed(campaign, normalized)) {

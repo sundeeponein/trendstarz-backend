@@ -12,6 +12,7 @@ import {
 } from "@nestjs/common";
 import { JwtAuthGuard } from "../auth/jwt-auth.guard";
 import { RolesGuard } from "../auth/roles.guard";
+import { LogAdminAction } from "../utils/admin-action.interceptor";
 import { CampaignInvitesService } from "./campaign-invites.service";
 
 import { UseInterceptors, UploadedFile } from "@nestjs/common";
@@ -407,6 +408,32 @@ export class CampaignInvitesController {
   @Patch(":id/shipping-address")
   async updateShippingAddress(@Param("id") id: string, @Req() req: any, @Body() body: any) {
     return this.invitesService.updateShippingAddress(id, this.requesterId(req), body);
+  }
+
+  /** Creator: the host still hasn't shipped 3 days after ship-by — leave without penalty. */
+  @UseGuards(JwtAuthGuard)
+  @Post(":id/leave-not-shipped")
+  async leaveNotShipped(@Param("id") id: string, @Req() req: any) {
+    return this.invitesService.leaveNotShipped(id, this.requesterId(req));
+  }
+
+  /** Creator: the host marked it delivered but nothing arrived. */
+  @UseGuards(JwtAuthGuard)
+  @Post(":id/product-not-received")
+  async reportProductNotReceived(@Param("id") id: string, @Req() req: any, @Body() body: { note?: string }) {
+    return this.invitesService.reportProductNotReceived(id, this.requesterId(req), body?.note);
+  }
+
+  /** Admin: settle a "product not received" report (received / not_received). */
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Post(":id/admin/product-receipt")
+  @LogAdminAction("product_receipt_decision")
+  async adminResolveProductReceipt(
+    @Param("id") id: string,
+    @Req() req: any,
+    @Body() body: { decision?: string; note?: string },
+  ) {
+    return this.invitesService.adminResolveProductReceipt(id, this.requesterId(req), body?.decision, body?.note);
   }
 
   /** Creator: "I received the product" (date + optional note). */

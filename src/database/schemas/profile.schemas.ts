@@ -1384,6 +1384,12 @@ export const AppSettingsSchema = new Schema({
   // Barter / location: days the creator has to post after the product is delivered
   // or the visit is checked in (capped at maxCampaignDurationDays from the start).
   postAfterDeliveryDays: { type: Number, default: 7 },
+  // Product campaigns that ship (campaigns/product-timeline.util): days after the
+  // start to accept, days after accept-by for the host to ship, and the shipping
+  // days that set the earliest post date (accept-by + this).
+  productAcceptanceDays: { type: Number, default: 2 },
+  productShipByDays: { type: Number, default: 2 },
+  productShippingDays: { type: Number, default: 5 },
 });
 export const AppSettingsModel = model("AppSettings", AppSettingsSchema);
 
@@ -1598,6 +1604,12 @@ export const CampaignSchema = new Schema(
     maxInfluencers: { type: Number },
     minInfluencers: { type: Number },
     acceptanceDeadline: { type: Date },
+    // Product campaigns that ship, created from 2026-11-11: accept-by = start + 2,
+    // ship-by and earliest post date stored here (campaigns/product-timeline.util).
+    // Older campaigns have none and keep their own dates.
+    productTimeline: { type: Boolean, default: undefined },
+    shipByDate: { type: Date, default: undefined },
+    earliestPostDate: { type: Date, default: undefined },
     estimatedBudget: { type: Number, min: 0 }, // paise
     timelineStart: { type: Date },
     timelineEnd: { type: Date },
