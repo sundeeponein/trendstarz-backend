@@ -2568,22 +2568,13 @@ export class CampaignInvitesService {
   private async applyPostDateAfter(invite: any, campaign: any, eventAt: Date) {
     const s = await this.timelineSettings();
     const start = campaign?.startDate || campaign?.timelineStart;
-    const isLocation = String(campaign?.campaignType || "") === "invite_location";
     const chosen = invite.selectedPostDate ? new Date(invite.selectedPostDate) : null;
-    let postDate: Date;
-    let adjusted = false;
-    if (isLocation) {
-      // The chosen date was the visit: posting runs from the check-in.
-      const due = postDateAfterDelivery(eventAt, start, s.postAfterDays, s.capDays);
-      postDate = chosen && chosen.getTime() > due.getTime() ? chosen : due;
-    } else {
-      const r = postDateOnDelivery(eventAt, chosen, start, s);
-      postDate = r.postDate;
-      adjusted = r.adjusted;
-      invite.deliveryOutcome = adjusted && chosen ? "late" : "on_time";
-      if (adjusted && chosen && postDate.getTime() !== chosen.getTime()) {
-        invite.postDateAdjusted = { from: chosen, to: postDate, reason: "late_delivery", at: new Date() };
-      }
+    const r = postDateOnDelivery(eventAt, chosen, start, s);
+    const postDate = r.postDate;
+    const adjusted = r.adjusted;
+    invite.deliveryOutcome = adjusted && chosen ? "late" : "on_time";
+    if (adjusted && chosen && postDate.getTime() !== chosen.getTime()) {
+      invite.postDateAdjusted = { from: chosen, to: postDate, reason: "late_delivery", at: new Date() };
     }
     invite.selectedPostDate = postDate;
     invite.insightsUnlocksAt = new Date(postDate.getTime() + 24 * 60 * 60 * 1000);
@@ -3096,28 +3087,34 @@ export class CampaignInvitesService {
       lv.checkedInAt = new Date(body.checkedInAt);
       lv.status = "checked_in";
     }
-    invite.locationVisit = lv;
-    // Checked in: the creator now has settings.postAfterDeliveryDays to post (2026-11-10).
-    let postDate: Date | null = null;
-    if (!wasCheckedIn && lv.checkedInAt) {
-      // The chosen date was the visit date: keep it as the scheduled visit.
+    // Location visits (2026-11-11): the visit is the whole job. Checking the creator
+    // in completes the campaign — no post, no posting deadline. Posting about the
+    // visit is the creator's own choice; TrendStarZ doesn't track it.
+    const completing = !wasCheckedIn && !!lv.checkedInAt;
+    if (completing) {
+      if (awaitingPlatformFee(invite)) {
+        throw new BadRequestException("Confirm the creator (platform fee) before checking them in.");
+      }
       if (!lv.scheduledAt && invite.selectedPostDate) lv.scheduledAt = invite.selectedPostDate;
-      invite.locationVisit = lv;
-      postDate = await this.applyPostDateAfter(invite, campaign, new Date(lv.checkedInAt));
+      lv.status = "checked_in";
+      invite.status = "completed";
+      invite.completedAt = new Date();
     }
+    invite.locationVisit = lv;
     invite.updatedAt = new Date();
     await invite.save();
-    if (postDate) {
+    if (completing) {
+      this.invalidateAttentionCache();
       const role = this.normalizeRecipientRole(invite.recipientRole);
       this.notifyInviteParty(
         String(invite.influencerId),
         role,
-        "Visit checked in",
-        `Thanks for visiting! Your post is due by ${postDate.toISOString().slice(0, 10)}.`,
+        "Visit confirmed — campaign complete",
+        "Thanks for visiting! The host checked you in, so this campaign is complete.",
         `/${role}-dashboard?invite=${invite._id}`,
       );
     }
-    return { success: true, locationVisit: lv, ...(postDate ? { selectedPostDate: postDate } : {}) };
+    return { success: true, locationVisit: lv, ...(completing ? { status: "completed" } : {}) };
   }
 
   /** Brand sets/updates the deliverable due-date for an invite. */
@@ -3271,8 +3268,10 @@ export class CampaignInvitesService {
 
           const campaign: any = await this.campaignModel
             .findById((invite as any).campaignId)
-            .select("title")
+            .select("title campaignType")
             .lean();
+          // Location visits: the visit is the job — no posting reminders (2026-11-11).
+          if (campaign?.campaignType === "invite_location") continue;
           const campaignTitle = campaign?.title || "your campaign";
           const dashboardPath =
             recipientRole === "photographer"
@@ -4824,8 +4823,13 @@ export class CampaignInvitesService {
     }
     const campaign: any = await this.campaignModel
       .findById(invite.campaignId)
-      .select("status postingDeadlineMode")
+      .select("status postingDeadlineMode campaignType")
       .lean();
+    if (campaign?.campaignType === "invite_location") {
+      throw new BadRequestException(
+        "Location visits don't need a post — the host checks you in and the campaign is complete.",
+      );
+    }
     this.assertCampaignLiveForRecipient(campaign, "submit work");
     this.assertCampaignNotEnded(campaign, "submit work");
     if (!data.postUrl) throw new BadRequestException("Post URL is required");
@@ -6423,6 +6427,15 @@ export class CampaignInvitesService {
         );
         continue;
       }
+      // Location visit the host never checked in nor marked a no-show: no penalty.
+      if (String(campaign?.campaignType || "") === "invite_location") {
+        await this.expireUnsubmittedInvite(
+          String(candidate._id),
+          "Campaign ended — the host didn't confirm the visit.",
+          { withdrawnReason: "visit_not_confirmed" },
+        );
+        continue;
+      }
       // Delivered late (host shipped late / too little time left): no penalty.
       if (CampaignInvitesService.lateDeliveryExcusesCreator(candidate)) {
         await this.expireUnsubmittedInvite(
@@ -6489,6 +6502,8 @@ export class CampaignInvitesService {
         .select("postingDeadlineMode campaignType productShippingRequired")
         .lean();
       if (!campaign) continue;
+      // Location visits have no posting deadline (the host checks in or marks a no-show).
+      if (campaign.campaignType === "invite_location") continue;
       // Barter: no posting deadline until the host has delivered the product,
       // or (fee campaigns) until the host has confirmed the collaboration.
       if (this.awaitingProductDelivery(campaign, invite)) continue;

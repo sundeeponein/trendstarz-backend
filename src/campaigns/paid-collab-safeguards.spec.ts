@@ -1085,6 +1085,47 @@ describe("Paid-collaboration safeguards (CampaignInvitesService)", () => {
     });
   });
 
+  describe("location visit = the visit only (2026-11-11)", () => {
+    const location = { campaignType: "invite_location" };
+
+    it("checking the creator in completes the campaign (no post, no posting deadline)", async () => {
+      await build([working({ status: "accepted", selectedPostDate: new Date(Date.now() - DAY) })], [], [], [], location);
+      const res: any = await service.updateLocationCheckIn(INVITE, "host1", { status: "checked_in" });
+      const after = invites.get(INVITE);
+      expect(res.status).toBe("completed");
+      expect(after.status).toBe("completed");
+      expect(after.completedAt).toBeTruthy();
+      expect(after.locationVisit.status).toBe("checked_in");
+      expect(notifications.createForUser).toHaveBeenCalledWith(
+        expect.objectContaining({ userId: "creator1", title: "Visit confirmed — campaign complete" }),
+      );
+    });
+
+    it("can't check in before the host has confirmed (platform fee unpaid)", async () => {
+      await build([working({ status: "accepted", platformFeeDue: 9900 })], [], [], [], location);
+      await expect(service.updateLocationCheckIn(INVITE, "host1", { status: "checked_in" })).rejects.toThrow("platform fee");
+    });
+
+    it("no posting deadline: the hourly job never closes a location invite", async () => {
+      await build([working({ status: "accepted", selectedPostDate: new Date(Date.now() - 10 * DAY) })], [], [], [], location);
+      await service.autoExpireUnsubmittedInvites();
+      expect(invites.get(INVITE).status).toBe("accepted");
+    });
+
+    it("campaign ends with no check-in and no no-show: closed without penalty", async () => {
+      await build([working({ status: "accepted", selectedPostDate: new Date(Date.now() - 2 * DAY) })], [], [], [], location);
+      await service.expireUnsubmittedInvitesForCampaign(CAMPAIGN, "Campaign ended.");
+      expect(invites.get(INVITE).withdrawnReasonCode).toBe("visit_not_confirmed");
+    });
+
+    it("refuses a post submission", async () => {
+      await build([working({ status: "accepted" })], [], [], [], location);
+      await expect(
+        service.submitPost(INVITE, "creator1", { postUrl: "https://instagram.com/p/abc" } as any),
+      ).rejects.toThrow("Location visits don't need a post");
+    });
+  });
+
   describe("settlement takes back fee credit", () => {
     it("unused credit is reversed and spent credit is added to what the host repays", async () => {
       await build(

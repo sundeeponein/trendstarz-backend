@@ -67,3 +67,13 @@ describe("campaign create/update stamps the product timeline", () => {
     expect(paid.productTimeline).toBeUndefined();
   });
 });
+
+import { getRequiredFields } from "./campaign-required-fields";
+
+describe("location visits need no payment amount (2026-11-11)", () => {
+  it("pricePerInfluencer is not required; venue fields still are", () => {
+    const req = getRequiredFields({ campaignType: "invite_location" } as any);
+    expect(req).not.toContain("pricePerInfluencer");
+    expect(req).toEqual(expect.arrayContaining(["venueAddress", "venueCity"]));
+  });
+});

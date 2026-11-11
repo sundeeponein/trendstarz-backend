@@ -31,11 +31,12 @@ export function getRequiredFields(ctx: CampaignRequiredFieldsCtx): string[] {
 
   // Flat payout requirement is role/type aware:
   // - paid_collab: flat only when photographer is involved
-  // - invite_location: always flat
+  // - invite_location: never — the visit is the whole job; TrendStarZ handles no
+  //   money for it (2026-11-11)
   // - creative_project: flat for photographer-led collaborations
   const paidNeedsFlat = isPaid && (isPhotographerCreator || isInvitingPhotographers);
   const creativeNeedsFlat = isCreativeProject && isPhotographerCreator;
-  if (paidNeedsFlat || isLocation || creativeNeedsFlat) {
+  if (paidNeedsFlat || creativeNeedsFlat) {
     required.push("pricePerInfluencer");
   }
 
