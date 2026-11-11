@@ -846,6 +846,17 @@ export class CampaignInvitesService {
    * excuse/slot notes, and an off-platform report only if they made it (the other side is
    * never told about it).
    */
+  /** Invite statuses in which the host sees the creator's shipping address. */
+  static readonly SHIPPING_ADDRESS_VISIBLE_STATUSES = new Set([
+    "accepted",
+    "payment_confirmed",
+    "working",
+    "submitted",
+    "completed",
+    "approved",
+    "disputed",
+  ]);
+
   static forParty(invite: any, side: "creator" | "host"): any {
     if (!invite || typeof invite !== "object") return invite;
     const out: any = { ...invite };
@@ -856,13 +867,16 @@ export class CampaignInvitesService {
     }
     delete out.missExcused;
     delete out.slotRestored;
-    // The creator's home address: the host gets it only once the collaboration is
-    // confirmed (platform fee paid / contact unlocked), and loses it with the rest
-    // of the contact details after the post-close window.
+    // The creator's shipping address: the host gets it as soon as the creator
+    // accepts (2026-11-10 — product campaigns ship before any payment step), and
+    // loses it on a declined/withdrawn invite and with the rest of the contact
+    // details after the post-close window.
     if (
       side === "host" &&
       out.shippingAddress &&
-      (!(out.unlocked || out.platformFeePaidAt) ||
+      (!CampaignInvitesService.SHIPPING_ADDRESS_VISIBLE_STATUSES.has(
+        String(out.status || "").toLowerCase(),
+      ) ||
         CampaignInvitesService.contactExpired(out))
     ) {
       delete out.shippingAddress;
