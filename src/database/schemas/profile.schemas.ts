@@ -1381,6 +1381,9 @@ export const AppSettingsSchema = new Schema({
   minCampaignStartDays: { type: Number, default: 3 },
   // Maximum allowed campaign duration (start to end date), in days.
   maxCampaignDurationDays: { type: Number, default: 15 },
+  // Barter / location: days the creator has to post after the product is delivered
+  // or the visit is checked in (capped at maxCampaignDurationDays from the start).
+  postAfterDeliveryDays: { type: Number, default: 7 },
 });
 export const AppSettingsModel = model("AppSettings", AppSettingsSchema);
 

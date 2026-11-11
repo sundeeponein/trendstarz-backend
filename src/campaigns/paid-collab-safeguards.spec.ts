@@ -846,34 +846,95 @@ describe("Paid-collaboration safeguards (CampaignInvitesService)", () => {
       ).rejects.toThrow("accepted campaign");
     });
 
-    it("refuses invalid and future dates, and delivery before shipping", async () => {
+    it("refuses invalid/future dates; shipping needs courier + tracking ID", async () => {
       await build([working({ status: "accepted" })], [], [], [], product);
       await expect(
         service.updateProductFulfillment(INVITE, "host1", { shippedAt: "not a date" }),
       ).rejects.toThrow("isn't a valid date");
       await expect(
         service.updateProductFulfillment(INVITE, "host1", {
-          deliveredAt: new Date(Date.now() + 3 * DAY).toISOString(),
+          shippedAt: new Date(Date.now() + 3 * DAY).toISOString(),
         }),
       ).rejects.toThrow("can't be in the future");
       await expect(
-        service.updateProductFulfillment(INVITE, "host1", {
-          shippedAt: new Date(Date.now() - 1 * DAY).toISOString(),
-          deliveredAt: new Date(Date.now() - 2 * DAY).toISOString(),
-        }),
-      ).rejects.toThrow("before the shipped date");
+        service.updateProductFulfillment(INVITE, "host1", { shippedAt: new Date().toISOString() }),
+      ).rejects.toThrow("courier and tracking ID");
+      // Delivery before shipping isn't possible at all.
+      await expect(
+        service.updateProductFulfillment(INVITE, "host1", { status: "delivered" }),
+      ).rejects.toThrow("Mark it shipped first");
     });
 
-    it("'delivered' records the delivery time and can't be undone (only 'returned')", async () => {
-      await build([working({ status: "accepted" })], [], [], [], product);
-      await service.updateProductFulfillment(INVITE, "host1", { status: "delivered" });
-      const deliveredAt = new Date(invites.get(INVITE).productFulfillment.deliveredAt);
-      expect(Math.abs(deliveredAt.getTime() - Date.now())).toBeLessThan(60 * 1000);
+    it("the host can mark delivered only 5 days after shipping; then the 7-day post date is set", async () => {
+      await build([working({ status: "accepted" })], [], [], [], {
+        ...product,
+        startDate: new Date(Date.now() - 4 * DAY),
+      });
+      await service.updateProductFulfillment(INVITE, "host1", {
+        courier: "BlueDart",
+        trackingId: "AWB1",
+        shippedAt: new Date(Date.now() - 2 * DAY).toISOString(),
+      });
+      expect(invites.get(INVITE).productFulfillment.status).toBe("shipped");
+      expect(notifications.createForUser).toHaveBeenCalledWith(
+        expect.objectContaining({ userId: "creator1", title: "Your product has been shipped" }),
+      );
       await expect(
-        service.updateProductFulfillment(INVITE, "host1", { status: "pending" }),
-      ).rejects.toThrow("already marked delivered");
-      await service.updateProductFulfillment(INVITE, "host1", { status: "returned" });
-      expect(invites.get(INVITE).productFulfillment.status).toBe("returned");
+        service.updateProductFulfillment(INVITE, "host1", { status: "delivered" }),
+      ).rejects.toThrow("within 5 days");
+
+      invites.get(INVITE).productFulfillment.shippedAt = new Date(Date.now() - 6 * DAY);
+      await service.updateProductFulfillment(INVITE, "host1", { status: "delivered" });
+      const after = invites.get(INVITE);
+      expect(after.productFulfillment.deliveredConfirmedBy).toBe("host");
+      // 7 days after delivery (well inside the 15-day cap from the start).
+      const days = (new Date(after.selectedPostDate).getTime() - Date.now()) / DAY;
+      expect(days).toBeGreaterThan(6);
+      expect(days).toBeLessThan(8);
+      await expect(
+        service.updateProductFulfillment(INVITE, "host1", { status: "delivered" }),
+      ).rejects.toThrow("already delivered");
+    });
+
+    it("the creator confirms receipt (date + note); the post date never passes 15 days from the start", async () => {
+      await build(
+        [working({ status: "accepted", productFulfillment: { status: "shipped", courier: "DTDC", trackingId: "X1", shippedAt: new Date(Date.now() - 1 * DAY) } })],
+        [],
+        [],
+        [],
+        { ...product, startDate: new Date(Date.now() - 12 * DAY) },
+      );
+      await expect(
+        service.confirmProductReceived(INVITE, "someone-else", {}),
+      ).rejects.toThrow("Not your invite");
+      await service.confirmProductReceived(INVITE, "creator1", { note: "Got size M <b>ok</b>" });
+      const after = invites.get(INVITE);
+      expect(after.productFulfillment.status).toBe("delivered");
+      expect(after.productFulfillment.deliveredConfirmedBy).toBe("creator");
+      expect(after.productFulfillment.receivedNote).toBe("Got size M  b ok /b");
+      // Start was 12 days ago → capped at day 15, i.e. ~3 days from now (not 7).
+      const days = (new Date(after.selectedPostDate).getTime() - Date.now()) / DAY;
+      expect(days).toBeLessThan(4);
+      expect(days).toBeGreaterThan(1);
+      expect(notifications.createForUser).toHaveBeenCalledWith(
+        expect.objectContaining({ userId: "host1", title: "Product received by the creator" }),
+      );
+      await expect(service.confirmProductReceived(INVITE, "creator1", {})).rejects.toThrow("Already marked");
+    });
+
+    it("the host can ask the creator to fix their address (before shipping)", async () => {
+      await build(
+        [working({ status: "accepted", shippingAddress: { line1: "1 St", city: "Hyd", state: "TS", pincode: "500001" } })],
+        [],
+        [],
+        [],
+        product,
+      );
+      await service.requestAddressUpdate(INVITE, "host1", "Flat number missing");
+      expect(invites.get(INVITE).addressUpdateRequest.reason).toBe("Flat number missing");
+      expect(notifications.createForUser).toHaveBeenCalledWith(
+        expect.objectContaining({ userId: "creator1", title: "Please update your shipping address" }),
+      );
     });
   });
 

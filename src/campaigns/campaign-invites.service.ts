@@ -9,6 +9,8 @@ import {
 import {
   graceHoursFromSettings,
   submissionWindow,
+  postDateAfterDelivery,
+  DEFAULT_POST_AFTER_DELIVERY_DAYS,
 } from "./campaign-deadlines.util";
 import { meetsMinimumTier, resolveTier } from "../utils/tier-ranges.util";
 import { Cron, CronExpression } from "@nestjs/schedule";
@@ -2404,8 +2406,222 @@ export class CampaignInvitesService {
   }
 
   /**
+   * The creator's shipping address as stored on the invite: the address they
+   * typed, their REGISTERED name and mobile (never the browser's), and their
+   * answer to the campaign's product question (size etc.). Used at accept and
+   * when they update it before shipping.
+   */
+  private async buildShippingAddress(
+    campaign: any,
+    recipientRole: "influencer" | "photographer",
+    creatorId: string,
+    input: any,
+    errorPrefix: string,
+  ) {
+    const registered: any = await (recipientRole === "photographer"
+      ? this.photographerModel.findById(creatorId).select("name phoneNumber").lean()
+      : this.influencerModel.findById(creatorId).select("name phoneNumber").lean());
+    const sa: any = {
+      ...(input || {}),
+      contactName: String(registered?.name || "").trim(),
+      contactMobile: String(registered?.phoneNumber || "").trim(),
+    };
+    if (!sa.contactName || !sa.contactMobile) {
+      throw new BadRequestException(
+        "Add your name and mobile number in your profile before accepting this product campaign.",
+      );
+    }
+    const missing: string[] = [];
+    for (const [k, label] of [
+      ["line1", "address line 1"],
+      ["city", "city"],
+      ["state", "state"],
+      ["pincode", "pincode"],
+    ] as const) {
+      if (!String(sa[k] || "").trim()) missing.push(label);
+    }
+    const mobile = String(sa.contactMobile || "").replace(/\D/g, "");
+    if (mobile && (mobile.length < 10 || mobile.length > 13)) missing.push("valid contact mobile");
+    const pincode = String(sa.pincode || "").replace(/\D/g, "");
+    if (pincode && (pincode.length < 4 || pincode.length > 10)) missing.push("valid pincode");
+    const option = productOptionAnswer(
+      campaign?.productOptionQuestion,
+      campaign?.productOptionChoices,
+      sa.optionAnswer,
+    );
+    if (option.error) missing.push(option.error);
+    if (missing.length) {
+      throw new BadRequestException(`${errorPrefix} Missing/invalid: ${missing.join(", ")}.`);
+    }
+    const clip = (v: unknown, max = 200) => String(v || "").trim().slice(0, max);
+    return {
+      contactName: sa.contactName,
+      contactMobile: sa.contactMobile,
+      line1: clip(sa.line1),
+      line2: clip(sa.line2),
+      city: clip(sa.city, 80),
+      state: clip(sa.state, 80),
+      pincode: clip(sa.pincode, 10),
+      landmark: clip(sa.landmark),
+      ...(option.question ? { optionQuestion: option.question, optionAnswer: option.answer } : {}),
+      capturedAt: new Date(),
+    };
+  }
+
+  /** Product-shipping is "sent" once the host recorded a shipped date or status. */
+  private static isShipped(pf: any): boolean {
+    return !!(pf?.shippedAt || pf?.deliveredAt || ["shipped", "delivered", "returned"].includes(String(pf?.status || "")));
+  }
+
+  /** Days the host waits for the creator to confirm receipt before marking it delivered. */
+  static readonly HOST_MARK_DELIVERED_AFTER_DAYS = 5;
+
+  /**
+   * Barter delivered / location visited: the creator's post date becomes the due
+   * day (settings.postAfterDeliveryDays, capped at maxCampaignDurationDays from
+   * the campaign start), so the usual posting window and no-show rules apply.
+   */
+  private async applyPostDateAfter(invite: any, campaign: any, eventAt: Date) {
+    const settings: any = await this.appSettingsModel
+      .findOne({})
+      .select("postAfterDeliveryDays maxCampaignDurationDays")
+      .lean();
+    const afterDays = Number(settings?.postAfterDeliveryDays) > 0
+      ? Number(settings.postAfterDeliveryDays)
+      : DEFAULT_POST_AFTER_DELIVERY_DAYS;
+    const capDays = Number(settings?.maxCampaignDurationDays) > 0 ? Number(settings.maxCampaignDurationDays) : 15;
+    const postDate = postDateAfterDelivery(
+      eventAt,
+      campaign?.startDate || campaign?.timelineStart,
+      afterDays,
+      capDays,
+    );
+    invite.selectedPostDate = postDate;
+    invite.insightsUnlocksAt = new Date(postDate.getTime() + 24 * 60 * 60 * 1000);
+    return postDate;
+  }
+
+  private notifyInviteParty(
+    userId: string,
+    userRole: "brand" | "influencer" | "photographer",
+    title: string,
+    body: string,
+    url: string,
+  ) {
+    this.notificationsService
+      ?.createForUser({ userId: String(userId), userRole, title, body, url })
+      .catch(() => undefined);
+  }
+
+  /** Host: ask the creator to fix their shipping address (before shipping). */
+  async requestAddressUpdate(inviteId: string, brandId: string, reason: unknown) {
+    const invite = await this.assertBrandOwnsInvite(inviteId, brandId);
+    if (!invite.shippingAddress) throw new BadRequestException("This creator hasn't added an address.");
+    if (CampaignInvitesService.isShipped(invite.productFulfillment)) {
+      throw new BadRequestException("Already shipped — contact the creator directly.");
+    }
+    const text = String(reason ?? "").replace(/[<>]/g, " ").trim().slice(0, 200);
+    if (!text) throw new BadRequestException("Say what's missing or wrong in the address.");
+    invite.addressUpdateRequest = { reason: text, requestedAt: new Date() };
+    invite.updatedAt = new Date();
+    await invite.save();
+    const role = this.normalizeRecipientRole(invite.recipientRole);
+    this.notifyInviteParty(
+      String(invite.influencerId),
+      role,
+      "Please update your shipping address",
+      `The host needs a correction before shipping: ${text}`,
+      `/${role}-dashboard?invite=${invite._id}`,
+    );
+    return { addressUpdateRequest: invite.addressUpdateRequest };
+  }
+
+  /** Creator: change their shipping address / product answer until it's shipped. */
+  async updateShippingAddress(inviteId: string, creatorId: string, address: any) {
+    const invite: any = await this.inviteModel.findById(inviteId);
+    if (!invite) throw new NotFoundException("Invite not found");
+    if (String(invite.influencerId) !== String(creatorId)) throw new BadRequestException("Not your invite");
+    if (!["accepted", "payment_confirmed", "working"].includes(String(invite.status))) {
+      throw new BadRequestException("The address can be changed only on an active campaign.");
+    }
+    if (CampaignInvitesService.isShipped(invite.productFulfillment)) {
+      throw new BadRequestException("The product has already been shipped — message the host if something is wrong.");
+    }
+    const campaign: any = await this.campaignModel
+      .findById(invite.campaignId)
+      .select("campaignType productShippingRequired productOptionQuestion productOptionChoices")
+      .lean();
+    if (campaign?.campaignType !== "product" || campaign?.productShippingRequired !== true) {
+      throw new BadRequestException("This campaign doesn't ship a product.");
+    }
+    const role = this.normalizeRecipientRole(invite.recipientRole);
+    const next: any = await this.buildShippingAddress(campaign, role, creatorId, address, "Please complete your address.");
+    // Keep the question as it was asked at accept (campaigns lock it on approval).
+    next.capturedAt = invite.shippingAddress?.capturedAt || next.capturedAt;
+    next.updatedAt = new Date();
+    const hadRequest = !!invite.addressUpdateRequest?.requestedAt;
+    invite.shippingAddress = next;
+    invite.addressUpdateRequest = undefined;
+    invite.updatedAt = new Date();
+    await invite.save();
+    this.notifyInviteParty(
+      String(invite.brandId),
+      "brand",
+      hadRequest ? "Shipping address updated" : "Creator changed their shipping address",
+      "Check the new address before shipping.",
+      "/campaigns",
+    );
+    return { shippingAddress: invite.shippingAddress };
+  }
+
+  /** Creator: "I received the product" — starts their posting window. */
+  async confirmProductReceived(inviteId: string, creatorId: string, body: { receivedAt?: unknown; note?: unknown }) {
+    const invite: any = await this.inviteModel.findById(inviteId);
+    if (!invite) throw new NotFoundException("Invite not found");
+    if (String(invite.influencerId) !== String(creatorId)) throw new BadRequestException("Not your invite");
+    if (!["accepted", "payment_confirmed", "working"].includes(String(invite.status))) {
+      throw new BadRequestException("This campaign isn't active.");
+    }
+    const campaign: any = await this.campaignModel.findById(invite.campaignId).select("campaignType startDate timelineStart").lean();
+    if (campaign?.campaignType !== "product") throw new BadRequestException("This isn't a product campaign.");
+    const pf: any = invite.productFulfillment?.toObject?.() ?? { ...(invite.productFulfillment || {}) };
+    if (pf.deliveredAt) throw new BadRequestException("Already marked as received.");
+    if (!pf.shippedAt) throw new BadRequestException("The host hasn't marked it shipped yet.");
+    const receivedAt = this.pastOrTodayDate(body?.receivedAt ?? new Date(), "Received date");
+    if (receivedAt.getTime() < new Date(pf.shippedAt).setUTCHours(0, 0, 0, 0)) {
+      throw new BadRequestException("The received date can't be before the shipped date.");
+    }
+    pf.deliveredAt = receivedAt;
+    pf.status = "delivered";
+    pf.deliveredConfirmedBy = "creator";
+    pf.receivedNote = String(body?.note ?? "").replace(/[<>]/g, " ").trim().slice(0, 300);
+    invite.productFulfillment = pf;
+    const postDate = await this.applyPostDateAfter(invite, campaign, receivedAt);
+    invite.updatedAt = new Date();
+    await invite.save();
+    this.notifyInviteParty(
+      String(invite.brandId),
+      "brand",
+      "Product received by the creator",
+      `They confirmed receipt${pf.receivedNote ? `: "${pf.receivedNote}"` : ""}. Their post is due by ${postDate.toISOString().slice(0, 10)}.`,
+      "/campaigns",
+    );
+    return { productFulfillment: pf, selectedPostDate: postDate };
+  }
+
+  /** A date that is today or earlier (a plain date reads as 00:00 UTC = 05:30 IST). */
+  private pastOrTodayDate(value: unknown, label: string): Date {
+    const d = new Date(value as any);
+    if (Number.isNaN(d.getTime())) throw new BadRequestException(`${label} isn't a valid date.`);
+    if (d.getTime() > Date.now() + 6 * 60 * 60 * 1000) throw new BadRequestException(`${label} can't be in the future.`);
+    return d;
+  }
+
+  /**
    * Brand updates product-shipping fulfillment for a `product` campaign invite.
-   * Status auto-derives: trackingId set → shipped; deliveredAt set → delivered.
+   * 2026-11-10: the host records shipping (courier, tracking, shipped date);
+   * delivery is confirmed by the creator — the host may mark it delivered only
+   * HOST_MARK_DELIVERED_AFTER_DAYS after shipping if the creator hasn't.
    */
   async updateProductFulfillment(
     inviteId: string,
@@ -2449,37 +2665,70 @@ export class CampaignInvitesService {
       }
       return d;
     };
-    const wasDelivered = String(pf.status || "") === "delivered" || !!pf.deliveredAt;
-    if (body.courier !== undefined) pf.courier = body.courier;
-    if (body.trackingId !== undefined) pf.trackingId = body.trackingId;
-    if (body.trackingUrl !== undefined) pf.trackingUrl = body.trackingUrl;
-    if (body.shippedAt !== undefined) pf.shippedAt = realDate(body.shippedAt, "Shipped date");
-    if (body.deliveredAt !== undefined)
-      pf.deliveredAt = realDate(body.deliveredAt, "Delivered date");
-    if (pf.shippedAt && pf.deliveredAt && new Date(pf.deliveredAt) < new Date(pf.shippedAt)) {
-      throw new BadRequestException("The delivered date can't be before the shipped date.");
+    const clip = (v: unknown, max: number) => String(v ?? "").trim().slice(0, max);
+    if (pf.deliveredAt) {
+      throw new BadRequestException("This product is already delivered.");
     }
-    if (body.note !== undefined) pf.note = body.note;
-    // Delivered starts the creator's posting window: it can't be undone (only "returned").
-    if (wasDelivered && body.status && !["delivered", "returned"].includes(body.status)) {
-      throw new BadRequestException(
-        "This product is already marked delivered. If it came back, mark it as returned.",
-      );
-    }
-    if (body.status) {
-      pf.status = body.status;
-      if (body.status === "delivered" && !pf.deliveredAt) pf.deliveredAt = new Date();
-    } else {
-      // Auto-derive
-      if (pf.deliveredAt) pf.status = "delivered";
-      else if (pf.trackingId || pf.shippedAt) {
-        pf.status = "shipped";
-        if (!pf.shippedAt) pf.shippedAt = new Date();
+    const wantsDelivered = body.status === "delivered" || body.deliveredAt !== undefined;
+    if (wantsDelivered) {
+      // Fallback: the creator hasn't confirmed receipt in time.
+      if (!pf.shippedAt) throw new BadRequestException("Mark it shipped first.");
+      const waitMs = CampaignInvitesService.HOST_MARK_DELIVERED_AFTER_DAYS * 24 * 60 * 60 * 1000;
+      if (Date.now() < new Date(pf.shippedAt).getTime() + waitMs) {
+        throw new BadRequestException(
+          `The creator confirms delivery. If they haven't within ${CampaignInvitesService.HOST_MARK_DELIVERED_AFTER_DAYS} days of shipping, you can mark it delivered.`,
+        );
       }
+      const deliveredAt = body.deliveredAt !== undefined ? realDate(body.deliveredAt, "Delivered date") : new Date();
+      if (deliveredAt < new Date(new Date(pf.shippedAt).setUTCHours(0, 0, 0, 0))) {
+        throw new BadRequestException("The delivered date can't be before the shipped date.");
+      }
+      pf.deliveredAt = deliveredAt;
+      pf.status = "delivered";
+      pf.deliveredConfirmedBy = "host";
+      invite.productFulfillment = pf;
+      const postDate = await this.applyPostDateAfter(invite, campaign, deliveredAt);
+      invite.updatedAt = new Date();
+      await invite.save();
+      const role = this.normalizeRecipientRole(invite.recipientRole);
+      this.notifyInviteParty(
+        String(invite.influencerId),
+        role,
+        "The host marked your product as delivered",
+        `Your post is due by ${postDate.toISOString().slice(0, 10)}. If you didn't receive it, use Report on the campaign.`,
+        `/${role}-dashboard?invite=${invite._id}`,
+      );
+      return { success: true, productFulfillment: pf, selectedPostDate: postDate };
+    }
+    const wasShipped = !!pf.shippedAt;
+    if (body.courier !== undefined) pf.courier = clip(body.courier, 80);
+    if (body.trackingId !== undefined) pf.trackingId = clip(body.trackingId, 80);
+    if (body.trackingUrl !== undefined) pf.trackingUrl = clip(body.trackingUrl, 500);
+    if (body.shippedAt !== undefined && body.shippedAt !== null && body.shippedAt !== "") {
+      pf.shippedAt = realDate(body.shippedAt, "Shipped date");
+    }
+    if (body.note !== undefined) pf.note = clip(body.note, 300);
+    if (pf.shippedAt || body.status === "shipped") {
+      if (!pf.courier || !pf.trackingId) {
+        throw new BadRequestException("Enter the courier and tracking ID to mark it shipped.");
+      }
+      if (!pf.shippedAt) pf.shippedAt = new Date();
+      pf.status = "shipped";
     }
     invite.productFulfillment = pf;
     invite.updatedAt = new Date();
+    if (pf.status === "shipped") invite.addressUpdateRequest = undefined;
     await invite.save();
+    if (!wasShipped && pf.shippedAt) {
+      const role = this.normalizeRecipientRole(invite.recipientRole);
+      this.notifyInviteParty(
+        String(invite.influencerId),
+        role,
+        "Your product has been shipped",
+        `${pf.courier} · tracking ${pf.trackingId}. Tap "I received the product" when it arrives — you then have a few days to post.`,
+        `/${role}-dashboard?invite=${invite._id}`,
+      );
+    }
     return { success: true, productFulfillment: pf };
   }
 
@@ -2549,6 +2798,7 @@ export class CampaignInvitesService {
       );
     }
     const lv = invite.locationVisit || {};
+    const wasCheckedIn = !!lv.checkedInAt || lv.status === "checked_in";
     if (body.scheduledAt !== undefined) {
       const at = new Date(body.scheduledAt as any);
       if (Number.isNaN(at.getTime())) {
@@ -2569,9 +2819,27 @@ export class CampaignInvitesService {
       lv.status = "checked_in";
     }
     invite.locationVisit = lv;
+    // Checked in: the creator now has settings.postAfterDeliveryDays to post (2026-11-10).
+    let postDate: Date | null = null;
+    if (!wasCheckedIn && lv.checkedInAt) {
+      // The chosen date was the visit date: keep it as the scheduled visit.
+      if (!lv.scheduledAt && invite.selectedPostDate) lv.scheduledAt = invite.selectedPostDate;
+      invite.locationVisit = lv;
+      postDate = await this.applyPostDateAfter(invite, campaign, new Date(lv.checkedInAt));
+    }
     invite.updatedAt = new Date();
     await invite.save();
-    return { success: true, locationVisit: lv };
+    if (postDate) {
+      const role = this.normalizeRecipientRole(invite.recipientRole);
+      this.notifyInviteParty(
+        String(invite.influencerId),
+        role,
+        "Visit checked in",
+        `Thanks for visiting! Your post is due by ${postDate.toISOString().slice(0, 10)}.`,
+        `/${role}-dashboard?invite=${invite._id}`,
+      );
+    }
+    return { success: true, locationVisit: lv, ...(postDate ? { selectedPostDate: postDate } : {}) };
   }
 
   /** Brand sets/updates the deliverable due-date for an invite. */
@@ -3146,65 +3414,13 @@ export class CampaignInvitesService {
         campaign.campaignType === "product" &&
         campaign.productShippingRequired === true;
       if (requiresShippingAddress) {
-        // Name and mobile are the creator's registered ones (2026-11-10): the
-        // creator enters only the address; anything sent for them is ignored.
-        const registered: any = await (recipientRole === "photographer"
-          ? this.photographerModel.findById(influencerId).select("name phoneNumber").lean()
-          : this.influencerModel.findById(influencerId).select("name phoneNumber").lean());
-        const sa = {
-          ...(shippingAddress || {}),
-          contactName: String(registered?.name || "").trim(),
-          contactMobile: String(registered?.phoneNumber || "").trim(),
-        };
-        if (!sa.contactName || !sa.contactMobile) {
-          throw new BadRequestException(
-            "Add your name and mobile number in your profile before accepting this product campaign.",
-          );
-        }
-        const missing: string[] = [];
-        const required: Array<[keyof typeof sa, string]> = [
-          ["line1", "address line 1"],
-          ["city", "city"],
-          ["state", "state"],
-          ["pincode", "pincode"],
-        ];
-        for (const [k, label] of required) {
-          if (!String((sa as any)[k] || "").trim()) missing.push(label);
-        }
-        const mobile = String(sa.contactMobile || "").replace(/\D/g, "");
-        if (mobile && (mobile.length < 10 || mobile.length > 13)) {
-          missing.push("valid contact mobile");
-        }
-        const pincode = String(sa.pincode || "").replace(/\D/g, "");
-        if (pincode && (pincode.length < 4 || pincode.length > 10)) {
-          missing.push("valid pincode");
-        }
-        // The host's question (size etc.), if the campaign asks one.
-        const option = productOptionAnswer(
-          campaign.productOptionQuestion,
-          campaign.productOptionChoices,
-          (sa as any).optionAnswer,
+        invite.shippingAddress = await this.buildShippingAddress(
+          campaign,
+          recipientRole,
+          influencerId,
+          shippingAddress,
+          "Shipping address required to accept this product campaign.",
         );
-        if (option.error) missing.push(option.error);
-        if (missing.length) {
-          throw new BadRequestException(
-            `Shipping address required to accept this product campaign. Missing/invalid: ${missing.join(", ")}.`,
-          );
-        }
-        invite.shippingAddress = {
-          contactName: String(sa.contactName || "").trim(),
-          contactMobile: String(sa.contactMobile || "").trim(),
-          line1: String(sa.line1 || "").trim(),
-          line2: String(sa.line2 || "").trim(),
-          city: String(sa.city || "").trim(),
-          state: String(sa.state || "").trim(),
-          pincode: String(sa.pincode || "").trim(),
-          landmark: String(sa.landmark || "").trim(),
-          ...(option.question
-            ? { optionQuestion: option.question, optionAnswer: option.answer }
-            : {}),
-          capturedAt: new Date(),
-        };
       }
 
       const influencer =

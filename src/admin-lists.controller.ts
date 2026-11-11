@@ -346,6 +346,7 @@ export class AdminListsController {
       collaborationApprovalMode: "manual",
       minCampaignStartDays: 3,
       maxCampaignDurationDays: 15,
+      postAfterDeliveryDays: 7,
       paymentGatewayMode: "razorpay_fallback",
       platformFeeEnabled: false,
       platformFeePercent: commissionDefaults.platformFeePercent,
@@ -574,6 +575,13 @@ export class AdminListsController {
         );
       }
       next.maxCampaignDurationDays = Math.floor(days);
+    }
+    if (next.postAfterDeliveryDays !== undefined) {
+      const days = Number(next.postAfterDeliveryDays);
+      if (!Number.isFinite(days) || days < 1 || days > 30) {
+        throw new BadRequestException("postAfterDeliveryDays must be a number between 1 and 30");
+      }
+      next.postAfterDeliveryDays = Math.floor(days);
     }
     for (const key of ["barterPlatformFee", "locationPlatformFee"]) {
       if (next[key] === undefined) continue;

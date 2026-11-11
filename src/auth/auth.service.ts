@@ -2683,6 +2683,7 @@ export class AuthService {
         settings?.paidCollabTermsV2EffectiveAt ?? null,
       minCampaignStartDays: settings?.minCampaignStartDays ?? 3,
       maxCampaignDurationDays: settings?.maxCampaignDurationDays ?? 15,
+      postAfterDeliveryDays: settings?.postAfterDeliveryDays ?? 7,
       otpVerificationEnabled: !!settings?.otpVerificationEnabled,
       // Campaign payment UPI shown to brands on the payment screen
       paymentUpiId: settings?.paymentUpiId || "trendstarzin@kotak",

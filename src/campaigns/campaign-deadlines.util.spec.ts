@@ -162,3 +162,26 @@ describe("campaign deadlines", () => {
     });
   });
 });
+
+import { postDateAfterDelivery } from "./campaign-deadlines.util";
+
+describe("postDateAfterDelivery (barter / location, 2026-11-10)", () => {
+  const ist = (ymd: string, hhmm = "12:00") => new Date(`${ymd}T${hhmm}:00+05:30`);
+  const day = (d: Date) => d.toISOString().slice(0, 10);
+
+  it("is 7 India days after delivery, stored as midnight UTC of that date", () => {
+    expect(postDateAfterDelivery(ist("2026-11-10"), ist("2026-11-08"), 7, 15).toISOString()).toBe(
+      "2026-11-17T00:00:00.000Z",
+    );
+    // 00:30 IST on the 10th is still the 10th in India.
+    expect(day(postDateAfterDelivery(ist("2026-11-10", "00:30"), null, 7, 15))).toBe("2026-11-17");
+  });
+
+  it("never goes past 15 days from the campaign start", () => {
+    expect(day(postDateAfterDelivery(ist("2026-11-20"), ist("2026-11-10"), 7, 15))).toBe("2026-11-25");
+  });
+
+  it("still leaves at least the next day after a very late delivery", () => {
+    expect(day(postDateAfterDelivery(ist("2026-11-30"), ist("2026-11-10"), 7, 15))).toBe("2026-12-01");
+  });
+});

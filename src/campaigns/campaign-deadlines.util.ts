@@ -120,3 +120,36 @@ export function submissionWindow(
     closesAt: new Date(closesAt),
   };
 }
+
+/** Days to post after a barter product is delivered / a location visit is checked in. */
+export const DEFAULT_POST_AFTER_DELIVERY_DAYS = 7;
+
+/** India calendar day of `t` as midnight UTC of that date (how post dates are stored). */
+function istDayUtc(t: number): number {
+  const shifted = new Date(t + IST_OFFSET_MS);
+  return Date.UTC(shifted.getUTCFullYear(), shifted.getUTCMonth(), shifted.getUTCDate());
+}
+
+/**
+ * Barter / location (2026-11-10): the creator's post date once the product is
+ * delivered or the visit is checked in — `afterDays` India days later, but never
+ * past `capDays` from the campaign start (same 15-day limit as campaigns
+ * themselves). It's always at least the next day, so a very late delivery still
+ * leaves a day to post. Returned in the stored post-date form (midnight UTC of
+ * the date), so the usual window (+24h, +24h grace) applies on top.
+ */
+export function postDateAfterDelivery(
+  eventAt: Date,
+  campaignStart: unknown,
+  afterDays = DEFAULT_POST_AFTER_DELIVERY_DAYS,
+  capDays = 15,
+): Date {
+  const DAY = 24 * HOUR_MS;
+  const eventDay = istDayUtc(eventAt.getTime());
+  let due = eventDay + Math.max(1, Math.round(afterDays)) * DAY;
+  const start = toTime(campaignStart);
+  if (start !== null && capDays > 0) {
+    due = Math.min(due, istDayUtc(start) + Math.round(capDays) * DAY);
+  }
+  return new Date(Math.max(due, eventDay + DAY));
+}

@@ -98,7 +98,17 @@ export const CampaignInviteSchema = new Schema({
     trackingUrl: { type: String },
     shippedAt: { type: Date },
     deliveredAt: { type: Date },
+    // Who marked it delivered: the creator ("I received it"), or the host after
+    // 5 days without the creator confirming (2026-11-10).
+    deliveredConfirmedBy: { type: String, enum: ["creator", "host"] },
+    // The creator's note on receipt (e.g. "Got size M, box damaged").
+    receivedNote: { type: String },
     note: { type: String },
+  },
+  // The host asked the creator to fix their shipping address before shipping.
+  addressUpdateRequest: {
+    reason: { type: String },
+    requestedAt: { type: Date },
   },
   // For `invite_location` campaigns — influencer visits a location
   locationVisit: {
@@ -256,6 +266,8 @@ export const CampaignInviteSchema = new Schema({
     optionQuestion: { type: String },
     optionAnswer: { type: String },
     capturedAt: { type: Date },
+    // Last time the creator changed the address after accepting.
+    updatedAt: { type: Date },
   },
   createdAt: { type: Date, default: Date.now },
   updatedAt: { type: Date, default: Date.now },

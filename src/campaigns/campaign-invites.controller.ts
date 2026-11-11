@@ -395,6 +395,31 @@ export class CampaignInvitesController {
     );
   }
 
+  /** Host: ask the creator to fix their shipping address before shipping. */
+  @UseGuards(JwtAuthGuard)
+  @Post(":id/address-request")
+  async requestAddressUpdate(@Param("id") id: string, @Req() req: any, @Body() body: { reason?: string }) {
+    return this.invitesService.requestAddressUpdate(id, this.requesterId(req), body?.reason);
+  }
+
+  /** Creator: change their shipping address / product answer until it ships. */
+  @UseGuards(JwtAuthGuard)
+  @Patch(":id/shipping-address")
+  async updateShippingAddress(@Param("id") id: string, @Req() req: any, @Body() body: any) {
+    return this.invitesService.updateShippingAddress(id, this.requesterId(req), body);
+  }
+
+  /** Creator: "I received the product" (date + optional note). */
+  @UseGuards(JwtAuthGuard)
+  @Post(":id/product-received")
+  async confirmProductReceived(
+    @Param("id") id: string,
+    @Req() req: any,
+    @Body() body: { receivedAt?: string; note?: string },
+  ) {
+    return this.invitesService.confirmProductReceived(id, this.requesterId(req), body || {});
+  }
+
   @UseGuards(JwtAuthGuard)
   @Patch(":id/fulfillment/check-in")
   async updateLocationCheckIn(
