@@ -3110,7 +3110,7 @@ export class CampaignInvitesService {
       const campaign: any = await this.campaignModel
         .findById(invite.campaignId)
         .select(
-          "status ownerType requestKind startDate endDate timelineStart timelineEnd socialMedia platforms campaignMode minInfluencerTier minInfluencers maxInfluencers inviteSlots acceptanceDeadline campaignType productShippingRequired productOptionQuestion productOptionChoices productPaymentMode",
+          "status ownerType requestKind startDate endDate timelineStart timelineEnd socialMedia platforms campaignMode minInfluencerTier minInfluencers maxInfluencers inviteSlots acceptanceDeadline campaignType productShippingRequired productOptionQuestion productOptionChoices productPaymentMode productPaymentAmount pricePerInfluencer",
         )
         .lean();
       if (!campaign) throw new NotFoundException("Campaign not found");
@@ -3399,21 +3399,42 @@ export class CampaignInvitesService {
         this.assertFileShareChoice(campaign, effectivePlatform, selectedContentType);
       }
 
-      const offeredRupees = isDeliverablePricing
+      let offeredRupees = isDeliverablePricing
         ? this.resolveDeliverableOfferRupees(
             campaign,
             effectivePlatform,
             selectedContentType,
           )
         : this.toRupeesFromPaise(Number(campaign?.pricePerInfluencer || 0));
-      const offeredPaise = isDeliverablePricing
+      let offeredPaise = isDeliverablePricing
         ? this.toPaiseFromMaybeRupees(offeredRupees)
         : Number(campaign?.pricePerInfluencer || 0);
 
+      // Product + Paid: the cash part is the campaign's productPaymentAmount (paise).
+      if (
+        (!offeredPaise || offeredPaise <= 0) &&
+        String(campaign?.campaignType || "") === "product" &&
+        String(campaign?.productPaymentMode || "") === "product_plus_payment"
+      ) {
+        offeredPaise = Number(campaign?.productPaymentAmount || 0);
+        offeredRupees = this.toRupeesFromPaise(offeredPaise);
+      }
+
       if (!offeredPaise || offeredPaise <= 0) {
-        throw new BadRequestException(
-          "Offered payout is not configured for this invite.",
-        );
+        // Barter (product only) / location visit with no cash: nothing to pay,
+        // so nothing to counter — accepted at ₹0 (the platform fee covers it).
+        if (!isBarterOrLocationCampaign(campaign)) {
+          throw new BadRequestException(
+            "Offered payout is not configured for this invite.",
+          );
+        }
+        if (status === "counter_sent") {
+          throw new BadRequestException(
+            "Counter offers aren't available for product-only or location campaigns.",
+          );
+        }
+        offeredPaise = 0;
+        offeredRupees = 0;
       }
 
       if (isRecipientResolvingBrandCounter) {

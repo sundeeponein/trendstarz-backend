@@ -897,6 +897,89 @@ describe("CampaignInvitesService – respond()", () => {
     expect(invite.acceptedAt).toBeInstanceOf(Date);
   });
 
+  describe("offered amount on accept (2026-11-10: product/barter/flat-price accepts failed)", () => {
+    /** Like the database: returns only the fields the code selects. */
+    function campaignHonoringSelect(overrides: any = {}) {
+      const full: any = {
+        status: "active",
+        startDate: CAMPAIGN_START,
+        endDate: CAMPAIGN_END,
+        timelineStart: CAMPAIGN_START,
+        timelineEnd: CAMPAIGN_END,
+        socialMedia: [],
+        minInfluencers: 0,
+        maxInfluencers: 0,
+        ...overrides,
+      };
+      return {
+        select: jest.fn().mockImplementation((fields: string) => {
+          const picked: any = {};
+          for (const f of String(fields || "").split(/\s+/).filter(Boolean)) {
+            if (f in full) picked[f] = full[f];
+          }
+          return { lean: jest.fn().mockResolvedValue(picked) };
+        }),
+      };
+    }
+
+    it("a flat-price campaign uses its price per creator (it wasn't loaded before)", async () => {
+      const invite: any = pendingInvite({ recipientRole: "photographer" });
+      inviteModel.findById.mockResolvedValue(invite);
+      campaignModel.findById.mockReturnValue(
+        campaignHonoringSelect({ campaignType: "paid_collab", ownerType: "brand", pricePerInfluencer: 250000 }),
+      );
+      inviteModel.countDocuments.mockResolvedValue(0);
+      await service.respond("inv1", "inf1", "accepted", "2026-07-15");
+      expect(invite.agreedAmountPaise).toBe(250000);
+    });
+
+    it("Product + Paid uses the campaign's cash amount", async () => {
+      const invite: any = pendingInvite();
+      inviteModel.findById.mockResolvedValue(invite);
+      campaignModel.findById.mockReturnValue(
+        campaignHonoringSelect({
+          campaignType: "product",
+          productPaymentMode: "product_plus_payment",
+          productPaymentAmount: 50000,
+        }),
+      );
+      inviteModel.countDocuments.mockResolvedValue(0);
+      await service.respond("inv1", "inf1", "accepted", "2026-07-15");
+      expect(invite.agreedAmountPaise).toBe(50000);
+    });
+
+    it("a product-only (barter) campaign is accepted at ₹0", async () => {
+      const invite: any = pendingInvite();
+      inviteModel.findById.mockResolvedValue(invite);
+      campaignModel.findById.mockReturnValue(
+        campaignHonoringSelect({ campaignType: "product", productPaymentMode: "product_only" }),
+      );
+      inviteModel.countDocuments.mockResolvedValue(0);
+      await service.respond("inv1", "inf1", "accepted", "2026-07-15");
+      expect(invite.status).toBe("accepted");
+      expect(invite.agreedAmountPaise).toBe(0);
+    });
+
+    it("barter can't be countered, and a paid campaign with no amount is still refused", async () => {
+      inviteModel.findById.mockResolvedValue(pendingInvite());
+      campaignModel.findById.mockReturnValue(
+        campaignHonoringSelect({ campaignType: "product", productPaymentMode: "product_only" }),
+      );
+      inviteModel.countDocuments.mockResolvedValue(0);
+      await expect(
+        service.respond("inv1", "inf1", "counter_sent", "2026-07-15", undefined, undefined, 500),
+      ).rejects.toThrow(/Counter offers aren't available/);
+
+      inviteModel.findById.mockResolvedValue(pendingInvite({ recipientRole: "photographer" }));
+      campaignModel.findById.mockReturnValue(
+        campaignHonoringSelect({ campaignType: "paid_collab", ownerType: "brand" }),
+      );
+      await expect(service.respond("inv1", "inf1", "accepted", "2026-07-15")).rejects.toThrow(
+        /Offered payout is not configured/,
+      );
+    });
+  });
+
   it("withdraws remaining pending invites for the role when accepted target is reached", async () => {
     const invite = pendingInvite({ recipientRole: "influencer" });
     inviteModel.findById.mockResolvedValue(invite);
