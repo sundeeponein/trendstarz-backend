@@ -41,6 +41,34 @@ describe("price changes (real MongoDB)", () => {
     expect(pending).toEqual([]);
   });
 
+  it("approving a held NEW rate (kept off at ₹0) sets the price and turns it on", async () => {
+    const id = new Types.ObjectId();
+    await db.conn.collection("influencers").insertOne({
+      _id: id,
+      socialMedia: [
+        {
+          socialAccountId: "sa-1",
+          platform: "YouTube",
+          contentTypes: [
+            { name: "Video", price: 0, enabled: false },
+            { name: "Shorts", price: 100, enabled: true },
+          ],
+        },
+      ],
+    });
+    await service.record(String(id), "influencer", [], [
+      { source: "social", socialAccountId: "sa-1", platform: "YouTube", rateName: "Video", oldPrice: null, newPrice: 900 },
+    ]);
+    const [waiting] = await service.pendingForUser(String(id));
+    expect(waiting.oldPrice).toBeNull();
+    await service.approve(waiting._id, "admin-1");
+    const doc: any = await db.conn.collection("influencers").findOne({ _id: id });
+    expect(doc.socialMedia[0].contentTypes.map((c: any) => [c.name, c.price, c.enabled])).toEqual([
+      ["Video", 900, true],
+      ["Shorts", 100, true],
+    ]);
+  });
+
   it("approve sets the new price only while the profile still shows the old one", async () => {
     const id = new Types.ObjectId();
     await db.conn.collection("influencers").insertOne({

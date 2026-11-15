@@ -13,8 +13,8 @@ import {
  * max null = open-ended ("₹40,000+").
  *
  * Used by: the creator profile hint ("Usual range for your tier"), and the
- * price-change rule — a raise up to the top of the range for an admin-VERIFIED
- * tier applies straight away even when it doubles (price-changes.util).
+ * price-change rule — a raise or new rate above the range waits for admin
+ * approval; within it applies straight away (price-changes.util).
  */
 export const REEL_RANGE_BY_TIER: Record<string, { min: number; max: number | null }> = {
   starter: { min: 50, max: 150 }, // 1–100 followers
@@ -55,11 +55,15 @@ export function rangeKindFor(contentTypeName: unknown): keyof TierRateRanges | n
   return null;
 }
 
-/** Top of the usual range for this tier and rate; null when none applies (unknown tier/rate, or open-ended). */
-export function rangeTopFor(tier: unknown, contentTypeName: unknown): number | null {
+/**
+ * The usual range's top for this tier and rate: { top } (null = open-ended,
+ * e.g. Mega), or null when the rate has no range (Photo post…) or the tier is
+ * unknown.
+ */
+export function rangeFor(tier: unknown, contentTypeName: unknown): { top: number | null } | null {
   const ranges = rangesForTier(resolveTier(tier));
   const kind = rangeKindFor(contentTypeName);
-  return ranges && kind ? ranges[kind].max : null;
+  return ranges && kind ? { top: ranges[kind].max } : null;
 }
 
 /** The whole table, keyed by the tier name the profile dropdown stores ("Starter" … "Mega / Celebrity"). */

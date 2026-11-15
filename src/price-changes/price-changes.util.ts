@@ -1,4 +1,4 @@
-import { rangeTopFor } from "../collaboration-score/rate-suggestion.util";
+import { rangeFor } from "../collaboration-score/rate-suggestion.util";
 /**
  * Creator price changes (2026-11-10).
  *
@@ -10,9 +10,16 @@ import { rangeTopFor } from "../collaboration-score/rate-suggestion.util";
  * is held: the profile keeps the current price (what brands see) and the new
  * one waits in price_changes as "pending" until an admin approves it.
  *
- * Exception (2026-11-15): a raise up to the top of the usual range for the
- * account's ADMIN-VERIFIED tier applies straight away even when it doubles
- * (e.g. Starter Reel ₹50 → ₹100). Above that range the doubling rule applies.
+ * USUAL-RANGE RULE (2026-11-15, influencer social rates): for a rate that has a
+ * usual range (Reel/Shorts, Video, Story), the range decides instead:
+ *  - a raise or a NEW rate ABOVE the top of the range waits for approval
+ *    (a held new rate stays off — brands don't see it until approved);
+ *  - anything within the range applies straight away, even if it doubles;
+ *  - cuts always apply; untouched rates (even above the range) stay live.
+ * The range comes from the "approval tier" the caller passes: the admin-
+ * verified tier, else TrendStarZ's checked YouTube tier, else Starter.
+ * Rates with no range (Photo post…) and photographer pricing keep the
+ * doubling rule.
  *
  * Two kinds of rate lists are covered:
  *  - "social":  socialMedia[].contentTypes[] (influencers and photographers)
@@ -59,16 +66,20 @@ function plain(value: any): Record<string, any> {
 
 /**
  * Compares one rate list before and after a save. Rows whose price moved are
- * returned as `applied`, except big jumps: those rows are put back to the stored
- * price (and its confirmed date) and returned as `held`. Turning a rate on/off
- * without changing its price is not a price change.
+ * returned as `applied`, except held ones (big jumps, or above the usual range
+ * when `rangeTop` is given): those rows are put back to the stored price (and
+ * its confirmed date) and returned as `held`. Turning a rate on/off without
+ * changing its price is not a price change. A stored ₹0 counts as no price.
  */
 export function holdRateRows(
   storedRows: unknown,
   nextRows: unknown,
   where: { source: PriceSource; socialAccountId?: string; platform?: string },
-  /** Top of the usual range for a rate (verified tier only); raises up to it are never held. */
-  rangeTop?: (rateName: string) => number | null,
+  /**
+   * Usual range for a rate under the approval tier: { top } (null top = open-
+   * ended), or null when the rate has no range — then the doubling rule applies.
+   */
+  rangeTop?: (rateName: string) => { top: number | null } | null,
 ): { rows: any[]; applied: PriceChange[]; held: PriceChange[] } {
   const byName = new Map<string, Record<string, any>>();
   for (const raw of Array.isArray(storedRows) ? storedRows : []) {
@@ -85,7 +96,7 @@ export function holdRateRows(
     if (!name || !Number.isFinite(newPrice)) return row;
     const stored = byName.get(rateKey(name));
     const storedPrice = stored ? Number(stored.price) : NaN;
-    const oldPrice = Number.isFinite(storedPrice) ? storedPrice : null;
+    const oldPrice = Number.isFinite(storedPrice) && storedPrice > 0 ? storedPrice : null;
     if (oldPrice === newPrice) return row;
     // A new rate at ₹0 (or a ₹0 rate staying ₹0) is not a price.
     if (oldPrice === null && newPrice <= 0) return row;
@@ -97,11 +108,18 @@ export function holdRateRows(
       oldPrice,
       newPrice,
     };
-    const top = rangeTop ? rangeTop(name) : null;
-    const withinUsualRange = top !== null && newPrice <= top;
-    if (isBigJump(oldPrice, newPrice) && !withinUsualRange) {
+    const range = rangeTop ? rangeTop(name) : null;
+    const raised = oldPrice === null || newPrice > oldPrice;
+    const hold = range
+      ? raised && range.top !== null && newPrice > range.top
+      : isBigJump(oldPrice, newPrice);
+    if (hold) {
       held.push(change);
-      const keptRow: Record<string, any> = { ...row, price: oldPrice };
+      // A new rate has no price to keep showing: it stays off until approved.
+      const keptRow: Record<string, any> =
+        oldPrice === null
+          ? { ...row, price: 0, enabled: false }
+          : { ...row, price: oldPrice };
       if (Object.prototype.hasOwnProperty.call(row, "priceConfirmedAt")) {
         keptRow.priceConfirmedAt = stored?.priceConfirmedAt ?? null;
       }
@@ -121,8 +139,12 @@ export function holdRateRows(
 export function holdSocialRates(
   before: unknown,
   merged: unknown,
-  /** socialAccountId → the tier an admin verified for that account (as stored before this save). */
-  verifiedTiers?: Map<string, string>,
+  /**
+   * socialAccountId → the tier the usual range is taken from (verified, else
+   * checked YouTube, else Starter — decided by the caller). Not given (e.g.
+   * photographers): the doubling rule applies to every rate.
+   */
+  approvalTiers?: Map<string, string>,
 ): { socialMedia: any[]; applied: PriceChange[]; held: PriceChange[] } {
   const stored = new Map<string, Record<string, any>>();
   for (const raw of Array.isArray(before) ? before : []) {
@@ -140,8 +162,8 @@ export function holdSocialRates(
       stored.get(socialAccountId)?.contentTypes,
       entry.contentTypes,
       { source: "social", socialAccountId, platform: String(entry.platform || "") },
-      verifiedTiers?.has(socialAccountId)
-        ? (rateName) => rangeTopFor(verifiedTiers.get(socialAccountId), rateName)
+      approvalTiers
+        ? (rateName) => rangeFor(approvalTiers.get(socialAccountId) || "Starter", rateName)
         : undefined,
     );
     applied.push(...result.applied);

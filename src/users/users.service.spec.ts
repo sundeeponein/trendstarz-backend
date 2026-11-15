@@ -773,7 +773,8 @@ describe("UsersService social accounts on creator save (Stage 3A-0)", () => {
         handle: "creator.one",
         tier: "Micro",
         followersCount: 0,
-        contentTypes: [{ name: "Reel", enabled: true, price: 5000 }],
+        // Within the Starter usual range (no verified tier in this test), so it is not held.
+        contentTypes: [{ name: "Reel", enabled: true, price: 100 }],
         ownershipVerification: { status: "verified" },
         socialAccountId: "64b0000000000000000000ff",
         ...over,
@@ -802,7 +803,7 @@ describe("UsersService social accounts on creator save (Stage 3A-0)", () => {
         decidedHandle: "creator.one",
       },
       observedFollowers: { count: 8200, source: "admin_manual" },
-      contentTypes: [{ name: "Reel", enabled: true, price: 5000 }],
+      contentTypes: [{ name: "Reel", enabled: true, price: 100 }],
     });
     expect(doc.save).toHaveBeenCalled();
   });
@@ -1471,5 +1472,50 @@ describe("UsersService creator saves vs admin verification (documents)", () => {
     doc.verifiedByTrendStarz = false;
     await save(doc, { verificationDocuments: [id], verificationDisclaimerAccepted: true });
     expect(doc.verificationStatus).toBe("pending");
+  });
+});
+
+describe("rate approval tier (usual-range rule, 2026-11-15)", () => {
+  const make = (statuses: Map<string, Map<string, { tier?: string }>>, observations: any[]) =>
+    new UsersService(
+      {} as any, {} as any, {} as any,
+      {
+        db: { collection: () => ({ find: () => ({ toArray: async () => observations }) }) },
+      } as any,
+      {} as any, {} as any, {} as any, {} as any,
+      { updateMany: jest.fn() } as any,
+      {} as any, {} as any, {} as any, {} as any,
+      { canViewSocialLinks: jest.fn(), listActive: jest.fn() } as any,
+      { revokePermissions: jest.fn() } as any,
+      {} as any, {} as any,
+      { statusesForProfiles: jest.fn().mockResolvedValue(statuses) } as any,
+      noOtpStore,
+    );
+  const recent = new Date(Date.now() - 2 * 24 * 60 * 60 * 1000);
+  const social = [
+    { socialAccountId: "ig", platform: "Instagram", handle: "me", tier: "Micro" },
+    { socialAccountId: "yt", platform: "YouTube", handle: "mychan", tier: "Macro" },
+    { socialAccountId: "fb", platform: "Facebook", handle: "me", tier: "Mega / Celebrity" },
+  ];
+
+  it("verified tier, else checked YouTube tier, else Starter", async () => {
+    const service: any = make(
+      new Map([["p1", new Map([["ig", { tier: "verified" }], ["yt", { tier: "pending" }]])]]),
+      [{ socialAccountId: "yt", observedFollowersCount: 27, observedHandle: "@MyChan", capturedAt: recent }],
+    );
+    const tiers = await service.rateApprovalTiers("p1", social);
+    expect(Object.fromEntries(tiers)).toEqual({ ig: "Micro", yt: "Starter", fb: "Starter" });
+  });
+
+  it("a stale or different-handle YouTube check doesn't count", async () => {
+    const old = new Date(Date.now() - 40 * 24 * 60 * 60 * 1000);
+    const service: any = make(new Map(), [
+      { socialAccountId: "yt", observedFollowersCount: 50000, observedHandle: "mychan", capturedAt: old },
+    ]);
+    expect((await service.rateApprovalTiers("p1", social)).get("yt")).toBe("Starter");
+    const other: any = make(new Map(), [
+      { socialAccountId: "yt", observedFollowersCount: 50000, observedHandle: "someoneelse", capturedAt: recent },
+    ]);
+    expect((await other.rateApprovalTiers("p1", social)).get("yt")).toBe("Starter");
   });
 });

@@ -1,3 +1,4 @@
+import { tierForFollowers } from "../utils/tier-ranges.util";
 import { planMobileChange } from "../utils/pending-mobile.util";
 import { PriceChangesService } from "../price-changes/price-changes.service";
 import { PriceChange, holdSocialRates } from "../price-changes/price-changes.util";
@@ -3504,9 +3505,15 @@ export class UsersService implements OnModuleInit {
       };
     }
     const isPremium = this.isCurrentlyPremium(user);
+    // Usual-range rule (2026-11-15): the tier each account's new prices are checked against, by
+    // socialAccountId — so the profile can warn before saving (same rule as the save).
+    const rateApprovalTiers = Object.fromEntries(
+      await this.rateApprovalTiers(user._id, Array.isArray(user.socialMedia) ? user.socialMedia : []),
+    );
     return {
       _id: user._id?.toString() || user.id?.toString() || "",
       username: user.username,
+      rateApprovalTiers,
       phoneNumber: user.phoneNumber,
       name: user.name,
       email: user.email,
@@ -3655,6 +3662,61 @@ export class UsersService implements OnModuleInit {
     }).catch((err: unknown) => console.error("[payout] UPI change email failed:", err));
   }
 
+  /**
+   * Per social account, the tier whose usual rate range decides whether a new
+   * price needs admin approval (2026-11-15): the admin-verified tier, else the
+   * tier TrendStarZ's YouTube check found (fresh, same handle), else Starter.
+   * Uses the accounts as stored before the save. Best effort: on any failure an
+   * account falls back to Starter (the strictest range), never to no check.
+   */
+  private async rateApprovalTiers(
+    profileId: unknown,
+    socialBefore: any[],
+  ): Promise<Map<string, string>> {
+    const out = new Map<string, string>();
+    const id = String(profileId || "");
+    for (const entry of socialBefore) {
+      const sid = String(entry?.socialAccountId || "");
+      if (sid) out.set(sid, "Starter");
+    }
+    try {
+      const statuses = await this.socialAccountVerification.statusesForProfiles(
+        "Influencer",
+        [{ _id: id, socialMedia: socialBefore }],
+      );
+      const mine = statuses.get(id);
+      const handle = (h: unknown) => String(h ?? "").trim().replace(/^@+/, "").toLowerCase();
+      const observations: any[] = await this.influencerModel.db
+        .collection("social_account_observations")
+        .find(
+          { profileType: "Influencer", profileId: id, platformKey: "youtube" },
+          { projection: { socialAccountId: 1, observedFollowersCount: 1, observedHandle: 1, capturedAt: 1 } },
+        )
+        .toArray();
+      const obsById = new Map(observations.map((o) => [String(o.socialAccountId), o]));
+      const now = Date.now();
+      for (const entry of socialBefore) {
+        const sid = String(entry?.socialAccountId || "");
+        if (!sid) continue;
+        if (mine?.get(sid)?.tier === "verified" && entry?.tier) {
+          out.set(sid, String(entry.tier));
+          continue;
+        }
+        const o = obsById.get(sid);
+        const fresh =
+          o?.capturedAt &&
+          now - new Date(o.capturedAt).getTime() <= 30 * 24 * 60 * 60 * 1000 && // same 30 days as AUTO_TIER.maxAgeDays
+          Number(o.observedFollowersCount) > 0 &&
+          handle(o.observedHandle) === handle(entry?.handle);
+        const checked = fresh ? tierForFollowers(o.observedFollowersCount) : null;
+        if (checked) out.set(sid, checked.label);
+      }
+    } catch {
+      // keep Starter for everyone
+    }
+    return out;
+  }
+
   async updateInfluencerProfile(
     userId: string,
     update: any,
@@ -3795,26 +3857,13 @@ export class UsersService implements OnModuleInit {
     // (the current price stays live). No re-verification — see price-changes.util.
     let priceHold: { applied: PriceChange[]; held: PriceChange[] } | null = null;
     if (updateData.socialMedia) {
-      // Raises up to the top of the usual range for an admin-verified tier apply
-      // straight away (2026-11-15). The tier is the one stored BEFORE this save,
-      // so changing the tier in the same save never unlocks a higher range.
-      const verifiedTiers = new Map<string, string>();
-      try {
-        const statuses = await this.socialAccountVerification.statusesForProfiles(
-          "Influencer",
-          [{ _id: userDoc._id, socialMedia: socialBefore }],
-        );
-        const mine = statuses.get(String(userDoc._id));
-        for (const entry of socialBefore) {
-          const sid = String(entry?.socialAccountId || "");
-          if (sid && mine?.get(sid)?.tier === "verified" && entry?.tier) {
-            verifiedTiers.set(sid, String(entry.tier));
-          }
-        }
-      } catch {
-        // No exception without verification data: the doubling rule applies as before.
-      }
-      const held = holdSocialRates(socialBefore, updateData.socialMedia, verifiedTiers);
+      // Usual-range rule (2026-11-15): a raise or new rate above the usual range
+      // for the account's APPROVAL tier waits for admin approval. Approval tier =
+      // the admin-verified tier as stored BEFORE this save, else TrendStarZ's
+      // checked YouTube tier, else Starter — a tier picked in this same save
+      // never unlocks a higher range.
+      const approvalTiers = await this.rateApprovalTiers(userDoc._id, socialBefore);
+      const held = holdSocialRates(socialBefore, updateData.socialMedia, approvalTiers);
       updateData.socialMedia = held.socialMedia;
       priceHold = held;
     }

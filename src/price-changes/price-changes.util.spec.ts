@@ -55,40 +55,62 @@ describe("price changes", () => {
     expect(r.applied.map((c) => [c.socialAccountId, c.oldPrice])).toEqual([["b", null]]);
   });
 
-  describe("raises within the usual range of a VERIFIED tier apply straight away (2026-11-15)", () => {
+  describe("usual-range rule (2026-11-15)", () => {
     const before = [
       {
         socialAccountId: "a",
         platform: "Instagram",
-        tier: "Starter",
+        tier: "Macro",
         contentTypes: [
-          { name: "Reel", price: 50 },
-          { name: "Story (24h)", price: 50 },
+          { name: "Reel", price: 50, enabled: true },
+          { name: "Story (24h)", price: 500, enabled: true }, // already above Starter's ₹50–60
+          { name: "Photo post", price: 50, enabled: true }, // no range: doubling rule
         ],
       },
     ];
-    const save = (reel: number, verified: boolean) =>
-      holdSocialRates(
-        before,
-        [{ ...before[0], contentTypes: [{ name: "Reel", price: reel }, { name: "Story (24h)", price: 50 }] }],
-        verified ? new Map([["a", "Starter"]]) : new Map(),
-      );
+    const save = (rows: Array<{ name: string; price: number; enabled?: boolean }>, tier = "Starter") =>
+      holdSocialRates(before, [{ ...before[0], contentTypes: rows }], new Map([["a", tier]]));
+    const others = before[0].contentTypes.slice(1);
 
-    it("Starter Reel ₹50 → ₹100 (doubles, within ₹50–150) applies", () => {
-      const r = save(100, true);
-      expect(r.held).toEqual([]);
-      expect(r.socialMedia[0].contentTypes[0].price).toBe(100);
+    it("within the range applies even when it doubles (Starter Reel ₹50 → ₹100 / ₹150)", () => {
+      expect(save([{ name: "Reel", price: 100 }, ...others]).held).toEqual([]);
+      expect(save([{ name: "Reel", price: 150 }, ...others]).held).toEqual([]);
     });
 
-    it("up to the top of the range applies; above it the doubling rule holds it", () => {
-      expect(save(150, true).held).toEqual([]);
-      const r = save(200, true);
-      expect(r.held.map((c) => c.newPrice)).toEqual([200]);
+    it("above the range waits, even when it doesn't double; brands keep the old price", () => {
+      const r = save([{ name: "Reel", price: 160 }, ...others]);
+      expect(r.held.map((c) => c.newPrice)).toEqual([160]);
       expect(r.socialMedia[0].contentTypes[0].price).toBe(50);
     });
 
-    it("an unverified tier gets no exception", () => {
-      expect(save(100, false).held.map((c) => c.newPrice)).toEqual([100]);
+    it("the tier passed in decides — a Macro tier picked in the same save doesn't count", () => {
+      // Caller passes the approval tier (verified/checked/Starter), not the new dropdown value.
+      expect(save([{ name: "Reel", price: 10000 }, ...others], "Starter").held.map((c) => c.newPrice)).toEqual([10000]);
+      expect(save([{ name: "Reel", price: 10000 }, ...others], "Macro").held).toEqual([]);
+    });
+
+    it("prices already above the range stay live; cuts always apply", () => {
+      expect(save([{ name: "Reel", price: 50 }, ...others]).held).toEqual([]); // untouched Story ₹500
+      const cut = save([{ name: "Reel", price: 50 }, { name: "Story (24h)", price: 400 }, others[1]]);
+      expect(cut.held).toEqual([]);
+      expect(cut.applied.map((c) => c.newPrice)).toEqual([400]);
+    });
+
+    it("a NEW rate above the range is held and stays off until approved", () => {
+      const r = save([...before[0].contentTypes, { name: "YouTube Video", price: 900, enabled: true }]);
+      expect(r.held.map((c) => [c.rateName, c.oldPrice, c.newPrice])).toEqual([["YouTube Video", null, 900]]);
+      const row = r.socialMedia[0].contentTypes[3];
+      expect([row.price, row.enabled]).toEqual([0, false]);
+    });
+
+    it("rates without a range keep the doubling rule", () => {
+      expect(save([before[0].contentTypes[0], before[0].contentTypes[1], { name: "Photo post", price: 99 }]).held).toEqual([]);
+      expect(save([before[0].contentTypes[0], before[0].contentTypes[1], { name: "Photo post", price: 100 }]).held.length).toBe(1);
+    });
+
+    it("no approval tiers given (photographers): doubling rule everywhere", () => {
+      const r = holdSocialRates(before, [{ ...before[0], contentTypes: [{ name: "Reel", price: 99 }, ...others] }]);
+      expect(r.held).toEqual([]);
     });
   });
 });

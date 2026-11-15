@@ -156,11 +156,11 @@ export class PriceChangesService {
     }
     if (newlyWaiting.length) {
       const list = newlyWaiting
-        .map((c) => `${rateLabel(c)} ${rupees(c.oldPrice)} → ${rupees(c.newPrice)}`)
+        .map((c) => c.oldPrice === null ? `${rateLabel(c)} new rate ${rupees(c.newPrice)}` : `${rateLabel(c)} ${rupees(c.oldPrice)} → ${rupees(c.newPrice)}`)
         .join(", ");
       const message = {
         title: "New price waiting for approval",
-        body: `Prices that double or more are checked by our team first: ${list}. Brands see your current price until it's approved.`,
+        body: `Prices above the usual range for your tier, or that double, are checked by our team first: ${list}. Until it's approved, brands see your current price (a new rate stays hidden).`,
         url: PROFILE_URL[role],
       };
       this.notifications
@@ -236,18 +236,24 @@ export class PriceChangesService {
     let result;
     // Only if the profile still shows the price the raise was made from.
     if (doc.source === "social") {
+      // A held NEW rate was kept off at ₹0 (usual-range rule, 2026-11-15): approving turns it on.
+      const isNewRate = doc.oldPrice === null || doc.oldPrice === undefined;
       result = await this.connection.collection(COLLECTION[doc.role as CreatorRole]).updateOne(
         { _id: new Types.ObjectId(userId) },
         {
           $set: {
             "socialMedia.$[a].contentTypes.$[r].price": doc.newPrice,
             "socialMedia.$[a].contentTypes.$[r].priceConfirmedAt": now,
+            ...(isNewRate ? { "socialMedia.$[a].contentTypes.$[r].enabled": true } : {}),
           },
         },
         {
           arrayFilters: [
             { "a.socialAccountId": doc.socialAccountId },
-            { "r.name": nameMatch, "r.price": doc.oldPrice },
+            {
+              "r.name": nameMatch,
+              "r.price": isNewRate ? { $in: [null, 0] } : doc.oldPrice,
+            },
           ],
         },
       );

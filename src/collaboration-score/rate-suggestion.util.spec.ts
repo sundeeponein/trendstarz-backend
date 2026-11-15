@@ -1,4 +1,4 @@
-import { rangeTopFor, rateRangeTable, ratesForFollowers } from "./rate-suggestion.util";
+import { rangeFor, rateRangeTable, ratesForFollowers } from "./rate-suggestion.util";
 
 describe("usual rate ranges per tier (2026-11-15)", () => {
   const table = rateRangeTable();
@@ -20,12 +20,12 @@ describe("usual rate ranges per tier (2026-11-15)", () => {
   });
 
   it("range top by tier name and rate name", () => {
-    expect(rangeTopFor("Starter (1–100)", "Reel")).toBe(150);
-    expect(rangeTopFor("starter", "YouTube Shorts")).toBe(150);
-    expect(rangeTopFor("Starter", "Video")).toBe(270);
-    expect(rangeTopFor("Starter", "Photo post")).toBeNull(); // no range for this rate
-    expect(rangeTopFor("Mega / Celebrity", "Reel")).toBeNull(); // open-ended
-    expect(rangeTopFor("", "Reel")).toBeNull();
+    expect(rangeFor("Starter (1–100)", "Reel")).toEqual({ top: 150 });
+    expect(rangeFor("starter", "YouTube Shorts")).toEqual({ top: 150 });
+    expect(rangeFor("Starter", "Video")).toEqual({ top: 270 });
+    expect(rangeFor("Starter", "Photo post")).toBeNull(); // no range for this rate
+    expect(rangeFor("Mega / Celebrity", "Reel")).toEqual({ top: null }); // open-ended
+    expect(rangeFor("", "Reel")).toBeNull();
   });
 
   it("stored TrendScore audits keep one number: the bottom of the range", () => {
