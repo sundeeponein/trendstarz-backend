@@ -14,6 +14,8 @@ export const INVITE_WHATSAPP_MESSAGE_TYPES = [
   "productShipped",
   "inviteOnly",
   "postingReminder",
+  // Payout released — admin's manual "Payment" message to the creator.
+  "payment",
 ] as const;
 
 export type InviteWhatsAppMessageType = (typeof INVITE_WHATSAPP_MESSAGE_TYPES)[number];
