@@ -1,4 +1,4 @@
-import { isInviteWhatsAppMessageType, recordInviteWhatsApp } from "./whatsapp/invite-whatsapp-log";
+import { INVITE_WHATSAPP_SEND_LIMITS, isAfterPostDateIst, isInviteWhatsAppMessageType, recordManualInviteWhatsApp } from "./whatsapp/invite-whatsapp-log";
 import { recordAdminAction, settingsDiff } from "./utils/admin-action-log.util";
 import { LogAdminAction } from "./utils/admin-action.interceptor";
 import {
@@ -1383,9 +1383,25 @@ export class AdminListsController {
     if (!/^[a-fA-F0-9]{24}$/.test(String(inviteId || ""))) {
       throw new BadRequestException("Invite not found");
     }
-    const exists = await this.campaignInviteModel.exists({ _id: inviteId });
-    if (!exists) throw new BadRequestException("Invite not found");
-    await recordInviteWhatsApp(this.campaignInviteModel, inviteId, type, "manual");
+    const invite: any = await this.campaignInviteModel
+      .findById(inviteId)
+      .select("selectedPostDate whatsappLog")
+      .lean();
+    if (!invite) throw new BadRequestException("Invite not found");
+    if (type === "postingReminder" && isAfterPostDateIst(invite.selectedPostDate)) {
+      throw new BadRequestException("The post date has passed — posting reminders are no longer sent.");
+    }
+    const recorded = await recordManualInviteWhatsApp(this.campaignInviteModel, inviteId, type);
+    if (!recorded) {
+      const limit = INVITE_WHATSAPP_SEND_LIMITS[type];
+      throw new BadRequestException(
+        type === "postingReminder" && Number(invite.whatsappLog?.[type]?.count || 0) < limit
+          ? "A posting reminder was already sent today. You can send the next one tomorrow."
+          : limit > 1
+            ? `This message was already sent the maximum ${limit} times.`
+            : "This message was already sent.",
+      );
+    }
     await recordAdminAction(req, "invite_whatsapp_sent", { type: "campaign_invite", id: inviteId }, { messageType: type });
     const updated: any = await this.campaignInviteModel.findById(inviteId).select("whatsappLog").lean();
     return { whatsappLog: updated?.whatsappLog || {} };
