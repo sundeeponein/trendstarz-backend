@@ -18,6 +18,8 @@ import {
  * Lexicographic, no weights, no composite score, no randomness:
  *   1. platform/content coverage — matched campaign pairs / campaign pairs
  *   2. category coverage         — matched campaign categories / campaign categories
+ *   2b. main category            — the creator's chosen main category is one of the
+ *                                  campaign's categories (Stage 3E-2, 2026-11-15)
  *   3. activity bucket           — from creator.lastActiveAt (lastLoginAt, else lastOpenedAt)
  *   4. verified tier             — TrendStarZ (admin) verified the creator's declared tier on
  *                                  one of the campaign's platforms (any platform when the
@@ -76,6 +78,8 @@ export interface RankedCreator {
     /** Whole days between lastActiveAt and asOf; null when unknown. */
     daysSinceActive: number | null;
   };
+  /** Stage 3E-2: the creator's main category when it is one of the campaign's categories, else null. */
+  mainCategory: string | null;
   /** Stage 3E-1: tier verified by TrendStarZ on a campaign platform (platform keys, campaign order). */
   verifiedTier: { verified: boolean; platforms: string[] };
   rankingReasons: string[];
@@ -216,6 +220,9 @@ export function rankEligibleCreators(
       asOf,
     );
     const tierPlatforms = verifiedTierPlatforms(campaign, creator);
+    const mainCategory = creator.primaryCategory
+      ? (intersect(requiredCreatorCategories(campaign), [creator.primaryCategory])[0] ?? null)
+      : null;
     const lastActiveValid =
       creator.lastActiveAt && !Number.isNaN(creator.lastActiveAt.getTime());
     candidates.push({
@@ -230,6 +237,7 @@ export function rankEligibleCreators(
         daysSinceActive,
       },
       verifiedTier: { verified: tierPlatforms.length > 0, platforms: tierPlatforms },
+      mainCategory,
       rankingReasons: [
         coverageReason(
           platformContent,
@@ -241,6 +249,7 @@ export function rankEligibleCreators(
           "categories",
           "Campaign has no category requirement; treated as neutral.",
         ),
+        ...(mainCategory ? [`Main category is ${mainCategory}`] : []),
         activityReason(bucket, creator.lastActiveAt),
         tierPlatforms.length
           ? `Tier verified by TrendStarZ on ${tierPlatforms.join(", ")}`
@@ -253,6 +262,7 @@ export function rankEligibleCreators(
     (a, b) =>
       compareCoverage(a.platformContent, b.platformContent) ||
       compareCoverage(a.category, b.category) ||
+      Number(!!b.mainCategory) - Number(!!a.mainCategory) ||
       ACTIVITY_BUCKET_ORDER[a.activity.bucket] -
         ACTIVITY_BUCKET_ORDER[b.activity.bucket] ||
       Number(b.verifiedTier.verified) - Number(a.verifiedTier.verified) ||

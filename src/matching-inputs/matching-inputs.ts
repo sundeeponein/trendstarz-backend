@@ -9,6 +9,7 @@ import {
 } from "../utils/social-account.util";
 import { resolveTier } from "../utils/tier-ranges.util";
 import { storedAvailabilityState } from "../utils/collaboration-availability.util";
+import { mainCategoryWithin } from "../utils/profile-selection-limits.util";
 
 /**
  * Stage 3B-1 — normalized MATCHING INPUTS (read model only).
@@ -136,6 +137,8 @@ export interface NormalizedCreatorMatchInput {
   accounts: NormalizedCreatorAccount[];
   platforms: string[];
   categories: string[];
+  /** The creator's main category (influencerCategory) when it is one of their categories; photographers: null. */
+  primaryCategory: string | null;
   /** Canonical "platformKey:contentTypeKey" the creator offers (enabled). */
   contentTypes: string[];
   /** Per-deliverable rates, INR rupees. */
@@ -224,6 +227,10 @@ export function normalizeCreatorMatchInput(
     categories: uniqueStrings(
       profileType === "Photographer" ? profile?.skills : profile?.categories,
     ),
+    primaryCategory:
+      profileType === "Photographer"
+        ? null
+        : mainCategoryWithin(profile?.influencerCategory, profile?.categories) || null,
     contentTypes: contentPairs(rates.filter((r) => r.enabled)),
     rates,
     location: {

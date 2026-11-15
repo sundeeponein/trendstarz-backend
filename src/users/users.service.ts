@@ -19,6 +19,7 @@ import { availabilityUpdate } from "../utils/collaboration-availability.util";
 import { FirebaseAdminService } from "../utils/firebase-admin.service";
 import {
   PROFILE_SELECTION_LIMITS,
+  mainCategoryWithin,
   normalizeSelectionList,
 } from "../utils/profile-selection-limits.util";
 import { normalizeSocialMediaList } from "../utils/social-handle.util";
@@ -3756,6 +3757,20 @@ export class UsersService implements OnModuleInit {
     // NOTE: isPremium is intentionally excluded — it is only set by a verified payment (payment.service.ts) or admin setPremium
     const userDoc: any = await this.influencerModel.findById(userId);
     if (!userDoc) return { message: "Influencer not found", userId };
+    // Main category (matching, 2026-11-15): must be one of the creator's own
+    // categories — spelled as in that list — else it's cleared. Re-checked when
+    // the categories change, so removing a category drops it as main too.
+    if (
+      updateData.influencerCategory !== undefined ||
+      updateData.categories !== undefined
+    ) {
+      updateData.influencerCategory = mainCategoryWithin(
+        updateData.influencerCategory !== undefined
+          ? updateData.influencerCategory
+          : userDoc.influencerCategory,
+        updateData.categories ?? userDoc.categories,
+      );
+    }
     if (updateData.username !== undefined) {
       // The username is the profile link: right form, and not someone else's.
       updateData.username = await checkedProfileName(this.influencerModel, userId, "username", updateData.username);

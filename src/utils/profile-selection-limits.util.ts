@@ -11,6 +11,20 @@ export const PROFILE_SELECTION_LIMITS = {
   },
 } as const;
 
+/**
+ * The creator's main category (stored as influencerCategory), only if it is one
+ * of their own categories — returned in that list's spelling; otherwise "".
+ * Shared by profile saves and matching (2026-11-15).
+ */
+export function mainCategoryWithin(main: unknown, categories: unknown): string {
+  const wanted = String(main ?? "").trim().toLowerCase();
+  if (!wanted || !Array.isArray(categories)) return "";
+  const hit = categories.find(
+    (c) => String(c ?? "").trim().toLowerCase() === wanted,
+  );
+  return hit === undefined ? "" : String(hit).trim();
+}
+
 export function normalizeSelectionList(
   value: unknown,
   limit: number,

@@ -28,6 +28,7 @@ const PROFILE_FIELDS = {
   profileImages: 1,
   location: 1,
   categories: 1,
+  influencerCategory: 1,
   skills: 1,
   languages: 1,
   socialMedia: 1,

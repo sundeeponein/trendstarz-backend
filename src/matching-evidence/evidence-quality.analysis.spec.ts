@@ -423,8 +423,8 @@ describe("Stage 3D-1m — creator data shape", () => {
   it("category breadth and the over-cap legacy count", () => {
     const r = measureCreatorData(
       [
-        norm({ categories: ["A"] }),
-        norm({ categories: ["A", "B", "C", "D", "E"] }),
+        norm({ categories: ["A"], influencerCategory: "A" }),
+        norm({ categories: ["A", "B", "C", "D", "E"], influencerCategory: "Z" }), // not in the list → not counted
         norm({ categories: Array.from({ length: 19 }, (_, i) => `C${i}`) }),
       ],
       AS_OF,
@@ -433,6 +433,7 @@ describe("Stage 3D-1m — creator data shape", () => {
       perCreator: { "1": 1, "5": 1, "6+": 1 },
       overCurrentCap: 1,
       cap: 5,
+      mainCategorySet: 1,
     });
   });
 });
@@ -493,6 +494,7 @@ describe("Stage 3D-1m — ranking resolution", () => {
       category: { matched: Array(cat[0]).fill("y"), total: cat[1] },
       activity: { bucket, lastActiveAt: null, daysSinceActive: null },
       verifiedTier: { verified: tierVerified, platforms: tierVerified ? ["instagram"] : [] },
+      mainCategory: null,
       rankingReasons: [],
     }) as RankedCreator;
 
@@ -511,6 +513,7 @@ describe("Stage 3D-1m — ranking resolution", () => {
     expect(r.decidedPairs).toEqual({
       platformContent: 4,
       category: 3,
+      mainCategory: 0,
       activity: 2,
       verifiedTier: 0,
       creatorId: 1,
@@ -536,6 +539,7 @@ describe("Stage 3D-1m — ranking resolution", () => {
     expect(r.decidedPairs).toEqual({
       platformContent: 0,
       category: 0,
+      mainCategory: 0,
       activity: 0,
       verifiedTier: 2,
       creatorId: 1,

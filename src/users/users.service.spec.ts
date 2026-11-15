@@ -124,6 +124,37 @@ describe("UsersService profile update guards", () => {
     );
   });
 
+  describe("main category (influencerCategory), 2026-11-15", () => {
+    const saveWith = async (stored: Record<string, any>, update: Record<string, any>) => {
+      const doc: any = {
+        phoneNumber: "9908763880",
+        email: "old@example.com",
+        ...stored,
+        set: jest.fn((key: string, value: any) => {
+          doc[key] = value;
+        }),
+        save: jest.fn().mockResolvedValue({ _id: "inf-1" }),
+      };
+      const service = makeService({ influencerModel: { findById: jest.fn().mockResolvedValue(doc) } });
+      await service.updateInfluencerProfile("inf-1", update);
+      return doc.set.mock.calls.filter(([k]: [string]) => k === "influencerCategory").map(([, v]: [string, any]) => v);
+    };
+
+    it("keeps a main category from the creator's own list (list spelling)", async () => {
+      expect(await saveWith({ categories: ["Fashion", "Food"] }, { influencerCategory: "food" })).toEqual(["Food"]);
+    });
+
+    it("refuses one that isn't in the list", async () => {
+      expect(await saveWith({ categories: ["Fashion"] }, { influencerCategory: "Travel" })).toEqual([""]);
+    });
+
+    it("clears it when its category is removed", async () => {
+      expect(
+        await saveWith({ categories: ["Fashion", "Food"], influencerCategory: "Food" }, { categories: ["Fashion"] }),
+      ).toEqual([""]);
+    });
+  });
+
   it("keeps a verified influencer number and parks the new one for verification", async () => {
     const doc: any = {
       phoneNumber: "9908763880",

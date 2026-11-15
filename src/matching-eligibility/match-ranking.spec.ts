@@ -507,12 +507,46 @@ describe("Stage 3C-1 ranking — lexicographic order", () => {
       "activity",
       "category",
       "creatorId",
+      "mainCategory",
       "platformContent",
       "rank",
       "rankingReasons",
       "verifiedTier",
     ]);
     expect(JSON.stringify(r)).not.toMatch(/score|weight|\/100/i);
+  });
+});
+
+// ── Stage 3E-2: main category (after category coverage) ─────────────────────
+
+describe("Stage 3E-2 ranking — main category", () => {
+  const c = campaignOf({ categories: ["Fashion", "Food"] });
+  const cats = ["Fashion", "Food", "Travel"];
+
+  it("a main category the campaign asks for beats activity, but not category coverage", () => {
+    const out = rank(c, [
+      rawCreator("a", { categories: cats, influencerCategory: "Travel", lastLoginAt: daysAgo(1) }),
+      rawCreator("b", { categories: cats, influencerCategory: "food", lastLoginAt: daysAgo(200) }),
+      rawCreator("c", { categories: ["Fashion"], influencerCategory: "Fashion", lastLoginAt: daysAgo(1) }),
+    ]);
+    // b and a both cover 2/2; b's main category (Food) is asked for. c covers only 1/2.
+    expect(out.map((r) => r.creatorId)).toEqual(["b", "a", "c"]);
+    expect(out[0].mainCategory).toBe("Food");
+    expect(out[0].rankingReasons).toContain("Main category is Food");
+    expect(out[1].mainCategory).toBeNull();
+  });
+
+  it("a main category that isn't one of the creator's categories doesn't count", () => {
+    const [r] = rank(c, [rawCreator("a", { categories: ["Fashion", "Food"], influencerCategory: "Travel" })]);
+    expect(r.mainCategory).toBeNull();
+    const [s] = rank(c, [rawCreator("a", { categories: ["Fashion"], influencerCategory: "Food" })]);
+    expect(s.mainCategory).toBeNull();
+  });
+
+  it("no campaign categories: main category is neutral", () => {
+    const none = campaignOf({ categories: [] });
+    const [r] = rank(none, [rawCreator("a", { influencerCategory: "Fashion" })]);
+    expect(r.mainCategory).toBeNull();
   });
 });
 
