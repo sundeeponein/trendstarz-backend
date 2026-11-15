@@ -616,6 +616,8 @@ describe("CollaborationScoreService", () => {
       const result = await service.getAuditForUser("user-1", { userId: "user-1", role: "influencer" });
       expect(result).toEqual({
         ...fullAudit,
+        // Per-platform rate hint follows the profile's tiers (none in this fixture).
+        pricingSuggestion: { ...fullAudit.pricingSuggestion, byPlatform: {} },
         canReanalyze: true,
         reanalysisAvailableAt: null,
         reanalysisFeeRupees: 99,
@@ -627,6 +629,8 @@ describe("CollaborationScoreService", () => {
       const result = await service.getAuditForUser("user-1", { userId: "admin-1", role: "admin" });
       expect(result).toEqual({
         ...fullAudit,
+        // Per-platform rate hint follows the profile's tiers (none in this fixture).
+        pricingSuggestion: { ...fullAudit.pricingSuggestion, byPlatform: {} },
         canReanalyze: true,
         reanalysisAvailableAt: null,
         reanalysisFeeRupees: 99,

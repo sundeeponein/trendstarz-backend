@@ -1,4 +1,5 @@
 import { Injectable } from "@nestjs/common";
+import { ratesForFollowers } from "./rate-suggestion.util";
 import { CollectedPlatformData } from "./collectors/collector.interface";
 
 export type CollaborationScoreUserType = "Influencer" | "Brand" | "Photographer";
@@ -79,18 +80,9 @@ const PROFILE_PHOTO_ISSUE_CODES = new Set([
   "PROFILE_PHOTO_QUALITY",
 ]);
 
-// Base per-tier reel rate (INR) for the pricing suggestion — a simple,
-// transparent Phase-A approximation per the spec's "never estimate using AI
-// only" rule. PHASE C TODO: replace with admin-configurable marketplace-rate
-// rules (own settings, not hardcoded here) once real transaction-price data
-// exists to calibrate against.
-const TIER_BASE_REEL_RATE: Array<{ maxFollowers: number; rate: number }> = [
-  { maxFollowers: 1000, rate: 500 },
-  { maxFollowers: 10000, rate: 1500 },
-  { maxFollowers: 100000, rate: 5000 },
-  { maxFollowers: 1000000, rate: 20000 },
-  { maxFollowers: Infinity, rate: 75000 },
-];
+// Pricing suggestion: per follower tier, from rate-suggestion.util (Starter ₹100 /
+// Nano ₹300 set 2026-11-15). PHASE C TODO: admin-configurable marketplace-rate
+// rules once real transaction-price data exists to calibrate against.
 
 /**
  * Pure scoring math — no I/O, no DB/HTTP access. Deliberately transparent
@@ -427,14 +419,10 @@ export class CollaborationScoreRulesService {
       ...input.collectedPlatforms.map((p) => p.followersOrSubscribers || 0),
       0,
     );
-    const tierRate =
-      TIER_BASE_REEL_RATE.find((t) => followers <= t.maxFollowers)?.rate ??
-      TIER_BASE_REEL_RATE[TIER_BASE_REEL_RATE.length - 1].rate;
-
+    // 0 followers reads as the lowest tier (Starter), not "no suggestion".
+    const rates = ratesForFollowers(Math.max(1, followers))!;
     return {
-      reelPrice: tierRate,
-      storyPrice: Math.round(tierRate * 0.4),
-      videoPrice: Math.round(tierRate * 1.8),
+      ...rates,
       currency: "INR",
       basis: "Follower tier (Phase A approximation — see PHASE C TODO in this file)",
     };
