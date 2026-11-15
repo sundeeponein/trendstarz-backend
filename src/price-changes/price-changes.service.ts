@@ -160,13 +160,38 @@ export class PriceChangesService {
         .join(", ");
       const message = {
         title: "New price waiting for approval",
-        body: `Prices above the usual range for your tier, or that double, are checked by our team first: ${list}. Until it's approved, brands see your current price (a new rate stays hidden).`,
+        body: `Prices above the usual range for your tier, or that double, are checked by our team first: ${list}. Until it's approved, brands see your current price (a new rate stays hidden). Meanwhile you can counter-offer on any paid invite with your new price.`,
         url: PROFILE_URL[role],
       };
       this.notifications
         .createForUser({ userId, userRole: role, ...message })
         .catch(() => undefined);
     }
+  }
+
+  /**
+   * Admin dashboard: how many prices wait for approval, per creator role, and
+   * how long the oldest has waited (hours). Hosts see the older price meanwhile.
+   */
+  async pendingSummary(now = new Date()) {
+    const rows = await this.col()
+      .aggregate([
+        { $match: { status: "pending" } },
+        { $group: { _id: "$role", count: { $sum: 1 }, oldest: { $min: "$createdAt" } } },
+      ])
+      .toArray();
+    const byRole: Record<string, number> = { influencer: 0, photographer: 0 };
+    let oldest: Date | null = null;
+    for (const r of rows as any[]) {
+      byRole[String(r._id || "influencer")] = Number(r.count || 0);
+      if (r.oldest && (!oldest || r.oldest < oldest)) oldest = new Date(r.oldest);
+    }
+    return {
+      total: Object.values(byRole).reduce((a, b) => a + b, 0),
+      influencer: byRole.influencer || 0,
+      photographer: byRole.photographer || 0,
+      oldestHours: oldest ? Math.floor((now.getTime() - oldest.getTime()) / 3600000) : null,
+    };
   }
 
   /** Admin: a creator's price history, newest first. */

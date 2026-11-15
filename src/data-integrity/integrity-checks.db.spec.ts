@@ -69,7 +69,7 @@ describe("data integrity checks (real MongoDB)", () => {
     ]);
     const checks = await runIntegrityChecks(db);
     expect(checks.filter((c) => c.status === "warn")).toEqual([]);
-    expect(checks).toHaveLength(30);
+    expect(checks).toHaveLength(31);
   });
 
   it("finds collected money with no way out, and invites waiting on an ended campaign", async () => {
@@ -133,6 +133,24 @@ describe("data integrity checks (real MongoDB)", () => {
     expect(c.payouts_overdue.samples[0]).toMatch(/₹950 due to the creator for 5 days/);
     expect(c.refunds_overdue.count).toBe(1);
     expect(c.refunds_overdue.samples[0]).toMatch(/₹600 owed to the host for 5 days/);
+  });
+
+  it("flags creator prices waiting for approval over 24 hours, and repeats that alert nightly", async () => {
+    const hours = (h: number) => new Date(Date.now() - h * 3600000);
+    await db.collection("price_changes").insertMany([
+      { userId: "u1", role: "influencer", platform: "Instagram", rateName: "Reel", oldPrice: 50, newPrice: 500, status: "pending", createdAt: hours(30) },
+      { userId: "u2", role: "influencer", platform: "YouTube", rateName: "Video", oldPrice: null, newPrice: 900, status: "pending", createdAt: hours(26) },
+      { userId: "u3", role: "influencer", platform: "Instagram", rateName: "Reel", oldPrice: 50, newPrice: 500, status: "pending", createdAt: hours(3) },
+      { userId: "u4", role: "influencer", platform: "Instagram", rateName: "Reel", oldPrice: 50, newPrice: 500, status: "approved", createdAt: hours(50) },
+    ]);
+    const c = await byKey();
+    expect(c.prices_waiting_approval.count).toBe(2);
+    expect(c.prices_waiting_approval.samples.join(" ")).toMatch(/Instagram Reel ₹50 → ₹500, waiting 30 h/);
+    expect(c.prices_waiting_approval.samples.join(" ")).toMatch(/YouTube Video new rate → ₹900/);
+
+    const { dailyReminderDue } = require("./data-integrity.service");
+    expect(dailyReminderDue([c.prices_waiting_approval])).toBe(true);
+    expect(dailyReminderDue([{ ...c.prices_waiting_approval, status: "ok" }])).toBe(false);
   });
 
   it("repeats money alerts every Monday (IST) while they last", () => {

@@ -931,6 +931,43 @@ async function payoutsOverdue(db: Db, explained: ExplainedSet, now = new Date())
   );
 }
 
+/** A creator's new price shouldn't wait for admin approval longer than this (2026-11-15). */
+export const PRICE_APPROVAL_HOURS = 24;
+/** Checks that repeat the alert email every night while they warn (not just when they change). */
+export const DAILY_REMINDER_CHECKS = ["prices_waiting_approval"];
+
+/**
+ * Creator prices held for admin approval (above the usual range for their tier,
+ * or doubled). While one waits, hosts see the older price — so it should be
+ * decided within a day.
+ */
+async function pricesWaitingApproval(db: Db, explained: ExplainedSet, now = new Date()): Promise<IntegrityCheck> {
+  const cutoff = new Date(now.getTime() - PRICE_APPROVAL_HOURS * 3600000);
+  const rows = await db
+    .collection("price_changes")
+    .find(
+      { status: "pending", createdAt: { $lte: cutoff } },
+      { projection: { userId: 1, role: 1, platform: 1, rateName: 1, oldPrice: 1, newPrice: 1, createdAt: 1 } },
+    )
+    .toArray();
+  const rupees = (n: unknown) => `₹${Number(n || 0).toLocaleString("en-IN")}`;
+  const found = (rows as any[]).map((r) => {
+    const hours = Math.floor((now.getTime() - new Date(r.createdAt).getTime()) / 3600000);
+    const from = r.oldPrice === null || r.oldPrice === undefined ? "new rate" : rupees(r.oldPrice);
+    return {
+      ref: `price:${r._id}`,
+      text: `${r.role || "creator"} ${r.userId}: ${[r.platform, r.rateName].filter(Boolean).join(" ")} ${from} → ${rupees(r.newPrice)}, waiting ${hours} h`,
+    };
+  });
+  return explainableCheck(
+    "prices_waiting_approval",
+    `Creator prices are approved or rejected within ${PRICE_APPROVAL_HOURS} hours`,
+    "Hosts see the creator's older price until you decide. Users → filter 'Price waiting for approval' → open the user → Approve or Reject.",
+    found,
+    explained,
+  );
+}
+
 /** A refund owed to a host should be sent within a few days of being approved. */
 async function refundsOverdue(db: Db, explained: ExplainedSet, now = new Date()): Promise<IntegrityCheck> {
   const cutoff = new Date(now.getTime() - MONEY_OVERDUE_DAYS * 86400000);
@@ -1188,6 +1225,7 @@ export async function runIntegrityChecks(db: Db): Promise<IntegrityCheck[]> {
     guard("publicIdsPresent", () => publicIdsPresent(db)),
     guard("payoutsOverdue", () => payoutsOverdue(db, explained)),
     guard("refundsOverdue", () => refundsOverdue(db, explained)),
+    guard("pricesWaitingApproval", () => pricesWaitingApproval(db, explained)),
     guard("sharedPhones", () => sharedPhones(db)),
     guard("backupRestoreTested", () => backupRestoreTested(db)),
     guard("emailFailures", () => emailFailures(db)),

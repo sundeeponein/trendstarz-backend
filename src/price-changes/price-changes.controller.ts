@@ -20,6 +20,12 @@ import { PriceChangesService } from "./price-changes.service";
 export class AdminPriceChangesController {
   constructor(private readonly priceChanges: PriceChangesService) {}
 
+  /** GET /admin/price-changes/pending-summary — dashboard count of prices waiting for approval. */
+  @Get("pending-summary")
+  async pendingSummary() {
+    return this.priceChanges.pendingSummary();
+  }
+
   @Get("user/:userId")
   async forUser(@Param("userId") userId: string) {
     if (!Types.ObjectId.isValid(userId)) throw new BadRequestException("Invalid user id");

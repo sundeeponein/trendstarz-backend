@@ -94,6 +94,20 @@ describe("price changes (real MongoDB)", () => {
     expect((await db.conn.collection(PRICE_CHANGES).findOne({ _id: new Types.ObjectId(stale._id) }))?.status).toBe("replaced");
   });
 
+  it("dashboard summary counts waiting prices per role and the oldest wait", async () => {
+    await db.conn.collection(PRICE_CHANGES).deleteMany({});
+    const now = new Date("2026-11-16T12:00:00Z");
+    await db.conn.collection(PRICE_CHANGES).insertMany([
+      { userId: "a", role: "influencer", status: "pending", createdAt: new Date("2026-11-15T09:00:00Z") },
+      { userId: "b", role: "influencer", status: "pending", createdAt: new Date("2026-11-16T10:00:00Z") },
+      { userId: "c", role: "photographer", status: "pending", createdAt: new Date("2026-11-16T11:00:00Z") },
+      { userId: "d", role: "influencer", status: "approved", createdAt: new Date("2026-11-01T00:00:00Z") },
+    ]);
+    expect(await service.pendingSummary(now)).toEqual({ total: 3, influencer: 2, photographer: 1, oldestHours: 27 });
+    await db.conn.collection(PRICE_CHANGES).deleteMany({});
+    expect(await service.pendingSummary(now)).toEqual({ total: 0, influencer: 0, photographer: 0, oldestHours: null });
+  });
+
   it("approves photographer pricing rows and rejects leave the price alone", async () => {
     const id = new Types.ObjectId();
     await db.conn.collection("photographers").insertOne({
