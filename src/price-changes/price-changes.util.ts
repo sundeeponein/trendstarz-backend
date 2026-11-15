@@ -1,3 +1,4 @@
+import { rangeTopFor } from "../collaboration-score/rate-suggestion.util";
 /**
  * Creator price changes (2026-11-10).
  *
@@ -8,6 +9,10 @@
  * A BIG JUMP — the new price is at least BIG_JUMP_FACTOR × the current one —
  * is held: the profile keeps the current price (what brands see) and the new
  * one waits in price_changes as "pending" until an admin approves it.
+ *
+ * Exception (2026-11-15): a raise up to the top of the usual range for the
+ * account's ADMIN-VERIFIED tier applies straight away even when it doubles
+ * (e.g. Starter Reel ₹50 → ₹100). Above that range the doubling rule applies.
  *
  * Two kinds of rate lists are covered:
  *  - "social":  socialMedia[].contentTypes[] (influencers and photographers)
@@ -62,6 +67,8 @@ export function holdRateRows(
   storedRows: unknown,
   nextRows: unknown,
   where: { source: PriceSource; socialAccountId?: string; platform?: string },
+  /** Top of the usual range for a rate (verified tier only); raises up to it are never held. */
+  rangeTop?: (rateName: string) => number | null,
 ): { rows: any[]; applied: PriceChange[]; held: PriceChange[] } {
   const byName = new Map<string, Record<string, any>>();
   for (const raw of Array.isArray(storedRows) ? storedRows : []) {
@@ -90,7 +97,9 @@ export function holdRateRows(
       oldPrice,
       newPrice,
     };
-    if (isBigJump(oldPrice, newPrice)) {
+    const top = rangeTop ? rangeTop(name) : null;
+    const withinUsualRange = top !== null && newPrice <= top;
+    if (isBigJump(oldPrice, newPrice) && !withinUsualRange) {
       held.push(change);
       const keptRow: Record<string, any> = { ...row, price: oldPrice };
       if (Object.prototype.hasOwnProperty.call(row, "priceConfirmedAt")) {
@@ -112,6 +121,8 @@ export function holdRateRows(
 export function holdSocialRates(
   before: unknown,
   merged: unknown,
+  /** socialAccountId → the tier an admin verified for that account (as stored before this save). */
+  verifiedTiers?: Map<string, string>,
 ): { socialMedia: any[]; applied: PriceChange[]; held: PriceChange[] } {
   const stored = new Map<string, Record<string, any>>();
   for (const raw of Array.isArray(before) ? before : []) {
@@ -129,6 +140,9 @@ export function holdSocialRates(
       stored.get(socialAccountId)?.contentTypes,
       entry.contentTypes,
       { source: "social", socialAccountId, platform: String(entry.platform || "") },
+      verifiedTiers?.has(socialAccountId)
+        ? (rateName) => rangeTopFor(verifiedTiers.get(socialAccountId), rateName)
+        : undefined,
     );
     applied.push(...result.applied);
     held.push(...result.held);

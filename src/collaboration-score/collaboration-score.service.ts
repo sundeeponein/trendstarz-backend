@@ -1,5 +1,4 @@
 import { formatIstDate } from "../utils/ist-date.util";
-import { ratesByPlatformFromProfile } from "./rate-suggestion.util";
 import { endOfIstDay } from "../campaigns/campaign-deadlines.util";
 import {
   BadRequestException,
@@ -621,20 +620,6 @@ export class CollaborationScoreService {
   }
 
   /** The fields canOpenProfile needs, from whichever account kind owns this id. */
-  /** Best-effort: the rate hint must never stop the audit from loading. */
-  private async profileSocialMedia(userId: string): Promise<any> {
-    if (!Types.ObjectId.isValid(String(userId))) return null;
-    try {
-      for (const model of [this.influencerModel, this.photographerModel]) {
-        const found = await model.findById(userId).select("socialMedia.platform socialMedia.tier").lean();
-        if (found) return found;
-      }
-    } catch {
-      // no hint
-    }
-    return null;
-  }
-
   private async profileForVisibility(userId: string): Promise<any> {
     if (!Types.ObjectId.isValid(String(userId))) return null;
     const select = "status isDeleted accountStatus profileVisibility";
@@ -676,16 +661,8 @@ export class CollaborationScoreService {
       const canReanalyze =
         cooldownElapsed &&
         (!settings.requireSyncBeforeReanalysis || syncStatus.hasChanges);
-      // The rate hint follows the profile's CURRENT tier per platform (2026-11-15),
-      // so stored audits don't keep an old suggestion until the next re-analysis.
-      const owner: any = await this.profileSocialMedia(targetUserId);
-      const byPlatform = ratesByPlatformFromProfile(owner?.socialMedia);
       return {
         ...audit,
-        pricingSuggestion: {
-          ...(audit.pricingSuggestion || {}),
-          byPlatform,
-        },
         canReanalyze,
         reanalysisAvailableAt: cooldownElapsed ? null : availableAt,
         reanalysisFeeRupees: settings.reanalysisFeeRupees,

@@ -1,3 +1,4 @@
+import { rateRangeTable } from "./rate-suggestion.util";
 import {
   BadRequestException,
   Body,
@@ -83,6 +84,16 @@ export class CollaborationScoreController {
   @Post("sync")
   syncMyProfile(@Req() req: any) {
     return this.service.syncLatestProfile(this.requesterId(req), req?.user?.role);
+  }
+
+  /**
+   * GET /api/audit/rate-ranges — the usual rate range per tier for the profile
+   * hint (same table the price-change rule uses). Static guidance, no user data.
+   */
+  @UseGuards(JwtAuthGuard)
+  @Get("rate-ranges")
+  getRateRanges() {
+    return { tiers: rateRangeTable() };
   }
 
   /** GET /api/audit/sync-status — self-only; per-platform last-synced/hasChanges state. */

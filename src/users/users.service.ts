@@ -3795,7 +3795,26 @@ export class UsersService implements OnModuleInit {
     // (the current price stays live). No re-verification — see price-changes.util.
     let priceHold: { applied: PriceChange[]; held: PriceChange[] } | null = null;
     if (updateData.socialMedia) {
-      const held = holdSocialRates(socialBefore, updateData.socialMedia);
+      // Raises up to the top of the usual range for an admin-verified tier apply
+      // straight away (2026-11-15). The tier is the one stored BEFORE this save,
+      // so changing the tier in the same save never unlocks a higher range.
+      const verifiedTiers = new Map<string, string>();
+      try {
+        const statuses = await this.socialAccountVerification.statusesForProfiles(
+          "Influencer",
+          [{ _id: userDoc._id, socialMedia: socialBefore }],
+        );
+        const mine = statuses.get(String(userDoc._id));
+        for (const entry of socialBefore) {
+          const sid = String(entry?.socialAccountId || "");
+          if (sid && mine?.get(sid)?.tier === "verified" && entry?.tier) {
+            verifiedTiers.set(sid, String(entry.tier));
+          }
+        }
+      } catch {
+        // No exception without verification data: the doubling rule applies as before.
+      }
+      const held = holdSocialRates(socialBefore, updateData.socialMedia, verifiedTiers);
       updateData.socialMedia = held.socialMedia;
       priceHold = held;
     }

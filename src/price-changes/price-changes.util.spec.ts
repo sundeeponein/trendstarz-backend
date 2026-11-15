@@ -54,4 +54,41 @@ describe("price changes", () => {
     expect(r.held.map((c) => c.socialAccountId)).toEqual(["a"]);
     expect(r.applied.map((c) => [c.socialAccountId, c.oldPrice])).toEqual([["b", null]]);
   });
+
+  describe("raises within the usual range of a VERIFIED tier apply straight away (2026-11-15)", () => {
+    const before = [
+      {
+        socialAccountId: "a",
+        platform: "Instagram",
+        tier: "Starter",
+        contentTypes: [
+          { name: "Reel", price: 50 },
+          { name: "Story (24h)", price: 50 },
+        ],
+      },
+    ];
+    const save = (reel: number, verified: boolean) =>
+      holdSocialRates(
+        before,
+        [{ ...before[0], contentTypes: [{ name: "Reel", price: reel }, { name: "Story (24h)", price: 50 }] }],
+        verified ? new Map([["a", "Starter"]]) : new Map(),
+      );
+
+    it("Starter Reel ₹50 → ₹100 (doubles, within ₹50–150) applies", () => {
+      const r = save(100, true);
+      expect(r.held).toEqual([]);
+      expect(r.socialMedia[0].contentTypes[0].price).toBe(100);
+    });
+
+    it("up to the top of the range applies; above it the doubling rule holds it", () => {
+      expect(save(150, true).held).toEqual([]);
+      const r = save(200, true);
+      expect(r.held.map((c) => c.newPrice)).toEqual([200]);
+      expect(r.socialMedia[0].contentTypes[0].price).toBe(50);
+    });
+
+    it("an unverified tier gets no exception", () => {
+      expect(save(100, false).held.map((c) => c.newPrice)).toEqual([100]);
+    });
+  });
 });
