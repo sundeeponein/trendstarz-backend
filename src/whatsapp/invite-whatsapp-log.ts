@@ -41,8 +41,8 @@ export const InviteWhatsAppLogSchemaDef = Object.fromEntries(
  * How many times each message may be sent in total (automatic + admin), 2026-11-15.
  * Submitted up to 2 (re-send if the host hasn't seen it); Posting Reminder up to 5,
  * at most one per India day and not after the post date; everything else once.
- * KEEP IN SYNC with WHATSAPP_SEND_LIMITS in the frontend campaign-detail-modal.component.ts
- * (the admin buttons); this copy is the one that is enforced.
+ * The only copy: the admin screen gets it from GET /admin/campaigns/:id/share-messages
+ * (whatsappSendLimits) and locks its buttons from it.
  */
 export const INVITE_WHATSAPP_SEND_LIMITS: Record<InviteWhatsAppMessageType, number> = {
   accepted: 1,

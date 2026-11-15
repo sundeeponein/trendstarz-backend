@@ -1362,6 +1362,8 @@ export class AdminListsController {
           })
         : null,
       ownerPhone,
+      // Per-invite message send limits — the admin buttons lock from these (single source, 2026-11-15).
+      whatsappSendLimits: INVITE_WHATSAPP_SEND_LIMITS,
     };
   }
 
