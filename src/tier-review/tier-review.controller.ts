@@ -18,6 +18,7 @@ export class TierReviewController {
     @Query("platform") platform?: string,
     @Query("profileType") profileType?: string,
     @Query("q") q?: string,
+    @Query("notFound") notFound?: string,
     @Query("page") page?: string,
     @Query("pageSize") pageSize?: string,
   ) {
@@ -26,6 +27,7 @@ export class TierReviewController {
       platform,
       profileType,
       q,
+      notFound: notFound === "1" || notFound === "true",
       page: Number(page) || 1,
       pageSize: Number(pageSize) || 25,
     });

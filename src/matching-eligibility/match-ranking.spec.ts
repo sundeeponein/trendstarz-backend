@@ -510,8 +510,67 @@ describe("Stage 3C-1 ranking — lexicographic order", () => {
       "platformContent",
       "rank",
       "rankingReasons",
+      "verifiedTier",
     ]);
     expect(JSON.stringify(r)).not.toMatch(/score|weight|\/100/i);
+  });
+});
+
+// ── Stage 3E-1: verified tier (before the creator-id tie-break) ─────────────
+
+describe("Stage 3E-1 ranking — verified tier", () => {
+  const c = campaignOf({ pairs: [["Instagram", "Reel"]] });
+  const IG = "64b000000000000000000000"; // rawCreator's first account id
+  const withTier = (raw: Record<string, any>, tier: string) => {
+    const creator = normalizeCreatorMatchInput(raw, "Influencer", {
+      verification: new Map([[IG, { tier }]]),
+    });
+    return { creator, result: evaluateEligibility(c, creator) };
+  };
+
+  it("verified tier beats creator id, but not activity", () => {
+    const out = rankEligibleCreators(
+      c,
+      [
+        withTier(rawCreator("a", { lastLoginAt: daysAgo(100) }), "pending"),
+        withTier(rawCreator("b", { lastLoginAt: daysAgo(100) }), "verified"),
+        withTier(rawCreator("c", { lastLoginAt: daysAgo(1) }), "pending"),
+      ],
+      AS_OF,
+    );
+    expect(out.map((r) => r.creatorId)).toEqual(["c", "b", "a"]);
+    expect(out[1].verifiedTier).toEqual({ verified: true, platforms: ["instagram"] });
+    expect(out[1].rankingReasons).toContain("Tier verified by TrendStarZ on instagram");
+    expect(out[2].rankingReasons).toContain(
+      "Tier not yet verified by TrendStarZ on a campaign platform",
+    );
+  });
+
+  it("a tier verified on a platform the campaign doesn't use doesn't count", () => {
+    const yt = campaignOf({ pairs: [["YouTube", "Video"]] });
+    const creator = normalizeCreatorMatchInput(
+      rawCreator("a", { pairs: [["Instagram", "Reel"], ["YouTube", "Video"]] }),
+      "Influencer",
+      { verification: new Map([[IG, { tier: "verified" }]]) }, // Instagram only
+    );
+    const [r] = rankEligibleCreators(
+      yt,
+      [{ creator, result: evaluateEligibility(yt, creator) }],
+      AS_OF,
+    );
+    expect(r.verifiedTier.verified).toBe(false);
+  });
+
+  it("rejected or pending tiers rank like unverified; no evidence changes nothing", () => {
+    const out = rankEligibleCreators(
+      c,
+      [
+        withTier(rawCreator("b"), "rejected"),
+        withTier(rawCreator("a"), "pending"),
+      ],
+      AS_OF,
+    );
+    expect(out.map((r) => r.creatorId)).toEqual(["a", "b"]);
   });
 });
 
@@ -638,9 +697,10 @@ describe("Stage 3C-1 ranking — determinism and purity", () => {
     expect(code).not.toMatch(
       /mongoose|@nestjs|InjectModel|http|fetch\(|anthropic|openai/i,
     );
-    expect(code).not.toMatch(
-      /trendScore|followers|isPremium|profileCompletion|tier/i,
-    );
+    expect(code).not.toMatch(/trendScore|followers|isPremium|profileCompletion/i);
+    // Stage 3E-1: the only tier input is TrendStarZ's verification status —
+    // never the creator's declared tier or its size.
+    expect(code).not.toMatch(/declaredTier|originalTier|minimumTier|targetTiers/);
   });
 });
 
@@ -715,6 +775,7 @@ describe("Stage 3C-1 admin eligibility list — ranking attached, nothing else c
       "Matches all campaign platform/content options",
       "Matches all campaign categories",
       "Last active more than 90 days ago",
+      "Tier not yet verified by TrendStarZ on a campaign platform",
     ]);
     expect(by.get("c")!.rankingReasons[0]).toBe(
       "Matches 1 of 2 campaign platform/content options",

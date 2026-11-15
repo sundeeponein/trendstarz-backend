@@ -462,6 +462,41 @@ export class SocialAccountVerificationService {
   }
 
   /**
+   * Stage 3E-1 — effective ownership/tier status for MANY profiles in one read
+   * (the ranking's verified-tier step). Same effectiveDecision rule as
+   * listForProfile, so a decision made on an old handle/tier counts as pending.
+   * Returns profileId → socialAccountId → statuses. Read-only.
+   */
+  async statusesForProfiles(
+    profileType: SocialProfileType,
+    profiles: Array<{ _id: unknown; socialMedia?: any[] | null }>,
+  ): Promise<Map<string, Map<string, { ownership?: string; tier?: string }>>> {
+    const out = new Map<string, Map<string, { ownership?: string; tier?: string }>>();
+    if (!profiles.length) return out;
+    const states: any[] = await this.stateModel
+      .find({ profileType, profileId: { $in: profiles.map((p) => String(p._id)) } })
+      .select("profileId socialAccountId ownership tier")
+      .lean();
+    const byKey = new Map(states.map((s) => [`${s.profileId}|${s.socialAccountId}`, s]));
+    for (const profile of profiles) {
+      const profileId = String(profile._id);
+      const perAccount = new Map<string, { ownership?: string; tier?: string }>();
+      for (const raw of Array.isArray(profile.socialMedia) ? profile.socialMedia : []) {
+        const entry = plain(raw);
+        if (!isSocialAccountId(entry?.socialAccountId)) continue;
+        const state = byKey.get(`${profileId}|${entry.socialAccountId}`);
+        if (!state) continue;
+        perAccount.set(String(entry.socialAccountId), {
+          ownership: effectiveDecision("ownership", state.ownership, entry).status,
+          tier: effectiveDecision("tier", state.tier, entry).status,
+        });
+      }
+      if (perAccount.size) out.set(profileId, perAccount);
+    }
+    return out;
+  }
+
+  /**
    * Called after ANY save that may have changed socialMedia (creator or admin
    * edit). Resets a verified/rejected decision to pending when the account's
    * handle (ownership) or declared tier (tier) no longer matches what was

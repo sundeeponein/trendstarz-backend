@@ -484,6 +484,7 @@ describe("Stage 3D-1m — ranking resolution", () => {
     pc: [number, number],
     cat: [number, number],
     bucket: RankedCreator["activity"]["bucket"],
+    tierVerified = false,
   ): RankedCreator =>
     ({
       creatorId: id,
@@ -491,6 +492,7 @@ describe("Stage 3D-1m — ranking resolution", () => {
       platformContent: { matched: Array(pc[0]).fill("x"), total: pc[1] },
       category: { matched: Array(cat[0]).fill("y"), total: cat[1] },
       activity: { bucket, lastActiveAt: null, daysSinceActive: null },
+      verifiedTier: { verified: tierVerified, platforms: tierVerified ? ["instagram"] : [] },
       rankingReasons: [],
     }) as RankedCreator;
 
@@ -510,6 +512,7 @@ describe("Stage 3D-1m — ranking resolution", () => {
       platformContent: 4,
       category: 3,
       activity: 2,
+      verifiedTier: 0,
       creatorId: 1,
     });
     expect(r.totalPairs).toBe(10);
@@ -520,6 +523,23 @@ describe("Stage 3D-1m — ranking resolution", () => {
     expect(ACTIVITY_BUCKET_ORDER.unknown).toBe(
       ACTIVITY_BUCKET_ORDER.within_31_90_days,
     );
+  });
+
+  it("counts pairs the verified tier separates (Stage 3E-1)", () => {
+    const list = [
+      ranked("a", [1, 1], [1, 1], "within_31_90_days", true),
+      ranked("b", [1, 1], [1, 1], "within_31_90_days", false),
+      ranked("c", [1, 1], [1, 1], "within_31_90_days", false),
+    ];
+    const r = rankingResolution(list);
+    // a vs b, a vs c by verified tier; b–c only by creator id.
+    expect(r.decidedPairs).toEqual({
+      platformContent: 0,
+      category: 0,
+      activity: 0,
+      verifiedTier: 2,
+      creatorId: 1,
+    });
   });
 
   it("detects a top-N cutoff that falls inside a tie group", () => {

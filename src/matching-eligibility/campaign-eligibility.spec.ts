@@ -321,11 +321,15 @@ describe("Stage 3B-3 service / controller", () => {
     ).toBe("eligibility/:campaignId");
   });
 
-  it("forAllCreators: one read of non-deleted profiles, no password, no evidence calls", async () => {
+  it("forAllCreators: one read of non-deleted profiles, no password, one batch verification read, no per-creator evidence calls", async () => {
     const lean = jest.fn().mockResolvedValue([rawCreator("a")]);
     const select = jest.fn().mockReturnValue({ lean });
     const find = jest.fn().mockReturnValue({ select });
-    const verification = { listForProfile: jest.fn() };
+    const verification = {
+      listForProfile: jest.fn(),
+      // Stage 3E-1: one batch read for the ranking's verified-tier step.
+      statusesForProfiles: jest.fn().mockResolvedValue(new Map()),
+    };
     const observation = { listForProfile: jest.fn() };
     const service = new MatchingInputsService(
       { find } as any,
@@ -338,6 +342,7 @@ describe("Stage 3B-3 service / controller", () => {
     expect(find).toHaveBeenCalledWith({ isDeleted: { $ne: true } });
     expect(select).toHaveBeenCalledWith("-password");
     expect(verification.listForProfile).not.toHaveBeenCalled();
+    expect(verification.statusesForProfiles).toHaveBeenCalledTimes(1);
     expect(observation.listForProfile).not.toHaveBeenCalled();
     expect(out[0].display).toEqual({
       name: "Creator a",

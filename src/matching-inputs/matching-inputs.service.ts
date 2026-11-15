@@ -141,7 +141,8 @@ export class MatchingInputsService {
 
   /**
    * Stage 3B-3 — every non-deleted creator of one type, normalized in one
-   * read. Per-account verification/observation evidence is NOT loaded: it never
+   * read. Tier/ownership verification is loaded in one batch (Stage 3E-1 ranking);
+   * observation evidence is NOT loaded: it never
    * affects eligibility, and loading it per creator would be N extra queries
    * (the single-creator endpoint still returns it).
    */
@@ -160,8 +161,16 @@ export class MatchingInputsService {
       .select("-password")
       .lean();
     const str = (v: unknown) => (typeof v === "string" ? v.trim() : "");
+    // Stage 3E-1: tier/ownership verification for everyone in ONE read (the
+    // ranking's verified-tier step). Observation evidence is still not loaded.
+    const verification = await this.verification.statusesForProfiles(
+      profileType,
+      profiles,
+    );
     return profiles.map((profile) => ({
-      input: normalizeCreatorMatchInput(profile, profileType),
+      input: normalizeCreatorMatchInput(profile, profileType, {
+        verification: verification.get(String(profile._id)),
+      }),
       display: {
         name: str(profile.name),
         username: str(profile.username),

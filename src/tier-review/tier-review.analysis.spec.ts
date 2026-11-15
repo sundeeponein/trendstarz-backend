@@ -333,4 +333,28 @@ describe("tier review queue (Stage 3D-1b)", () => {
     ).find((i) => i.platformKey === "youtube")!;
     expect(lost.observed.notFound).toBe(true);
   });
+
+  it("the Channel not found filter lists only those accounts, with a count", () => {
+    const i = input({
+      creators: [
+        { profileType: "Influencer", profile: creator("c1") },
+        { profileType: "Influencer", profile: creator("c2") },
+      ],
+      observations: [
+        ytObs("c1", 5000),
+        {
+          ...ytObs("c2", 5000),
+          status: "failed",
+          lastError: "external_account_not_found",
+          failureCount: 2,
+        },
+      ],
+    });
+    const all = tierReviewQueue(i, {});
+    expect(all.notFoundCount).toBe(1);
+    const only = tierReviewQueue(i, { notFound: true });
+    expect(only.filtered).toBe(1);
+    expect(only.items.every((x) => x.observed.notFound)).toBe(true);
+    expect(only.notFoundCount).toBe(1);
+  });
 });

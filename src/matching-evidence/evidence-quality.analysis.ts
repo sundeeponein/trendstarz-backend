@@ -425,12 +425,15 @@ const kCAT = (r: RankedCreator) =>
 const kACT = (r: RankedCreator) =>
   String(ACTIVITY_BUCKET_ORDER[r.activity.bucket]);
 /** The comparator's own keys, cumulatively (unknown activity shares the 31–90d key). */
+const kVT = (r: RankedCreator) => (r.verifiedTier?.verified ? "1" : "0");
 const LAYER_KEYS: Array<[string, (r: RankedCreator) => string]> = [
   ["platformContent", (r) => kPC(r)],
   ["category", (r) => `${kPC(r)}|${kCAT(r)}`],
   ["activity", (r) => `${kPC(r)}|${kCAT(r)}|${kACT(r)}`],
+  // Stage 3E-1 (2026-11-15).
+  ["verifiedTier", (r) => `${kPC(r)}|${kCAT(r)}|${kACT(r)}|${kVT(r)}`],
 ];
-const FINAL_KEY = LAYER_KEYS[2][1];
+const FINAL_KEY = LAYER_KEYS[3][1];
 
 function groupSizes(
   ranked: RankedCreator[],
@@ -443,7 +446,7 @@ function groupSizes(
 
 /**
  * Pairwise view of the lexicographic order: of all pairs of ranked creators,
- * which layer first tells them apart. "creatorId" pairs are those the three
+ * which layer first tells them apart. "creatorId" pairs are those the four
  * signals leave tied — their order is stable but not evidence-based.
  */
 export function rankingResolution(ranked: RankedCreator[]) {
@@ -456,7 +459,8 @@ export function rankingResolution(ranked: RankedCreator[]) {
     platformContent: total - tiedAfter[0],
     category: tiedAfter[0] - tiedAfter[1],
     activity: tiedAfter[1] - tiedAfter[2],
-    creatorId: tiedAfter[2],
+    verifiedTier: tiedAfter[2] - tiedAfter[3],
+    creatorId: tiedAfter[3],
   };
   const finalSizes = groupSizes(ranked, FINAL_KEY);
   const multi = finalSizes.filter((s) => s > 1);
@@ -525,6 +529,7 @@ export function measureRankingResolution(
         platformContent: 0,
         category: 0,
         activity: 0,
+        verifiedTier: 0,
         creatorId: 0,
       },
     },
@@ -561,11 +566,41 @@ export function buildEvidenceQualityReport(input: EvidenceQualityInput) {
   if (!(asOf instanceof Date) || Number.isNaN(asOf.getTime()))
     throw new Error("buildEvidenceQualityReport: asOf must be a valid Date");
 
+  // Tier/ownership decisions per account, with the same effectiveDecision rule
+  // the live ranking uses (Stage 3E-1), so the measured ranking matches it.
+  const verByKey = new Map(
+    (input.verifications || []).map((v: any) => [
+      `${v.profileType}|${String(v.profileId)}|${String(v.socialAccountId)}`,
+      v,
+    ]),
+  );
+  const verificationEvidence = (
+    profileType: string,
+    profile: Record<string, any>,
+  ) => {
+    const m = new Map<string, { ownership?: string; tier?: string }>();
+    for (const entry of Array.isArray(profile?.socialMedia)
+      ? profile.socialMedia
+      : []) {
+      const id = String(entry?.socialAccountId ?? "");
+      const v: any = id
+        ? verByKey.get(`${profileType}|${String(profile?._id ?? "")}|${id}`)
+        : undefined;
+      if (!v) continue;
+      m.set(id, {
+        ownership: effectiveDecision("ownership", v.ownership, entry).status,
+        tier: effectiveDecision("tier", v.tier, entry).status,
+      });
+    }
+    return m;
+  };
   const creators = input.creators
     .filter((c) => c.profile?.isDeleted !== true)
     .map((c) => ({
       ...c,
-      input: normalizeCreatorMatchInput(c.profile, c.profileType),
+      input: normalizeCreatorMatchInput(c.profile, c.profileType, {
+        verification: verificationEvidence(c.profileType, c.profile),
+      }),
     }));
   // Evidence is measured on the population ranking actually sees.
   const approved = creators.filter(

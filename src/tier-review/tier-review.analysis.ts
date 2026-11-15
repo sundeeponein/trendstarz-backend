@@ -104,6 +104,8 @@ export interface TierReviewQuery {
   platform?: string;
   profileType?: string;
   q?: string;
+  /** Only accounts whose channel can't be found (2+ lookups in a row) — 2026-11-15. */
+  notFound?: boolean;
   page?: number;
   pageSize?: number;
 }
@@ -328,7 +330,12 @@ export function tierReviewQueue(
   )
     ? String(query.reason)
     : "";
-  const filtered = reason ? scoped.filter((i) => i.reason === reason) : scoped;
+  const notFoundCount = scoped.filter((i) => i.observed?.notFound).length;
+  const filtered = scoped.filter(
+    (i) =>
+      (!reason || i.reason === reason) &&
+      (!query.notFound || i.observed?.notFound),
+  );
   const pageSize = Math.min(
     100,
     Math.max(1, Math.floor(Number(query.pageSize) || 25)),
@@ -342,6 +349,7 @@ export function tierReviewQueue(
   return {
     asOf: input.asOf.toISOString(),
     counts,
+    notFoundCount,
     total: scoped.length,
     platforms,
     filtered: filtered.length,

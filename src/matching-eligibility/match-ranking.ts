@@ -19,7 +19,10 @@ import {
  *   1. platform/content coverage — matched campaign pairs / campaign pairs
  *   2. category coverage         — matched campaign categories / campaign categories
  *   3. activity bucket           — from creator.lastActiveAt (lastLoginAt, else lastOpenedAt)
- *   4. creatorId                 — ascending, final tie-break
+ *   4. verified tier             — TrendStarZ (admin) verified the creator's declared tier on
+ *                                  one of the campaign's platforms (any platform when the
+ *                                  campaign names none); verified first (Stage 3E-1, 2026-11-15)
+ *   5. creatorId                 — ascending, final tie-break
  *
  * Coverage is always measured on the CAMPAIGN side (iterating the campaign's
  * own de-duplicated list), so extra creator pairs/categories never help and
@@ -27,7 +30,9 @@ import {
  * Stage 3B `intersect` and canonical inputs — no second normalization.
  *
  * `asOf` is the only clock. No Date.now(), no DB, no TrendScore, no followers,
- * no tier, no verification, no pricing, no AI. Nothing is written.
+ * no pricing, no AI. Nothing is written. The verified-tier step reads only the
+ * tier verification status already on the normalized input (pending when the
+ * caller loaded no verification evidence, so it then changes nothing).
  */
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -71,6 +76,8 @@ export interface RankedCreator {
     /** Whole days between lastActiveAt and asOf; null when unknown. */
     daysSinceActive: number | null;
   };
+  /** Stage 3E-1: tier verified by TrendStarZ on a campaign platform (platform keys, campaign order). */
+  verifiedTier: { verified: boolean; platforms: string[] };
   rankingReasons: string[];
 }
 
@@ -143,6 +150,34 @@ const compareCoverage = (a: Coverage, b: Coverage) =>
 
 const compareIds = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
 
+/**
+ * Platforms (campaign order, de-duplicated) on which the creator has an
+ * account whose declared tier TrendStarZ verified. When the campaign names no
+ * platform, any verified account counts (creator order).
+ */
+export function verifiedTierPlatforms(
+  campaign: NormalizedCampaignMatchInput,
+  creator: NormalizedCreatorMatchInput,
+): string[] {
+  const verified = new Set(
+    (creator.accounts || [])
+      .filter(
+        (a) => a.platformKey && a.evidence?.tierVerificationStatus === "verified",
+      )
+      .map((a) => a.platformKey as string),
+  );
+  const campaignPlatforms = [
+    ...new Set(
+      (campaign.platforms || [])
+        .map((p) => p.platformKey)
+        .filter((k): k is string => !!k),
+    ),
+  ];
+  return campaignPlatforms.length
+    ? campaignPlatforms.filter((k) => verified.has(k))
+    : [...verified];
+}
+
 export function rankEligibleCreators(
   campaign: NormalizedCampaignMatchInput,
   entries: RankingEntry[],
@@ -180,6 +215,7 @@ export function rankEligibleCreators(
       creator.lastActiveAt,
       asOf,
     );
+    const tierPlatforms = verifiedTierPlatforms(campaign, creator);
     const lastActiveValid =
       creator.lastActiveAt && !Number.isNaN(creator.lastActiveAt.getTime());
     candidates.push({
@@ -193,6 +229,7 @@ export function rankEligibleCreators(
           : null,
         daysSinceActive,
       },
+      verifiedTier: { verified: tierPlatforms.length > 0, platforms: tierPlatforms },
       rankingReasons: [
         coverageReason(
           platformContent,
@@ -205,6 +242,9 @@ export function rankEligibleCreators(
           "Campaign has no category requirement; treated as neutral.",
         ),
         activityReason(bucket, creator.lastActiveAt),
+        tierPlatforms.length
+          ? `Tier verified by TrendStarZ on ${tierPlatforms.join(", ")}`
+          : "Tier not yet verified by TrendStarZ on a campaign platform",
       ],
     });
   }
@@ -215,6 +255,7 @@ export function rankEligibleCreators(
       compareCoverage(a.category, b.category) ||
       ACTIVITY_BUCKET_ORDER[a.activity.bucket] -
         ACTIVITY_BUCKET_ORDER[b.activity.bucket] ||
+      Number(b.verifiedTier.verified) - Number(a.verifiedTier.verified) ||
       compareIds(a.creatorId, b.creatorId),
   );
   return candidates.map((c, i) => ({ ...c, rank: i + 1 }));
