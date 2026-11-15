@@ -1,3 +1,4 @@
+import { recordInviteWhatsApp } from "../whatsapp/invite-whatsapp-log";
 import { productOptionAnswer } from "./product-option.util";
 import {
   Injectable,
@@ -876,6 +877,7 @@ export class CampaignInvitesService {
     }
     delete out.missExcused;
     delete out.slotRestored;
+    delete out.whatsappLog; // admin-only send log (2026-11-13)
     // The creator's shipping address: the host gets it as soon as the creator
     // accepts (2026-11-10 — product campaigns ship before any payment step), and
     // loses it on a declined/withdrawn invite and with the rest of the contact
@@ -1663,6 +1665,9 @@ export class CampaignInvitesService {
               },
             );
           })
+          .then((r: any) =>
+            r?.sent ? recordInviteWhatsApp(this.inviteModel, saved._id, "inviteOnly", "auto") : undefined,
+          )
           .catch(() => {
             /* non-critical */
           });
@@ -2857,7 +2862,7 @@ export class CampaignInvitesService {
       const model = role === "photographer" ? this.photographerModel : this.influencerModel;
       const creator: any = await model.findById(invite.influencerId).select("name username phoneNumber isMobileVerified").lean();
       if (!creator?.phoneNumber) return;
-      await this.whatsAppService.sendToUser(String(invite.influencerId), creator.phoneNumber, creator.isMobileVerified, {
+      const result = await this.whatsAppService.sendToUser(String(invite.influencerId), creator.phoneNumber, creator.isMobileVerified, {
         name: "campaign_product_shipped",
         bodyParams: productShippedParams({
           creatorName: creator.name || creator.username || "there",
@@ -2868,6 +2873,7 @@ export class CampaignInvitesService {
           inviteUrl: creatorInviteLink(role, invite._id),
         }),
       });
+      if (result?.sent) await recordInviteWhatsApp(this.inviteModel, invite._id, "productShipped", "auto");
     } catch {
       // non-critical
     }
@@ -3301,7 +3307,7 @@ export class CampaignInvitesService {
             .catch(() => {});
 
           if (ENABLE_CAMPAIGN_WHATSAPP) {
-            await this.whatsAppService
+            const waResult: any = await this.whatsAppService
               .sendToUser(
                 String(recipient._id),
                 recipient.phoneNumber,
@@ -3317,7 +3323,10 @@ export class CampaignInvitesService {
                   }),
                 },
               )
-              .catch(() => {});
+              .catch(() => null);
+            if (waResult?.sent) {
+              await recordInviteWhatsApp(this.inviteModel, (invite as any)._id, "postingReminder", "auto");
+            }
           }
 
           await this.inviteModel.updateOne(
@@ -4183,6 +4192,9 @@ export class CampaignInvitesService {
                   campaignUrl: `${frontendBase}/campaigns`,
                 }),
               },
+            )
+            .then((r: any) =>
+              r?.sent ? recordInviteWhatsApp(this.inviteModel, invite._id, "accepted", "auto") : undefined,
             )
             .catch(() => {
               /* non-critical */

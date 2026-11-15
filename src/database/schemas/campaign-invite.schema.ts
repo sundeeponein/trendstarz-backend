@@ -1,5 +1,6 @@
 import { externalUrlSetter } from "../../utils/external-url.util";
 import { Schema } from "mongoose";
+import { InviteWhatsAppLogSchemaDef } from "../../whatsapp/invite-whatsapp-log";
 
 export const CampaignInviteSchema = new Schema({
   // Type locked 2026-10-17 to what every stored row already holds (cron/auditIdTypes.js).
@@ -147,6 +148,9 @@ export const CampaignInviteSchema = new Schema({
   // milestone fires so the cron never re-sends it (independent of the brand-initiated remindedAt above).
   postingReminder48hSentAt: { type: Date },
   postingReminder24hSentAt: { type: Date },
+  // Campaign WhatsApp messages sent for this invite (automatic + admin manual): count,
+  // last time and how — the admin message buttons show "Sent" from this (2026-11-13).
+  whatsappLog: InviteWhatsAppLogSchemaDef,
   withdrawnAt: { type: Date },
   withdrawnReason: { type: String },
   // Why it was withdrawn, as an INVITE_WITHDRAWN_REASONS code (set by expireUnsubmittedInvite).

@@ -1,3 +1,4 @@
+import { isInviteWhatsAppMessageType, recordInviteWhatsApp } from "./whatsapp/invite-whatsapp-log";
 import { recordAdminAction, settingsDiff } from "./utils/admin-action-log.util";
 import { LogAdminAction } from "./utils/admin-action.interceptor";
 import {
@@ -939,7 +940,7 @@ export class AdminListsController {
             },
           })
           .select(
-            "_id campaignId influencerId recipientRole status selectedPlatform selectedContentType selectedPostDate updatedAt acceptedAt paymentConfirmedAt agreedAmount agreedAmountPaise counterOffer",
+            "_id campaignId influencerId recipientRole status selectedPlatform selectedContentType selectedPostDate updatedAt acceptedAt paymentConfirmedAt agreedAmount agreedAmountPaise counterOffer whatsappLog",
           )
           .lean()
       : [];
@@ -1054,6 +1055,7 @@ export class AdminListsController {
         payoutUtr: transaction?.payoutUtr || null,
         payoutTransferId: transaction?.payoutTransferId || null,
         payoutAmountPaise: Number(transaction?.recipientPayout || 0),
+        whatsappLog: (invite as any)?.whatsappLog || null,
       });
       inviteProgressByCampaign.set(key, progressRows);
     }
@@ -1361,6 +1363,32 @@ export class AdminListsController {
         : null,
       ownerPhone,
     };
+  }
+
+  /**
+   * The admin tapped "Send via WhatsApp" on a per-invite message — record it so
+   * that button shows "Sent" and isn't used twice (automatic sends are stamped
+   * by the sender itself). Returns the invite's updated log.
+   */
+  @Post("campaigns/invites/:inviteId/whatsapp-sent")
+  async recordInviteWhatsAppSent(
+    @Param("inviteId") inviteId: string,
+    @Body() body: any,
+    @Req() req: any,
+  ) {
+    const type = body?.type;
+    if (!isInviteWhatsAppMessageType(type)) {
+      throw new BadRequestException("Unknown message type");
+    }
+    if (!/^[a-fA-F0-9]{24}$/.test(String(inviteId || ""))) {
+      throw new BadRequestException("Invite not found");
+    }
+    const exists = await this.campaignInviteModel.exists({ _id: inviteId });
+    if (!exists) throw new BadRequestException("Invite not found");
+    await recordInviteWhatsApp(this.campaignInviteModel, inviteId, type, "manual");
+    await recordAdminAction(req, "invite_whatsapp_sent", { type: "campaign_invite", id: inviteId }, { messageType: type });
+    const updated: any = await this.campaignInviteModel.findById(inviteId).select("whatsappLog").lean();
+    return { whatsappLog: updated?.whatsappLog || {} };
   }
 
   /**

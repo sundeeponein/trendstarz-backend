@@ -1,3 +1,4 @@
+import { recordInviteWhatsApp } from "../whatsapp/invite-whatsapp-log";
 import {
   BadRequestException,
   Injectable,
@@ -2164,7 +2165,7 @@ export class PaymentsPayoutsService {
       const title = campaign?.title || "your campaign";
       const creatorName = creator?.name || creator?.username || "The creator";
       if (host) {
-        await this.whatsAppService.sendToUser(String(tx.payerId), host.phoneNumber, host.isMobileVerified, {
+        const hostResult = await this.whatsAppService.sendToUser(String(tx.payerId), host.phoneNumber, host.isMobileVerified, {
           name: "campaign_payment_received_host",
           bodyParams: paymentReceivedHostParams({
             hostName: host.brandName || host.name || host.contactPersonName || "there",
@@ -2173,9 +2174,10 @@ export class PaymentsPayoutsService {
             campaignsUrl: hostCampaignsLink(),
           }),
         });
+        if (hostResult?.sent) await recordInviteWhatsApp(this.inviteModel, inviteId, "paymentReceived", "auto");
       }
       if (creator) {
-        await this.whatsAppService.sendToUser(String(recipientId), creator.phoneNumber, creator.isMobileVerified, {
+        const creatorResult = await this.whatsAppService.sendToUser(String(recipientId), creator.phoneNumber, creator.isMobileVerified, {
           name: "campaign_start_posting",
           bodyParams: startPostingParams({
             creatorName,
@@ -2183,6 +2185,7 @@ export class PaymentsPayoutsService {
             inviteUrl: creatorInviteLink(recipientRole, inviteId),
           }),
         });
+        if (creatorResult?.sent) await recordInviteWhatsApp(this.inviteModel, inviteId, "startWork", "auto");
       }
     } catch {
       // non-critical
