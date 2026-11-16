@@ -5,6 +5,7 @@ import {
   PhotographerSchema,
 } from "../database/schemas/profile.schemas";
 import { NotificationsModule } from "../notifications/notifications.module";
+import { PriceChangesModule } from "../price-changes/price-changes.module";
 import { PushModule } from "../push/push.module";
 import { SocialAccountVerificationModule } from "../social-account-verification/social-account-verification.module";
 import { CreatorObservationController } from "./creator-observation.controller";
@@ -33,6 +34,7 @@ import { TierReviewService } from "./tier-review.service";
     SocialAccountVerificationModule,
     NotificationsModule,
     PushModule,
+    PriceChangesModule,
   ],
   controllers: [
     TierReviewController,

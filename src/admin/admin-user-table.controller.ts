@@ -2074,7 +2074,27 @@ export class AdminUserTableController {
       reviewType,
       body: body || {},
     });
-    return { message: "Social account review saved", account };
+    // Verifying a tier approves the waiting prices that fit inside it (2026-11-16).
+    let pricesApproved = 0;
+    if (
+      reviewType === "tier" &&
+      body?.status === "verified" &&
+      profileType === "Influencer" &&
+      entry?.tier &&
+      this.priceChanges
+    ) {
+      pricesApproved = await this.priceChanges.approveWithinVerifiedTier(
+        String(id),
+        socialAccountId,
+        String(entry.tier),
+        String(req?.user?.userId || req?.user?.id || "admin"),
+      );
+    }
+    return {
+      message: "Social account review saved",
+      account,
+      ...(pricesApproved ? { pricesApproved } : {}),
+    };
   }
 
   /** The socialMedia entry with this exact socialAccountId on this profile (never by position). */

@@ -1,4 +1,5 @@
-import { Injectable, Logger } from "@nestjs/common";
+import { Injectable, Logger, Optional } from "@nestjs/common";
+import { PriceChangesService } from "../price-changes/price-changes.service";
 import { InjectConnection, InjectModel } from "@nestjs/mongoose";
 import { Cron } from "@nestjs/schedule";
 import { Connection, Model } from "mongoose";
@@ -34,6 +35,7 @@ export class TierAutoApplyService {
     private readonly verification: SocialAccountVerificationService,
     private readonly notifications: NotificationsService,
     private readonly push: PushService,
+    @Optional() private readonly priceChanges?: PriceChangesService,
   ) {}
 
   @Cron("0 3 * * *", { timeZone: "Asia/Kolkata", name: "youtubeTierAutoApply" })
@@ -49,6 +51,17 @@ export class TierAutoApplyService {
     } catch (err: any) {
       this.logger.error(`Auto tier failed: ${err?.message || err}`);
     }
+  }
+
+  /** Waiting prices that fit the tier just verified go live (2026-11-16). */
+  private async approvePricesInTier(profileType: string, profileId: string, entry: any) {
+    if (profileType !== "Influencer" || !this.priceChanges || !entry?.socialAccountId || !entry?.tier) return;
+    await this.priceChanges.approveWithinVerifiedTier(
+      profileId,
+      String(entry.socialAccountId),
+      String(entry.tier),
+      "system",
+    );
   }
 
   /** Applies every correction that passes the safeguards. Returns what was changed. */
@@ -135,6 +148,7 @@ export class TierAutoApplyService {
             now,
             markAutoApplied: false,
           });
+          await this.approvePricesInTier(profileType, profileId, entry);
           applied.push({
             profileType,
             profileId,
@@ -165,6 +179,7 @@ export class TierAutoApplyService {
           note: `Changed from ${result.fromTier} to ${result.toTier}: YouTube showed ${result.followers.toLocaleString("en-IN")} subscribers on ${capturedText}.`,
           now,
         });
+        await this.approvePricesInTier(profileType, profileId, updated);
         applied.push({
           profileType,
           profileId,

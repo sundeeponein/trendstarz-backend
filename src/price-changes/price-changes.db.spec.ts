@@ -94,6 +94,34 @@ describe("price changes (real MongoDB)", () => {
     expect((await db.conn.collection(PRICE_CHANGES).findOne({ _id: new Types.ObjectId(stale._id) }))?.status).toBe("replaced");
   });
 
+  it("verifying a tier approves the waiting prices inside its range, others keep waiting (2026-11-16)", async () => {
+    const id = new Types.ObjectId();
+    await db.conn.collection("influencers").insertOne({
+      _id: id,
+      socialMedia: [
+        { socialAccountId: "sa-1", platform: "Instagram", contentTypes: [{ name: "Reel", price: 100 }, { name: "Video", price: 100 }] },
+        { socialAccountId: "sa-2", platform: "YouTube", contentTypes: [{ name: "Shorts", price: 100 }] },
+      ],
+    });
+    await service.record(String(id), "influencer", [], [
+      reel(100, 2000), // Micro Reel range tops at 3,000 → approved
+      { ...reel(100, 9000), rateName: "Video" }, // Micro Video tops at 5,400 → waits
+      { ...reel(100, 2000), socialAccountId: "sa-2", platform: "YouTube", rateName: "Shorts" }, // other account → waits
+    ]);
+    const approved = await service.approveWithinVerifiedTier(String(id), "sa-1", "Micro", "admin-1");
+    expect(approved).toBe(1);
+    const doc: any = await db.conn.collection("influencers").findOne({ _id: id });
+    expect(doc.socialMedia[0].contentTypes.map((c: any) => [c.name, c.price])).toEqual([
+      ["Reel", 2000],
+      ["Video", 100],
+    ]);
+    const waiting = await service.pendingForUser(String(id));
+    expect(waiting.map((w: any) => w.rateName).sort()).toEqual(["Shorts", "Video"]);
+    const row: any = await db.conn.collection(PRICE_CHANGES).findOne({ userId: String(id), rateName: "Reel" });
+    expect(row.status).toBe("approved");
+    expect(row.adminNote).toBe("Within the verified Micro range");
+  });
+
   it("dashboard summary counts waiting prices per role and the oldest wait", async () => {
     await db.conn.collection(PRICE_CHANGES).deleteMany({});
     const now = new Date("2026-11-16T12:00:00Z");

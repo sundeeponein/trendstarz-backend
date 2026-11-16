@@ -9,6 +9,7 @@ import { InjectConnection } from "@nestjs/mongoose";
 import { Connection, Types } from "mongoose";
 import { NotificationsService } from "../notifications/notifications.service";
 import { PushService } from "../push/push.service";
+import { rangeFor } from "../collaboration-score/rate-suggestion.util";
 import { PriceChange, rateKey } from "./price-changes.util";
 
 /** One document per price change. See price-changes.util for the rules. */
@@ -253,8 +254,8 @@ export class PriceChangesService {
   }
 
   /** Admin: apply a waiting price. */
-  async approve(id: string, adminId: string) {
-    const doc = await this.claim(id, "approved", adminId, "");
+  async approve(id: string, adminId: string, note = "") {
+    const doc = await this.claim(id, "approved", adminId, note);
     const now = new Date();
     const userId = String(doc.userId);
     const nameMatch = { $regex: `^\\s*${escapeRegex(String(doc.rateName))}\\s*$`, $options: "i" };
@@ -303,6 +304,47 @@ export class PriceChangesService {
       body: `Your ${rateLabel(doc)} price is now ${rupees(doc.newPrice)}.`,
     });
     return { status: "approved" };
+  }
+
+  /**
+   * A tier was just verified (by an admin, or the nightly YouTube check):
+   * every waiting price on that account that now falls inside the verified
+   * tier's usual range is approved (2026-11-16). Above the range, or rates
+   * with no range, keep waiting for an admin. Influencer social rates only
+   * (photographers keep the doubling rule). Best effort: never throws.
+   */
+  async approveWithinVerifiedTier(
+    userId: string,
+    socialAccountId: string,
+    tier: string,
+    reviewer: string,
+  ): Promise<number> {
+    let approved = 0;
+    try {
+      const waiting: any[] = await this.col()
+        .find({
+          userId: String(userId),
+          role: "influencer",
+          source: "social",
+          socialAccountId: String(socialAccountId),
+          status: "pending",
+        })
+        .toArray();
+      for (const doc of waiting) {
+        const range = rangeFor(tier, doc.rateName);
+        if (!range) continue;
+        if (range.top !== null && Number(doc.newPrice) > range.top) continue;
+        try {
+          await this.approve(String(doc._id), reviewer, `Within the verified ${tier} range`);
+          approved++;
+        } catch {
+          // changed or handled meanwhile — leave it
+        }
+      }
+    } catch (err: any) {
+      this.logger.warn(`Auto-approve after tier verify failed: ${err?.message || err}`);
+    }
+    return approved;
   }
 
   /** Admin: keep the current price. */
