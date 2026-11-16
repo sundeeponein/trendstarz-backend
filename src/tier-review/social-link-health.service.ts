@@ -41,6 +41,12 @@ const ROLE: Record<string, "influencer" | "photographer"> = {
   Photographer: "photographer",
 };
 
+/** "Influencer" / "influencer" / "INFLUENCER" → "Influencer" (same for Photographer); else null. */
+export function profileTypeFrom(value: unknown): "Influencer" | "Photographer" | null {
+  const v = String(value ?? "").trim().toLowerCase();
+  return v === "influencer" ? "Influencer" : v === "photographer" ? "Photographer" : null;
+}
+
 export function profileTypeForRole(role: unknown): SocialProfileType | null {
   const r = (typeof role === "string" ? role : "").toLowerCase();
   return r === "influencer"
@@ -253,12 +259,8 @@ export class SocialLinkHealthService {
       socialAccountId?: string;
     },
   ) {
-    const profileType =
-      body?.profileType === "Photographer"
-        ? "Photographer"
-        : body?.profileType === "Influencer"
-          ? "Influencer"
-          : null;
+    // The admin page sends "influencer"/"photographer" (lower case): accept any case.
+    const profileType = profileTypeFrom(body?.profileType);
     if (!profileType) throw new BadRequestException("Unknown profile type");
     const profileId = String(body?.profileId || "");
     if (!reporter.userId)
@@ -301,12 +303,8 @@ export class SocialLinkHealthService {
       note?: string;
     },
   ) {
-    const profileType =
-      body?.profileType === "Photographer"
-        ? "Photographer"
-        : body?.profileType === "Influencer"
-          ? "Influencer"
-          : null;
+    // The admin page sends "influencer"/"photographer" (lower case): accept any case.
+    const profileType = profileTypeFrom(body?.profileType);
     if (!profileType) throw new BadRequestException("Unknown profile type");
     const action =
       body?.action === "confirm"
@@ -353,20 +351,46 @@ export class SocialLinkHealthService {
 
   /** Which of a profile's links are reported as not opening (for hosts' "may be outdated"). */
   async linkStatus(profileType: string, profileId: string) {
-    const type =
-      profileType === "Photographer"
-        ? "Photographer"
-        : profileType === "Influencer"
-          ? "Influencer"
-          : null;
+    const type = profileTypeFrom(profileType);
     if (!type) return { success: true, data: {} };
-    return {
-      success: true,
-      data: await this.verification.linkReportsForProfile(
-        type,
-        String(profileId),
-      ),
-    };
+    const reports = await this.verification.linkReportsForProfile(type, String(profileId));
+    // Hosts see only that a link may be outdated, not how many reports there were.
+    const data = Object.fromEntries(
+      Object.entries(reports).map(([id, r]) => [id, { status: r.status, since: r.since }]),
+    );
+    return { success: true, data };
+  }
+
+  /**
+   * The creator's OWN links that hosts reported as not opening (open, or
+   * confirmed by an admin) — shown on their dashboard and profile until they
+   * fix the handle (that clears it) or an admin dismisses it (2026-11-16).
+   * No reporter details.
+   */
+  async myReportedLinks(user: { userId: string; role: string }) {
+    const profileType = profileTypeForRole(user.role);
+    const model = profileType ? this.modelFor(profileType) : null;
+    if (!model || !Types.ObjectId.isValid(String(user.userId))) return { accounts: [] };
+    const [profile, reports]: [any, Record<string, { status: string; since: Date | null; count: number }>] =
+      await Promise.all([
+        model.findById(user.userId).select("socialMedia").lean(),
+        this.verification.linkReportsForProfile(profileType as any, String(user.userId)),
+      ]);
+    const accounts = (Array.isArray(profile?.socialMedia) ? profile.socialMedia : [])
+      .filter((e: any) => reports[String(e?.socialAccountId)])
+      .map((e: any) => {
+        const r = reports[String(e.socialAccountId)];
+        return {
+          socialAccountId: String(e.socialAccountId),
+          platform: String(e.platform || ""),
+          handle: String(e.handle || ""),
+          platformAccountId: e.platformAccountId || null,
+          status: r.status,
+          since: r.since,
+          reports: r.count,
+        };
+      });
+    return { accounts };
   }
 
   // ── 3. 90-day handle confirmation ─────────────────────────────────────────

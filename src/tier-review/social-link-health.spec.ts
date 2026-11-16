@@ -7,6 +7,7 @@ import {
   SocialLinkHealthService,
   handleConfirmDue,
   handleConfirmOverdue,
+  profileTypeFrom,
 } from "./social-link-health.service";
 
 const DAY = 24 * 60 * 60 * 1000;
@@ -294,7 +295,7 @@ describe("Social links that keep working", () => {
       const { service } = verificationService([]);
       await service.reportBrokenLink(params());
       const map = await service.linkReportsForProfile("Influencer", PROFILE);
-      expect(map[ACC]).toEqual({ status: "open", since: expect.anything() });
+      expect(map[ACC]).toEqual({ status: "open", since: expect.anything(), count: 1 });
       expect(JSON.stringify(map)).not.toContain("host1");
     });
   });
@@ -401,5 +402,49 @@ describe("Social links that keep working", () => {
       expect(doc.socialMedia[0].handle).toBe("switchedtoanother");
       expect(doc.socialMedia[0].platformAccountId).toBeUndefined();
     });
+  });
+});
+
+describe("creator sees their own reported links (2026-11-16)", () => {
+  const ACC2 = "64b0000000000000000000b2";
+  const PROF = "64b0000000000000000000f1";
+  const build = (reports: Record<string, any>) => {
+    const profile = {
+      _id: PROF,
+      socialMedia: [
+        { socialAccountId: ACC, platform: "Instagram", handle: "asha.creates" },
+        { socialAccountId: ACC2, platform: "YouTube", handle: "ashachannel", platformAccountId: "UCx" },
+      ],
+    };
+    const influencerModel: any = {
+      findById: () => ({ select: () => ({ lean: () => Promise.resolve(profile) }) }),
+    };
+    const verification: any = { linkReportsForProfile: jest.fn(() => Promise.resolve(reports)) };
+    return new SocialLinkHealthService({} as any, influencerModel, {} as any, verification, {} as any, {} as any);
+  };
+
+  it("lists only the reported accounts, with when and how many reports", async () => {
+    const since = new Date("2026-11-15T10:00:00Z");
+    const service = build({ [ACC]: { status: "open", since, count: 2 } });
+    expect(await service.myReportedLinks({ userId: PROF, role: "influencer" })).toEqual({
+      accounts: [
+        { socialAccountId: ACC, platform: "Instagram", handle: "asha.creates", platformAccountId: null, status: "open", since, reports: 2 },
+      ],
+    });
+  });
+
+  it("nothing for non-creators or when no link is reported", async () => {
+    expect(await build({}).myReportedLinks({ userId: PROF, role: "influencer" })).toEqual({ accounts: [] });
+    expect(await build({}).myReportedLinks({ userId: PROF, role: "brand" })).toEqual({ accounts: [] });
+  });
+});
+
+describe("profile type from the admin page (dismiss bug, 2026-11-16)", () => {
+  it("accepts any case — the admin page sends 'influencer'", () => {
+    expect(profileTypeFrom("influencer")).toBe("Influencer");
+    expect(profileTypeFrom("Influencer")).toBe("Influencer");
+    expect(profileTypeFrom("PHOTOGRAPHER")).toBe("Photographer");
+    expect(profileTypeFrom("brand")).toBeNull();
+    expect(profileTypeFrom(undefined)).toBeNull();
   });
 });

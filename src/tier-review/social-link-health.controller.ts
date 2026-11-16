@@ -71,6 +71,12 @@ export class SocialLinkHealthController {
     return this.service.openReportCounts();
   }
 
+  /** The creator's own links that hosts reported as not opening. */
+  @Get("creator/social-links/reported")
+  myReported(@Req() req: any) {
+    return this.service.myReportedLinks(this.user(req));
+  }
+
   /** The creator's own 90-day "are these still your accounts?" check. */
   @Get("creator/social-confirm")
   confirmStatus(@Req() req: any) {

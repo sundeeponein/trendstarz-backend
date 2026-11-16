@@ -809,20 +809,21 @@ export class SocialAccountVerificationService {
   async linkReportsForProfile(
     profileType: SocialProfileType,
     profileId: string,
-  ): Promise<Record<string, { status: string; since: Date | null }>> {
+  ): Promise<Record<string, { status: string; since: Date | null; count: number }>> {
     const rows: any[] = await this.stateModel
       .find({
         profileType,
         profileId,
         "linkReport.status": { $in: ["open", "confirmed"] },
       })
-      .select("socialAccountId linkReport.status linkReport.firstReportedAt")
+      .select("socialAccountId linkReport.status linkReport.firstReportedAt linkReport.count")
       .lean();
-    const out: Record<string, { status: string; since: Date | null }> = {};
+    const out: Record<string, { status: string; since: Date | null; count: number }> = {};
     for (const r of rows) {
       out[String(r.socialAccountId)] = {
         status: String(r.linkReport?.status),
         since: r.linkReport?.firstReportedAt || null,
+        count: Number(r.linkReport?.count || 0),
       };
     }
     return out;
