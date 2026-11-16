@@ -114,6 +114,7 @@ export class SitemapController {
       { loc: `${BASE_URL}/how-it-works`, priority: "0.8", changefreq: "monthly", lastmod: today },
       { loc: `${BASE_URL}/how-it-works/influencers`, priority: "0.8", changefreq: "monthly", lastmod: today },
       { loc: `${BASE_URL}/how-it-works/brands`, priority: "0.8", changefreq: "monthly", lastmod: today },
+      { loc: `${BASE_URL}/creator-shortlist`, priority: "0.8", changefreq: "monthly", lastmod: today },
       { loc: `${BASE_URL}/how-it-works/photographers`, priority: "0.8", changefreq: "monthly", lastmod: today },
       { loc: `${BASE_URL}/features`, priority: "0.8", changefreq: "monthly", lastmod: today },
       { loc: `${BASE_URL}/features/photographers`, priority: "0.8", changefreq: "monthly", lastmod: today },
