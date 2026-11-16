@@ -78,3 +78,42 @@ export function parseShortlistInput(body: any): { value?: ShortlistInput; error?
     },
   };
 }
+
+// ── Signup link (2026-11-16) ──
+// The shortlist WhatsApp ends with a brand signup link carrying "<requestId>.<code>".
+// The code (random, stored on the request) lets the signup page prefill the
+// brand's own details, and the finished signup marks the request converted.
+
+/** Signup links work this long after the request. */
+export const SIGNUP_LINK_DAYS = 60;
+
+export function newSignupCode(): string {
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  return require("crypto").randomBytes(16).toString("hex");
+}
+
+/** "<24-hex id>.<32-hex code>" → parts, or null. */
+export function parseSignupRef(ref: unknown): { id: string; code: string } | null {
+  const m = /^([a-f0-9]{24})\.([a-f0-9]{32})$/.exec(String(ref ?? "").trim());
+  return m ? { id: m[1], code: m[2] } : null;
+}
+
+/**
+ * After a brand signed up through a shortlist link: mark the request converted
+ * and remember the brand. Best effort — never blocks the signup.
+ */
+export async function markShortlistSignup(db: any, ref: unknown, brandId: string): Promise<boolean> {
+  const parts = parseSignupRef(ref);
+  if (!parts || !db) return false;
+  try {
+    const { ObjectId } = require("mongodb");
+    const now = new Date();
+    const res = await db.collection(SHORTLIST_REQUESTS).updateOne(
+      { _id: new ObjectId(parts.id), signupCode: parts.code, brandId: null },
+      { $set: { status: "converted", brandId: String(brandId), signedUpAt: now, updatedAt: now } },
+    );
+    return res.modifiedCount > 0;
+  } catch {
+    return false;
+  }
+}

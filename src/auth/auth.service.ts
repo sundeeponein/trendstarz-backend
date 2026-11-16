@@ -1,4 +1,5 @@
 import { maskEmail, sendSecurityAlert } from "../utils/security-alert.util";
+import { markShortlistSignup } from "../growth/shortlist-request.util";
 import { consentOnSignup } from "../utils/legal-consent.util";
 import { LoginAttempts } from "./login-attempts.util";
 import { canonicalPhone } from "../utils/phone.util";
@@ -2381,6 +2382,8 @@ export class AuthService {
       String(savedBrand._id),
       "brand",
     );
+    // Came from a creator-shortlist WhatsApp (2026-11-16): mark that request converted.
+    await markShortlistSignup(this.brandModel.db, data?.shortlistRef, String(savedBrand._id));
 
     // Relocate staged uploads into their final brands/{_id}/... folder now
     // that the document is confirmed saved.

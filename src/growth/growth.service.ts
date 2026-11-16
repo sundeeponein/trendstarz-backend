@@ -6,10 +6,15 @@ import { escapeHtml } from "../email/layout";
 import { sendAppEmail } from "../utils/app-email.service";
 import { SingleInstance } from "../utils/single-instance";
 import { applyDiscoverableProfileFilter } from "../utils/profile-eligibility.util";
+import { SocialAccountVerificationService } from "../social-account-verification/social-account-verification.service";
+import { rankShortlist } from "./shortlist-match";
 import { buildScorecard, scorecardEmailText, unansweredInviteIds } from "./growth-scorecard";
 import {
   MIN_COUNT_SHOWN,
+  newSignupCode,
   parseShortlistInput,
+  parseSignupRef,
+  SIGNUP_LINK_DAYS,
   SHORTLIST_BUDGETS,
   SHORTLIST_KEEP_DAYS,
   SHORTLIST_REQUESTS,
@@ -26,7 +31,10 @@ export class GrowthService {
   private readonly logger = new Logger(GrowthService.name);
   private indexReady: Promise<unknown> | null = null;
 
-  constructor(@InjectConnection() private readonly connection: Connection) {}
+  constructor(
+    @InjectConnection() private readonly connection: Connection,
+    private readonly verification?: SocialAccountVerificationService,
+  ) {}
 
   private db() {
     return this.connection.db as any;
@@ -124,6 +132,90 @@ export class GrowthService {
     const doc = (res as any)?.value !== undefined ? (res as any).value : res;
     if (!doc) throw new NotFoundException("Request not found");
     return doc;
+  }
+
+  private async findRequest(id: string): Promise<any> {
+    if (!Types.ObjectId.isValid(id)) throw new BadRequestException("Invalid id");
+    const doc = await this.requests().findOne({ _id: new Types.ObjectId(id) });
+    if (!doc) throw new NotFoundException("Request not found");
+    return doc;
+  }
+
+  /**
+   * Admin "Build shortlist": creators in the request's state with the niche,
+   * whose profile a guest can open, best first (shortlist-match.ts). When the
+   * niche has fewer than 5 there, creators in the state from other niches follow.
+   */
+  async matchesFor(id: string, limit = 15) {
+    const request = await this.findRequest(id);
+    const projection = {
+      name: 1, username: 1, publicId: 1, location: 1, categories: 1, influencerCategory: 1,
+      socialMedia: 1, lastLoginAt: 1, lastOpenedAt: 1,
+    };
+    const base = () => applyDiscoverableProfileFilter({ "location.state": request.state }, { viewerIsAuthenticated: false });
+    const col = this.connection.collection("influencers");
+    const inNiche = await col.find({ ...base(), categories: request.category }, { projection }).limit(500).toArray();
+    let others: any[] = [];
+    if (inNiche.length < 5) {
+      const f = base();
+      f.$and.push({ categories: { $ne: request.category } });
+      others = await col.find(f, { projection }).limit(200).toArray();
+    }
+    const all = [...inNiche, ...others];
+    const statuses = this.verification
+      ? await this.verification.statusesForProfiles("Influencer", all as any).catch(() => new Map())
+      : new Map();
+    const verifiedById = new Map<string, Set<string>>();
+    for (const [profileId, perAccount] of statuses as Map<string, Map<string, { tier?: string }>>) {
+      verifiedById.set(profileId, new Set([...perAccount].filter(([, v]) => v.tier === "verified").map(([k]) => k)));
+    }
+    const now = new Date();
+    const ranked = [
+      ...rankShortlist(request, inNiche, verifiedById, now),
+      ...rankShortlist(request, others, verifiedById, now),
+    ];
+    return {
+      request: { _id: String(request._id), category: request.category, state: request.state, city: request.city, budget: request.budget },
+      inNiche: inNiche.length,
+      candidates: ranked.slice(0, limit).map((c) => ({ ...c, inNiche: inNiche.some((d) => String(d._id) === c.id) })),
+    };
+  }
+
+  /** Admin: the brand signup link for this request (same link if asked again). */
+  async signupLink(id: string) {
+    const request = await this.findRequest(id);
+    let code = String(request.signupCode || "");
+    if (!code) {
+      code = newSignupCode();
+      await this.requests().updateOne({ _id: request._id, signupCode: null }, { $set: { signupCode: code } });
+      const fresh: any = await this.requests().findOne({ _id: request._id }, { projection: { signupCode: 1 } });
+      code = String(fresh?.signupCode || code);
+    }
+    const params = new URLSearchParams({
+      shortlist: `${request._id}.${code}`,
+      utm_source: "whatsapp",
+      utm_medium: "shortlist",
+      utm_campaign: "shortlist-request",
+    });
+    return { link: `${frontendUrl()}/register-brand?${params}` };
+  }
+
+  /** Public: the brand's own details for the signup form, only with the right code. */
+  async prefill(ref: unknown) {
+    const parts = parseSignupRef(ref);
+    if (!parts) throw new NotFoundException("This link isn't valid.");
+    const doc: any = await this.requests().findOne({ _id: new Types.ObjectId(parts.id), signupCode: parts.code });
+    if (!doc || doc.brandId || Date.now() - new Date(doc.createdAt).getTime() > SIGNUP_LINK_DAYS * DAY) {
+      throw new NotFoundException("This link has expired or was already used.");
+    }
+    return {
+      name: doc.name,
+      businessName: doc.businessName,
+      phone: doc.phone,
+      state: doc.state,
+      city: doc.city,
+      category: doc.category,
+    };
   }
 
   scorecard() {

@@ -13,6 +13,13 @@ export class PublicShortlistController {
     return this.growth.creatorCount(state, category);
   }
 
+  /** Signup page: the brand's details from their shortlist link (needs the private code). */
+  @Throttle({ default: { ttl: 60000, limit: 10 } })
+  @Get("prefill")
+  async prefill(@Query("ref") ref: string) {
+    return this.growth.prefill(ref);
+  }
+
   @Throttle({ default: { ttl: 60000, limit: 3 } })
   @Post()
   async create(@Body() body: any) {

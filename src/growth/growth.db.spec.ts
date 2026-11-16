@@ -5,7 +5,7 @@ import { sendAppEmail } from "../utils/app-email.service";
 import { DB_TEST_TIMEOUT_MS, startTestDb, TestDb } from "../testing/mongo-replset.fixture-spec";
 import { buildScorecard, scorecardEmailText, sourceLabel } from "./growth-scorecard";
 import { GrowthService } from "./growth.service";
-import { parseShortlistInput, SHORTLIST_REQUESTS } from "./shortlist-request.util";
+import { markShortlistSignup, parseShortlistInput, SHORTLIST_REQUESTS } from "./shortlist-request.util";
 
 jest.setTimeout(DB_TEST_TIMEOUT_MS);
 const DAY = 24 * 60 * 60 * 1000;
@@ -100,6 +100,52 @@ describe("growth (real MongoDB, 2026-11-16)", () => {
     expect(updated.status).toBe("contacted");
     expect(updated.contactedAt).toBeTruthy();
     await expect(service.updateRequest(String(docs[0]._id), { status: "won" }, "admin1")).rejects.toThrow("Status must be");
+  });
+
+  it("signup link prefills only with the right code, and the signup marks the request converted", async () => {
+    const col = db.conn.collection(SHORTLIST_REQUESTS);
+    const { insertedId } = await col.insertOne({
+      name: "Asha", businessName: "Asha Foods", phone: "9000000001", state: "Telangana", city: "Hyderabad",
+      category: "Food", budget: "not_sure", status: "contacted", createdAt: new Date(),
+    });
+    const { link } = await service.signupLink(String(insertedId));
+    const again = await service.signupLink(String(insertedId));
+    expect(again.link).toBe(link);
+    const ref = new URL(link).searchParams.get("shortlist")!;
+    expect(new URL(link).searchParams.get("utm_medium")).toBe("shortlist");
+    expect(await service.prefill(ref)).toEqual({
+      name: "Asha", businessName: "Asha Foods", phone: "9000000001", state: "Telangana", city: "Hyderabad", category: "Food",
+    });
+    await expect(service.prefill(`${insertedId}.${"0".repeat(32)}`)).rejects.toThrow("expired");
+    await expect(service.prefill("nonsense")).rejects.toThrow("isn't valid");
+
+    expect(await markShortlistSignup(db.conn.db, ref, "brand-1")).toBe(true);
+    expect(await markShortlistSignup(db.conn.db, ref, "brand-2")).toBe(false);
+    const doc: any = await col.findOne({ _id: insertedId });
+    expect(doc).toMatchObject({ status: "converted", brandId: "brand-1" });
+    await expect(service.prefill(ref)).rejects.toThrow("already used");
+  });
+
+  it("build shortlist: creators a guest can open in the state, niche first", async () => {
+    const d = db.conn.db as any;
+    const pub = (over: any) => ({
+      status: "accepted", verificationStatus: "approved", profileVisibility: "PUBLIC", isEmailVerified: true, isMobileVerified: true,
+      profileImages: [{ url: "x", public_id: "x" }],
+      socialMedia: [{ handle: "h", tier: "Micro" }],
+      ...over,
+    });
+    await d.collection("influencers").insertMany([
+      pub({ name: "Niche", publicId: "INF9001", location: { state: "Kerala", district: "Kochi" }, categories: ["Travel"] }),
+      pub({ name: "Other", publicId: "INF9002", location: { state: "Kerala", district: "Kochi" }, categories: ["Comedy"] }),
+      pub({ name: "Hidden", publicId: "INF9003", location: { state: "Kerala" }, categories: ["Travel"], profileVisibility: "MEMBERS_ONLY" }),
+      pub({ name: "Elsewhere", publicId: "INF9004", location: { state: "Goa" }, categories: ["Travel"] }),
+    ]);
+    const { insertedId } = await db.conn.collection(SHORTLIST_REQUESTS).insertOne({
+      name: "B", businessName: "Kochi Tours", phone: "9000000002", state: "Kerala", city: "Kochi", category: "Travel", budget: "not_sure", status: "new", createdAt: new Date(),
+    });
+    const res = await service.matchesFor(String(insertedId));
+    expect(res.inNiche).toBe(1);
+    expect(res.candidates.map((c: any) => [c.name, c.inNiche])).toEqual([["Niche", true], ["Other", false]]);
   });
 
   it("input rules and source labels", () => {

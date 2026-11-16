@@ -30,6 +30,16 @@ export class AdminGrowthController {
     return this.growth.listRequests(status);
   }
 
+  @Get("shortlist-requests/:id/matches")
+  async matches(@Param("id") id: string) {
+    return this.growth.matchesFor(id);
+  }
+
+  @Get("shortlist-requests/:id/signup-link")
+  async signupLink(@Param("id") id: string) {
+    return this.growth.signupLink(id);
+  }
+
   @Patch("shortlist-requests/:id")
   @LogAdminAction("shortlist_request_update")
   async update(@Param("id") id: string, @Body() body: any, @Req() req: any) {
