@@ -32,3 +32,14 @@ describe("UPI ID check", () => {
     expect(() => payoutFromInput({ upiId: "ravi" }, fail)).toThrow(/doesn't look right/);
   });
 });
+
+describe("upiChangedRecently (2026-11-16)", () => {
+  const { upiChangedRecently } = require("./upi.util");
+  const now = new Date("2026-11-16T10:00:00Z");
+  it("holds automatic payouts for 7 days after a change", () => {
+    expect(upiChangedRecently(new Date("2026-11-10T10:00:00Z"), now)).toBe(true);
+    expect(upiChangedRecently(new Date("2026-11-09T09:59:00Z"), now)).toBe(false);
+    expect(upiChangedRecently(null, now)).toBe(false);
+    expect(upiChangedRecently("not a date", now)).toBe(false);
+  });
+});

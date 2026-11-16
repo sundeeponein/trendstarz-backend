@@ -1,3 +1,4 @@
+import { UPI_CHANGE_HOLD_DAYS, upiChangedRecently } from "../utils/upi.util";
 import { recordInviteWhatsApp } from "../whatsapp/invite-whatsapp-log";
 import {
   BadRequestException,
@@ -586,6 +587,7 @@ export class PaymentsPayoutsService {
     name: string;
     upiId: string;
     role: "brand" | "influencer" | "photographer";
+    upiChangedAt: Date | null;
   } | null> {
     const role = String(tx?.recipientRole || "").toLowerCase();
     const recipientId = String(tx?.recipientId || "");
@@ -601,6 +603,7 @@ export class PaymentsPayoutsService {
         name: String(photographer?.name || "Photographer"),
         upiId: String(photographer?.payout?.upiId || "").trim(),
         role: "photographer",
+        upiChangedAt: photographer?.payout?.upiChangedAt || null,
       };
     }
 
@@ -613,6 +616,7 @@ export class PaymentsPayoutsService {
       name: String(influencer?.name || "Influencer"),
       upiId: String(influencer?.payout?.upiId || "").trim(),
       role: "influencer",
+      upiChangedAt: influencer?.payout?.upiChangedAt || null,
     };
   }
 
@@ -2854,6 +2858,17 @@ export class PaymentsPayoutsService {
           txId,
           status: "skipped",
           message: "Recipient UPI ID is missing",
+        });
+        continue;
+      }
+      // A UPI ID changed in the last 7 days could be a taken-over account:
+      // an admin confirms with the creator and pays by hand (2026-11-16).
+      if (upiChangedRecently(recipient.upiChangedAt)) {
+        skipped += 1;
+        details.push({
+          txId,
+          status: "skipped",
+          message: `UPI ID changed in the last ${UPI_CHANGE_HOLD_DAYS} days — confirm with the creator and pay by hand`,
         });
         continue;
       }

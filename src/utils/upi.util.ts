@@ -47,6 +47,17 @@ export function upiChangeFields(previous: unknown, next: unknown, now = new Date
   return { "payout.upiChangedAt": now, "payout.previousUpiId": before };
 }
 
+/** Automatic payouts wait this long after a UPI ID change (admins pay by hand after confirming). */
+export const UPI_CHANGE_HOLD_DAYS = 7;
+
+/** True while a UPI ID change is too recent for an automatic payout (2026-11-16). */
+export function upiChangedRecently(changedAt: unknown, now = new Date()): boolean {
+  if (!changedAt) return false;
+  const at = new Date(changedAt as any).getTime();
+  if (!Number.isFinite(at)) return false;
+  return now.getTime() - at < UPI_CHANGE_HOLD_DAYS * 24 * 60 * 60 * 1000;
+}
+
 /** "ab***@okaxis" — enough for the owner to recognise, not enough to reuse. */
 export function maskUpiId(value: unknown): string {
   const upi = normalizeUpiId(value);
