@@ -47,4 +47,17 @@ describe("browser errors are recorded (real HTTP + MongoDB)", () => {
     expect(c.count).toBe(5);
     expect(c.samples[0]).toBe("/campaign/:id ×5 — x is undefined for [email]");
   });
+
+  it("ignores harmless browser messages: not stored, and older ones not counted (2026-11-17)", async () => {
+    for (const message of ["Error invoking postMessage: Java object is gone", "Script error."]) {
+      await request(app.getHttpServer()).post("/client-errors").send({ page: "/", name: "Error", message }).expect(204);
+    }
+    expect(await db.conn.db!.collection(CLIENT_ERRORS).countDocuments({ message: /Java object|Script error/ })).toBe(0);
+    await db.conn.db!.collection(CLIENT_ERRORS).insertMany(
+      Array.from({ length: 6 }, () => ({ at: new Date(), page: "/", message: "Script error." })),
+    );
+    const c = (await runIntegrityChecks(db.conn.db as any)).find((x) => x.key === "client_errors")!;
+    expect(c.count).toBe(5); // still only the 5 real ones from the test above
+    expect(c.samples.some((x: string) => x.includes("Script error"))).toBe(false);
+  });
 });

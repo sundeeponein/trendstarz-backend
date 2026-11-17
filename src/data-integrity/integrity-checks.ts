@@ -1,4 +1,5 @@
 import { normalizeUtr } from "../utils/utr.util";
+import { CLIENT_ERROR_NOISE } from "./client-errors.controller";
 import { ObjectId, type Db } from "mongodb";
 import { PERSONAL_TRACES } from "../users/personal-traces";
 import { ACTIVE_INVITE_STATUSES } from "../campaigns/reinvite-rule.util";
@@ -1162,7 +1163,8 @@ async function clientErrors(db: Db): Promise<IntegrityCheck> {
   const rows: any[] = await db
     .collection("client_errors")
     .aggregate([
-      { $match: { at: { $gte: since } } },
+      // Harmless messages stored before 2026-11-17 are left out (see CLIENT_ERROR_NOISE).
+      { $match: { at: { $gte: since }, message: { $nin: CLIENT_ERROR_NOISE } } },
       { $group: { _id: { page: "$page", message: "$message" }, n: { $sum: 1 } } },
       { $sort: { n: -1 } },
       { $limit: 15 },

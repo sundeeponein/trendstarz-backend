@@ -6,7 +6,7 @@ import {
   NotFoundException,
   InternalServerErrorException,
 } from "@nestjs/common";
-import { AuthService } from "./auth.service";
+import { AuthService, isFirebaseTooManyAttempts } from "./auth.service";
 import * as bcrypt from "bcryptjs";
 import { FirebaseAdminService } from "../utils/firebase-admin.service";
 import { CloudinaryService } from "../cloudinary.service";
@@ -448,6 +448,31 @@ describe("AuthService", () => {
       const result = await service.sendEmailVerificationLink("admin@test.com");
       expect(result.message).toBe("Verification email sent.");
       expect(sendAppEmail).toHaveBeenCalled();
+    });
+
+    it("explains Firebase's too-many-attempts limit instead of an internal error (2026-11-17)", async () => {
+      userModel.findOne.mockResolvedValue({
+        ...mockAdmin,
+        isEmailVerified: false,
+        save: jest.fn().mockResolvedValue(undefined),
+      });
+      const firebase: any = (service as any).firebaseAdminService;
+      firebase.isConfigured.mockReturnValue(true);
+      firebase.generateEmailVerificationLink.mockRejectedValue(
+        Object.assign(new Error('Raw server response: "{"error":{"code":400,"message":"TOO_MANY_ATTEMPTS_TRY_LATER"}}"'), { code: "auth/internal-error" }),
+      );
+      await expect(service.sendEmailVerificationLink("admin@test.com")).rejects.toMatchObject({
+        status: 429,
+        message: expect.stringContaining("wait a few minutes"),
+      });
+      firebase.isConfigured.mockReturnValue(false);
+    });
+
+    it("recognises Firebase's limit by code or message", () => {
+      expect(isFirebaseTooManyAttempts({ code: "auth/too-many-requests" })).toBe(true);
+      expect(isFirebaseTooManyAttempts({ errorInfo: { code: "auth/too-many-requests" } })).toBe(true);
+      expect(isFirebaseTooManyAttempts(new Error("TOO_MANY_ATTEMPTS_TRY_LATER"))).toBe(true);
+      expect(isFirebaseTooManyAttempts(new Error("user not found"))).toBe(false);
     });
   });
 

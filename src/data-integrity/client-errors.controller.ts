@@ -7,6 +7,18 @@ import type { Connection } from "mongoose";
 export const CLIENT_ERRORS = "client_errors";
 export const CLIENT_ERRORS_KEEP_DAYS = 30;
 
+/**
+ * Harmless browser messages that aren't our bugs (2026-11-17): Android in-app
+ * browsers closing ("Java object is gone") and errors from other sites'
+ * scripts, which browsers hide as "Script error.". Not stored, not counted.
+ */
+export const CLIENT_ERROR_NOISE: RegExp[] = [/Java object is gone/i, /^Script error\.?$/i];
+
+export function isClientErrorNoise(message: unknown): boolean {
+  const text = String(message ?? "").trim();
+  return CLIENT_ERROR_NOISE.some((re) => re.test(text));
+}
+
 const clean = (v: unknown, max: number) =>
   String(v ?? "")
     .replace(/\S+@\S+/g, "[email]")
@@ -23,7 +35,7 @@ export class ClientErrorsController {
   @Throttle({ default: { ttl: 60000, limit: 10 } })
   async report(@Body() body: any): Promise<void> {
     const message = clean(body?.message, 300);
-    if (!message) return;
+    if (!message || isClientErrorNoise(message)) return;
     await this.connection
       .db!.collection(CLIENT_ERRORS)
       .insertOne({

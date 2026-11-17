@@ -11,6 +11,8 @@ import {
   ForbiddenException,
   NotFoundException,
   InternalServerErrorException,
+  HttpException,
+  HttpStatus,
 } from "@nestjs/common";
 import * as bcrypt from "bcryptjs";
 import * as crypto from "crypto";
@@ -64,6 +66,13 @@ type AnyUserDoc = {
 
 type FirebaseContactType = "email" | "phone";
 type TrendstarzRole = "admin" | "influencer" | "brand" | "photographer";
+
+/** Firebase's "too many attempts" refusal (code or message, as the Admin SDK reports it). */
+export function isFirebaseTooManyAttempts(err: unknown): boolean {
+  const e = err as any;
+  const text = `${e?.code || ""} ${e?.errorInfo?.code || ""} ${e?.message || ""}`;
+  return /too-many-requests|TOO_MANY_ATTEMPTS/i.test(text);
+}
 
 @Injectable()
 export class AuthService {
@@ -190,10 +199,22 @@ export class AuthService {
     role: TrendstarzRole,
   ): Promise<string> {
     if (this.firebaseAdminService.isConfigured()) {
-      const verifyUrl =
-        await this.firebaseAdminService.generateEmailVerificationLink(
+      let verifyUrl: string;
+      try {
+        verifyUrl = await this.firebaseAdminService.generateEmailVerificationLink(
           normalizedEmail,
         );
+      } catch (err) {
+        // Firebase limits repeated links for one address; it used to reach the
+        // user as "An internal error has occurred" (2026-11-17).
+        if (isFirebaseTooManyAttempts(err)) {
+          throw new HttpException(
+            "Too many verification emails were requested. Please wait a few minutes and try again.",
+            HttpStatus.TOO_MANY_REQUESTS,
+          );
+        }
+        throw err;
+      }
       await this.firebaseAdminService.setUserRoleClaim(normalizedEmail, role);
       return verifyUrl;
     }
