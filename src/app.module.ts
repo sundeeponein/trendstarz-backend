@@ -1,5 +1,4 @@
 import { PriceChangesModule } from "./price-changes/price-changes.module";
-import { GrowthModule } from "./growth/growth.module";
 import { Module } from "@nestjs/common";
 import { APP_GUARD } from "@nestjs/core";
 import { ThrottlerModule, ThrottlerGuard } from "@nestjs/throttler";
@@ -212,7 +211,6 @@ import { CronLockInitializer } from "./utils/single-instance";
     MatchingEvidenceModule,
     TierReviewModule,
     PriceChangesModule,
-    GrowthModule,
     AvailabilityModule,
   ],
   controllers: [
