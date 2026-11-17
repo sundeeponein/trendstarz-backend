@@ -93,6 +93,7 @@ import { PlatformMetricsModule } from "./platform-metrics/platform-metrics.modul
 import { DataIntegrityModule } from "./data-integrity/data-integrity.module";
 import { RazorpayWebhookModule } from "./razorpay-webhook/razorpay-webhook.module";
 import { CronLockInitializer } from "./utils/single-instance";
+import { RequestLockInitializer } from "./utils/request-lock.util";
 
 @Module({
   imports: [
@@ -241,6 +242,8 @@ import { CronLockInitializer } from "./utils/single-instance";
     AuthService,
     // Connects @SingleInstance() job locks to the database before any job fires.
     CronLockInitializer,
+    // Connects withRequestLocks() (limit checks one request at a time) to the database.
+    RequestLockInitializer,
     EarlyAccessAssignmentService,
     PendingUserCleanupService,
     PendingUploadCleanupService,

@@ -70,6 +70,7 @@ import {
 import { settingHours } from "../utils/workflow-timing.util";
 import { idIn } from "../utils/id-match.util";
 import { SingleInstance } from "../utils/single-instance";
+import { campaignSlotLockKey, withRequestLocks } from "../utils/request-lock.util";
 import {
   campaignDeletionBlocker,
   DELETABLE_INVITE_STATUSES,
@@ -1240,6 +1241,18 @@ export class CampaignsService {
   }
 
   async create(ownerId: string, data: any, requesterRole?: string) {
+    // Drafts take no monthly slot; anything else counts the host's slots and then
+    // creates, so one host's requests run one at a time (a double submit can't
+    // both pass the limit).
+    if (String(data?.status || "").trim().toLowerCase() === "draft") {
+      return this.createCampaign(ownerId, data, requesterRole);
+    }
+    return withRequestLocks([campaignSlotLockKey(ownerId)], () =>
+      this.createCampaign(ownerId, data, requesterRole),
+    );
+  }
+
+  private async createCampaign(ownerId: string, data: any, requesterRole?: string) {
     data = withoutServerOwnedCampaignFields(data);
     // Enforce creation limit for owners (brand/photographer)
     const ownerType: CampaignOwnerType = await this.resolveOwnerTypeByProfile(
@@ -2005,6 +2018,14 @@ export class CampaignsService {
   }
 
   async update(id: string, brandId: string, data: any) {
+    // Submitting a draft (or switching to barter) counts the host's monthly slots:
+    // same per-host lock as create() (only the owner edits, so their id is the key).
+    return withRequestLocks([campaignSlotLockKey(String(brandId))], () =>
+      this.updateCampaign(id, brandId, data),
+    );
+  }
+
+  private async updateCampaign(id: string, brandId: string, data: any) {
     data = withoutServerOwnedCampaignFields(data);
     const campaign = await this.campaignModel.findById(id);
     if (!campaign) throw new NotFoundException("Campaign not found");

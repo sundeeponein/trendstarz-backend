@@ -502,6 +502,18 @@ describe("CampaignInvitesService – create() gating", () => {
     },
   );
 
+  it("removes the new invite when the campaign was closed while it was being sent", async () => {
+    const live = { _id: "camp1", brandId: "brand1", title: "T", status: "active", ownerType: "brand" };
+    campaignModel.findById
+      .mockReturnValueOnce({ lean: jest.fn().mockResolvedValue(live) })
+      .mockReturnValue({ lean: jest.fn().mockResolvedValue({ ...live, status: "completed" }) });
+    inviteModel.deleteOne = jest.fn().mockResolvedValue({ deletedCount: 1 });
+    await expect(
+      service.create("brand1", { campaignId: "camp1", influencerId: "inf1" }),
+    ).rejects.toThrow("Invites can only be sent for active or pending-review campaigns.");
+    expect(inviteModel.deleteOne).toHaveBeenCalledWith({ _id: "inv-new" });
+  });
+
   describe("saveIfUnchanged (answer races)", () => {
     it("saves with a filter on the state as read; a missing/default value also matches missing", async () => {
       const invite: any = { save: jest.fn().mockResolvedValue("saved") };
@@ -2455,6 +2467,26 @@ describe("CampaignInvitesService – platform events", () => {
         inviteId: "inv1",
         metadata: expect.objectContaining({ viaCounterAcceptedByOwner: true }),
       });
+    });
+
+    it("an owner can't accept a counter once the campaign's accepted places are full", async () => {
+      const invite = doc({
+        _id: "inv1",
+        influencerId: "inf1",
+        brandId: "brand1",
+        campaignId: "camp1",
+        status: "counter_sent",
+        counterOffer: { status: "sent", requestedAmount: 700, requestedAmountPaise: 70000 },
+      });
+      inviteModel.findById.mockResolvedValue(invite);
+      campaignModel.findById.mockReturnValue(queryOf({ ...activeCampaign, maxInfluencers: 1 }));
+      inviteModel.countDocuments.mockResolvedValue(1); // another creator already accepted
+
+      await expect(service.respondToCounter("inv1", "brand1", "accept")).rejects.toThrow(
+        "required influencer count reached (1)",
+      );
+      expect(invite.save).not.toHaveBeenCalled();
+      expect(eventsOfType("invite_accepted")).toHaveLength(0);
     });
 
     it("an owner declining the counter is not an accept or a creator decline (invite goes back to pending)", async () => {

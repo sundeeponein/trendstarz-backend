@@ -43,6 +43,20 @@ import {
   countUsedMonthlySlots,
   fullyBookedCreatorIds,
 } from "./creator-monthly-slots.util";
+import {
+  campaignInvitesLockKey,
+  creatorSlotLockKey,
+  hostInvitesLockKey,
+  withRequestLocks,
+} from "../utils/request-lock.util";
+
+/** Campaign statuses an owner can send invites in (pending review included). */
+const INVITE_SENDABLE_CAMPAIGN_STATUSES = new Set([
+  "active",
+  "pending",
+  "pending_review",
+  "needs_changes",
+]);
 import { sendAppEmail } from "../utils/app-email.service";
 import { inviteReminderTemplate } from "../email/templates/campaign.templates";
 import { PlansService } from "../plans/plans.service";
@@ -1374,7 +1388,30 @@ export class CampaignInvitesService {
     return (await this.resolveOwnerIdentifiers(requester)).includes(owner);
   }
 
+  /**
+   * Sending counts the campaign's invites, the creator's monthly slots and the
+   * host's monthly invites, then creates. Requests touching the same campaign,
+   * creator or host run one at a time, so two sent together can't both pass a limit.
+   */
   async create(
+    brandId: string,
+    data: any,
+    options: { invitedByAdminId?: string } = {},
+  ) {
+    const recipientId = String(
+      data?.recipientId || data?.influencerId || data?.photographerId || "",
+    ).trim();
+    return withRequestLocks(
+      [
+        data?.campaignId ? campaignInvitesLockKey(String(data.campaignId)) : "",
+        recipientId ? creatorSlotLockKey(recipientId) : "",
+        hostInvitesLockKey(String(brandId)),
+      ],
+      () => this.createInvite(brandId, data, options),
+    );
+  }
+
+  private async createInvite(
     brandId: string,
     data: any,
     options: { invitedByAdminId?: string } = {},
@@ -1401,13 +1438,7 @@ export class CampaignInvitesService {
       const campStatus = String(campaign?.status || "")
         .trim()
         .toLowerCase();
-      const allowedForOwner = new Set([
-        "active",
-        "pending",
-        "pending_review",
-        "needs_changes",
-      ]);
-      if (!allowedForOwner.has(campStatus)) {
+      if (!INVITE_SENDABLE_CAMPAIGN_STATUSES.has(campStatus)) {
         throw new BadRequestException("Invites can only be sent for active or pending-review campaigns.");
       }
     }
@@ -1588,6 +1619,21 @@ export class CampaignInvitesService {
         );
       }
       throw err;
+    }
+    // The campaign may have been closed (completed, cancelled, sent back to draft)
+    // while this invite was being checked: don't leave an invite in it.
+    const campaignNow: any = await this.campaignModel
+      .findById(campaign._id, { status: 1 })
+      .lean();
+    if (
+      !INVITE_SENDABLE_CAMPAIGN_STATUSES.has(
+        String(campaignNow?.status || "").trim().toLowerCase(),
+      )
+    ) {
+      await this.inviteModel.deleteOne({ _id: saved._id });
+      throw new BadRequestException(
+        "Invites can only be sent for active or pending-review campaigns.",
+      );
     }
 
     const senderRole: PlatformEventActorRole =
@@ -3536,7 +3582,41 @@ export class CampaignInvitesService {
     }
   }
 
+  /**
+   * Accepting counts the campaign's accepted places, then saves. Accepts for the
+   * same campaign run one at a time, so two creators accepting the last place
+   * together can't both get it.
+   */
   async respond(
+    inviteId: string,
+    influencerId: string,
+    status: "accepted" | "declined" | "counter_sent",
+    ...rest: any[]
+  ): Promise<any> {
+    const run = () =>
+      (this.respondUnlocked as (...a: any[]) => Promise<any>).call(
+        this,
+        inviteId,
+        influencerId,
+        status,
+        ...rest,
+      );
+    if (status !== "accepted") return run();
+    const campaignId = await this.inviteCampaignIdFor(inviteId);
+    return campaignId
+      ? withRequestLocks([campaignInvitesLockKey(campaignId)], run)
+      : run();
+  }
+
+  private async inviteCampaignIdFor(inviteId: string): Promise<string> {
+    if (!Types.ObjectId.isValid(String(inviteId))) return "";
+    const row: any = await this.inviteModel
+      .findById(inviteId, { campaignId: 1 })
+      .lean();
+    return row?.campaignId ? String(row.campaignId) : "";
+  }
+
+  private async respondUnlocked(
     inviteId: string,
     influencerId: string,
     status: "accepted" | "declined" | "counter_sent",
@@ -4244,7 +4324,30 @@ export class CampaignInvitesService {
     return updated;
   }
 
+  /** Accepting a creator's counter takes an accepted place: same lock as respond(). */
   async respondToCounter(
+    inviteId: string,
+    requesterId: string,
+    action: "accept" | "decline" | "counter",
+    note?: string,
+    counterAmount?: number,
+  ) {
+    const run = () =>
+      this.respondToCounterUnlocked(
+        inviteId,
+        requesterId,
+        action,
+        note,
+        counterAmount,
+      );
+    if (action !== "accept") return run();
+    const campaignId = await this.inviteCampaignIdFor(inviteId);
+    return campaignId
+      ? withRequestLocks([campaignInvitesLockKey(campaignId)], run)
+      : run();
+  }
+
+  private async respondToCounterUnlocked(
     inviteId: string,
     requesterId: string,
     action: "accept" | "decline" | "counter",
@@ -4363,11 +4466,22 @@ export class CampaignInvitesService {
     if (action === "accept") {
       const campaign: any = await this.campaignModel
         .findById(invite.campaignId)
-        .select("status campaignType")
+        .select("status campaignType inviteSlots maxInfluencers")
         .lean();
       this.assertCampaignLiveForRecipient(campaign, "accept the counter offer");
       this.assertCampaignNotEnded(campaign, "accept the counter offer");
       const recipientRole = this.normalizeRecipientRole(invite?.recipientRole);
+      // Same accepted-places limit a creator's own acceptance checks.
+      const counterCloseAt = this.getRoleAcceptanceCloseAt(campaign, recipientRole);
+      if (
+        counterCloseAt > 0 &&
+        (await this.countAcceptedForRole(invite.campaignId, recipientRole)) >=
+          counterCloseAt
+      ) {
+        throw new BadRequestException(
+          `Campaign is closed: required ${recipientRole} count reached (${counterCloseAt}).`,
+        );
+      }
       const recipientIdForEligibility = String(
         invite?.influencerId || "",
       );
