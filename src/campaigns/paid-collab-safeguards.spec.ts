@@ -1085,36 +1085,6 @@ describe("Paid-collaboration safeguards (CampaignInvitesService)", () => {
     });
   });
 
-  describe("unanswered invites (2026-11-16)", () => {
-    const pending = (hoursAgo: number, over: Record<string, any> = {}) =>
-      working({ status: "pending", createdAt: new Date(Date.now() - hoursAgo * 60 * 60 * 1000), ...over });
-
-    it("reminds the creator after 24h and tells the host after 48h, once each", async () => {
-      await build([pending(30)]);
-      expect(await service.nudgeUnansweredInvites(new Date())).toEqual({ creators: 1, hosts: 0 });
-      expect(invites.get(INVITE).unansweredCreatorReminderAt).toBeTruthy();
-      expect(notifications.createForUser).toHaveBeenCalledWith(
-        expect.objectContaining({ userId: "creator1", url: `/influencer-dashboard?invite=${INVITE}` }),
-      );
-      // A day later: the host is told; the creator is not reminded again.
-      notifications.createForUser.mockClear();
-      expect(await service.nudgeUnansweredInvites(new Date(Date.now() + 24 * 60 * 60 * 1000))).toEqual({ creators: 0, hosts: 1 });
-      expect(notifications.createForUser).toHaveBeenCalledWith(
-        expect.objectContaining({ userId: "host1", userRole: "brand", title: "No reply to your invite yet", url: "/campaigns" }),
-      );
-      expect(await service.nudgeUnansweredInvites(new Date(Date.now() + 48 * 60 * 60 * 1000))).toEqual({ creators: 0, hosts: 0 });
-    });
-
-    it("leaves fresh invites, answered invites and campaigns that aren't live alone", async () => {
-      await build([pending(10)]);
-      expect(await service.nudgeUnansweredInvites(new Date())).toEqual({ creators: 0, hosts: 0 });
-      await build([pending(60, { status: "accepted" })]);
-      expect(await service.nudgeUnansweredInvites(new Date())).toEqual({ creators: 0, hosts: 0 });
-      await build([pending(60)], [], [], [], { status: "completed" });
-      expect(await service.nudgeUnansweredInvites(new Date())).toEqual({ creators: 0, hosts: 0 });
-    });
-  });
-
   describe("location visit = the visit only (2026-11-11)", () => {
     const location = { campaignType: "invite_location" };
 

@@ -148,9 +148,6 @@ export const CampaignInviteSchema = new Schema({
   // milestone fires so the cron never re-sends it (independent of the brand-initiated remindedAt above).
   postingReminder48hSentAt: { type: Date },
   postingReminder24hSentAt: { type: Date },
-  // Unanswered invite (2026-11-16): creator reminded after 24h, host told after 48h — once each.
-  unansweredCreatorReminderAt: { type: Date },
-  unansweredHostNudgeAt: { type: Date },
   // Campaign WhatsApp messages sent for this invite (automatic + admin manual): count,
   // last time and how — the admin message buttons show "Sent" from this (2026-11-13).
   whatsappLog: InviteWhatsAppLogSchemaDef,
