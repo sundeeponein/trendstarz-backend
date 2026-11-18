@@ -1,5 +1,6 @@
 import axios from "axios";
-import type { Db } from "mongodb";
+import { ObjectId, type Db } from "mongodb";
+import { openMoneyFilter, openWorkFilter } from "../users/self-deletion.util";
 
 /** One address Brevo will not send to, as Brevo reports it. */
 export interface BlockedContact {
@@ -14,6 +15,10 @@ export interface EmailBlockRow {
   accountId: string;
   reason: string;
   blockedAt: string;
+  /** A campaign is under way with them (same rule as the self-delete guard). */
+  openWork: boolean;
+  /** A payment, payout or refund involving them isn't settled. */
+  openMoney: boolean;
 }
 
 export interface EmailBlocksResult {
@@ -69,8 +74,20 @@ export async function matchEmailBlocks(db: Db, blocked: BlockedContact[]): Promi
         accountId: String(a._id),
         reason: String(hit.reason?.message || hit.reason?.code || "blocked"),
         blockedAt: String(hit.blockedAt || ""),
+        openWork: false,
+        openMoney: false,
       });
     }
   }
+  // Their payment and campaign emails aren't arriving: flag who has something
+  // open, so the admin unblocks them in Brevo now instead of waiting.
+  for (const row of result.accounts) {
+    if (row.role === "admin" || !ObjectId.isValid(row.accountId)) continue;
+    // Raw driver: no schema casting, so pass an ObjectId (idIn adds the string form).
+    const id: any = new ObjectId(row.accountId);
+    row.openWork = !!(await db.collection("campaigninvites").findOne(openWorkFilter(id) as any, { projection: { _id: 1 } }));
+    row.openMoney = !!(await db.collection("campaigntransactions").findOne(openMoneyFilter(id) as any, { projection: { _id: 1 } }));
+  }
+  result.accounts.sort((a, b) => Number(b.openMoney || b.openWork) - Number(a.openMoney || a.openWork));
   return result;
 }

@@ -28,7 +28,37 @@ describe("accounts whose email Brevo won't deliver to (real MongoDB)", () => {
     ]);
     expect(r.blockedInBrevo).toBe(4);
     expect(r.accounts).toEqual([
-      { email: "bounced@x.in", role: "influencer", accountId: String(bounced), reason: "Hard bounce", blockedAt: "2026-10-01" },
+      { email: "bounced@x.in", role: "influencer", accountId: String(bounced), reason: "Hard bounce", blockedAt: "2026-10-01", openWork: false, openMoney: false },
     ]);
+  });
+
+  it("flags blocked people with a campaign or money open, and lists them first", async () => {
+    const db: any = tdb.conn.db;
+    await db.collection("influencers").deleteMany({});
+    const quiet = new Types.ObjectId();
+    const working = new Types.ObjectId();
+    const owed = new Types.ObjectId();
+    await db.collection("influencers").insertMany([
+      { _id: quiet, email: "quiet@x.in" },
+      { _id: working, email: "working@x.in" },
+      { _id: owed, email: "owed@x.in" },
+    ]);
+    // Stored as an ObjectId on invites, as a string on payments — both must match.
+    await db.collection("campaigninvites").insertMany([
+      { influencerId: working, brandId: "b1", status: "working" },
+      { influencerId: quiet, brandId: "b1", status: "completed" },
+    ]);
+    await db.collection("campaigntransactions").insertOne({
+      recipientId: String(owed), collectionStatus: "verified", payoutStatus: "pending",
+    });
+    const reason = { code: "unsubscribedViaEmail" };
+    const r = await matchEmailBlocks(db, [
+      { email: "quiet@x.in", reason },
+      { email: "working@x.in", reason },
+      { email: "owed@x.in", reason },
+    ]);
+    const flags = r.accounts.map((a) => [a.email, a.openWork, a.openMoney]);
+    expect(flags.slice(0, 2)).toEqual(expect.arrayContaining([["working@x.in", true, false], ["owed@x.in", false, true]]));
+    expect(flags[2]).toEqual(["quiet@x.in", false, false]);
   });
 });
