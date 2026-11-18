@@ -33,6 +33,7 @@ export const EXPLAINABLE_CHECKS = [
   "dangling_references",
 ];
 import { EMAIL_FAILURES, EMAIL_FAILURES_KEEP_DAYS, sendAppEmail, setEmailFailureCollection } from "../utils/app-email.service";
+import { setUnsubscribeReleaseDb } from "../utils/email-unsubscribe-release";
 import { reconcileRazorpay } from "./razorpay-reconcile";
 import { reconcileFirebase } from "./firebase-reconcile";
 import { CLIENT_ERRORS, CLIENT_ERRORS_KEEP_DAYS } from "./client-errors.controller";
@@ -128,6 +129,7 @@ export class DataIntegrityService implements OnModuleInit {
 
   async onModuleInit() {
     setEmailFailureCollection(this.connection.db!.collection(EMAIL_FAILURES));
+    setUnsubscribeReleaseDb(this.connection.db!);
     setAdminActionCollection(this.connection.db!.collection(ADMIN_ACTIONS));
     setServerErrorCollection(this.connection.db!.collection(SERVER_ERRORS));
     await this.connection.db!

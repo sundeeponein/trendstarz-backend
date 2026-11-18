@@ -52,6 +52,7 @@ export class OtpController {
         subject: template.subject,
         text: template.text,
         html: template.html,
+        requestedByUser: true,
       });
     } else if (type === "phone") {
       await this.smsProvider.send(

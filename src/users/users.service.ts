@@ -3151,6 +3151,7 @@ export class UsersService implements OnModuleInit {
     await sendAppEmail({
       to: String(user.email),
       ...deleteAccountCodeTemplate({ otp: code, expiryMinutes: 5 }),
+      requestedByUser: true,
     });
     return { sentTo: maskEmail(String(user.email)) };
   }

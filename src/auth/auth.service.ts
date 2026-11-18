@@ -260,7 +260,7 @@ export class AuthService {
     const verifyUrl = await this.generateVerifyUrl(normalizedEmail, match.role);
     const { subject, html, text } = verifyEmailTemplate(verifyUrl);
 
-    await sendAppEmail({ to: normalizedEmail, subject, html, text });
+    await sendAppEmail({ to: normalizedEmail, subject, html, text, requestedByUser: true });
 
     // Reset so the 30-minute WhatsApp reminder cron re-arms for this fresh link
     // instead of treating it as already reminded-about.
@@ -516,7 +516,7 @@ export class AuthService {
     if (!adminUser) user.passwordResetRequestedAt = new Date();
     await user.save();
     const { subject, html, text } = resetPasswordTemplate(resetUrl);
-    await sendAppEmail({ to: user.email, subject, html, text });
+    await sendAppEmail({ to: user.email, subject, html, text, requestedByUser: true });
   }
 
   async validateResetToken(token: string): Promise<boolean> {
@@ -1302,7 +1302,7 @@ export class AuthService {
       expiresInHours: AuthService.TEMP_PASSWORD_TTL_HOURS,
     });
     try {
-      await sendAppEmail({ to: user.email, subject, html, text });
+      await sendAppEmail({ to: user.email, subject, html, text, requestedByUser: true });
     } catch (err: any) {
       // The password is already changed, so the admin must know the user never got it.
       console.error(
@@ -1648,6 +1648,7 @@ export class AuthService {
       await sendAppEmail({
         to: email,
         subject: "Your TrendStarZ admin sign-in code",
+        requestedByUser: true,
         text: `Your admin sign-in code is ${code}. It works for 5 minutes. If you didn't just sign in, change your password now.`,
       });
     } catch {

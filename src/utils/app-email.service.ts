@@ -1,5 +1,6 @@
 import type { Collection } from "mongodb";
 import { sendEmailBrevo } from "./brevo-email.service";
+import { releaseUnsubscribeBlock } from "./email-unsubscribe-release";
 
 /** Failed sends (address, subject, provider error — never the body); kept 30 days. */
 export const EMAIL_FAILURES = "email_send_failures";
@@ -24,6 +25,12 @@ export interface AppEmailOptions {
   subject: string;
   text?: string;
   html?: string;
+  /**
+   * The person asked for this email themselves (login code, reset link, delete
+   * code). An unsubscribe click on an earlier email must not stop it — see
+   * email-unsubscribe-release.ts. Never set this on offers, reminders or notices.
+   */
+  requestedByUser?: boolean;
 }
 
 const warnedMissingEmailKeys = new Set<string>();
@@ -52,8 +59,11 @@ export async function sendAppEmail(options: AppEmailOptions) {
     );
   }
 
+  if (options.requestedByUser) await releaseUnsubscribeBlock(options.to);
+
   try {
-    return await sendEmailBrevo(options);
+    const { to, subject, text, html } = options;
+    return await sendEmailBrevo({ to, subject, text, html });
   } catch (err: any) {
     // Most callers swallow email errors (an email must not fail the action), so
     // record it here: an OTP or invite that never left would otherwise be invisible.
