@@ -40,6 +40,8 @@ const CHECKS = [
   ['GET', `${API}/users/influencer-profile`, 401],
   ['GET', `${API}/notifications`, 401],
   ['GET', `${API}/campaign-transactions/my/history`, 401],
+  // One-time terms consent (2026-11-18): refused before anything is read or saved
+  ['POST', `${API}/auth/consent/accept`, 401],
   // Admin only: must be 401 without a login
   ['GET', `${API}/admin/data-integrity`, 401],
   ['GET', `${API}/admin/influencers`, 401],
@@ -52,6 +54,9 @@ const HEADERS = [
   [`${SITE}/`, 'x-content-type-options', 'nosniff'],
   [`${SITE}/`, 'referrer-policy', 'strict-origin-when-cross-origin'],
   [`${SITE}/`, 'strict-transport-security', 'max-age='],
+  // Security policy (2026-11-18): basics enforced, full list report-only until it's quiet.
+  [`${SITE}/`, 'content-security-policy', "object-src 'none'"],
+  [`${SITE}/`, 'content-security-policy-report-only', "default-src 'self'"],
 ];
 
 async function checkHeaders() {
