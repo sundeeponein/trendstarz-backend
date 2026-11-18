@@ -518,6 +518,18 @@ export class AuthController {
     );
   }
 
+  @Post("consent/accept")
+  @UseGuards(JwtAuthGuard)
+  async acceptLegalConsent(@Req() req: any, @Body() body: any) {
+    const userId = req?.user?.userId || req?.user?.sub || req?.user?.id;
+    const role = req?.user?.role;
+    return this.authService.acceptLegalConsent(
+      String(userId || ""),
+      String(role || ""),
+      body,
+    );
+  }
+
   @Post("founder-offer/seen")
   @UseGuards(JwtAuthGuard)
   async markFounderOfferSeen(@Req() req: any) {

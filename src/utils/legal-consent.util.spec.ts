@@ -23,3 +23,37 @@ describe("consent at sign-up", () => {
     }
   });
 });
+
+describe("one-time consent prompt for older accounts", () => {
+  const { consentNeeded, consentOnPrompt } = jest.requireActual("./legal-consent.util");
+
+  it("asks accounts made before the checkbox, and accounts on older versions", () => {
+    expect(consentNeeded({})).toBe(true);
+    expect(consentNeeded({ termsAcceptedAt: null })).toBe(true);
+    expect(
+      consentNeeded({ termsAcceptedAt: new Date(), termsVersion: "2026-01-01", privacyVersion: LEGAL_VERSIONS.privacy }),
+    ).toBe(true);
+  });
+
+  it("doesn't ask anyone who accepted the current versions", () => {
+    expect(
+      consentNeeded({
+        termsAcceptedAt: new Date(),
+        termsVersion: LEGAL_VERSIONS.terms,
+        privacyVersion: LEGAL_VERSIONS.privacy,
+      }),
+    ).toBe(false);
+  });
+
+  it("needs the same explicit yes as sign-up", () => {
+    for (const body of [{}, { acceptedTerms: "true" }, null]) {
+      expect(() => consentOnPrompt(body)).toThrow(/agree to the Terms of Service and Privacy Policy/);
+    }
+    const now = new Date("2026-11-18T10:00:00Z");
+    expect(consentOnPrompt({ acceptedTerms: true }, now)).toEqual({
+      termsAcceptedAt: now,
+      termsVersion: LEGAL_VERSIONS.terms,
+      privacyVersion: LEGAL_VERSIONS.privacy,
+    });
+  });
+});

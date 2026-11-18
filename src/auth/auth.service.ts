@@ -1,5 +1,5 @@
 import { maskEmail, sendSecurityAlert } from "../utils/security-alert.util";
-import { consentOnSignup } from "../utils/legal-consent.util";
+import { consentNeeded, consentOnPrompt, consentOnSignup } from "../utils/legal-consent.util";
 import { LoginAttempts } from "./login-attempts.util";
 import { canonicalPhone } from "../utils/phone.util";
 import { invalidateAccountStatusCache } from "./jwt-auth.guard";
@@ -931,8 +931,33 @@ export class AuthService {
       throw new BadRequestException("Invalid user session.");
     }
     const lastOpenedAt = new Date();
-    await model.updateOne({ _id: userId }, { $set: { lastOpenedAt } });
-    return { success: true, lastOpenedAt };
+    const doc: any = await model
+      .findOneAndUpdate(
+        { _id: userId },
+        { $set: { lastOpenedAt } },
+        { projection: { termsAcceptedAt: 1, termsVersion: 1, privacyVersion: 1 } },
+      )
+      .lean();
+    // Creators and brands made before the sign-up checkbox are asked once to agree
+    // (admins don't sign up through it).
+    const isAdmin = model === this.userModel;
+    return {
+      success: true,
+      lastOpenedAt,
+      consentNeeded: !!doc && !isAdmin && consentNeeded(doc),
+    };
+  }
+
+  /** The one-time "I agree" for accounts made before the sign-up checkbox. */
+  async acceptLegalConsent(userId: string, role: string, body: any) {
+    const model = this.modelForRole(role);
+    if (!model || !userId || model === this.userModel) {
+      throw new BadRequestException("Invalid user session.");
+    }
+    const consent = consentOnPrompt(body);
+    const res = await model.updateOne({ _id: userId }, { $set: consent });
+    if (!res.matchedCount) throw new BadRequestException("Invalid user session.");
+    return { success: true, ...consent };
   }
 
   /**

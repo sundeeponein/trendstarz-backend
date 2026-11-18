@@ -60,4 +60,19 @@ describe("browser errors are recorded (real HTTP + MongoDB)", () => {
     expect(c.count).toBe(5); // still only the 5 real ones from the test above
     expect(c.samples.some((x: string) => x.includes("Script error"))).toBe(false);
   });
+
+  it("security-policy reports get their own check and never count as errors (2026-11-18)", async () => {
+    const before = (await runIntegrityChecks(db.conn.db as any)).find((x) => x.key === "client_errors")!.count;
+    for (let n = 0; n < 6; n++) {
+      await request(app.getHttpServer())
+        .post("/client-errors")
+        .send({ page: "/pay", name: "CSPReportOnly", message: "script-src would block https://new-tag.example.com" })
+        .expect(204);
+    }
+    const checks = await runIntegrityChecks(db.conn.db as any);
+    expect(checks.find((x) => x.key === "client_errors")!.count).toBe(before);
+    const csp = checks.find((x) => x.key === "csp_would_block")!;
+    expect(csp.count).toBe(6);
+    expect(csp.samples[0]).toBe("script-src would block https://new-tag.example.com ×6 (e.g. /pay)");
+  });
 });

@@ -14,6 +14,12 @@ export const CLIENT_ERRORS_KEEP_DAYS = 30;
  */
 export const CLIENT_ERROR_NOISE: RegExp[] = [/Java object is gone/i, /^Script error\.?$/i];
 
+/**
+ * What the website's report-only security policy would have blocked (name on
+ * the report). Stored like errors, but counted by its own check, not as errors.
+ */
+export const CSP_REPORT_NAME = "CSPReportOnly";
+
 export function isClientErrorNoise(message: unknown): boolean {
   const text = String(message ?? "").trim();
   return CLIENT_ERROR_NOISE.some((re) => re.test(text));

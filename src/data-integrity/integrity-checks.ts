@@ -1,5 +1,5 @@
 import { normalizeUtr } from "../utils/utr.util";
-import { CLIENT_ERROR_NOISE } from "./client-errors.controller";
+import { CLIENT_ERROR_NOISE, CSP_REPORT_NAME } from "./client-errors.controller";
 import { ObjectId, type Db } from "mongodb";
 import { PERSONAL_TRACES } from "../users/personal-traces";
 import { ACTIVE_INVITE_STATUSES } from "../campaigns/reinvite-rule.util";
@@ -250,7 +250,7 @@ async function slotRacePairs(db: Db): Promise<IntegrityCheck> {
     "slot_race_pairs",
     "No two campaigns took a monthly slot at the same moment",
     samples.length,
-    "One host's campaigns took slots within 5 seconds — a double submit may have passed the monthly limit. If this appears, build the per-host slot counter.",
+    "One host's campaigns took slots within 5 seconds — a double submit may have passed the monthly limit. Since 2026-11-18 a per-host lock (request-lock.util) should prevent this, so a new pair means the lock was bypassed: check how those campaigns were created.",
     samples,
   );
 }
@@ -1154,6 +1154,33 @@ async function jobsRunning(db: Db, now = new Date()): Promise<IntegrityCheck> {
   );
 }
 
+/**
+ * The website sends its full security policy as report-only first (2026-11-18):
+ * what it WOULD have blocked in the last 7 days, by type and address. When this
+ * stays at 0 for a week, the policy can be switched to enforcing (vercel.json).
+ */
+async function cspWouldBlock(db: Db): Promise<IntegrityCheck> {
+  const since = new Date(Date.now() - 7 * 24 * 3600000);
+  const rows: any[] = await db
+    .collection("client_errors")
+    .aggregate([
+      { $match: { at: { $gte: since }, name: CSP_REPORT_NAME } },
+      { $group: { _id: "$message", n: { $sum: 1 }, page: { $last: "$page" } } },
+      { $sort: { n: -1 } },
+      { $limit: 15 },
+    ])
+    .toArray()
+    .catch(() => [] as any[]);
+  const total = rows.reduce((n: number, r: any) => n + Number(r.n || 0), 0);
+  return check(
+    "csp_would_block",
+    "The website's security policy would block nothing (last 7 days)",
+    total,
+    "Report-only: nothing is blocked yet. Each line is something the policy would block (e.g. a new analytics or payment address). Add real ones to the policy in vercel.json; when this stays at 0 for a week, switch Content-Security-Policy-Report-Only to Content-Security-Policy.",
+    rows.map((r: any) => `${r._id} ×${r.n} (e.g. ${r.page})`),
+  );
+}
+
 /** Browser errors are noisy (extensions, flaky networks): warn from this many a day. */
 export const CLIENT_ERROR_ALERT_AT = 5;
 
@@ -1164,7 +1191,13 @@ async function clientErrors(db: Db): Promise<IntegrityCheck> {
     .collection("client_errors")
     .aggregate([
       // Harmless messages stored before 2026-11-17 are left out (see CLIENT_ERROR_NOISE).
-      { $match: { at: { $gte: since }, message: { $nin: CLIENT_ERROR_NOISE } } },
+      {
+        $match: {
+          at: { $gte: since },
+          message: { $nin: CLIENT_ERROR_NOISE },
+          name: { $ne: CSP_REPORT_NAME }, // counted by cspWouldBlock
+        },
+      },
       { $group: { _id: { page: "$page", message: "$message" }, n: { $sum: 1 } } },
       { $sort: { n: -1 } },
       { $limit: 15 },
@@ -1234,5 +1267,6 @@ export async function runIntegrityChecks(db: Db): Promise<IntegrityCheck[]> {
     guard("serverErrors", () => serverErrors(db)),
     guard("jobsRunning", () => jobsRunning(db)),
     guard("clientErrors", () => clientErrors(db)),
+    guard("cspWouldBlock", () => cspWouldBlock(db)),
   ]);
 }

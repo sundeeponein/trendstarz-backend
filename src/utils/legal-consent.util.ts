@@ -21,3 +21,27 @@ export function consentOnSignup(data: any, now = new Date()) {
     privacyVersion: LEGAL_VERSIONS.privacy,
   };
 }
+
+/**
+ * Accounts made before the sign-up checkbox (or before the current Terms /
+ * Privacy versions) are asked once, at their next visit, to agree.
+ */
+export function consentNeeded(profile: any): boolean {
+  if (!profile?.termsAcceptedAt) return true;
+  return (
+    String(profile?.termsVersion || "") !== LEGAL_VERSIONS.terms ||
+    String(profile?.privacyVersion || "") !== LEGAL_VERSIONS.privacy
+  );
+}
+
+/** The "I agree" from that one-time prompt: same explicit yes as sign-up. */
+export function consentOnPrompt(data: any, now = new Date()) {
+  if (data?.acceptedTerms !== true) {
+    throw new BadRequestException("Please agree to the Terms of Service and Privacy Policy to continue.");
+  }
+  return {
+    termsAcceptedAt: now,
+    termsVersion: LEGAL_VERSIONS.terms,
+    privacyVersion: LEGAL_VERSIONS.privacy,
+  };
+}
