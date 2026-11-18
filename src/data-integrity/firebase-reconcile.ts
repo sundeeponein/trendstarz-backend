@@ -1,4 +1,9 @@
 import type { Db } from "mongodb";
+import { ADMIN_SOFT_DELETE_RETENTION_DAYS, SELF_DELETION_GRACE_PERIOD_DAYS } from "../users/users.service";
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+/** The nightly cleanup runs once a day; give it this long before calling a login stuck. */
+const CLEANUP_SLACK_DAYS = 2;
 
 /** The parts of a Firebase user this comparison reads. */
 export interface FirebaseUserLite {
@@ -22,7 +27,16 @@ export interface FirebaseReconcileResult {
   noFirebaseLogin: FirebaseReconcileRow[];
   /** Account linked to a Firebase user that has a different email (or no longer exists). */
   linkedToOtherLogin: FirebaseReconcileRow[];
-  /** Firebase login still present for a deleted or anonymized account (personal data kept). */
+  /**
+   * Deleted but still restorable (admin delete: 90 days; self-delete: grace period).
+   * The login is kept on purpose so a restore works; the nightly cleanup removes it
+   * when it anonymizes the account. Information only. removeOn = that day.
+   */
+  deletedAwaitingCleanup: Array<FirebaseReconcileRow & { removeOn: string }>;
+  /**
+   * Login still present although it should be gone: account anonymized, past its
+   * removal day, or deleted without a date (the cleanup never picks those up).
+   */
   deletedButLoginKept: FirebaseReconcileRow[];
   /** Firebase login whose email matches no account at all. */
   loginWithoutAccount: FirebaseReconcileRow[];
@@ -44,7 +58,11 @@ const norm = (v: unknown) => String(v || "").trim().toLowerCase();
  * and Firebase sign-in tokens go through Firebase while everything else uses
  * the account in MongoDB, so the two must describe the same people.
  */
-export async function reconcileFirebase(db: Db, firebaseUsers: FirebaseUserLite[]): Promise<FirebaseReconcileResult> {
+export async function reconcileFirebase(
+  db: Db,
+  firebaseUsers: FirebaseUserLite[],
+  now: Date = new Date(),
+): Promise<FirebaseReconcileResult> {
   const byUid = new Map(firebaseUsers.map((u) => [u.uid, u]));
   const byEmail = new Map(firebaseUsers.filter((u) => u.email).map((u) => [norm(u.email), u]));
   const result: FirebaseReconcileResult = {
@@ -52,6 +70,7 @@ export async function reconcileFirebase(db: Db, firebaseUsers: FirebaseUserLite[
     accounts: 0,
     noFirebaseLogin: [],
     linkedToOtherLogin: [],
+    deletedAwaitingCleanup: [],
     deletedButLoginKept: [],
     loginWithoutAccount: [],
     verifiedOnlyInFirebase: [],
@@ -62,7 +81,7 @@ export async function reconcileFirebase(db: Db, firebaseUsers: FirebaseUserLite[
   for (const [collection, role] of ROLES) {
     const rows = await db
       .collection(collection)
-      .find({}, { projection: { email: 1, firebaseUid: 1, isDeleted: 1, anonymized: 1, status: 1, isEmailVerified: 1 } })
+      .find({}, { projection: { email: 1, firebaseUid: 1, isDeleted: 1, anonymized: 1, status: 1, isEmailVerified: 1, deletedAt: 1 } })
       .toArray();
     for (const a of rows as any[]) {
       const email = norm(a.email);
@@ -73,7 +92,29 @@ export async function reconcileFirebase(db: Db, firebaseUsers: FirebaseUserLite[
       const linked = a.firebaseUid ? byUid.get(String(a.firebaseUid)) : undefined;
       const sameEmail = email ? byEmail.get(email) : undefined;
       if (gone) {
-        if (linked || sameEmail) result.deletedButLoginKept.push(row("account deleted, Firebase login still exists"));
+        if (!(linked || sameEmail)) continue;
+        if (a.anonymized === true) {
+          result.deletedButLoginKept.push(row("account anonymized, Firebase login still exists"));
+          continue;
+        }
+        // Same timing as the nightly cleanup: admin deletes wait 90 days, self-deletes the grace period.
+        const keepDays = a.status === "deletion_pending" ? SELF_DELETION_GRACE_PERIOD_DAYS : ADMIN_SOFT_DELETE_RETENTION_DAYS;
+        const deletedAt = a.deletedAt ? new Date(a.deletedAt) : null;
+        if (!deletedAt || Number.isNaN(deletedAt.getTime())) {
+          result.deletedButLoginKept.push(row("deleted without a date — the cleanup never removes this login"));
+          continue;
+        }
+        const removeOn = new Date(deletedAt.getTime() + keepDays * DAY_MS);
+        if (now.getTime() > removeOn.getTime() + CLEANUP_SLACK_DAYS * DAY_MS) {
+          result.deletedButLoginKept.push(
+            row("past its removal day, login still exists (open work or money, or the cleanup failed)"),
+          );
+          continue;
+        }
+        result.deletedAwaitingCleanup.push({
+          ...row(a.status === "deletion_pending" ? "deletion requested — can still cancel" : "deleted — restorable"),
+          removeOn: removeOn.toISOString(),
+        });
         continue;
       }
       result.accounts += 1;
